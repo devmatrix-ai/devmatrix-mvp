@@ -150,3 +150,4 @@ desktop.ini
 *.swp
 *~
 .~*
+backups/*.sql
