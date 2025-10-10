@@ -387,27 +387,27 @@ class PostgresManager:
     def log_decision(
         self,
         task_id: UUID,
-        decision_point: str,
-        options: list[str],
-        selected_option: str,
-        rationale: str,
+        decision_type: str,
+        reasoning: str,
+        approved: bool = None,
+        metadata: dict = None,
     ) -> UUID:
         """
         Log an agent decision.
 
         Args:
             task_id: Task UUID
-            decision_point: Description of decision point
-            options: Available options
-            selected_option: Chosen option
-            rationale: Reasoning for choice
+            decision_type: Type of decision being made
+            reasoning: Reasoning behind the decision
+            approved: Whether decision was approved (optional)
+            metadata: Additional metadata (optional)
 
         Returns:
             Decision UUID
         """
         query = """
             INSERT INTO devmatrix.agent_decisions
-            (task_id, decision_point, options, selected_option, rationale)
+            (task_id, decision_type, reasoning, approved, metadata)
             VALUES (%s, %s, %s, %s, %s)
             RETURNING id
         """
@@ -416,10 +416,10 @@ class PostgresManager:
             query,
             (
                 str(task_id),
-                decision_point,
-                Json(options),
-                selected_option,
-                rationale,
+                decision_type,
+                reasoning,
+                approved,
+                Json(metadata or {}),
             ),
             fetch=True,
         )
