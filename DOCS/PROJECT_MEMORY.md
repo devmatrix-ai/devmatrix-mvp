@@ -156,7 +156,7 @@
 ## 📈 Progreso del Proyecto
 
 ### Phase 0: Foundation (Weeks 1-2)
-**Status**: 🟡 In Progress (Day 1-2 completed)
+**Status**: 🟡 In Progress (Day 1-4 completed)
 **Target dates**: 2025-10-10 to 2025-10-24
 **Started**: 2025-10-10
 
@@ -171,13 +171,17 @@
   - GitHub: Connected to devmatrix-ai/devmatrix-mvp
   - Initial commit & push completed
 
-- [ ] **Day 3-4: Docker Compose & dependencies** 🔄 NEXT
-  - Docker Compose config (FastAPI + PostgreSQL + Redis)
-  - Service health checks
-  - Volume management
-  - Network configuration
+- [x] **Day 3-4: Docker Compose & dependencies** ✅ COMPLETED
+  - Docker Compose config (PostgreSQL pgvector + Redis + pgAdmin)
+  - Multi-stage Dockerfile (development + production)
+  - Service health checks (PostgreSQL + Redis)
+  - Database initialization script (5 tables + pgvector extension)
+  - Volume management (postgres_data, redis_data, pgadmin_data)
+  - Network configuration (devmatrix-network)
+  - CLI utility scripts (dvmtx command)
+  - All services healthy and verified
 
-- [ ] Day 5: LangGraph hello world
+- [ ] **Day 5: LangGraph hello world** 🔄 NEXT
 - [ ] Day 6-7: State management (Redis + PostgreSQL)
 - [ ] Day 8-9: Basic tools (file operations)
 - [ ] Day 10: CLI interface (Rich)
@@ -190,6 +194,9 @@
 - ✅ Security & secrets management
 - ✅ Documentation framework
 - ✅ Dependency management
+- ✅ Docker Compose infrastructure
+- ✅ Database schema & initialization
+- ✅ CLI utility scripts (dvmtx)
 
 ---
 
@@ -652,6 +659,99 @@ DOCS/PROJECT_MEMORY.md (this file)
 
 ---
 
+### Session 1 (2025-10-10) - Part 3: Docker Infrastructure
+**Duration**: ~1.5 hours
+**Participants**: Ariel, Dany
+
+**Topics covered**:
+1. ✅ Docker Compose multi-service setup
+2. ✅ PostgreSQL with pgvector extension
+3. ✅ Redis for state management
+4. ✅ Database schema initialization
+5. ✅ CLI utility scripts creation
+6. ✅ Service health verification
+7. ✅ Docker configuration debugging
+
+**Completed tasks**:
+- [x] docker-compose.yml con 3 servicios (PostgreSQL, Redis, pgAdmin)
+- [x] Multi-stage Dockerfile (development + production stages)
+- [x] .dockerignore para build optimization
+- [x] Database init script: 01-init-db.sql (5 tables + pgvector)
+- [x] CLI utility: scripts/dvmtx (350+ lines bash script)
+- [x] CLI installer: scripts/install-cli.sh
+- [x] CLI documentation: scripts/README.md (500+ lines)
+- [x] CLI installed globally: ~/.local/bin/dvmtx
+- [x] Services tested and verified healthy
+
+**Technical issues resolved**:
+1. **Redis password configuration error**:
+   - Problem: Empty REDIS_PASSWORD causing Redis restart loop
+   - Solution: Removed `--requirepass` flag from command
+   - Result: Redis started successfully
+
+2. **Docker Compose version warning**:
+   - Problem: `version: '3.8'` field obsolete in Compose v2
+   - Solution: Removed version field from docker-compose.yml
+   - Result: Clean startup without warnings
+
+3. **WSL2 credential helper warning**:
+   - Problem: "no configuration file provided: not found" on every docker command
+   - Solution: Created `docker_compose()` wrapper function to filter warning
+   - Result: Clean CLI output without cosmetic errors
+
+**Database schema created**:
+```sql
+devmatrix.projects       (id, name, description, status, created_at, updated_at)
+devmatrix.tasks          (id, project_id, agent_name, task_type, status, input_data, output_data, created_at, completed_at)
+devmatrix.agent_decisions (id, task_id, decision_point, options, selected_option, rationale, created_at)
+devmatrix.git_commits    (id, project_id, commit_hash, message, author, files_changed, created_at)
+devmatrix.cost_tracking  (id, project_id, task_id, model_name, input_tokens, output_tokens, cost_eur, created_at)
+```
+
+**CLI commands available**:
+```bash
+dvmtx up            # Start services
+dvmtx down          # Stop services
+dvmtx restart       # Restart services
+dvmtx status        # Service health
+dvmtx logs [svc]    # View logs
+dvmtx clean         # Delete all data
+dvmtx db shell      # PostgreSQL shell
+dvmtx db tables     # List tables
+dvmtx db backup     # Create backup
+dvmtx redis cli     # Redis CLI
+dvmtx redis flush   # Flush Redis
+dvmtx dev pgadmin   # Start pgAdmin
+dvmtx dev install   # Install Python deps
+dvmtx dev test      # Run tests
+dvmtx dev lint      # Run linters
+dvmtx dev format    # Format code
+```
+
+**Files created** (8 files):
+```
+docker-compose.yml              → Multi-service orchestration
+Dockerfile                      → Multi-stage build config
+.dockerignore                   → Build optimization
+docker/postgres/init/01-init-db.sql → Database schema
+scripts/dvmtx                   → CLI utility (350+ lines)
+scripts/install-cli.sh          → CLI installer
+scripts/README.md               → CLI documentation (500+ lines)
+backups/.gitkeep                → Backup directory
+```
+
+**Git commits made**:
+- `3c8f4e2` - "feat: Add Docker Compose infrastructure with PostgreSQL and Redis"
+- `e0aaab1` - "feat: Add CLI utility scripts (dvmtx command)"
+- `218b19c` - "fix: Remove obsolete docker-compose version and suppress credential warning"
+
+**Next session agenda**:
+- Phase 0 Day 5: LangGraph "Hello World"
+- First agent implementation
+- Basic workflow with single node
+
+---
+
 ## 🔗 Related Documents
 
 ### Project Documentation
@@ -715,6 +815,6 @@ DOCS/PROJECT_MEMORY.md (this file)
 
 ---
 
-**Última actualización**: 2025-10-10 (Session 1 Part 2 - Implementation Kickoff)
+**Última actualización**: 2025-10-10 (Session 1 Part 3 - Docker Infrastructure)
 **Próxima actualización planeada**: 2025-10-17 (Weekly Review)
-**Versión**: 1.1 (Phase 0 Day 1-2 completed)
+**Versión**: 1.2 (Phase 0 Day 1-4 completed)
