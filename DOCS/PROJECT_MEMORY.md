@@ -156,7 +156,7 @@
 ## 📈 Progreso del Proyecto
 
 ### Phase 0: Foundation (Weeks 1-2)
-**Status**: 🟡 In Progress (Day 1-4 completed)
+**Status**: 🟡 In Progress (Day 1-5 completed)
 **Target dates**: 2025-10-10 to 2025-10-24
 **Started**: 2025-10-10
 
@@ -181,8 +181,16 @@
   - CLI utility scripts (dvmtx command)
   - All services healthy and verified
 
-- [ ] **Day 5: LangGraph hello world** 🔄 NEXT
-- [ ] Day 6-7: State management (Redis + PostgreSQL)
+- [x] **Day 5: LangGraph hello world** ✅ COMPLETED
+  - AgentState and PlanningState schemas (TypedDict with reducers)
+  - hello_agent_node (simple greeting agent)
+  - hello_workflow with StateGraph (START → hello_agent → END)
+  - examples/hello_world.py with Rich UI
+  - Python symlink created (python → python3)
+  - Core dependencies installed (langchain, langgraph, rich)
+  - README updated with LangGraph section
+
+- [ ] **Day 6-7: State management (Redis + PostgreSQL)** 🔄 NEXT
 - [ ] Day 8-9: Basic tools (file operations)
 - [ ] Day 10: CLI interface (Rich)
 
@@ -197,6 +205,7 @@
 - ✅ Docker Compose infrastructure
 - ✅ Database schema & initialization
 - ✅ CLI utility scripts (dvmtx)
+- ✅ LangGraph foundation & hello world
 
 ---
 
@@ -752,6 +761,105 @@ backups/.gitkeep                → Backup directory
 
 ---
 
+### Session 1 (2025-10-10) - Part 4: LangGraph Foundation
+**Duration**: ~1 hour
+**Participants**: Ariel, Dany
+
+**Topics covered**:
+1. ✅ LangGraph state schemas with TypedDict
+2. ✅ Agent node implementation
+3. ✅ Workflow creation and execution
+4. ✅ Rich CLI example
+5. ✅ Python symlink setup
+6. ✅ Core dependencies installation
+
+**Completed tasks**:
+- [x] src/state/graph_state.py: AgentState & PlanningState schemas
+- [x] src/agents/hello_agent.py: Simple greeting agent node
+- [x] src/workflows/hello_workflow.py: StateGraph workflow builder
+- [x] examples/hello_world.py: Interactive Rich UI example
+- [x] README updated with LangGraph Quick Start section
+- [x] Python symlink: ~/.local/bin/python → /usr/bin/python3
+- [x] Dependencies: langchain, langgraph, langchain-anthropic, rich, typer
+
+**Technical decisions**:
+1. **State Management Pattern**:
+   - TypedDict for type safety
+   - Annotated with `add` reducer for message accumulation
+   - Separate schemas for different workflows (AgentState, PlanningState)
+
+2. **Node Pattern**:
+   - Nodes receive full state, return partial updates
+   - LangGraph merges updates automatically
+   - Pure functions for easier testing
+
+3. **Workflow Pattern**:
+   - Factory function returns compiled workflow
+   - Helper function for execution with initial state
+   - Single entry point, explicit edge to END
+
+**Code structure**:
+```python
+# State with reducer
+class AgentState(TypedDict):
+    messages: Annotated[Sequence[dict], add]  # Accumulates
+    user_request: str                          # Replaces
+
+# Node function
+def hello_agent_node(state: AgentState) -> dict:
+    return {"messages": [new_message]}  # Partial update
+
+# Workflow creation
+workflow = StateGraph(AgentState)
+workflow.add_node("hello_agent", hello_agent_node)
+workflow.set_entry_point("hello_agent")
+workflow.add_edge("hello_agent", END)
+app = workflow.compile()
+```
+
+**Example output**:
+```bash
+$ python examples/hello_world.py "Create a function to add numbers"
+╔══════════════════════════════════════╗
+║   Devmatrix - LangGraph Hello World  ║
+╚══════════════════════════════════════╝
+
+✓ Workflow completed successfully!
+
+📝 Agent Messages:
+Hello! I received your request: 'Create a function to add numbers'
+
+💻 Generated Code:
+# Hello World from Devmatrix!
+# Request: Create a function to add numbers
+```
+
+**Files created** (5 files):
+```
+src/state/graph_state.py        → State definitions (AgentState, PlanningState)
+src/agents/hello_agent.py       → Agent node implementation
+src/workflows/hello_workflow.py → Workflow builder and executor
+examples/hello_world.py         → Rich CLI example (executable)
+~/.local/bin/python             → Symlink to python3
+```
+
+**Git commits made**:
+- `e4b48d3` - "feat: Implement LangGraph Hello World workflow (Phase 0 Day 5)"
+
+**Learnings**:
+1. **LangGraph State Reducers**: The `Annotated[List, add]` pattern is crucial for accumulating messages
+2. **Node Simplicity**: Nodes should be pure functions that return state updates
+3. **Workflow Compilation**: Compiled workflows are immutable and reusable
+4. **Python Symlink**: WSL2 needs python symlink in ~/.local/bin for consistency
+
+**Next session agenda**:
+- Phase 0 Day 6-7: State Management Integration
+- Connect Redis for workflow state
+- Connect PostgreSQL for task history
+- Cost tracking implementation
+
+---
+
 ## 🔗 Related Documents
 
 ### Project Documentation
@@ -815,6 +923,6 @@ backups/.gitkeep                → Backup directory
 
 ---
 
-**Última actualización**: 2025-10-10 (Session 1 Part 3 - Docker Infrastructure)
+**Última actualización**: 2025-10-10 (Session 1 Part 4 - LangGraph Foundation)
 **Próxima actualización planeada**: 2025-10-17 (Weekly Review)
-**Versión**: 1.2 (Phase 0 Day 1-4 completed)
+**Versión**: 1.3 (Phase 0 Day 1-5 completed)
