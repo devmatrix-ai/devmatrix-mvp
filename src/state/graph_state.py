@@ -32,6 +32,8 @@ class AgentState(TypedDict):
     # Workflow metadata
     workflow_id: str
     agent_name: str
+    project_id: str
+    task_id: str
 
     # Error tracking
     error: str | None
