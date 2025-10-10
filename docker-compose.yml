@@ -1,0 +1,99 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database with pgvector extension
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: devmatrix-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-devmatrix}
+      POSTGRES_USER: ${POSTGRES_USER:-devmatrix}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devmatrix}
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-devmatrix}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - devmatrix-network
+
+  # Redis for state management
+  redis:
+    image: redis:7-alpine
+    container_name: devmatrix-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - devmatrix-network
+
+  # pgAdmin (Optional - Database GUI)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: devmatrix-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@devmatrix.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+    networks:
+      - devmatrix-network
+    profiles:
+      - tools  # Only start with: docker compose --profile tools up
+
+  # FastAPI Application (Future - Phase 0 Day 5+)
+  # app:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: devmatrix-app
+  #   restart: unless-stopped
+  #   env_file:
+  #     - .env
+  #   ports:
+  #     - "${APP_PORT:-8000}:8000"
+  #   volumes:
+  #     - ./src:/app/src
+  #     - ./workspace:/app/workspace
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #   command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+  #   networks:
+  #     - devmatrix-network
+
+networks:
+  devmatrix-network:
+    driver: bridge
+    name: devmatrix-network
+
+volumes:
+  postgres_data:
+    name: devmatrix-postgres-data
+  redis_data:
+    name: devmatrix-redis-data
+  pgadmin_data:
+    name: devmatrix-pgadmin-data
