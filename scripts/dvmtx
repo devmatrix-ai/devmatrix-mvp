@@ -50,19 +50,24 @@ check_docker() {
     fi
 }
 
+# Wrapper for docker compose commands to suppress config warning
+docker_compose() {
+    docker compose "$@" 2>&1 | grep -v "no configuration file provided: not found" || true
+}
+
 # Command: up - Start services
 cmd_up() {
     print_header
     print_info "Starting Devmatrix services..."
     check_docker
 
-    docker compose up -d postgres redis
+    docker_compose up -d postgres redis
 
     echo ""
     print_info "Waiting for services to be healthy..."
     sleep 5
 
-    docker compose ps
+    docker_compose ps
     echo ""
     print_success "Devmatrix is running!"
     print_info "PostgreSQL: localhost:5432"
@@ -75,7 +80,7 @@ cmd_down() {
     print_header
     print_info "Stopping Devmatrix services..."
 
-    docker compose down
+    docker_compose down
 
     echo ""
     print_success "Devmatrix stopped successfully"
@@ -97,7 +102,7 @@ cmd_status() {
     check_docker
 
     print_info "Service Status:"
-    docker compose ps
+    docker_compose ps
 
     echo ""
     print_info "Health Checks:"
@@ -127,10 +132,10 @@ cmd_logs() {
 
     if [ -z "$service" ]; then
         print_info "Showing logs for all services (Ctrl+C to exit)..."
-        docker compose logs -f
+        docker_compose logs -f
     else
         print_info "Showing logs for $service (Ctrl+C to exit)..."
-        docker compose logs -f "$service"
+        docker_compose logs -f "$service"
     fi
 }
 
@@ -142,7 +147,7 @@ cmd_clean() {
 
     if [ "$confirm" = "yes" ]; then
         print_info "Cleaning Devmatrix data..."
-        docker compose down -v
+        docker_compose down -v
         print_success "All data cleaned"
     else
         print_info "Clean cancelled"
@@ -218,7 +223,7 @@ cmd_dev() {
     case "$tool" in
         pgadmin)
             print_info "Starting pgAdmin..."
-            docker compose --profile tools up -d pgadmin
+            docker_compose --profile tools up -d pgadmin
             echo ""
             print_success "pgAdmin is running!"
             print_info "URL: http://localhost:5050"
