@@ -156,3 +156,100 @@ class TestStatefulWorkflow:
         tasks = self.workflow.postgres.get_project_tasks(project_id)
         assert len(tasks) >= 1
         assert any(str(task["id"]) == str(task_id) for task in tasks)  # Compare as strings
+
+    def test_workflow_with_long_request(self):
+        """Test workflow with very long user request."""
+        long_request = "A" * 1000  # 1000 character request
+
+        final_state, project_id, task_id = self.workflow.run_workflow(
+            user_request=long_request,
+            project_name="Long Request Test"
+        )
+
+        assert final_state["user_request"] == long_request
+        assert len(final_state["user_request"]) == 1000
+
+    def test_workflow_with_special_characters(self):
+        """Test workflow with special characters in request."""
+        special_request = "Test with 特殊字符 émojis 🚀 and symbols @#$%"
+
+        final_state, project_id, task_id = self.workflow.run_workflow(
+            user_request=special_request,
+            project_name="Special Chars Test"
+        )
+
+        assert final_state["user_request"] == special_request
+
+    def test_redis_and_postgres_sync(self):
+        """Test that Redis and PostgreSQL stay in sync."""
+        final_state, project_id, task_id = self.workflow.run_workflow(
+            user_request="Sync test",
+            project_name="Sync Test"
+        )
+
+        workflow_id = final_state["workflow_id"]
+
+        # Get state from both sources
+        redis_state = self.workflow.get_workflow_state_from_redis(workflow_id)
+        postgres_task = self.workflow.get_task_from_postgres(task_id)
+
+        # Verify sync
+        assert redis_state["user_request"] == "Sync test"
+        assert postgres_task["status"] == "completed"
+        # task_id gets updated after workflow completes, verify from final_state
+        assert str(final_state["task_id"]) == str(postgres_task["id"])
+
+    def test_multiple_cost_entries_same_task(self):
+        """Test tracking multiple costs for same task."""
+        final_state, project_id, task_id = self.workflow.run_workflow(
+            user_request="Multiple costs test",
+            project_name="Multi Cost Test"
+        )
+
+        # Track multiple costs
+        cost_ids = []
+        for i in range(3):
+            cost_id = self.workflow.track_llm_cost(
+                task_id=task_id,
+                model_name=f"model-{i}",
+                input_tokens=100 * (i + 1),
+                output_tokens=50 * (i + 1),
+                cost_usd=0.01 * (i + 1)
+            )
+            cost_ids.append(cost_id)
+
+        # Verify all tracked
+        assert len(cost_ids) == 3
+
+        # Verify aggregation
+        project_costs = self.workflow.postgres.get_project_costs(project_id)
+        assert project_costs["api_calls"] == 3
+        assert float(project_costs["total_cost"]) == 0.06  # 0.01 + 0.02 + 0.03
+
+    def test_workflow_error_state_persistence(self):
+        """Test that workflow state with errors persists correctly."""
+        # Create a state with error manually
+        from uuid import uuid4
+
+        workflow_id = str(uuid4())
+        error_state = {
+            "user_request": "Error test",
+            "messages": [],
+            "current_task": "failed",
+            "generated_code": "",
+            "workflow_id": workflow_id,
+            "project_id": str(uuid4()),
+            "agent_name": "test_agent",
+            "error": "Simulated error",
+            "retry_count": 2,
+            "task_id": ""
+        }
+
+        # Save to Redis
+        self.workflow.redis.save_workflow_state(workflow_id, error_state)
+
+        # Retrieve and verify
+        retrieved = self.workflow.get_workflow_state_from_redis(workflow_id)
+        assert retrieved["error"] == "Simulated error"
+        assert retrieved["retry_count"] == 2
+        assert retrieved["current_task"] == "failed"
