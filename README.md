@@ -75,19 +75,34 @@ Devmatrix is an agentic AI system that generates production-ready code with huma
    nano .env  # or use your preferred editor
    ```
 
-3. **Start services**
+3. **Install CLI utilities**
    ```bash
-   # Start Docker services (PostgreSQL + Redis)
-   docker compose up -d
-
-   # Install Python dependencies
-   pip install -r requirements.txt
+   # Install dvmtx command
+   ./scripts/install-cli.sh
    ```
 
-4. **Run the agent**
+4. **Start services**
    ```bash
-   # CLI command (coming soon in Phase 1)
-   python -m devmatrix.cli run "Create a fibonacci function"
+   # Start Docker services (PostgreSQL + Redis)
+   dvmtx up
+
+   # Check service health
+   dvmtx status
+   ```
+
+5. **Install Python dependencies**
+   ```bash
+   # Install core dependencies
+   pip install langchain langgraph langchain-anthropic rich typer python-dotenv
+   ```
+
+6. **Try the Hello World example**
+   ```bash
+   # Run basic LangGraph workflow
+   python examples/hello_world.py
+
+   # Or with custom request
+   python examples/hello_world.py "Create a function to calculate factorial"
    ```
 
 ---
@@ -125,6 +140,44 @@ agentic-ai/
 - `.env.example` is a template only
 - Agent workspace is sandboxed to `/workspace` by default
 - All file operations are logged for audit
+
+---
+
+## 🔧 LangGraph Workflows
+
+### Hello World Example
+
+The `examples/hello_world.py` demonstrates the basic LangGraph workflow pattern:
+
+```python
+# State definition with TypedDict
+class AgentState(TypedDict):
+    user_request: str
+    messages: Annotated[Sequence[dict], add]
+    generated_code: str
+    # ... more fields
+
+# Agent node function
+def hello_agent_node(state: AgentState) -> dict[str, Any]:
+    # Process state and return updates
+    return {"messages": [message], "current_task": "complete"}
+
+# Create workflow
+workflow = StateGraph(AgentState)
+workflow.add_node("hello_agent", hello_agent_node)
+workflow.set_entry_point("hello_agent")
+workflow.add_edge("hello_agent", END)
+app = workflow.compile()
+
+# Execute
+final_state = app.invoke(initial_state)
+```
+
+**Key concepts**:
+- **State**: TypedDict passed between nodes
+- **Nodes**: Functions that transform state
+- **Edges**: Define workflow flow
+- **Reducers**: Accumulate values (e.g., `add` for messages list)
 
 ---
 
@@ -180,11 +233,12 @@ black src/ tests/
 - [x] Git repository setup
 - [x] Project structure
 - [x] Security & secrets management
-- [ ] Docker Compose configuration
-- [ ] LangGraph hello world
-- [ ] State management (Redis + PostgreSQL)
+- [x] Docker Compose configuration
+- [x] LangGraph hello world
+- [x] CLI utilities (dvmtx command)
+- [ ] State management (Redis + PostgreSQL integration)
 - [ ] Basic file operation tools
-- [ ] CLI interface
+- [ ] CLI interface with Rich
 
 ### 🔄 Phase 1: Single Agent POC (Weeks 3-4)
 - [ ] Planning Agent implementation
