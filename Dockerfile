@@ -30,7 +30,26 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir uvicorn[standard] gunicorn
 
 # =============================================================================
-# Stage 2: Development - Full development environment
+# Stage 2: UI Builder - Build React frontend
+# =============================================================================
+FROM node:20-alpine as ui-builder
+
+WORKDIR /ui
+
+# Copy UI package files
+COPY src/ui/package.json src/ui/package-lock.json* ./
+
+# Install dependencies
+RUN npm ci --only=production
+
+# Copy UI source
+COPY src/ui/ ./
+
+# Build for production
+RUN npm run build
+
+# =============================================================================
+# Stage 3: Development - Full development environment
 # =============================================================================
 FROM python:3.11-slim as development
 
@@ -75,7 +94,7 @@ EXPOSE 8000
 CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--log-level", "debug"]
 
 # =============================================================================
-# Stage 3: Production - Minimal secure production image
+# Stage 4: Production - Minimal secure production image
 # =============================================================================
 FROM python:3.11-slim as production
 
@@ -106,6 +125,9 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --chown=devmatrix:devmatrix src/ ./src/
 COPY --chown=devmatrix:devmatrix alembic/ ./alembic/
 COPY --chown=devmatrix:devmatrix alembic.ini pyproject.toml ./
+
+# Copy built UI from ui-builder stage
+COPY --from=ui-builder --chown=devmatrix:devmatrix /ui/dist ./src/api/static
 
 # Create necessary directories with correct permissions
 RUN mkdir -p /app/logs /app/data /app/workspace && \
