@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "devmatrix.fullname" . }}-config
+  labels:
+    {{- include "devmatrix.labels" . | nindent 4 }}
+data:
+  app.yaml: |
+    environment: {{ .Values.global.environment }}
+    log_level: {{ .Values.config.logLevel }}
+    log_format: {{ .Values.config.logFormat }}
+
+    api:
+      host: {{ .Values.config.api.host }}
+      port: {{ .Values.config.api.port }}
+      workers: {{ .Values.config.api.workers }}
+      timeout: {{ .Values.config.api.timeout }}
+      cors_origins:
+        {{- range .Values.config.api.corsOrigins }}
+        - {{ . }}
+        {{- end }}
+
+    redis:
+      host: {{ include "devmatrix.redis.fullname" . }}
+      port: {{ .Values.config.redis.port }}
+      db: {{ .Values.config.redis.db }}
+      ttl: {{ .Values.config.redis.ttl }}
+      max_connections: {{ .Values.config.redis.maxConnections }}
+
+    postgres:
+      host: {{ include "devmatrix.postgresql.fullname" . }}
+      port: {{ .Values.config.postgres.port }}
+      pool_size: {{ .Values.config.postgres.poolSize }}
+      max_overflow: {{ .Values.config.postgres.maxOverflow }}
+      pool_timeout: {{ .Values.config.postgres.poolTimeout }}
+      pool_recycle: {{ .Values.config.postgres.poolRecycle }}
+
+    performance:
+      cache_enabled: {{ .Values.config.performance.cacheEnabled }}
+      cache_ttl: {{ .Values.config.performance.cacheTtl }}
+      max_workers: {{ .Values.config.performance.maxWorkers }}
+      request_timeout: {{ .Values.config.performance.requestTimeout }}
+
+    monitoring:
+      prometheus_enabled: {{ .Values.config.monitoring.prometheusEnabled }}
+      health_check_interval: {{ .Values.config.monitoring.healthCheckInterval }}
+      metrics_port: {{ .Values.config.monitoring.metricsPort }}

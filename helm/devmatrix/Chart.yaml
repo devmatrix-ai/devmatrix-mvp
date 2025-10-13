@@ -1,0 +1,28 @@
+apiVersion: v2
+name: devmatrix
+description: DevMatrix - Multi-Agent AI Development Environment
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.21.0-0"
+
+keywords:
+  - ai
+  - agents
+  - development
+  - automation
+  - llm
+
+maintainers:
+  - name: DevMatrix Team
+    email: team@devmatrix.example.com
+
+home: https://github.com/yourusername/devmatrix
+sources:
+  - https://github.com/yourusername/devmatrix
+
+dependencies: []
+
+annotations:
+  category: Development
+  licenses: MIT

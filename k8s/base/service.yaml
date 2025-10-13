@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: devmatrix-api
+  namespace: devmatrix
+  labels:
+    app: devmatrix
+    component: api
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+    protocol: TCP
+  selector:
+    app: devmatrix
+    component: api
+  sessionAffinity: None
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: devmatrix-redis
+  namespace: devmatrix
+  labels:
+    app: devmatrix
+    component: redis
+spec:
+  type: ClusterIP
+  ports:
+  - name: redis
+    port: 6379
+    targetPort: 6379
+    protocol: TCP
+  selector:
+    app: devmatrix
+    component: redis
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: devmatrix-postgres
+  namespace: devmatrix
+  labels:
+    app: devmatrix
+    component: postgres
+spec:
+  type: ClusterIP
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+    protocol: TCP
+  selector:
+    app: devmatrix
+    component: postgres

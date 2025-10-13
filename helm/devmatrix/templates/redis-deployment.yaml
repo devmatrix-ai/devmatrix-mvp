@@ -1,0 +1,76 @@
+{{- if .Values.redis.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "devmatrix.redis.fullname" . }}
+  labels:
+    {{- include "devmatrix.labels" . | nindent 4 }}
+    component: redis
+spec:
+  replicas: {{ .Values.redis.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "devmatrix.selectorLabels" . | nindent 6 }}
+      component: redis
+  template:
+    metadata:
+      labels:
+        {{- include "devmatrix.selectorLabels" . | nindent 8 }}
+        component: redis
+    spec:
+      containers:
+      - name: redis
+        image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+        imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+        ports:
+        - name: redis
+          containerPort: 6379
+          protocol: TCP
+        resources:
+          {{- toYaml .Values.redis.master.resources | nindent 12 }}
+        {{- if .Values.redis.master.livenessProbe.enabled }}
+        livenessProbe:
+          tcpSocket:
+            port: redis
+          initialDelaySeconds: {{ .Values.redis.master.livenessProbe.initialDelaySeconds }}
+          periodSeconds: {{ .Values.redis.master.livenessProbe.periodSeconds }}
+        {{- end }}
+        {{- if .Values.redis.master.readinessProbe.enabled }}
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: {{ .Values.redis.master.readinessProbe.initialDelaySeconds }}
+          periodSeconds: {{ .Values.redis.master.readinessProbe.periodSeconds }}
+        {{- end }}
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+      volumes:
+      - name: redis-data
+        {{- if .Values.redis.master.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ include "devmatrix.redis.fullname" . }}-pvc
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "devmatrix.redis.fullname" . }}
+  labels:
+    {{- include "devmatrix.labels" . | nindent 4 }}
+    component: redis
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6379
+    targetPort: redis
+    protocol: TCP
+    name: redis
+  selector:
+    {{- include "devmatrix.selectorLabels" . | nindent 4 }}
+    component: redis
+{{- end }}

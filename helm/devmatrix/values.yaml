@@ -1,0 +1,288 @@
+# Default values for devmatrix
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Global configuration
+global:
+  environment: production
+
+# API Deployment configuration
+api:
+  replicaCount: 3
+
+  image:
+    repository: devmatrix/api
+    pullPolicy: IfNotPresent
+    tag: "latest"
+
+  imagePullSecrets: []
+  nameOverride: ""
+  fullnameOverride: ""
+
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: ""
+
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8000"
+    prometheus.io/path: "/metrics"
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+
+  securityContext:
+    capabilities:
+      drop:
+      - ALL
+    readOnlyRootFilesystem: false
+    allowPrivilegeEscalation: false
+
+  service:
+    type: ClusterIP
+    port: 8000
+    targetPort: 8000
+    annotations: {}
+
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+
+  autoscaling:
+    enabled: false
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+
+  livenessProbe:
+    httpGet:
+      path: /api/v1/health/live
+      port: http
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    httpGet:
+      path: /api/v1/health/ready
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+# PostgreSQL configuration
+postgresql:
+  enabled: true
+
+  image:
+    repository: postgres
+    tag: "15-alpine"
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1
+
+  auth:
+    database: devmatrix
+    username: devmatrix
+    existingSecret: devmatrix-secrets
+    secretKeys:
+      userPasswordKey: postgres-password
+
+  primary:
+    persistence:
+      enabled: false
+      size: 8Gi
+      storageClass: ""
+
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "2Gi"
+        cpu: "1000m"
+
+    livenessProbe:
+      enabled: true
+      initialDelaySeconds: 30
+      periodSeconds: 10
+
+    readinessProbe:
+      enabled: true
+      initialDelaySeconds: 5
+      periodSeconds: 5
+
+# Redis configuration
+redis:
+  enabled: true
+
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1
+
+  auth:
+    enabled: false
+    existingSecret: devmatrix-secrets
+    existingSecretPasswordKey: redis-password
+
+  master:
+    persistence:
+      enabled: false
+      size: 8Gi
+      storageClass: ""
+
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+
+    livenessProbe:
+      enabled: true
+      initialDelaySeconds: 30
+      periodSeconds: 10
+
+    readinessProbe:
+      enabled: true
+      initialDelaySeconds: 5
+      periodSeconds: 5
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+
+  hosts:
+    - host: api.devmatrix.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+  tls:
+    - secretName: devmatrix-tls
+      hosts:
+        - api.devmatrix.example.com
+
+# ConfigMap for application configuration
+config:
+  logLevel: INFO
+  logFormat: json
+
+  api:
+    host: 0.0.0.0
+    port: 8000
+    workers: 4
+    timeout: 300
+    corsOrigins:
+      - https://devmatrix.example.com
+      - https://api.devmatrix.example.com
+
+  redis:
+    host: devmatrix-redis
+    port: 6379
+    db: 0
+    ttl: 7200
+    maxConnections: 50
+
+  postgres:
+    host: devmatrix-postgres
+    port: 5432
+    poolSize: 20
+    maxOverflow: 10
+    poolTimeout: 30
+    poolRecycle: 3600
+
+  performance:
+    cacheEnabled: true
+    cacheTtl: 3600
+    maxWorkers: 4
+    requestTimeout: 300
+
+  monitoring:
+    prometheusEnabled: true
+    healthCheckInterval: 30
+    metricsPort: 8000
+
+# Secrets configuration (use external-secrets or sealed-secrets in production)
+secrets:
+  create: true
+  data:
+    anthropicApiKey: ""
+    openaiApiKey: ""
+    googleApiKey: ""
+
+# RBAC configuration
+rbac:
+  create: true
+  rules:
+    - apiGroups: [""]
+      resources: ["configmaps", "secrets"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: [""]
+      resources: ["pods"]
+      verbs: ["get", "list"]
+
+# Monitoring configuration
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+
+  prometheusRule:
+    enabled: false
+    rules: []
+
+# Network policies
+networkPolicy:
+  enabled: false
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: devmatrix
+
+  egress:
+    - to:
+      - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
