@@ -1,0 +1,98 @@
+{{- if .Values.postgresql.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "devmatrix.postgresql.fullname" . }}
+  labels:
+    {{- include "devmatrix.labels" . | nindent 4 }}
+    component: postgres
+spec:
+  replicas: {{ .Values.postgresql.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "devmatrix.selectorLabels" . | nindent 6 }}
+      component: postgres
+  template:
+    metadata:
+      labels:
+        {{- include "devmatrix.selectorLabels" . | nindent 8 }}
+        component: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+        imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+        ports:
+        - name: postgres
+          containerPort: 5432
+          protocol: TCP
+        env:
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "devmatrix.fullname" . }}-secrets
+              key: postgres-db
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "devmatrix.fullname" . }}-secrets
+              key: postgres-user
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "devmatrix.fullname" . }}-secrets
+              key: postgres-password
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        resources:
+          {{- toYaml .Values.postgresql.primary.resources | nindent 12 }}
+        {{- if .Values.postgresql.primary.livenessProbe.enabled }}
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - {{ .Values.postgresql.auth.username }}
+          initialDelaySeconds: {{ .Values.postgresql.primary.livenessProbe.initialDelaySeconds }}
+          periodSeconds: {{ .Values.postgresql.primary.livenessProbe.periodSeconds }}
+        {{- end }}
+        {{- if .Values.postgresql.primary.readinessProbe.enabled }}
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - {{ .Values.postgresql.auth.username }}
+          initialDelaySeconds: {{ .Values.postgresql.primary.readinessProbe.initialDelaySeconds }}
+          periodSeconds: {{ .Values.postgresql.primary.readinessProbe.periodSeconds }}
+        {{- end }}
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+      volumes:
+      - name: postgres-data
+        {{- if .Values.postgresql.primary.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ include "devmatrix.postgresql.fullname" . }}-pvc
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "devmatrix.postgresql.fullname" . }}
+  labels:
+    {{- include "devmatrix.labels" . | nindent 4 }}
+    component: postgres
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: postgres
+    protocol: TCP
+    name: postgres
+  selector:
+    {{- include "devmatrix.selectorLabels" . | nindent 4 }}
+    component: postgres
+{{- end }}

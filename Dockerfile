@@ -1,79 +1,143 @@
-# Devmatrix - Multi-stage Dockerfile for FastAPI Application
-# Python 3.12+ required
+# DevMatrix - Multi-stage Dockerfile for Production Deployment
+# Optimized for size, security, and performance
 
-# Stage 1: Base image with dependencies
-FROM python:3.12-slim as base
+# =============================================================================
+# Stage 1: Builder - Install dependencies and build wheels
+# =============================================================================
+FROM python:3.11-slim as builder
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+WORKDIR /build
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    git \
-    curl \
-    build-essential \
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    make \
     libpq-dev \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Create app directory
+# Copy dependency files
+COPY requirements.txt requirements-dev.txt ./
+
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install production dependencies with optimizations
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir uvicorn[standard] gunicorn
+
+# =============================================================================
+# Stage 2: Development - Full development environment
+# =============================================================================
+FROM python:3.11-slim as development
+
+# Install runtime and development dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    git \
+    curl \
+    vim \
+    postgresql-client \
+    redis-tools \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# Stage 2: Development image
-FROM base as development
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy requirements first for better caching
-COPY requirements.txt .
-
-# Install Python dependencies
-RUN pip install --upgrade pip && \
-    pip install -r requirements.txt
+# Install development dependencies
+COPY requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements-dev.txt
 
 # Copy application code
 COPY src/ ./src/
 COPY tests/ ./tests/
-COPY pyproject.toml .
+COPY alembic/ ./alembic/
+COPY alembic.ini pyproject.toml ./
 
-# Create workspace directory
-RUN mkdir -p /app/workspace
+# Create necessary directories
+RUN mkdir -p /app/workspace /app/logs /app/data
 
-# Expose FastAPI port
+# Set environment variables
+ENV PYTHONPATH="/app" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    ENVIRONMENT=development
+
 EXPOSE 8000
 
-# Development command (with reload)
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Development command with hot reload
+CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--log-level", "debug"]
 
-# Stage 3: Production image (future)
-FROM base as production
+# =============================================================================
+# Stage 3: Production - Minimal secure production image
+# =============================================================================
+FROM python:3.11-slim as production
 
-# Copy requirements
-COPY requirements.txt .
+# Set metadata
+LABEL maintainer="DevMatrix Team <team@devmatrix.example.com>" \
+      description="DevMatrix Multi-Agent AI Development Environment" \
+      version="0.1.0" \
+      org.opencontainers.image.source="https://github.com/yourusername/devmatrix"
 
-# Install only production dependencies (no dev tools)
-RUN pip install --upgrade pip && \
-    pip install -r requirements.txt --no-dev
+# Create non-root user and group
+RUN groupadd -r devmatrix && \
+    useradd -r -g devmatrix -u 1000 -m -s /sbin/nologin devmatrix
 
-# Copy application code only (no tests)
-COPY src/ ./src/
-COPY pyproject.toml .
+# Install minimal runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-# Create non-root user for security
-RUN useradd -m -u 1000 devmatrix && \
+WORKDIR /app
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+
+# Copy application code with correct ownership
+COPY --chown=devmatrix:devmatrix src/ ./src/
+COPY --chown=devmatrix:devmatrix alembic/ ./alembic/
+COPY --chown=devmatrix:devmatrix alembic.ini pyproject.toml ./
+
+# Create necessary directories with correct permissions
+RUN mkdir -p /app/logs /app/data /app/workspace && \
     chown -R devmatrix:devmatrix /app
 
+# Set environment variables
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONPATH="/app" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    ENVIRONMENT=production \
+    PORT=8000 \
+    WORKERS=4
+
+# Switch to non-root user
 USER devmatrix
 
-# Create workspace directory
-RUN mkdir -p /app/workspace
+# Health check with proper endpoint
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:${PORT}/api/v1/health/live || exit 1
 
-# Expose FastAPI port
+# Expose port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
-
-# Production command (no reload, optimized)
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+# Use gunicorn with uvicorn workers for production
+CMD exec gunicorn src.api.main:app \
+    --bind 0.0.0.0:${PORT} \
+    --workers ${WORKERS} \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --timeout 300 \
+    --graceful-timeout 30 \
+    --keep-alive 5 \
+    --access-logfile - \
+    --error-logfile - \
+    --log-level info

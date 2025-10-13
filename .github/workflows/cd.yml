@@ -1,0 +1,300 @@
+name: CD Pipeline
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - production
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  # ============================================================================
+  # Build and Push Docker Images
+  # ============================================================================
+  build-push:
+    name: Build & Push Docker Images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          target: production
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            VCS_REF=${{ github.sha }}
+            VERSION=${{ steps.meta.outputs.version }}
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.spdx.json
+
+  # ============================================================================
+  # Deploy to Development
+  # ============================================================================
+  deploy-dev:
+    name: Deploy to Development
+    runs-on: ubuntu-latest
+    needs: build-push
+    if: github.ref == 'refs/heads/develop' || inputs.environment == 'dev'
+    environment:
+      name: development
+      url: https://dev.devmatrix.example.com
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Configure kubectl
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG_DEV }}" | base64 -d > ~/.kube/config
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: 'v3.13.0'
+
+      - name: Deploy with Helm
+        run: |
+          helm upgrade --install devmatrix ./helm/devmatrix \
+            --namespace devmatrix-dev \
+            --create-namespace \
+            --values helm/devmatrix/values/dev.yaml \
+            --set api.image.tag=${{ needs.build-push.outputs.image-tag }} \
+            --set api.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} \
+            --wait \
+            --timeout 10m
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/devmatrix -n devmatrix-dev
+          kubectl get pods -n devmatrix-dev
+
+  # ============================================================================
+  # Deploy to Staging
+  # ============================================================================
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build-push
+    if: github.ref == 'refs/heads/main' || inputs.environment == 'staging'
+    environment:
+      name: staging
+      url: https://staging.devmatrix.example.com
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Configure kubectl
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG_STAGING }}" | base64 -d > ~/.kube/config
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: 'v3.13.0'
+
+      - name: Deploy with Helm
+        run: |
+          helm upgrade --install devmatrix ./helm/devmatrix \
+            --namespace devmatrix-staging \
+            --create-namespace \
+            --values helm/devmatrix/values/staging.yaml \
+            --set api.image.tag=${{ needs.build-push.outputs.image-tag }} \
+            --set api.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} \
+            --set secrets.data.anthropicApiKey=${{ secrets.ANTHROPIC_API_KEY_STAGING }} \
+            --set secrets.data.openaiApiKey=${{ secrets.OPENAI_API_KEY_STAGING }} \
+            --wait \
+            --timeout 10m
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/devmatrix -n devmatrix-staging
+          kubectl get pods -n devmatrix-staging
+
+      - name: Run smoke tests
+        run: |
+          ENDPOINT="https://staging.devmatrix.example.com"
+          curl -f ${ENDPOINT}/api/v1/health/live || exit 1
+          curl -f ${ENDPOINT}/api/v1/health/ready || exit 1
+
+  # ============================================================================
+  # Deploy to Production
+  # ============================================================================
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build-push, deploy-staging]
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.environment == 'production'
+    environment:
+      name: production
+      url: https://api.devmatrix.example.com
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Configure kubectl
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG_PROD }}" | base64 -d > ~/.kube/config
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: 'v3.13.0'
+
+      - name: Backup current release
+        run: |
+          helm get values devmatrix -n devmatrix-prod > backup-values.yaml || true
+
+      - name: Deploy with Helm
+        run: |
+          helm upgrade --install devmatrix ./helm/devmatrix \
+            --namespace devmatrix-prod \
+            --create-namespace \
+            --values helm/devmatrix/values/prod.yaml \
+            --set api.image.tag=${{ needs.build-push.outputs.image-tag }} \
+            --set api.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} \
+            --set secrets.create=false \
+            --wait \
+            --timeout 15m
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/devmatrix -n devmatrix-prod
+          kubectl get pods -n devmatrix-prod
+
+      - name: Run smoke tests
+        run: |
+          ENDPOINT="https://api.devmatrix.example.com"
+          curl -f ${ENDPOINT}/api/v1/health/live || exit 1
+          curl -f ${ENDPOINT}/api/v1/health/ready || exit 1
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            sbom.spdx.json
+          generate_release_notes: true
+
+  # ============================================================================
+  # Rollback (Manual Trigger)
+  # ============================================================================
+  rollback:
+    name: Rollback Deployment
+    runs-on: ubuntu-latest
+    if: failure() && github.event_name == 'workflow_dispatch'
+    environment:
+      name: ${{ inputs.environment }}
+
+    steps:
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Configure kubectl
+        run: |
+          mkdir -p ~/.kube
+          if [ "${{ inputs.environment }}" == "production" ]; then
+            echo "${{ secrets.KUBE_CONFIG_PROD }}" | base64 -d > ~/.kube/config
+            NAMESPACE="devmatrix-prod"
+          elif [ "${{ inputs.environment }}" == "staging" ]; then
+            echo "${{ secrets.KUBE_CONFIG_STAGING }}" | base64 -d > ~/.kube/config
+            NAMESPACE="devmatrix-staging"
+          else
+            echo "${{ secrets.KUBE_CONFIG_DEV }}" | base64 -d > ~/.kube/config
+            NAMESPACE="devmatrix-dev"
+          fi
+          echo "NAMESPACE=$NAMESPACE" >> $GITHUB_ENV
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: 'v3.13.0'
+
+      - name: Rollback to previous release
+        run: |
+          helm rollback devmatrix -n ${{ env.NAMESPACE }}
+
+      - name: Verify rollback
+        run: |
+          kubectl rollout status deployment/devmatrix -n ${{ env.NAMESPACE }}
+          kubectl get pods -n ${{ env.NAMESPACE }}

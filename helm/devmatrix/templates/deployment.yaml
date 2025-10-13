@@ -1,0 +1,121 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "devmatrix.fullname" . }}
+  labels:
+    {{- include "devmatrix.labels" . | nindent 4 }}
+    component: api
+spec:
+  {{- if not .Values.api.autoscaling.enabled }}
+  replicas: {{ .Values.api.replicaCount }}
+  {{- end }}
+  strategy:
+    {{- toYaml .Values.api.strategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "devmatrix.selectorLabels" . | nindent 6 }}
+      component: api
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.api.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "devmatrix.selectorLabels" . | nindent 8 }}
+        component: api
+    spec:
+      {{- with .Values.api.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "devmatrix.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.api.podSecurityContext | nindent 8 }}
+      containers:
+      - name: api
+        securityContext:
+          {{- toYaml .Values.api.securityContext | nindent 12 }}
+        image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.api.service.targetPort }}
+          protocol: TCP
+        env:
+        - name: ENVIRONMENT
+          value: {{ .Values.global.environment | quote }}
+        - name: LOG_LEVEL
+          value: {{ .Values.config.logLevel | quote }}
+        - name: LOG_FORMAT
+          value: {{.Values.config.logFormat | quote }}
+        - name: API_HOST
+          value: {{ .Values.config.api.host | quote }}
+        - name: API_PORT
+          value: {{ .Values.config.api.port | quote }}
+        - name: REDIS_HOST
+          value: {{ include "devmatrix.redis.fullname" . | quote }}
+        - name: REDIS_PORT
+          value: {{ .Values.config.redis.port | quote }}
+        - name: POSTGRES_HOST
+          value: {{ include "devmatrix.postgresql.fullname" . | quote }}
+        - name: POSTGRES_PORT
+          value: {{ .Values.config.postgres.port | quote }}
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "devmatrix.fullname" . }}-secrets
+              key: postgres-db
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "devmatrix.fullname" . }}-secrets
+              key: postgres-user
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "devmatrix.fullname" . }}-secrets
+              key: postgres-password
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "devmatrix.fullname" . }}-secrets
+              key: anthropic-api-key
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "devmatrix.fullname" . }}-secrets
+              key: openai-api-key
+        - name: GOOGLE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "devmatrix.fullname" . }}-secrets
+              key: google-api-key
+        livenessProbe:
+          {{- toYaml .Values.api.livenessProbe | nindent 12 }}
+        readinessProbe:
+          {{- toYaml .Values.api.readinessProbe | nindent 12 }}
+        resources:
+          {{- toYaml .Values.api.resources | nindent 12 }}
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: {{ include "devmatrix.fullname" . }}-config
+      {{- with .Values.api.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
