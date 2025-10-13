@@ -60,6 +60,23 @@ services:
     profiles:
       - tools  # Only start with: docker compose --profile tools up
 
+  # UI Development Server (Vite)
+  ui:
+    image: node:20-alpine
+    container_name: devmatrix-ui
+    restart: unless-stopped
+    working_dir: /app/src/ui
+    command: sh -c "npm install && npm run dev"
+    ports:
+      - "${UI_PORT:-3000}:3000"
+    volumes:
+      - ./src/ui:/app/src/ui
+      - ui_node_modules:/app/src/ui/node_modules
+    networks:
+      - devmatrix-network
+    profiles:
+      - dev  # Only start in dev mode: docker compose --profile dev up
+
   # FastAPI Application
   api:
     build:
@@ -112,3 +129,5 @@ volumes:
     name: devmatrix-redis-data
   pgadmin_data:
     name: devmatrix-pgadmin-data
+  ui_node_modules:
+    name: devmatrix-ui-node-modules

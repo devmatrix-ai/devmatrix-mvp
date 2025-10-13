@@ -1,0 +1,403 @@
+"""
+WebSocket Router
+
+Real-time communication endpoints for chat, executions, and workspace updates.
+"""
+
+import asyncio
+from typing import Dict, Set
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+import socketio
+
+from src.services.chat_service import ChatService
+from src.services.workspace_service import WorkspaceService
+from src.observability import StructuredLogger
+
+
+router = APIRouter()
+logger = StructuredLogger("websocket")
+
+# Socket.IO server
+sio = socketio.AsyncServer(
+    async_mode='asgi',
+    cors_allowed_origins='*',
+    logger=False,
+    engineio_logger=False,
+)
+
+# Services
+chat_service = ChatService()
+workspace_service = WorkspaceService()
+
+# Active connections tracking
+active_connections: Dict[str, Set[str]] = {
+    "chat": set(),
+    "executions": set(),
+}
+
+
+# ==========================================
+# Socket.IO Event Handlers
+# ==========================================
+
+@sio.event
+async def connect(sid, environ):
+    """Handle client connection."""
+    logger.info(f"Client connected: {sid}")
+    await sio.emit('connected', {'sid': sid}, room=sid)
+
+
+@sio.event
+async def disconnect(sid):
+    """Handle client disconnection."""
+    logger.info(f"Client disconnected: {sid}")
+
+    # Remove from all rooms
+    for room_set in active_connections.values():
+        room_set.discard(sid)
+
+
+# ==========================================
+# Chat Events
+# ==========================================
+
+@sio.event
+async def join_chat(sid, data):
+    """
+    Join chat room.
+
+    Expected data:
+        {
+            "conversation_id": "optional-existing-conversation-id",
+            "workspace_id": "optional-workspace-id"
+        }
+    """
+    try:
+        conversation_id = data.get('conversation_id')
+        workspace_id = data.get('workspace_id')
+
+        # Create or get conversation
+        if conversation_id:
+            conversation = chat_service.get_conversation(conversation_id)
+            if not conversation:
+                await sio.emit('error', {
+                    'message': f'Conversation {conversation_id} not found'
+                }, room=sid)
+                return
+        else:
+            conversation_id = chat_service.create_conversation(
+                workspace_id=workspace_id,
+                metadata={'sid': sid}
+            )
+            conversation = chat_service.get_conversation(conversation_id)
+
+        # Join room
+        await sio.enter_room(sid, f"chat_{conversation_id}")
+        active_connections['chat'].add(sid)
+
+        # Send conversation history
+        history = conversation.get_history()
+
+        await sio.emit('chat_joined', {
+            'conversation_id': conversation_id,
+            'workspace_id': conversation.workspace_id,
+            'message_count': len(history),
+            'history': history,
+        }, room=sid)
+
+        logger.info(f"Client {sid} joined chat {conversation_id}")
+
+    except Exception as e:
+        logger.error(f"Error joining chat: {e}", exc_info=True)
+        await sio.emit('error', {'message': str(e)}, room=sid)
+
+
+@sio.event
+async def send_message(sid, data):
+    """
+    Send chat message.
+
+    Expected data:
+        {
+            "conversation_id": "conversation-id",
+            "content": "message content",
+            "metadata": {}  # optional
+        }
+    """
+    try:
+        conversation_id = data.get('conversation_id')
+        content = data.get('content')
+        metadata = data.get('metadata', {})
+
+        if not conversation_id or not content:
+            await sio.emit('error', {
+                'message': 'conversation_id and content are required'
+            }, room=sid)
+            return
+
+        # Echo user message immediately
+        await sio.emit('message', {
+            'type': 'user_message',
+            'content': content,
+            'timestamp': None,  # Will be set by frontend
+        }, room=f"chat_{conversation_id}")
+
+        # Process message and stream response
+        async for chunk in chat_service.send_message(
+            conversation_id=conversation_id,
+            content=content,
+            metadata=metadata,
+        ):
+            await sio.emit('message', chunk, room=f"chat_{conversation_id}")
+
+    except Exception as e:
+        logger.error(f"Error sending message: {e}", exc_info=True)
+        await sio.emit('error', {'message': str(e)}, room=sid)
+
+
+@sio.event
+async def leave_chat(sid, data):
+    """Leave chat room."""
+    try:
+        conversation_id = data.get('conversation_id')
+        if conversation_id:
+            await sio.leave_room(sid, f"chat_{conversation_id}")
+            active_connections['chat'].discard(sid)
+            logger.info(f"Client {sid} left chat {conversation_id}")
+    except Exception as e:
+        logger.error(f"Error leaving chat: {e}")
+
+
+# ==========================================
+# Workspace Events
+# ==========================================
+
+@sio.event
+async def get_file_tree(sid, data):
+    """
+    Get workspace file tree.
+
+    Expected data:
+        {
+            "workspace_id": "workspace-id"
+        }
+    """
+    try:
+        workspace_id = data.get('workspace_id')
+        if not workspace_id:
+            await sio.emit('error', {
+                'message': 'workspace_id is required'
+            }, room=sid)
+            return
+
+        file_tree = workspace_service.get_file_tree(workspace_id)
+        if file_tree:
+            await sio.emit('file_tree', {
+                'workspace_id': workspace_id,
+                'tree': file_tree.to_dict(),
+            }, room=sid)
+        else:
+            await sio.emit('error', {
+                'message': f'Workspace {workspace_id} not found'
+            }, room=sid)
+
+    except Exception as e:
+        logger.error(f"Error getting file tree: {e}", exc_info=True)
+        await sio.emit('error', {'message': str(e)}, room=sid)
+
+
+@sio.event
+async def read_file(sid, data):
+    """
+    Read file content.
+
+    Expected data:
+        {
+            "workspace_id": "workspace-id",
+            "file_path": "relative/path/to/file.py"
+        }
+    """
+    try:
+        workspace_id = data.get('workspace_id')
+        file_path = data.get('file_path')
+
+        if not workspace_id or not file_path:
+            await sio.emit('error', {
+                'message': 'workspace_id and file_path are required'
+            }, room=sid)
+            return
+
+        content = await workspace_service.read_file(workspace_id, file_path)
+
+        if content is not None:
+            await sio.emit('file_content', {
+                'workspace_id': workspace_id,
+                'file_path': file_path,
+                'content': content,
+            }, room=sid)
+        else:
+            await sio.emit('error', {
+                'message': f'File {file_path} not found'
+            }, room=sid)
+
+    except Exception as e:
+        logger.error(f"Error reading file: {e}", exc_info=True)
+        await sio.emit('error', {'message': str(e)}, room=sid)
+
+
+@sio.event
+async def write_file(sid, data):
+    """
+    Write file content.
+
+    Expected data:
+        {
+            "workspace_id": "workspace-id",
+            "file_path": "relative/path/to/file.py",
+            "content": "file content"
+        }
+    """
+    try:
+        workspace_id = data.get('workspace_id')
+        file_path = data.get('file_path')
+        content = data.get('content')
+
+        if not workspace_id or not file_path or content is None:
+            await sio.emit('error', {
+                'message': 'workspace_id, file_path, and content are required'
+            }, room=sid)
+            return
+
+        success = await workspace_service.write_file(
+            workspace_id, file_path, content
+        )
+
+        if success:
+            await sio.emit('file_written', {
+                'workspace_id': workspace_id,
+                'file_path': file_path,
+                'success': True,
+            }, room=sid)
+
+            # Broadcast file tree update to all clients in workspace
+            file_tree = workspace_service.get_file_tree(workspace_id)
+            if file_tree:
+                await sio.emit('file_tree', {
+                    'workspace_id': workspace_id,
+                    'tree': file_tree.to_dict(),
+                }, room=f"workspace_{workspace_id}")
+        else:
+            await sio.emit('error', {
+                'message': f'Failed to write file {file_path}'
+            }, room=sid)
+
+    except Exception as e:
+        logger.error(f"Error writing file: {e}", exc_info=True)
+        await sio.emit('error', {'message': str(e)}, room=sid)
+
+
+# ==========================================
+# Execution Events
+# ==========================================
+
+@sio.event
+async def join_execution(sid, data):
+    """
+    Join execution monitoring room.
+
+    Expected data:
+        {
+            "execution_id": "execution-id"
+        }
+    """
+    try:
+        execution_id = data.get('execution_id')
+        if not execution_id:
+            await sio.emit('error', {
+                'message': 'execution_id is required'
+            }, room=sid)
+            return
+
+        await sio.enter_room(sid, f"execution_{execution_id}")
+        active_connections['executions'].add(sid)
+
+        await sio.emit('execution_joined', {
+            'execution_id': execution_id,
+        }, room=sid)
+
+        logger.info(f"Client {sid} joined execution {execution_id}")
+
+    except Exception as e:
+        logger.error(f"Error joining execution: {e}", exc_info=True)
+        await sio.emit('error', {'message': str(e)}, room=sid)
+
+
+@sio.event
+async def leave_execution(sid, data):
+    """Leave execution monitoring room."""
+    try:
+        execution_id = data.get('execution_id')
+        if execution_id:
+            await sio.leave_room(sid, f"execution_{execution_id}")
+            active_connections['executions'].discard(sid)
+            logger.info(f"Client {sid} left execution {execution_id}")
+    except Exception as e:
+        logger.error(f"Error leaving execution: {e}")
+
+
+# ==========================================
+# Utility Functions
+# ==========================================
+
+async def broadcast_execution_update(execution_id: str, update: dict):
+    """
+    Broadcast execution update to all connected clients.
+
+    Args:
+        execution_id: Execution ID
+        update: Update data
+    """
+    await sio.emit('execution_update', update, room=f"execution_{execution_id}")
+
+
+async def broadcast_workspace_update(workspace_id: str, update: dict):
+    """
+    Broadcast workspace update to all connected clients.
+
+    Args:
+        workspace_id: Workspace ID
+        update: Update data
+    """
+    await sio.emit('workspace_update', update, room=f"workspace_{workspace_id}")
+
+
+# ==========================================
+# FastAPI WebSocket Endpoint (fallback)
+# ==========================================
+
+@router.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """
+    Basic WebSocket endpoint (fallback for simple connections).
+    Prefer using Socket.IO for full functionality.
+    """
+    await websocket.accept()
+    logger.info("WebSocket connection established")
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            await websocket.send_text(f"Echo: {data}")
+    except WebSocketDisconnect:
+        logger.info("WebSocket connection closed")
+
+
+# ==========================================
+# Socket.IO ASGI Application
+# ==========================================
+
+# Create Socket.IO ASGI app
+sio_app = socketio.ASGIApp(
+    socketio_server=sio,
+    socketio_path='/socket.io',
+)

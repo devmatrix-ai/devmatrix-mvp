@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..observability import StructuredLogger, MetricsCollector, HealthCheck
-from .routers import workflows, executions, metrics, health
+from .routers import workflows, executions, metrics, health, websocket
 
 
 # Global instances
@@ -77,6 +77,10 @@ def create_app() -> FastAPI:
     app.include_router(executions.router, prefix="/api/v1")
     app.include_router(metrics.router, prefix="/api/v1")
     app.include_router(health.router, prefix="/api/v1")
+    app.include_router(websocket.router, prefix="/api/v1")
+
+    # Mount Socket.IO app
+    app.mount("/socket.io", websocket.sio_app)
 
     # Mount static files
     static_dir = Path(__file__).parent / "static"
