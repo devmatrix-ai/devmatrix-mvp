@@ -1,16 +1,21 @@
 """
 Anthropic Claude Client
 
-Wrapper for Anthropic API with retry logic and error handling.
+Wrapper for Anthropic API with retry logic, error handling, and caching.
 """
 
 import os
+import logging
 from typing import Dict, Any, List, Optional
-from anthropic import Anthropic
+from anthropic import Anthropic, APIError, APIConnectionError, RateLimitError
 from dotenv import load_dotenv
+
+from src.error_handling import RetryStrategy, RetryConfig, CircuitBreaker, CircuitBreakerConfig
 
 # Load environment variables
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 class AnthropicClient:
@@ -25,13 +30,25 @@ class AnthropicClient:
         )
     """
 
-    def __init__(self, api_key: Optional[str] = None, model: str = "claude-3-5-sonnet-20241022"):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: str = "claude-3-5-sonnet-20241022",
+        enable_cache: bool = True,
+        cache_manager = None,
+        enable_retry: bool = True,
+        enable_circuit_breaker: bool = True,
+    ):
         """
         Initialize Anthropic client.
 
         Args:
             api_key: Anthropic API key (defaults to env var)
             model: Model to use (default: claude-3-5-sonnet-20241022)
+            enable_cache: Enable response caching (default: True)
+            cache_manager: CacheManager instance (creates new if None)
+            enable_retry: Enable retry with exponential backoff (default: True)
+            enable_circuit_breaker: Enable circuit breaker protection (default: True)
         """
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
         if not self.api_key:
@@ -42,6 +59,56 @@ class AnthropicClient:
 
         self.client = Anthropic(api_key=self.api_key)
         self.model = model
+        self.enable_cache = enable_cache
+
+        # Initialize cache manager if caching is enabled
+        if self.enable_cache:
+            if cache_manager is None:
+                try:
+                    from src.performance.cache_manager import CacheManager
+                    self.cache_manager = CacheManager()
+                except Exception as e:
+                    logger.warning(f"Failed to initialize cache manager: {e}")
+                    self.enable_cache = False
+                    self.cache_manager = None
+            else:
+                self.cache_manager = cache_manager
+        else:
+            self.cache_manager = None
+
+        # Initialize retry strategy
+        self.enable_retry = enable_retry
+        if self.enable_retry:
+            self.retry_strategy = RetryStrategy(
+                RetryConfig(
+                    max_attempts=3,
+                    initial_delay=1.0,
+                    max_delay=30.0,
+                    exponential_base=2.0,
+                    jitter=True,
+                    retryable_exceptions=(
+                        APIConnectionError,
+                        RateLimitError,
+                        TimeoutError,
+                    ),
+                )
+            )
+        else:
+            self.retry_strategy = None
+
+        # Initialize circuit breaker
+        self.enable_circuit_breaker = enable_circuit_breaker
+        if self.enable_circuit_breaker:
+            self.circuit_breaker = CircuitBreaker(
+                CircuitBreakerConfig(
+                    failure_threshold=5,
+                    success_threshold=2,
+                    timeout=60.0,
+                    expected_exception=APIError,
+                )
+            )
+        else:
+            self.circuit_breaker = None
 
     def generate(
         self,
@@ -49,23 +116,39 @@ class AnthropicClient:
         system: Optional[str] = None,
         max_tokens: int = 4096,
         temperature: float = 0.7,
+        use_cache: bool = True,
         **kwargs
     ) -> Dict[str, Any]:
         """
-        Generate completion from Claude.
+        Generate completion from Claude with caching support.
 
         Args:
             messages: List of message dicts with 'role' and 'content'
             system: System prompt (optional)
             max_tokens: Maximum tokens to generate
             temperature: Sampling temperature (0-1)
+            use_cache: Use cached response if available (default: True)
             **kwargs: Additional API parameters
 
         Returns:
             Dictionary with response data including content and usage
         """
-        try:
-            response = self.client.messages.create(
+        # Try cache first if enabled
+        if self.enable_cache and use_cache and self.cache_manager:
+            # Construct prompt for caching
+            prompt = "\n".join([m.get("content", "") for m in messages])
+            cached_response = self.cache_manager.get_cached_llm_response(
+                prompt=prompt,
+                system=system
+            )
+            if cached_response:
+                # Add cache hit indicator
+                cached_response["cached"] = True
+                return cached_response
+
+        # Define API call function for retry/circuit breaker
+        def _make_api_call():
+            return self.client.messages.create(
                 model=self.model,
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -74,7 +157,26 @@ class AnthropicClient:
                 **kwargs
             )
 
-            return {
+        try:
+            # Apply circuit breaker if enabled
+            if self.enable_circuit_breaker and self.circuit_breaker:
+                if self.enable_retry and self.retry_strategy:
+                    # Both retry and circuit breaker
+                    response = self.circuit_breaker.call(
+                        self.retry_strategy.execute,
+                        _make_api_call
+                    )
+                else:
+                    # Circuit breaker only
+                    response = self.circuit_breaker.call(_make_api_call)
+            elif self.enable_retry and self.retry_strategy:
+                # Retry only
+                response = self.retry_strategy.execute(_make_api_call)
+            else:
+                # No protection
+                response = _make_api_call()
+
+            result = {
                 "content": response.content[0].text,
                 "model": response.model,
                 "usage": {
@@ -82,9 +184,23 @@ class AnthropicClient:
                     "output_tokens": response.usage.output_tokens,
                 },
                 "stop_reason": response.stop_reason,
+                "cached": False
             }
 
+            # Cache response if enabled
+            if self.enable_cache and use_cache and self.cache_manager:
+                prompt = "\n".join([m.get("content", "") for m in messages])
+                self.cache_manager.cache_llm_response(
+                    prompt=prompt,
+                    system=system,
+                    response=result,
+                    ttl=3600  # Cache for 1 hour
+                )
+
+            return result
+
         except Exception as e:
+            logger.error(f"Anthropic API error after all retries: {str(e)}")
             raise RuntimeError(f"Anthropic API error: {str(e)}") from e
 
     def generate_with_tools(
