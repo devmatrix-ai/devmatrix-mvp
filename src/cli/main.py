@@ -698,6 +698,210 @@ def orchestrate(request: str, workspace: str, max_workers: int, verbose: bool):
         sys.exit(1)
 
 
+@cli.group()
+def plugins():
+    """Manage plugins (custom agents, tools, workflows)."""
+    pass
+
+
+@plugins.command("list")
+@click.option("--type", "-t", "plugin_type", help="Filter by plugin type (agent, tool, workflow, middleware)")
+@click.option("--enabled-only", is_flag=True, help="Show only enabled plugins")
+def plugins_list(plugin_type: str, enabled_only: bool):
+    """List all registered plugins."""
+    try:
+        from src.plugins.registry import PluginRegistry
+        from src.plugins.base import PluginType
+
+        registry = PluginRegistry()
+
+        # Convert string to enum if provided
+        type_filter = None
+        if plugin_type:
+            try:
+                type_filter = PluginType(plugin_type.lower())
+            except ValueError:
+                console.print(f"[red]Invalid plugin type: {plugin_type}[/red]")
+                console.print("[yellow]Valid types: agent, tool, workflow, middleware[/yellow]")
+                sys.exit(1)
+
+        # Get plugins
+        plugin_instances = registry.get_all(plugin_type=type_filter, enabled_only=enabled_only)
+
+        if not plugin_instances:
+            console.print("[yellow]No plugins found[/yellow]")
+            return
+
+        # Display plugins
+        table = Table(title="🔌 Registered Plugins", show_header=True, header_style="bold cyan")
+        table.add_column("Name", style="cyan")
+        table.add_column("Version", style="dim")
+        table.add_column("Type", style="magenta")
+        table.add_column("Status", style="green")
+        table.add_column("Description")
+
+        for plugin in plugin_instances:
+            meta = plugin.metadata
+            status = "✓ Enabled" if plugin.is_enabled else "✗ Disabled"
+            status_style = "green" if plugin.is_enabled else "red"
+
+            table.add_row(
+                meta.name,
+                meta.version,
+                meta.plugin_type.value,
+                f"[{status_style}]{status}[/{status_style}]",
+                meta.description[:50] + "..." if len(meta.description) > 50 else meta.description
+            )
+
+        console.print(table)
+
+        # Show stats
+        stats = registry.get_stats()
+        stats_text = (
+            f"\n[dim]Total: {stats['total']} | "
+            f"Enabled: {stats['enabled']} | "
+            f"Disabled: {stats['disabled']} | "
+            f"Lazy-loaded: {stats['lazy_loaded']}[/dim]"
+        )
+        console.print(stats_text)
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
+        sys.exit(1)
+
+
+@plugins.command("info")
+@click.argument("plugin_name")
+def plugins_info(plugin_name: str):
+    """Show detailed information about a plugin."""
+    try:
+        from src.plugins.registry import PluginRegistry
+
+        registry = PluginRegistry()
+        plugin = registry.get(plugin_name)
+
+        if not plugin:
+            console.print(f"[red]Plugin not found: {plugin_name}[/red]")
+            sys.exit(1)
+
+        meta = plugin.metadata
+
+        # Create detailed info panel
+        info_text = f"""[bold]Name:[/bold] {meta.name}
+[bold]Version:[/bold] {meta.version}
+[bold]Author:[/bold] {meta.author}
+[bold]Type:[/bold] {meta.plugin_type.value}
+
+[bold]Description:[/bold]
+{meta.description}
+
+[bold]Status:[/bold]
+  Enabled: {'✓ Yes' if plugin.is_enabled else '✗ No'}
+  Initialized: {'✓ Yes' if plugin.is_initialized else '✗ No'}
+
+[bold]Dependencies:[/bold]
+{chr(10).join(f'  • {dep}' for dep in meta.dependencies) if meta.dependencies else '  None'}
+
+[bold]Tags:[/bold]
+{', '.join(meta.tags) if meta.tags else 'None'}
+"""
+
+        panel = Panel(info_text, title=f"🔌 Plugin Info: {meta.name}", border_style="cyan")
+        console.print(panel)
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
+@plugins.command("load")
+@click.argument("directory")
+@click.option("--type", "-t", "plugin_type", help="Load only specific plugin type")
+def plugins_load(directory: str, plugin_type: str):
+    """Load plugins from a directory."""
+    try:
+        from src.plugins.registry import PluginRegistry
+        from src.plugins.base import PluginType
+
+        # Convert string to enum if provided
+        type_filter = None
+        if plugin_type:
+            try:
+                type_filter = PluginType(plugin_type.lower())
+            except ValueError:
+                console.print(f"[red]Invalid plugin type: {plugin_type}[/red]")
+                sys.exit(1)
+
+        plugin_dir = Path(directory).resolve()
+
+        if not plugin_dir.exists():
+            console.print(f"[red]Directory not found: {plugin_dir}[/red]")
+            sys.exit(1)
+
+        registry = PluginRegistry()
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task(f"Loading plugins from {directory}...", total=None)
+
+            count = registry.load_from_directory(plugin_dir, plugin_type=type_filter)
+
+            progress.update(task, completed=True)
+
+        console.print(f"\n[green]✓ Loaded {count} plugin(s) from {directory}[/green]")
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
+        sys.exit(1)
+
+
+@plugins.command("enable")
+@click.argument("plugin_name")
+def plugins_enable(plugin_name: str):
+    """Enable a plugin."""
+    try:
+        from src.plugins.registry import PluginRegistry
+
+        registry = PluginRegistry()
+
+        if registry.enable_plugin(plugin_name):
+            console.print(f"[green]✓ Plugin enabled: {plugin_name}[/green]")
+        else:
+            console.print(f"[red]Failed to enable plugin: {plugin_name}[/red]")
+            sys.exit(1)
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
+@plugins.command("disable")
+@click.argument("plugin_name")
+def plugins_disable(plugin_name: str):
+    """Disable a plugin."""
+    try:
+        from src.plugins.registry import PluginRegistry
+
+        registry = PluginRegistry()
+
+        if registry.disable_plugin(plugin_name):
+            console.print(f"[yellow]Plugin disabled: {plugin_name}[/yellow]")
+        else:
+            console.print(f"[red]Failed to disable plugin: {plugin_name}[/red]")
+            sys.exit(1)
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
 @cli.command()
 def info():
     """Show Devmatrix system information."""
@@ -715,6 +919,7 @@ def info():
   • GitOperations: Version control integration
   • PlanningAgent: AI-powered task planning
   • MultiAgentWorkflow: Orchestrated multi-agent execution
+  • PluginSystem: Extensible plugin architecture
   • Rich CLI: Beautiful terminal interface
 
 [bold]Specialized Agents:[/bold]
