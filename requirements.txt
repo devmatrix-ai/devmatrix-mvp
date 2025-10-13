@@ -5,8 +5,8 @@
 # Core Framework - LangChain & LangGraph
 # ========================================
 langchain==0.3.0
-langgraph==0.2.0
-langchain-core==0.3.0
+langgraph==0.2.57
+langchain-core==0.3.23
 langsmith==0.1.136
 
 # ========================================
@@ -76,7 +76,7 @@ python-dotenv==1.0.1              # Environment variables
 pyyaml==6.0.2                     # YAML parsing
 aiofiles==24.1.0                  # Async file operations
 python-json-logger==2.0.7         # Structured logging
-tenacity==9.0.0                   # Retry logic
+tenacity==8.5.0                   # Retry logic (compatible with langchain)
 
 # ========================================
 # Monitoring & Observability

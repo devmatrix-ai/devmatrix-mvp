@@ -1,0 +1,24 @@
+# Development dependencies
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.11.1
+
+# Code quality
+black>=23.7.0
+isort>=5.12.0
+flake8>=6.0.0
+mypy>=1.4.1
+pylint>=2.17.5
+
+# Security
+bandit>=1.7.5
+safety>=2.3.5
+
+# Type stubs
+types-redis>=4.6.0
+types-requests>=2.31.0
+
+# Testing utilities
+httpx>=0.24.1
+faker>=19.2.0
