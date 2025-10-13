@@ -6,10 +6,12 @@ Creates and configures the FastAPI application with all routes and middleware.
 
 from contextlib import asynccontextmanager
 from typing import Dict, Any
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from ..observability import StructuredLogger, MetricsCollector, HealthCheck
 from .routers import workflows, executions, metrics, health
@@ -76,16 +78,30 @@ def create_app() -> FastAPI:
     app.include_router(metrics.router, prefix="/api/v1")
     app.include_router(health.router, prefix="/api/v1")
 
-    # Root endpoint
-    @app.get("/", tags=["root"])
-    async def root() -> Dict[str, Any]:
-        """Root endpoint with API information."""
+    # Mount static files
+    static_dir = Path(__file__).parent / "static"
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+        # Serve index.html at root
+        from fastapi.responses import FileResponse
+
+        @app.get("/", include_in_schema=False)
+        async def serve_frontend():
+            """Serve the web UI."""
+            return FileResponse(str(static_dir / "index.html"))
+
+    # API info endpoint
+    @app.get("/api", tags=["root"])
+    async def api_info() -> Dict[str, Any]:
+        """API information endpoint."""
         return {
             "name": "Devmatrix API",
             "version": "1.0.0",
             "status": "operational",
             "docs": "/docs",
             "health": "/api/v1/health",
+            "ui": "/",
         }
 
     # Global exception handler
