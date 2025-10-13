@@ -68,12 +68,42 @@ Devmatrix AI Agent Project
 ## Setup
 
 ```bash
-devmatrix workspace create
+# Create a workspace for your project
+devmatrix workspace create --id {project_name}
+
+# Set your API key
+export ANTHROPIC_API_KEY="your-key-here"
 ```
 
 ## Usage
 
-TODO: Add usage instructions
+### Planning
+Generate a development plan:
+```bash
+devmatrix plan "Your project description"
+```
+
+### Code Generation
+Generate code with AI assistance:
+```bash
+devmatrix generate "Your code request" --workspace {project_name}
+```
+
+### Multi-Agent Orchestration
+Build complete projects with specialized agents:
+```bash
+devmatrix orchestrate "Build your project" --workspace {project_name}
+```
+
+## Commands
+
+- `devmatrix plan` - Create development plans
+- `devmatrix generate` - Generate code with approval gates
+- `devmatrix orchestrate` - Multi-agent project execution
+- `devmatrix workspace` - Manage workspaces
+- `devmatrix files` - File operations
+- `devmatrix git` - Git integration
+- `devmatrix info` - System information
 """
             (project_path / "README.md").write_text(readme_content)
 
@@ -519,6 +549,156 @@ def generate(request: str, workspace: str, context: str, git: bool):
 
 
 @cli.command()
+@click.argument("request")
+@click.option("--workspace", "-w", help="Workspace ID (auto-generated if not provided)")
+@click.option("--max-workers", default=4, help="Maximum concurrent workers (default: 4)")
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed execution messages")
+def orchestrate(request: str, workspace: str, max_workers: int, verbose: bool):
+    """
+    Orchestrate multi-agent workflow for complex projects.
+
+    Uses specialized agents (Implementation, Testing, Documentation) to
+    build complete projects with parallel task execution.
+
+    Example:
+        devmatrix orchestrate "Build a calculator with tests and docs"
+        devmatrix orchestrate "Create REST API with authentication" -w my-api-project
+    """
+    try:
+        from src.workflows.multi_agent_workflow import MultiAgentWorkflow
+        from rich.tree import Tree
+        from rich.table import Table
+
+        console.print(f"\n[bold cyan]Multi-Agent Orchestration:[/bold cyan] {request}\n")
+
+        # Generate workspace ID if not provided
+        if not workspace:
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            workspace = f"project-{timestamp}"
+            console.print(f"[dim]Using auto-generated workspace: {workspace}[/dim]\n")
+
+        # Create workflow
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            init_task = progress.add_task("Initializing multi-agent workflow...", total=None)
+
+            workflow = MultiAgentWorkflow(
+                workspace_id=workspace,
+                max_workers=max_workers
+            )
+
+            progress.update(init_task, description="Running workflow...", completed=True)
+
+            # Run workflow
+            exec_task = progress.add_task("Executing multi-agent tasks...", total=None)
+            result = workflow.run(request)
+            progress.update(exec_task, completed=True)
+
+        console.print("\n")
+
+        # Display results
+        if result['success']:
+            # Success panel
+            status_text = (
+                f"[bold green]✓ Workflow Completed Successfully[/bold green]\n\n"
+                f"Workspace: [cyan]{workspace}[/cyan]\n"
+                f"Status: [green]{result['status']}[/green]\n"
+                f"Tasks: {len(result.get('completed_tasks', []))} completed, "
+                f"{len(result.get('failed_tasks', []))} failed"
+            )
+
+            panel = Panel(status_text, title="✓ Success", border_style="green")
+            console.print(panel)
+
+            # Show tasks if verbose
+            if verbose and result['tasks']:
+                console.print("\n")
+                table = Table(title="📋 Task Execution Details", show_header=True)
+                table.add_column("Task ID", style="cyan")
+                table.add_column("Type", style="magenta")
+                table.add_column("Description", style="white")
+                table.add_column("Status", style="green")
+
+                completed = set(result['completed_tasks'])
+                failed = set(result['failed_tasks'])
+
+                for task in result['tasks']:
+                    task_id = task['id']
+                    status = "✅" if task_id in completed else "❌" if task_id in failed else "⏳"
+                    table.add_row(
+                        task_id,
+                        task.get('task_type', 'unknown'),
+                        task['description'][:60] + "..." if len(task['description']) > 60 else task['description'],
+                        status
+                    )
+
+                console.print(table)
+
+            # Show execution stats
+            if result['execution_stats']:
+                console.print("\n")
+                stats = result['execution_stats']
+                stats_table = Table(title="📊 Execution Statistics", show_header=True)
+                stats_table.add_column("Metric", style="cyan")
+                stats_table.add_column("Value", style="yellow")
+
+                stats_table.add_row("Total Tasks", str(stats.get('total_tasks', 0)))
+                stats_table.add_row("Successful", f"[green]{stats.get('successful', 0)}[/green]")
+                stats_table.add_row("Failed", f"[red]{stats.get('failed', 0)}[/red]")
+                stats_table.add_row("Skipped", str(stats.get('skipped', 0)))
+                stats_table.add_row("Total Time", f"{stats.get('total_time', 0):.2f}s")
+
+                if stats.get('parallel_time_saved', 0) > 0:
+                    stats_table.add_row(
+                        "Parallel Time Saved",
+                        f"[green]⚡ {stats['parallel_time_saved']:.2f}s[/green]"
+                    )
+
+                console.print(stats_table)
+
+            # Show messages if verbose
+            if verbose and result['messages']:
+                console.print("\n[bold]Execution Log:[/bold]")
+                for msg in result['messages']:
+                    console.print(f"  {msg}")
+
+            # Next steps
+            console.print("\n[bold]Next steps:[/bold]")
+            console.print(f"  • Check workspace: [cyan]devmatrix files list {workspace}[/cyan]")
+            console.print(f"  • Read files: [cyan]devmatrix files read {workspace} <filename>[/cyan]")
+
+        else:
+            # Failure panel
+            error_text = (
+                f"[bold red]✗ Workflow Failed[/bold red]\n\n"
+                f"Status: {result['status']}\n"
+                f"Error: {result.get('error', 'Unknown error')}"
+            )
+
+            panel = Panel(error_text, title="✗ Failed", border_style="red")
+            console.print(panel)
+
+            if verbose and result['messages']:
+                console.print("\n[bold]Execution Log:[/bold]")
+                for msg in result['messages']:
+                    console.print(f"  {msg}")
+
+    except ValueError as e:
+        console.print(f"[red]Configuration Error: {e}[/red]")
+        console.print("\n[yellow]Make sure to set ANTHROPIC_API_KEY in .env file[/yellow]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
+        sys.exit(1)
+
+
+@cli.command()
 def info():
     """Show Devmatrix system information."""
     from datetime import datetime
@@ -534,7 +714,13 @@ def info():
   • FileOperations: Safe file manipulation
   • GitOperations: Version control integration
   • PlanningAgent: AI-powered task planning
+  • MultiAgentWorkflow: Orchestrated multi-agent execution
   • Rich CLI: Beautiful terminal interface
+
+[bold]Specialized Agents:[/bold]
+  • ImplementationAgent: Python code generation
+  • TestingAgent: pytest test generation and execution
+  • DocumentationAgent: Docstring and README generation
 
 [dim]Use --help with any command for more information[/dim]
 """

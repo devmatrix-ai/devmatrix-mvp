@@ -46,7 +46,7 @@ class TestAnthropicClient:
         mock_client = Mock()
         mock_client.messages.create.return_value = mock_response
 
-        client = AnthropicClient(api_key="test_key")
+        client = AnthropicClient(api_key="test_key", enable_cache=False)
         monkeypatch.setattr(client, "client", mock_client)
 
         result = client.generate(
@@ -80,7 +80,7 @@ class TestAnthropicClient:
         mock_client = Mock()
         mock_client.messages.create.return_value = mock_response
 
-        client = AnthropicClient(api_key="test_key")
+        client = AnthropicClient(api_key="test_key", enable_cache=False)
         monkeypatch.setattr(client, "client", mock_client)
 
         result = client.generate(
@@ -98,7 +98,7 @@ class TestAnthropicClient:
         mock_client = Mock()
         mock_client.messages.create.side_effect = Exception("API Error")
 
-        client = AnthropicClient(api_key="test_key")
+        client = AnthropicClient(api_key="test_key", enable_cache=False)
         monkeypatch.setattr(client, "client", mock_client)
 
         with pytest.raises(RuntimeError, match="Anthropic API error: API Error"):
