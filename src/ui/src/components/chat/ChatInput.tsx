@@ -124,7 +124,7 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
             placeholder={placeholder || 'Type a message...'}
             disabled={disabled}
             rows={1}
-            className="w-full px-4 py-3 pr-12 bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full px-4 py-3 pr-12 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-gray-500 dark:placeholder:text-gray-400"
             style={{ maxHeight: '200px' }}
           />
           <div className="absolute bottom-3 right-3 text-xs text-gray-400">
