@@ -85,6 +85,12 @@ def create_app() -> FastAPI:
     # Mount static files
     static_dir = Path(__file__).parent / "static"
     if static_dir.exists():
+        # Mount assets directory at /assets (for Vite build)
+        assets_dir = static_dir / "assets"
+        if assets_dir.exists():
+            app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+        # Mount entire static dir at /static (fallback)
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
         # Serve index.html at root
