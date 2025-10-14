@@ -4,7 +4,7 @@ import { useChatStore } from './stores/chatStore'
 import { FiMessageSquare, FiHome, FiSettings } from 'react-icons/fi'
 
 function App() {
-  const { isOpen, toggleChat, workspaceId } = useChatStore()
+  const { workspaceId } = useChatStore()
   const [isMinimized, setIsMinimized] = useState(false)
   const [activeTab, setActiveTab] = useState<'home' | 'chat' | 'settings'>('chat')
 

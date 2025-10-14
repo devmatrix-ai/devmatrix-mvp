@@ -47,19 +47,28 @@ body {
 
 /* Markdown styles */
 .markdown {
-  @apply prose prose-sm max-w-none dark:prose-invert;
+  max-width: none;
+  font-size: 0.875rem;
+  line-height: 1.7142857;
 }
 
 .markdown pre {
-  @apply bg-gray-900 rounded-lg p-4 overflow-x-auto;
+  background-color: #111827;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  overflow-x: auto;
 }
 
 .markdown code {
-  @apply bg-gray-800 px-1 py-0.5 rounded text-sm;
+  background-color: #1f2937;
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  font-size: 0.875rem;
 }
 
 .markdown pre code {
-  @apply bg-transparent p-0;
+  background-color: transparent;
+  padding: 0;
 }
 
 /* Loading animation */

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react'
+import { useRef, useEffect } from 'react'
 import { useChat } from '../../hooks/useChat'
 import { MessageList } from './MessageList'
 import { ChatInput } from './ChatInput'
@@ -124,7 +124,7 @@ export function ChatWindow({
       )}
 
       {/* Conversation ID (debug) */}
-      {conversationId && process.env.NODE_ENV === 'development' && (
+      {conversationId && import.meta.env.DEV && (
         <div className="px-4 py-2 text-xs text-gray-500 border-t border-gray-200 dark:border-gray-700">
           Conversation: {conversationId}
         </div>
