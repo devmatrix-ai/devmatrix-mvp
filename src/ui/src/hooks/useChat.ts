@@ -35,9 +35,11 @@ export function useChat(options: UseChatOptions = {}) {
     })
 
     const cleanup1 = on('chat_joined', (data: any) => {
+      console.log('[useChat] chat_joined event received:', data)
       setConversationId(data.conversation_id)
       setMessages(data.history || [])
       setIsJoined(true)
+      console.log('[useChat] State updated - isJoined: true, conversationId:', data.conversation_id)
     })
 
     const cleanup2 = on('message', (data: any) => {
@@ -91,11 +93,22 @@ export function useChat(options: UseChatOptions = {}) {
 
   const sendMessage = useCallback(
     (content: string, metadata?: Record<string, any>) => {
+      console.log('[useChat] sendMessage called:', {
+        content,
+        conversationId,
+        isJoined,
+        canSend: !!(conversationId && isJoined)
+      })
+
       if (!conversationId || !isJoined) {
-        console.warn('Cannot send message: not joined to chat')
+        console.warn('[useChat] Cannot send message: not joined to chat', {
+          conversationId,
+          isJoined
+        })
         return
       }
 
+      console.log('[useChat] Sending message via WebSocket')
       setIsLoading(true)
       send('send_message', {
         conversation_id: conversationId,
