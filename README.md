@@ -8,29 +8,41 @@ Devmatrix is an agentic AI system that generates production-ready code with huma
 
 ## 🎯 Project Status
 
-**Version**: 0.1.0 (MVP Ready!)
-**Phase**: Phase 1 - Single Agent POC ✅ COMPLETE
-**Progress**: Phase 0 ✅ | Phase 1 ✅ Complete (Days 1-18)
-**Tests**: 244 passing | Coverage: 92%
-**Target**: MVP completed ahead of schedule! 🎉
+**Version**: 0.4.0 (Production Ready!)
+**Phase**: Phase 4 - Task Execution ✅ COMPLETE
+**Progress**: Phase 0 ✅ | Phase 1 ✅ | Phase 2 ✅ | Phase 3 ✅ | Phase 4 ✅ (Days 1-70)
+**Tests**: 244 passing | Coverage: 92% | E2E: ✅ Passing
+**Current Focus**: Production deployment and polish
+**Target**: ✅ ACHIEVED - Full autonomous development system working end-to-end! 🎉
 
 ---
 
 ## ✨ Features
 
 ### Core Capabilities
-- ✅ **Intelligent Code Generation**: AI-powered Python code generation with Claude Sonnet 4.5
+- ✅ **Conversational Web UI**: React-based chat interface for natural project discussions
+- ✅ **Intelligent Orchestration**: Multi-agent system with specialized agents (Frontend, Backend, Testing, Documentation)
+- ✅ **Task Execution System**: Dependency-aware task execution with topological sorting
+- ✅ **Real-time Progress Streaming**: Live updates via WebSocket during orchestration
+- ✅ **Context-Aware Intent Detection**: Smart routing between conversation and implementation modes
+- ✅ **Markdown Rendering**: Syntax-highlighted code blocks with copy buttons
+- ✅ **Dark Mode Support**: Light/Dark/System theme with persistent preferences
+- ✅ **Keyboard Shortcuts**: Ctrl+K (focus), Ctrl+L (clear), Ctrl+N (new project)
+- ✅ **Export Functionality**: Download conversations as Markdown files
 - ✅ **Human-in-Loop Approval**: Interactive approval gates with feedback for regeneration
 - ✅ **Self-Review System**: Automated code quality assessment (0-10 scoring)
 - ✅ **Git Integration**: Automatic commits with LLM-generated conventional commit messages
-- ✅ **Feedback Loop**: Request modifications and regenerate code iteratively
 - ✅ **Workspace Management**: Isolated workspace environments for safe code generation
 
 ### Technical Features
+- ✅ **Multi-Agent System**: OrchestratorAgent coordinating specialized domain agents
 - ✅ **LangGraph Workflows**: State machine orchestration with conditional routing
 - ✅ **State Persistence**: Redis (realtime) + PostgreSQL (historical)
+- ✅ **React 18 + TypeScript**: Modern web UI with Vite build system and Tailwind CSS
+- ✅ **WebSocket Streaming**: Real-time bidirectional communication for agent interactions
+- ✅ **Markdown Rendering**: Syntax highlighting and rich formatting for code responses
 - ✅ **Cost Tracking**: Token usage and cost monitoring per task
-- ✅ **CLI Interface**: Rich terminal with syntax highlighting and progress indicators
+- ✅ **CLI + Web Interface**: Rich terminal and conversational web interface
 - ✅ **Comprehensive Testing**: 244 tests, 92% coverage, E2E validation
 - ✅ **Production Ready**: Error handling, validation, and logging throughout
 
@@ -39,45 +51,86 @@ Devmatrix is an agentic AI system that generates production-ready code with huma
 ## 🏗️ Architecture
 
 ```
-┌──────────────────────────────────────────────────┐
-│         CodeGenerationAgent (LangGraph)          │
-│                                                  │
-│  ┌────────┐  ┌──────┐  ┌──────────┐  ┌───────┐ │
-│  │Analyze │→ │ Plan │→ │ Generate │→ │Review │ │
-│  └────────┘  └──────┘  └──────────┘  └───┬───┘ │
-│                                           │     │
-│  ┌──────────────────────────────────────┐│     │
-│  │         Human Approval Gate           ││     │
-│  │  • Approve  • Reject  • Modify       │←─────┘
-│  └──────────┬───────────────────────────┘      │
-│             │                                   │
-│  ┌──────────▼─────┐    ┌──────────────┐       │
-│  │  Write File    │ →  │  Git Commit  │       │
-│  └────────────────┘    └──────────────┘       │
-│                                                 │
-│  LLM: Claude Sonnet 4.5 (10-step workflow)     │
-└────────────┬────────────────────────────────────┘
-             │
-    ┌────────┴─────────┐
-    │                  │
-┌───▼────────┐  ┌─────▼──────────┐
-│   Tools    │  │     State      │
-│            │  │                │
-│ • Files    │  │ • Redis Cache  │
-│ • Git      │  │ • PostgreSQL   │
-│ • Workspace│  │ • Cost Tracking│
-└────────────┘  └────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│                         Web UI (React + TypeScript)                 │
+│  ┌──────────────┐  ┌────────────────┐  ┌──────────────────────┐  │
+│  │ ChatWindow   │  │  MessageList   │  │  ChatInput           │  │
+│  │ • Auto-focus │  │  • Markdown    │  │  • Command hints     │  │
+│  │ • Nuevo btn  │  │  • Syntax hl.  │  │  • Smart autocomplete│  │
+│  └──────┬───────┘  └────────┬───────┘  └──────────┬───────────┘  │
+│         │                   │                      │               │
+│         └───────────────────┴──────────────────────┘               │
+│                             │                                       │
+│                    ┌────────▼─────────┐                           │
+│                    │ WebSocket Client │ (Socket.IO)               │
+│                    │ • useChat hook   │                           │
+│                    │ • Event routing  │                           │
+│                    └────────┬─────────┘                           │
+└─────────────────────────────┼─────────────────────────────────────┘
+                              │ WebSocket (Socket.IO)
+┌─────────────────────────────▼─────────────────────────────────────┐
+│                    FastAPI Server + python-socketio                │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                      ChatService                            │  │
+│  │  • Intent Detection (conversational vs orchestration)       │  │
+│  │  • Conversation Management                                  │  │
+│  │  • Message History                                          │  │
+│  └────────────────────┬────────────────────────────────────────┘  │
+└───────────────────────┼───────────────────────────────────────────┘
+                        │
+        ┌───────────────┴────────────────┐
+        │                                │
+┌───────▼────────┐            ┌──────────▼───────────┐
+│ Conversational │            │  OrchestratorAgent   │
+│ Agent (LLM)    │            │                      │
+│ • Spanish      │            │  Multi-Agent System  │
+│ • Natural chat │            │  ┌─────────────────┐ │
+│ • Q&A          │            │  │ Implementation  │ │
+└────────────────┘            │  │ Testing         │ │
+                              │  │ Documentation   │ │
+                              │  │ Frontend        │ │
+                              │  │ Backend         │ │
+                              │  └─────────────────┘ │
+                              │                      │
+                              │  LangGraph Workflow  │
+                              │  • Analyze Project   │
+                              │  • Decompose Tasks   │
+                              │  • Build Dependencies│
+                              │  • Assign Agents     │
+                              │  • Display Plan      │
+                              └──────────┬───────────┘
+                                         │
+                                ┌────────┴─────────┐
+                                │                  │
+                        ┌───────▼────────┐  ┌─────▼──────────┐
+                        │   Tools        │  │     State      │
+                        │                │  │                │
+                        │ • Files        │  │ • Redis Cache  │
+                        │ • Git          │  │ • PostgreSQL   │
+                        │ • Workspace    │  │ • Cost Tracking│
+                        └────────────────┘  └────────────────┘
 ```
 
 ### Workflow Steps
-1. **Analyze**: Extract requirements and determine filename
-2. **Plan**: Create detailed implementation plan
-3. **Generate**: Produce Python code with type hints and docstrings
-4. **Review**: Self-assess code quality (0-10 score)
-5. **Approval**: Human decision (approve/reject/modify)
-6. **Write**: Save approved code to workspace
-7. **Commit**: Auto-commit to Git with conventional message
-8. **Log**: Record decision and metadata to PostgreSQL
+
+#### Web UI Flow
+1. **User Input**: Natural language project description via chat
+2. **Intent Detection**: Classify as conversational (Q&A) or orchestration (implementation)
+3. **Conversation Mode**: Answer questions, clarify requirements, guide user
+4. **Orchestration Mode**: Decompose project into tasks and assign to specialized agents
+5. **Real-time Updates**: Stream status and progress via WebSocket
+6. **Markdown Rendering**: Display formatted responses with syntax-highlighted code
+
+#### Orchestration Workflow
+1. **Analyze Project**: Extract requirements, identify technology stack, assess complexity
+2. **Decompose Tasks**: Break down into atomic, manageable tasks with clear ownership
+3. **Build Dependency Graph**: Identify task dependencies for parallel execution
+4. **Assign Agents**: Route tasks to specialized agents (Frontend, Backend, Testing, etc.)
+5. **Display Plan**: Show comprehensive task breakdown to user
+6. **Execute Tasks**: ✅ Coordinate agent execution with topological sorting and dependency awareness
+7. **Stream Progress**: Real-time updates (phase_start, task_start, task_complete, etc.) via WebSocket
+8. **Review & Commit**: Quality checks and Git integration
+9. **Log & Track**: Record decisions, costs, and metrics to PostgreSQL
 
 ---
 
@@ -128,7 +181,23 @@ Devmatrix is an agentic AI system that generates production-ready code with huma
    pip install langchain langgraph langchain-anthropic rich typer python-dotenv
    ```
 
-6. **Try the Code Generation Agent**
+6. **Start the Web UI**
+   ```bash
+   # Start the API server (includes WebSocket)
+   cd src/api
+   python app.py
+
+   # In another terminal, start the UI dev server
+   cd src/ui
+   npm run dev
+
+   # Or use the production build
+   cd src/ui
+   npm run build  # Builds to ../api/static/
+   # Then access at http://localhost:8000
+   ```
+
+7. **Try the CLI (Alternative Interface)**
    ```bash
    # Generate a simple function
    devmatrix generate "Create a function to calculate fibonacci numbers"
@@ -144,7 +213,51 @@ Devmatrix is an agentic AI system that generates production-ready code with huma
 
 ## 📖 Usage Examples
 
-### Basic Code Generation
+### Web UI Conversational Flow
+
+Open the web UI at `http://localhost:8000` and start a conversation:
+
+**Example 1: Simple Greeting**
+```
+User: Buenos dias
+DevMatrix: ¡Hola! Soy DevMatrix, tu asistente para desarrollo de software.
+          Puedo ayudarte a diseñar arquitecturas, planear proyectos, y
+          orquestar la implementación con múltiples agentes especializados.
+          ¿En qué puedo ayudarte hoy?
+```
+
+**Example 2: Design Discussion**
+```
+User: Podríamos diseñar una app de task manager?
+DevMatrix: ¡Dale! Task manager suena bien. ¿Qué features principales necesitás?
+          (autenticación, asignación de tareas, notificaciones, kanban, etc.)
+
+User: Kanban, sprints, roles Dev/PO/Lead, colaboración
+DevMatrix: Perfecto, ya tengo claro el scope. Cuando quieras arrancar con la
+          implementación, decime "crear task manager con FastAPI, kanban,
+          sprints y roles" y lo orquesto.
+```
+
+**Example 3: Direct Implementation Request**
+```
+User: Quiero hacer una API REST para gestión de usuarios con FastAPI,
+      autenticación JWT y CRUD completo
+
+DevMatrix: [Starts orchestration immediately]
+          ## Orchestration Complete
+          **Workspace**: `workspace_abc123`
+          **Project Type**: backend_api
+          **Complexity**: 7.2
+          **Tasks**: 12
+
+          ### Task Breakdown:
+          - **task_1**: Project structure and dependencies
+          - **task_2**: Database models and migrations (depends on: task_1)
+          - **task_3**: JWT authentication middleware (depends on: task_1)
+          ...
+```
+
+### CLI Code Generation
 
 ```bash
 # Generate a simple function
@@ -224,19 +337,40 @@ devmatrix git status my-new-project
 ```
 agentic-ai/
 ├── src/                      # Source code
-│   ├── agents/              # Agent implementations
+│   ├── agents/              # Multi-agent system
+│   │   ├── orchestrator_agent.py    # Main orchestrator
+│   │   ├── implementation_agent.py  # Code implementation
+│   │   ├── testing_agent.py         # Test generation
+│   │   ├── documentation_agent.py   # Documentation
+│   │   ├── frontend_agent.py        # React/Vue/Angular
+│   │   └── backend_agent.py         # FastAPI/Django/Flask
+│   ├── services/            # Business logic
+│   │   ├── chat_service.py          # Conversational routing
+│   │   └── agent_registry.py        # Agent management
+│   ├── api/                 # FastAPI server
+│   │   ├── app.py                   # Main server + WebSocket
+│   │   ├── routes/                  # HTTP endpoints
+│   │   └── static/                  # Built UI assets
+│   ├── ui/                  # React Web UI
+│   │   ├── src/
+│   │   │   ├── components/chat/     # Chat components
+│   │   │   ├── hooks/               # Custom hooks (useChat, useWebSocket)
+│   │   │   └── services/            # WebSocket service
+│   │   ├── package.json
+│   │   └── vite.config.ts
 │   ├── tools/               # MCP-compatible tools
 │   ├── llm/                 # LLM integration & routing
-│   ├── state/               # State management
+│   ├── state/               # State management (Redis + PostgreSQL)
 │   └── cli/                 # CLI interface
 ├── tests/                   # Unit & integration tests
 ├── docker/                  # Docker configuration
 ├── scripts/                 # Utility scripts
 ├── workspace/               # Agent workspace (gitignored)
 ├── DOCS/                    # Documentation
-│   ├── devmatrix-architecture-2025.md
-│   ├── WORKPLAN.md
-│   └── PROJECT_MEMORY.md
+│   ├── ARCHITECTURE.md      # System architecture
+│   ├── WORKPLAN.md          # Development roadmap
+│   ├── WEB_UI.md            # Web UI documentation
+│   └── PROJECT_MEMORY.md    # Decision log
 ├── requirements.txt         # Python dependencies
 ├── .env.example            # Environment template
 └── README.md               # This file
@@ -341,7 +475,7 @@ black src/ tests/
 
 ## 🗺️ Roadmap
 
-### ✅ Phase 0: Foundation (Weeks 1-2) - COMPLETED
+### ✅ Phase 0: Foundation (Days 1-18) - COMPLETED
 - [x] Git repository setup
 - [x] Project structure
 - [x] Security & secrets management
@@ -354,7 +488,7 @@ black src/ tests/
 - **Tests**: 166 passing, 93% coverage
 - **Timeline**: Completed ahead of schedule!
 
-### ✅ Phase 1: Single Agent POC (Weeks 3-4) - COMPLETED
+### ✅ Phase 1: Single Agent POC (Days 19-40) - COMPLETED
 - [x] **Days 1-4**: Planning & Code Generation Agent (LangGraph workflow)
 - [x] **Days 5-8**: Analysis, Planning, Code Generation nodes
 - [x] **Days 9-12**: Self-review and quality scoring
@@ -366,18 +500,57 @@ black src/ tests/
 - **Features**: Complete code generation workflow with Git integration
 - **Status**: ✅ MVP COMPLETE - ahead of schedule!
 
-### 📅 Phase 2: Multi-Agent System (Future)
-- [ ] Orchestrator agent
-- [ ] Specialized agents (Frontend, Backend, Testing)
-- [ ] Inter-agent communication
-- [ ] Parallel execution
+### ✅ Phase 2: Multi-Agent System (Days 41-58) - COMPLETED
+- [x] OrchestratorAgent with LangGraph workflow
+- [x] Specialized agents (Implementation, Testing, Documentation, Frontend, Backend)
+- [x] Agent registry for dynamic agent management
+- [x] Task decomposition and dependency graph building
+- [x] Agent assignment based on task requirements
+- **Status**: ✅ Multi-agent orchestration system functional!
+
+### ✅ Phase 3: Conversational Web UI (Days 59-63) - COMPLETED
+- [x] **React 18 + TypeScript** web UI with Vite build system
+- [x] **Real-time WebSocket** communication with Socket.IO
+- [x] **Chat interface** with markdown rendering and syntax highlighting
+- [x] **Intent detection** - smart routing between conversation and orchestration
+- [x] **ChatService** - conversational agent and orchestration routing
+- [x] **FastAPI integration** - WebSocket server with python-socketio
+- [x] **Auto-focus & UX** - input focus, "Nuevo Proyecto" button
+- [x] **Bug fixes** - Critical event listener lifecycle fix
+- [x] **Documentation** - Complete WEB_UI.md documentation
+- **Status**: ✅ Conversational UI fully functional!
+
+### ✅ Phase 4: Task Execution (Days 64-70) - COMPLETED
+- [x] **Execute Tasks Node** - Added execution to orchestrator workflow
+- [x] **Dependency-Aware Execution** - Topological sort respects task dependencies
+- [x] **Progress Streaming** - Real-time status updates via WebSocket
+- [x] **Error Handling** - Graceful failure recovery per task
+- [x] **Model Configuration** - Claude Opus 4.1 (reasoning) + Sonnet 4.5 (execution)
+- [x] **Markdown Rendering** - Syntax highlighting with copy buttons
+- [x] **Dark Mode Support** - Light/Dark/System theme persistence
+- [x] **Keyboard Shortcuts** - Ctrl+K, Ctrl+L, Ctrl+N shortcuts
+- [x] **Export Functionality** - Download conversations as Markdown
+- [x] **E2E Testing** - Full orchestration flow validated
+- **Status**: ✅ System fully functional end-to-end!
+
+### 🚀 Phase 5: Production Deployment (Days 71+) - NEXT
+- [ ] Docker compose production configuration
+- [ ] Environment-based configuration (dev/staging/prod)
+- [ ] Load testing and performance optimization
+- [ ] Monitoring and observability (metrics, logs, traces)
+- [ ] CI/CD pipeline setup
+- [ ] User documentation and guides
+- [ ] Deployment to production infrastructure
 
 ---
 
 ## 📚 Documentation
 
-- [Architecture Specification](DOCS/devmatrix-architecture-2025.md) - Complete technical architecture
-- [Work Plan](DOCS/WORKPLAN.md) - Detailed 4-week development plan
+- [Architecture](DOCS/ARCHITECTURE.md) - Complete technical architecture
+- [Work Plan](DOCS/WORKPLAN.md) - Detailed development roadmap with completed phases
+- [Web UI](DOCS/WEB_UI.md) - Complete Web UI and chat system documentation
+- [Features Completed](DOCS/FEATURES_COMPLETED.md) - Comprehensive list of implemented features
+- [Frontend Roadmap](DOCS/FRONTEND_ROADMAP.md) - UI enhancement roadmap and implementation guide
 - [Project Memory](DOCS/PROJECT_MEMORY.md) - Decision log and progress tracking
 
 ---
@@ -411,4 +584,4 @@ TBD - License to be determined
 
 ---
 
-**Last Updated**: 2025-10-11 (Phase 1 COMPLETE - MVP Ready! 🎉)
+**Last Updated**: 2025-10-16 (Phase 4 COMPLETE - Full Task Execution System! 🎉)

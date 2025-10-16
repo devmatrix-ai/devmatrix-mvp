@@ -117,7 +117,8 @@ Do not include explanations outside the content."""
         Args:
             api_key: Anthropic API key (optional, uses env var if not provided)
         """
-        self.llm = AnthropicClient(api_key=api_key)
+        # Use Claude Sonnet 4.5 for fast documentation generation
+        self.llm = AnthropicClient(api_key=api_key, model="claude-sonnet-4-5-20250929")
         self.name = "DocumentationAgent"
 
     def get_capabilities(self) -> Set[AgentCapability]:
@@ -169,11 +170,16 @@ Do not include explanations outside the content."""
             if scratchpad:
                 scratchpad.mark_task_started(task_id, self.name)
 
-            # Read code from dependency artifacts
-            code_to_document = self._read_code_from_dependencies(
-                dependencies,
-                scratchpad
-            ) if scratchpad else ""
+            # Read code from dependency artifacts (scratchpad) or outputs (workspace)
+            if scratchpad:
+                code_to_document = self._read_code_from_dependencies(dependencies, scratchpad)
+            else:
+                # Fallback: read from dependency outputs
+                code_to_document = self._read_code_from_workspace(
+                    workspace_id,
+                    dependencies,
+                    context.get("dependency_outputs", {})
+                )
 
             if not code_to_document:
                 raise ValueError("No code found to document. Dependencies may be missing.")
@@ -342,6 +348,47 @@ Do not include explanations outside the content."""
 
         return "\n\n".join(code_parts) if code_parts else ""
 
+    def _read_code_from_workspace(
+        self,
+        workspace_id: str,
+        dependencies: list,
+        dependency_outputs: Dict[str, Any]
+    ) -> str:
+        """
+        Read code from workspace files (fallback when SharedScratchpad unavailable).
+
+        Args:
+            workspace_id: Workspace identifier
+            dependencies: List of dependency task IDs
+            dependency_outputs: Outputs from dependency tasks
+
+        Returns:
+            Code from workspace files
+        """
+        if not dependencies:
+            return ""
+
+        code_parts = []
+        ws = WorkspaceManager(workspace_id=workspace_id, auto_cleanup=False)
+
+        for dep_task_id in dependencies:
+            # Get file paths from dependency output
+            dep_output = dependency_outputs.get(dep_task_id, {})
+            file_paths = dep_output.get("file_paths", [])
+
+            for file_path in file_paths:
+                try:
+                    # Read file from workspace
+                    file_path_obj = Path(file_path)
+                    if file_path_obj.exists():
+                        with open(file_path_obj, 'r') as f:
+                            code_parts.append(f.read())
+                except Exception as e:
+                    # Skip files that can't be read
+                    continue
+
+        return "\n\n".join(code_parts) if code_parts else ""
+
     def _write_to_workspace(
         self,
         workspace_id: str,
@@ -367,20 +414,8 @@ Do not include explanations outside the content."""
 
         file_paths = []
         for filename in files:
-            # Handle nested paths (e.g., "docs/api/reference.md")
-            if "/" in filename:
-                parts = filename.split("/")
-                parent_dirs = "/".join(parts[:-1])
-                actual_filename = parts[-1]
-
-                # Create nested directory structure
-                ws.create_dir(parent_dirs)
-                full_path = f"{parent_dirs}/{actual_filename}"
-            else:
-                full_path = filename
-
-            # Write file
-            file_path = ws.write_file(full_path, documentation)
+            # Write file (WorkspaceManager handles parent directory creation)
+            file_path = ws.write_file(filename, documentation)
             file_paths.append(str(file_path))
 
         return file_paths

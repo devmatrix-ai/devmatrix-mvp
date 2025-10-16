@@ -9,11 +9,17 @@ export interface ChatMessage {
   metadata?: Record<string, any>
 }
 
+export interface ProgressEvent {
+  event: string
+  data: Record<string, any>
+}
+
 export interface UseChatOptions {
   conversationId?: string
   workspaceId?: string
   onMessage?: (message: ChatMessage) => void
   onError?: (error: any) => void
+  onProgress?: (event: ProgressEvent) => void
 }
 
 export function useChat(options: UseChatOptions = {}) {
@@ -24,22 +30,16 @@ export function useChat(options: UseChatOptions = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isJoined, setIsJoined] = useState(false)
+  const [progress, setProgress] = useState<ProgressEvent | null>(null)
 
-  // Join chat room on mount
+  // Register event listeners (only once when connected)
   useEffect(() => {
-    if (!isConnected || isJoined) return
-
-    send('join_chat', {
-      conversation_id: options.conversationId,
-      workspace_id: options.workspaceId,
-    })
+    if (!isConnected) return
 
     const cleanup1 = on('chat_joined', (data: any) => {
-      console.log('[useChat] chat_joined event received:', data)
       setConversationId(data.conversation_id)
       setMessages(data.history || [])
       setIsJoined(true)
-      console.log('[useChat] State updated - isJoined: true, conversationId:', data.conversation_id)
     })
 
     const cleanup2 = on('message', (data: any) => {
@@ -59,15 +59,32 @@ export function useChat(options: UseChatOptions = {}) {
         }
         setMessages(prev => [...prev, assistantMsg])
         setIsLoading(false)
+        setProgress(null) // Clear progress when message completes
 
         if (options.onMessage) {
           options.onMessage(assistantMsg)
         }
       } else if (data.type === 'status') {
-        // Optional: handle status updates
-        console.log('Status:', data.content)
+        // Status messages - could be shown in UI later
+      } else if (data.type === 'progress') {
+        // Progress events during orchestration
+        const progressEvent: ProgressEvent = {
+          event: data.event,
+          data: data.data
+        }
+        setProgress(progressEvent)
+        if (options.onProgress) {
+          options.onProgress(progressEvent)
+        }
       } else if (data.type === 'error') {
+        console.error('[useChat] Error received from backend:', {
+          error: data.error,
+          message: data.message,
+          details: data.details,
+          fullData: data
+        })
         setIsLoading(false)
+        setProgress(null)
         if (options.onError) {
           options.onError(data)
         }
@@ -85,30 +102,33 @@ export function useChat(options: UseChatOptions = {}) {
       cleanup1()
       cleanup2()
       cleanup3()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected, on])
+
+  // Join chat room (separate effect)
+  useEffect(() => {
+    if (!isConnected || isJoined) return
+
+    send('join_chat', {
+      conversation_id: options.conversationId,
+      workspace_id: options.workspaceId,
+    })
+
+    return () => {
       if (conversationId) {
         send('leave_chat', { conversation_id: conversationId })
       }
     }
-  }, [isConnected, isJoined, options.conversationId, options.workspaceId])
+  }, [isConnected, isJoined, options.conversationId, options.workspaceId, send, conversationId])
 
   const sendMessage = useCallback(
     (content: string, metadata?: Record<string, any>) => {
-      console.log('[useChat] sendMessage called:', {
-        content,
-        conversationId,
-        isJoined,
-        canSend: !!(conversationId && isJoined)
-      })
-
       if (!conversationId || !isJoined) {
-        console.warn('[useChat] Cannot send message: not joined to chat', {
-          conversationId,
-          isJoined
-        })
+        console.warn('[useChat] Cannot send message: not joined to chat')
         return
       }
 
-      console.log('[useChat] Sending message via WebSocket')
       setIsLoading(true)
       send('send_message', {
         conversation_id: conversationId,
@@ -128,6 +148,7 @@ export function useChat(options: UseChatOptions = {}) {
     messages,
     isLoading,
     isConnected: isConnected && isJoined,
+    progress,
     sendMessage,
     clearMessages,
   }
