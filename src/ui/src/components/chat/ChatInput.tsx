@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
 import { FiSend } from 'react-icons/fi'
 
 interface ChatInputProps {
@@ -16,12 +16,20 @@ const COMMANDS = [
   '/workspace',
 ]
 
-export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
-  const [message, setMessage] = useState('')
-  const [showSuggestions, setShowSuggestions] = useState(false)
-  const [suggestions, setSuggestions] = useState<string[]>([])
-  const [selectedSuggestion, setSelectedSuggestion] = useState(0)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+export const ChatInput = forwardRef<{ focus: () => void }, ChatInputProps>(
+  ({ onSend, disabled, placeholder }, ref) => {
+    const [message, setMessage] = useState('')
+    const [showSuggestions, setShowSuggestions] = useState(false)
+    const [suggestions, setSuggestions] = useState<string[]>([])
+    const [selectedSuggestion, setSelectedSuggestion] = useState(0)
+    const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+    // Expose focus method to parent
+    useImperativeHandle(ref, () => ({
+      focus: () => {
+        textareaRef.current?.focus()
+      }
+    }))
 
   useEffect(() => {
     // Auto-resize textarea
@@ -147,3 +155,4 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
     </form>
   )
 }
+)

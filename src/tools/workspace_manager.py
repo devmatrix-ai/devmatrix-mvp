@@ -1,8 +1,8 @@
 """
 Workspace Manager
 
-Manages temporary isolated workspaces for Devmatrix operations.
-Creates workspaces in /tmp/devmatrix-workspace-{timestamp}/
+Manages isolated workspaces for Devmatrix operations.
+Creates workspaces in ./workspace/{workspace_id}/
 """
 
 import os
@@ -14,13 +14,16 @@ from typing import Optional
 
 class WorkspaceManager:
     """
-    Manages temporary workspaces for agent operations.
+    Manages workspaces for agent operations.
 
     Usage:
         with WorkspaceManager() as workspace:
             file_path = workspace.get_path("test.py")
             workspace.write_file("test.py", "print('hello')")
     """
+
+    # Base directory for all workspaces (relative to project root)
+    WORKSPACE_ROOT = Path(__file__).parent.parent.parent / "workspace"
 
     def __init__(self, workspace_id: str = None, auto_cleanup: bool = True):
         """
@@ -32,7 +35,7 @@ class WorkspaceManager:
         """
         self.workspace_id = workspace_id or self._generate_workspace_id()
         self.auto_cleanup = auto_cleanup
-        self.base_path = Path(f"/tmp/devmatrix-workspace-{self.workspace_id}")
+        self.base_path = self.WORKSPACE_ROOT / self.workspace_id
         self._created = False
 
     def _generate_workspace_id(self) -> str:

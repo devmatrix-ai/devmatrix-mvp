@@ -14,6 +14,7 @@ from rich.tree import Tree
 from src.llm.anthropic_client import AnthropicClient
 from src.state.postgres_manager import PostgresManager
 from src.agents.agent_registry import AgentRegistry, TaskType
+from src.state.shared_scratchpad import SharedScratchpad
 
 
 # Message reducer
@@ -78,22 +79,24 @@ class OrchestratorAgent:
         )
     """
 
-    SYSTEM_PROMPT = """You are an expert software architect and project orchestrator.
+    SYSTEM_PROMPT = """Sos un arquitecto de software experto y orquestador de proyectos, pero hablás de manera natural y amigable con el usuario.
 
-Your role is to:
-1. Analyze project requirements and scope
-2. Break down complex projects into atomic, manageable tasks
-3. Identify dependencies between tasks
-4. Assign tasks to specialized agents
-5. Ensure coherent project structure
+Tu rol es:
+1. Analizar los requerimientos y alcance del proyecto
+2. Descomponer proyectos complejos en tareas atómicas y manejables
+3. Identificar dependencias entre tareas
+4. Asignar tareas a agentes especializados
+5. Asegurar una estructura de proyecto coherente
 
-Guidelines:
-- Think like a senior software architect
-- Consider best practices and design patterns
-- Identify clear task boundaries
-- Minimize dependencies for parallel execution
-- Ensure completeness (don't miss critical components)
-"""
+Pautas:
+- Pensá como un arquitecto de software senior pero sin ser pedante
+- Considerá best practices y design patterns
+- Identificá límites claros entre tareas
+- Minimizá dependencias para ejecución paralela
+- Asegurá completitud (no te pierdas componentes críticos)
+- Hablá de manera natural y conversacional, como si estuvieras charlando con un compañero
+- Si hay algo que no queda claro, preguntá
+- Mantené un tono amigable y profesional, pero no formal"""
 
     PROJECT_ANALYSIS_PROMPT = """Analyze this project request and determine its scope and complexity.
 
@@ -158,19 +161,42 @@ Important:
 - Aim for 3-10 tasks total (don't over-decompose)
 """
 
-    def __init__(self, api_key: str = None, agent_registry: AgentRegistry = None):
+    def __init__(self, api_key: str = None, agent_registry: AgentRegistry = None, progress_callback=None):
         """
         Initialize orchestrator agent.
 
         Args:
             api_key: Anthropic API key (optional, uses env var if not provided)
             agent_registry: Agent registry for agent selection (optional, creates default if not provided)
+            progress_callback: Optional callback function for progress updates
         """
-        self.llm = AnthropicClient(api_key=api_key)
+        # Use Claude Opus 4.1 for complex orchestration reasoning
+        self.llm = AnthropicClient(api_key=api_key, model="claude-opus-4-1-20250805")
         self.console = Console()
         self.registry = agent_registry or AgentRegistry()
+        self.progress_callback = progress_callback
         self.graph = self._build_graph()
-        self.postgres = PostgresManager()
+
+        # PostgreSQL is optional
+        try:
+            self.postgres = PostgresManager()
+        except Exception:
+            self.postgres = None
+
+    def _emit_progress(self, event_type: str, data: dict):
+        """
+        Emit progress event via callback if available.
+
+        Args:
+            event_type: Type of event (e.g., 'task_start', 'task_complete', 'phase_start')
+            data: Event data dictionary
+        """
+        if self.progress_callback:
+            try:
+                self.progress_callback(event_type, data)
+            except Exception as e:
+                # Don't let callback errors break orchestration
+                self.console.print(f"[dim]Warning: Progress callback error: {e}[/dim]")
 
     def _build_graph(self) -> StateGraph:
         """Build LangGraph workflow for orchestration."""
@@ -182,6 +208,7 @@ Important:
         workflow.add_node("build_dependency_graph", self._build_dependency_graph)
         workflow.add_node("assign_agents", self._assign_agents)
         workflow.add_node("display_plan", self._display_plan)
+        workflow.add_node("execute_tasks", self._execute_tasks)  # NEW: Task execution
         workflow.add_node("finalize", self._finalize)
 
         # Define edges
@@ -190,7 +217,8 @@ Important:
         workflow.add_edge("decompose_tasks", "build_dependency_graph")
         workflow.add_edge("build_dependency_graph", "assign_agents")
         workflow.add_edge("assign_agents", "display_plan")
-        workflow.add_edge("display_plan", "finalize")
+        workflow.add_edge("display_plan", "execute_tasks")  # NEW: Execute after displaying plan
+        workflow.add_edge("execute_tasks", "finalize")
         workflow.add_edge("finalize", END)
 
         return workflow.compile()
@@ -198,6 +226,12 @@ Important:
     def _analyze_project(self, state: OrchestratorState) -> OrchestratorState:
         """Analyze project scope and complexity."""
         user_request = state["user_request"]
+
+        # Emit phase start event
+        self._emit_progress('phase_start', {
+            'phase': 'analyze_project',
+            'message': 'Analizando alcance del proyecto...'
+        })
 
         analysis_prompt = self.PROJECT_ANALYSIS_PROMPT.format(request=user_request)
 
@@ -243,6 +277,13 @@ Important:
             border_style="cyan"
         ))
 
+        # Emit phase complete event
+        self._emit_progress('phase_complete', {
+            'phase': 'analyze_project',
+            'project_type': project_type,
+            'complexity': complexity
+        })
+
         return state
 
     def _decompose_tasks(self, state: OrchestratorState) -> OrchestratorState:
@@ -250,6 +291,12 @@ Important:
         user_request = state["user_request"]
         project_type = state["project_type"]
         complexity = state["complexity"]
+
+        # Emit phase start event
+        self._emit_progress('phase_start', {
+            'phase': 'decompose_tasks',
+            'message': 'Descomponiendo proyecto en tareas...'
+        })
 
         decomposition_prompt = self.TASK_DECOMPOSITION_PROMPT.format(
             request=user_request,
@@ -311,6 +358,12 @@ Important:
         state["messages"].append({
             "role": "assistant",
             "content": f"Task Decomposition:\n{json.dumps(tasks_data, indent=2)}"
+        })
+
+        # Emit phase complete event
+        self._emit_progress('phase_complete', {
+            'phase': 'decompose_tasks',
+            'num_tasks': len(tasks)
         })
 
         return state
@@ -430,34 +483,244 @@ Important:
 
         return state
 
-    def _finalize(self, state: OrchestratorState) -> OrchestratorState:
-        """Finalize orchestration and prepare for execution."""
-        state["success"] = True
-        state["completed_tasks"] = []
-        state["failed_tasks"] = []
+    def _execute_tasks(self, state: OrchestratorState) -> OrchestratorState:
+        """
+        Execute tasks respecting dependencies.
 
-        # Log to PostgreSQL
+        Uses topological sort to ensure tasks execute in correct order,
+        with parallel execution for independent tasks.
+        """
+        tasks = state["tasks"]
+        dependency_graph = state["dependency_graph"]
+        workspace_id = state["workspace_id"]
+
+        # Emit execution start event
+        self._emit_progress('execution_start', {
+            'total_tasks': len(tasks),
+            'workspace_id': workspace_id
+        })
+
+        self.console.print("\n")
+        self.console.print(Panel.fit(
+            "[bold green]🚀 Starting Task Execution[/bold green]",
+            border_style="green"
+        ))
+
+        # Create shared scratchpad for inter-agent communication (if Redis is available)
         try:
-            project_id = self.postgres.create_project(
-                name=f"orchestrated_{state['workspace_id']}",
-                description=state["user_request"]
-            )
-
-            task_id = self.postgres.create_task(
-                project_id=project_id,
-                agent_name="OrchestratorAgent",
-                task_type="orchestration",
-                input_data=state["user_request"],
-                output_data=str({
-                    "project_type": state["project_type"],
-                    "complexity": state["complexity"],
-                    "num_tasks": len(state["tasks"])
-                }),
-                status="completed"
-            )
-
+            scratchpad = SharedScratchpad(workspace_id=workspace_id)
         except Exception as e:
-            self.console.print(f"[dim]Warning: Could not log orchestration: {e}[/dim]\n")
+            self.console.print(f"[dim]Warning: Could not create SharedScratchpad ({e})[/dim]")
+            self.console.print("[dim]Continuing without SharedScratchpad (inter-agent communication disabled)[/dim]\n")
+            scratchpad = None
+
+        # Initialize task status tracking
+        completed_tasks = []
+        failed_tasks = []
+        task_outputs = {}  # task_id -> output
+
+        # Topological sort for execution order
+        execution_order = self._topological_sort(tasks, dependency_graph)
+
+        if not execution_order:
+            self.console.print("[bold red]Error: Circular dependencies detected![/bold red]\n")
+            state["success"] = False
+            state["error_message"] = "Circular dependencies detected in task graph"
+            return state
+
+        # Execute tasks in order
+        for idx, task in enumerate(execution_order):
+            task_id = task["id"]
+            task_type = task["task_type"]
+            assigned_agent = task["assigned_agent"]
+
+            # Emit task start event
+            self._emit_progress('task_start', {
+                'task_id': task_id,
+                'task_type': task_type,
+                'description': task['description'],
+                'agent': assigned_agent,
+                'progress': f"{idx + 1}/{len(execution_order)}"
+            })
+
+            self.console.print(f"\n[cyan]Executing {task_id}[/cyan]: {task['description']}")
+            self.console.print(f"  Agent: [yellow]{assigned_agent}[/yellow]")
+
+            # Check if dependencies are met
+            dependencies_met = all(
+                dep_id in completed_tasks
+                for dep_id in task["dependencies"]
+            )
+
+            if not dependencies_met:
+                self.console.print(f"  [red]❌ Dependencies not met, skipping[/red]")
+                failed_tasks.append(task_id)
+                task["status"] = "failed"
+
+                # Emit task failure event
+                self._emit_progress('task_failed', {
+                    'task_id': task_id,
+                    'error': 'Dependencies not met'
+                })
+                continue
+
+            # Get agent instance
+            try:
+                agent = self.registry.get_agent(assigned_agent, api_key=self.llm.api_key)
+            except ValueError:
+                self.console.print(f"  [red]❌ Agent '{assigned_agent}' not found[/red]")
+                failed_tasks.append(task_id)
+                task["status"] = "failed"
+                continue
+
+            # Prepare execution context
+            context = {
+                "workspace_id": workspace_id,
+                "scratchpad": scratchpad,
+                "dependency_outputs": {
+                    dep_id: task_outputs.get(dep_id)
+                    for dep_id in task["dependencies"]
+                }
+            }
+
+            # Execute task
+            try:
+                result = agent.execute(task, context)
+
+                if result.get("success"):
+                    self.console.print(f"  [green]✓ Completed successfully[/green]")
+                    completed_tasks.append(task_id)
+                    task["status"] = "completed"
+                    task["output"] = result.get("output", {})
+                    task_outputs[task_id] = result
+
+                    # Emit task complete event
+                    self._emit_progress('task_complete', {
+                        'task_id': task_id,
+                        'output_files': result.get("file_paths", [])
+                    })
+                else:
+                    error_msg = result.get("error", "Unknown error")
+                    self.console.print(f"  [red]❌ Failed: {error_msg}[/red]")
+                    failed_tasks.append(task_id)
+                    task["status"] = "failed"
+
+                    # Emit task failure event
+                    self._emit_progress('task_failed', {
+                        'task_id': task_id,
+                        'error': error_msg
+                    })
+
+            except Exception as e:
+                self.console.print(f"  [red]❌ Exception: {str(e)}[/red]")
+                failed_tasks.append(task_id)
+                task["status"] = "failed"
+
+                # Emit task failure event
+                self._emit_progress('task_failed', {
+                    'task_id': task_id,
+                    'error': str(e)
+                })
+
+        # Update state
+        state["completed_tasks"] = completed_tasks
+        state["failed_tasks"] = failed_tasks
+        state["tasks"] = tasks  # Update with new statuses
+
+        # Summary
+        self.console.print("\n")
+        self.console.print(Panel.fit(
+            f"[bold]Execution Summary[/bold]\n\n"
+            f"✓ Completed: [green]{len(completed_tasks)}[/green]\n"
+            f"❌ Failed: [red]{len(failed_tasks)}[/red]\n"
+            f"📊 Total: {len(tasks)}",
+            border_style="green" if not failed_tasks else "yellow"
+        ))
+
+        state["success"] = len(failed_tasks) == 0
+        if failed_tasks:
+            state["error_message"] = f"Failed tasks: {', '.join(failed_tasks)}"
+
+        # Emit execution complete event
+        self._emit_progress('execution_complete', {
+            'total_tasks': len(tasks),
+            'completed': len(completed_tasks),
+            'failed': len(failed_tasks),
+            'success': len(failed_tasks) == 0
+        })
+
+        return state
+
+    def _topological_sort(
+        self,
+        tasks: List[Task],
+        dependency_graph: Dict[str, List[str]]
+    ) -> List[Task]:
+        """
+        Topological sort of tasks based on dependencies.
+
+        Returns tasks in execution order, or empty list if circular dependency.
+        """
+        # Build in-degree map
+        in_degree = {task["id"]: 0 for task in tasks}
+        for task_id, deps in dependency_graph.items():
+            for dep in deps:
+                if dep in in_degree:  # Only count dependencies that exist
+                    in_degree[task_id] += 1
+
+        # Find tasks with no dependencies
+        queue = [task for task in tasks if in_degree[task["id"]] == 0]
+        result = []
+
+        while queue:
+            # Take task with no dependencies
+            current_task = queue.pop(0)
+            result.append(current_task)
+            current_id = current_task["id"]
+
+            # Find tasks that depend on current task
+            for task in tasks:
+                if current_id in dependency_graph.get(task["id"], []):
+                    in_degree[task["id"]] -= 1
+                    if in_degree[task["id"]] == 0:
+                        queue.append(task)
+
+        # If not all tasks processed, there's a cycle
+        if len(result) != len(tasks):
+            return []
+
+        return result
+
+    def _finalize(self, state: OrchestratorState) -> OrchestratorState:
+        """Finalize orchestration and log results."""
+        # success already set by _execute_tasks
+        # completed_tasks and failed_tasks already set by _execute_tasks
+
+        # Log to PostgreSQL if available
+        if self.postgres:
+            try:
+                project_id = self.postgres.create_project(
+                    name=f"orchestrated_{state['workspace_id']}",
+                    description=state["user_request"]
+                )
+
+                task_id = self.postgres.create_task(
+                    project_id=project_id,
+                    agent_name="OrchestratorAgent",
+                    task_type="orchestration",
+                    input_data=state["user_request"],
+                    output_data=str({
+                        "project_type": state["project_type"],
+                        "complexity": state["complexity"],
+                        "num_tasks": len(state["tasks"]),
+                        "completed": len(state.get("completed_tasks", [])),
+                        "failed": len(state.get("failed_tasks", []))
+                    }),
+                    status="completed" if state["success"] else "failed"
+                )
+
+            except Exception as e:
+                self.console.print(f"[dim]Warning: Could not log orchestration: {e}[/dim]\n")
 
         return state
 

@@ -12,7 +12,10 @@ from datetime import datetime
 from enum import Enum
 
 from src.agents.orchestrator_agent import OrchestratorAgent
-from src.agents.agent_registry import AgentRegistry
+from src.agents.agent_registry import AgentRegistry, AgentCapability
+from src.agents.implementation_agent import ImplementationAgent
+from src.agents.testing_agent import TestingAgent
+from src.agents.documentation_agent import DocumentationAgent
 from src.observability import StructuredLogger
 
 
@@ -142,10 +145,61 @@ class ChatService:
         Args:
             api_key: Anthropic API key (optional, uses env var if not provided)
         """
+        from src.llm.anthropic_client import AnthropicClient
+
         self.logger = StructuredLogger("chat_service")
         self.conversations: Dict[str, Conversation] = {}
         self.registry = AgentRegistry()
-        self.orchestrator = OrchestratorAgent(api_key=api_key, agent_registry=self.registry)
+        self.progress_callback = None  # Will be set per-request for WebSocket streaming
+
+        # Register specialized agents
+        self._register_agents()
+
+        # Orchestrator will be created per-request to use specific progress callback
+        self.api_key = api_key
+
+        # Create shared LLM client for conversational mode
+        self.llm = AnthropicClient(api_key=api_key)
+
+    def _register_agents(self):
+        """Register all specialized agents in the registry."""
+        # Implementation Agent
+        self.registry.register(
+            name="ImplementationAgent",
+            agent_class=ImplementationAgent,
+            capabilities={
+                AgentCapability.CODE_GENERATION,
+                AgentCapability.API_DESIGN,
+                AgentCapability.REFACTORING
+            },
+            priority=10,
+            description="Python code generation and implementation"
+        )
+
+        # Testing Agent
+        self.registry.register(
+            name="TestingAgent",
+            agent_class=TestingAgent,
+            capabilities={
+                AgentCapability.UNIT_TESTING,
+                AgentCapability.INTEGRATION_TESTING
+            },
+            priority=8,
+            description="Test generation and execution"
+        )
+
+        # Documentation Agent
+        self.registry.register(
+            name="DocumentationAgent",
+            agent_class=DocumentationAgent,
+            capabilities={
+                AgentCapability.API_DOCUMENTATION,
+                AgentCapability.CODE_DOCUMENTATION,
+                AgentCapability.USER_DOCUMENTATION
+            },
+            priority=6,
+            description="Documentation generation"
+        )
 
     def create_conversation(
         self,
@@ -326,10 +380,138 @@ class ChatService:
         message: str,
     ) -> AsyncIterator[Dict[str, Any]]:
         """Handle regular conversation message."""
-        # For now, treat regular messages as orchestration requests
-        # In the future, this could route to different agents based on context
-        async for chunk in self._execute_orchestration(conversation, message):
-            yield chunk
+        # Detect if this is a direct implementation request or a discussion
+        message_lower = message.lower().strip()
+
+        # Keywords that indicate the user wants immediate implementation
+        implementation_keywords = ['crear', 'create', 'generar', 'generate', 'implementar', 'implement',
+                                  'hacer', 'make', 'escribir', 'write', 'code', 'coder', 'programa',
+                                  'desarrollar', 'develop', 'armar', 'build']
+
+        # Keywords indicating user gave enough context and is ready
+        ready_keywords = ['si a todo', 'yes to all', 'dale arran', 'empecemos', "let's start",
+                         'vamos', "let's go", 'dale', 'ok listo']
+
+        # Keywords for planning/discussion (when user is asking questions)
+        discussion_keywords = ['diseñar', 'design', 'planear', 'plan', 'pensar', 'think',
+                              'podria', 'podría', 'como', 'cómo', 'que te parece', 'qué te parece']
+
+        # Check conversation history - if user already gave detailed specs, they're ready
+        recent_messages = conversation.get_history(limit=5)
+        user_gave_details = len([m for m in recent_messages if m['role'] == 'user']) >= 3
+
+        # Check message length - detailed messages with tech specs = ready
+        word_count = len(message.split())
+        has_tech_details = any(tech in message_lower for tech in
+                              ['api', 'backend', 'frontend', 'database', 'db', 'fastapi', 'django',
+                               'react', 'vue', 'angular', 'postgres', 'mongodb', 'redis', 'sprint',
+                               'kanban', 'jira', 'git', 'docker', 'kubernetes'])
+
+        is_detailed_request = word_count > 30 and has_tech_details
+
+        # Check if it's a direct implementation request or user is ready
+        is_direct_implementation = (
+            (any(keyword in message_lower for keyword in implementation_keywords) and
+             not any(keyword in message_lower for keyword in discussion_keywords)) or
+            any(keyword in message_lower for keyword in ready_keywords) or
+            is_detailed_request or
+            (user_gave_details and word_count > 20)  # After 3+ messages with detail, assume ready
+        )
+
+        if is_direct_implementation:
+            # Direct implementation - go straight to orchestration
+            async for chunk in self._execute_orchestration(conversation, message):
+                yield chunk
+        else:
+            # Conversational mode - discuss and help user refine the idea
+            async for chunk in self._handle_conversational(conversation, message):
+                yield chunk
+
+    async def _handle_conversational(
+        self,
+        conversation: Conversation,
+        message: str,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """Handle conversational messages - greetings, questions, design discussions."""
+        try:
+            # Use LLM for friendly conversation
+            loop = asyncio.get_event_loop()
+
+            # Get conversation history for context
+            recent_messages = conversation.get_history(limit=10)
+            history_context = "\n".join([
+                f"{msg['role']}: {msg['content'][:200]}"  # Limit each message to 200 chars
+                for msg in recent_messages[-5:]  # Last 5 messages
+            ])
+
+            system_prompt = """Sos un asistente de IA amigable y conversacional llamado DevMatrix, especializado en desarrollo de software.
+
+Características:
+- Hablás en español argentino de manera natural y relajada
+- Sos útil y profesional pero no formal ni robótico
+- Cuando el usuario te saluda, saludás de vuelta y le contás brevemente qué podés hacer
+- Si el usuario quiere diseñar/planear algo, ayudalo a definir los requerimientos pero NO seas insistente
+- Hacé máximo 2-3 preguntas de clarificación por respuesta, no más
+- Si el usuario ya dio suficiente contexto (menciona tecnologías, features, roles, etc.), decile que ya tenés todo y que use "crear" o "implementar" para empezar
+- Si te preguntan sobre tecnologías o arquitectura, dales tu opinión directamente
+- Mantené las respuestas cortas (2-4 oraciones)
+- Usá formato markdown solo cuando ayude a la claridad
+- Si detectás que el usuario está listo (dio detalles técnicos, respondió a tus preguntas), no sigas preguntando - decile cómo activar la implementación
+
+Tus capacidades:
+- Conversar sobre diseño de software y arquitectura
+- Ayudar a definir requerimientos (pero no seas pesado con las preguntas)
+- Responder preguntas técnicas directamente
+- Cuando el usuario esté listo, decile que use "crear X" o "implementar Y" para que orqueste
+
+Ejemplos de interacción:
+- Usuario: "podríamos diseñar una app de task manager con FastAPI?" → "¡Dale! Task manager con FastAPI suena bien. ¿Qué features principales necesitás? (autenticación, asignación de tareas, notificaciones, etc.)"
+- Usuario: "necesito kanban, sprints, roles Dev/PO/Lead" → "Perfecto, ya tengo claro el scope. Cuando quieras arrancar con la implementación, decime 'crear task manager con FastAPI, kanban, sprints y roles' y lo orquesto."
+- Usuario: "qué me recomendás para una API?" → "Depende del caso de uso. FastAPI es genial para APIs modernas y rápidas, Django REST si necesitás muchas features out-of-the-box, Flask si preferís minimalismo. ¿Qué tipo de proyecto es?"""
+
+            user_prompt = f"""Conversación reciente:
+{history_context}
+
+Usuario: {message}
+
+Respondé de manera natural, amigable y útil. Si es una pregunta de diseño o planificación, hacé preguntas para entender mejor lo que necesita."""
+
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.llm.generate(
+                    messages=[{"role": "user", "content": user_prompt}],
+                    system=system_prompt,
+                    temperature=0.7,
+                    max_tokens=400
+                )
+            )
+
+            content = response['content']
+
+            # Add assistant response to conversation
+            assistant_message = Message(
+                content=content,
+                role=MessageRole.ASSISTANT,
+            )
+            conversation.add_message(assistant_message)
+
+            # Yield response
+            yield {
+                "type": "message",
+                "role": MessageRole.ASSISTANT.value,
+                "content": content,
+                "done": True,
+            }
+
+        except Exception as e:
+            error_message = f"Error en conversación: {str(e)}"
+            self.logger.error(error_message, exc_info=True)
+
+            yield {
+                "type": "error",
+                "content": error_message,
+                "done": True,
+            }
 
     async def _execute_orchestration(
         self,
@@ -346,19 +528,91 @@ class ChatService:
             # Send initial status
             yield {
                 "type": "status",
-                "content": "Starting orchestration...",
+                "content": "Iniciando orquestación...",
                 "done": False,
             }
 
+            # Create a queue for progress events
+            progress_queue = asyncio.Queue()
+
+            # Create progress callback that puts events in queue
+            def progress_callback(event_type: str, data: dict):
+                """Callback to capture progress events from orchestrator."""
+                try:
+                    # Put event in queue (non-blocking)
+                    asyncio.create_task(progress_queue.put({
+                        "event_type": event_type,
+                        "data": data
+                    }))
+                except Exception as e:
+                    self.logger.error(f"Error in progress callback: {e}")
+
+            # Create orchestrator with progress callback
+            orchestrator = OrchestratorAgent(
+                api_key=self.api_key,
+                agent_registry=self.registry,
+                progress_callback=progress_callback
+            )
+
             # Execute orchestration in thread pool to avoid blocking
             loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
+
+            # Start orchestration task
+            orchestration_task = loop.run_in_executor(
                 None,
-                self.orchestrator.orchestrate,
+                orchestrator.orchestrate,
                 request,
                 conversation.workspace_id,
                 None,
             )
+
+            # Stream progress events while orchestration runs
+            result = None
+            while True:
+                try:
+                    # Wait for either a progress event or orchestration completion
+                    done, pending = await asyncio.wait(
+                        [
+                            asyncio.create_task(progress_queue.get()),
+                            asyncio.create_task(orchestration_task)
+                        ],
+                        return_when=asyncio.FIRST_COMPLETED,
+                        timeout=0.1
+                    )
+
+                    for task in done:
+                        if task == orchestration_task or (hasattr(task, '_coro') and 'orchestrate' in str(task._coro)):
+                            # Orchestration completed
+                            result = await task
+                            break
+                        else:
+                            # Progress event received
+                            event = await task
+                            yield {
+                                "type": "progress",
+                                "event": event["event_type"],
+                                "data": event["data"],
+                                "done": False,
+                            }
+
+                    if result is not None:
+                        break
+
+                except asyncio.TimeoutError:
+                    continue
+
+            # Drain any remaining progress events
+            while not progress_queue.empty():
+                try:
+                    event = await asyncio.wait_for(progress_queue.get(), timeout=0.1)
+                    yield {
+                        "type": "progress",
+                        "event": event["event_type"],
+                        "data": event["data"],
+                        "done": False,
+                    }
+                except asyncio.TimeoutError:
+                    break
 
             # Format result as message
             response_lines = [

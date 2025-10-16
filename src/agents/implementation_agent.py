@@ -91,7 +91,8 @@ Do not include explanations outside the code block."""
         Args:
             api_key: Anthropic API key (optional, uses env var if not provided)
         """
-        self.llm = AnthropicClient(api_key=api_key)
+        # Use Claude Sonnet 4.5 for fast code generation
+        self.llm = AnthropicClient(api_key=api_key, model="claude-sonnet-4-5-20250929")
         self.name = "ImplementationAgent"
 
     def get_capabilities(self) -> Set[AgentCapability]:
@@ -292,21 +293,8 @@ Do not include explanations outside the code block."""
 
         file_paths = []
         for filename in files:
-            # Handle nested paths (e.g., "models/user.py")
-            if "/" in filename:
-                # Create parent directories
-                parts = filename.split("/")
-                parent_dirs = "/".join(parts[:-1])
-                actual_filename = parts[-1]
-
-                # Create nested directory structure
-                ws.create_dir(parent_dirs)
-                full_path = f"{parent_dirs}/{actual_filename}"
-            else:
-                full_path = filename
-
-            # Write file
-            file_path = ws.write_file(full_path, code)
+            # Write file (WorkspaceManager handles parent directory creation)
+            file_path = ws.write_file(filename, code)
             file_paths.append(str(file_path))
 
         return file_paths
