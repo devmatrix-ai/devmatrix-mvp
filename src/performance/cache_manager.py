@@ -14,11 +14,18 @@ import hashlib
 import json
 import time
 from typing import Any, Callable, Dict, Optional
+from src.observability import get_logger
 from functools import wraps
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 
 from src.state.redis_manager import RedisManager
+from src.config.constants import (
+    MEMORY_CACHE_SIZE,
+    DEFAULT_CACHE_TTL,
+    LLM_CACHE_TTL,
+    AGENT_CACHE_TTL,
+)
 
 
 @dataclass
@@ -71,8 +78,8 @@ class CacheManager:
     def __init__(
         self,
         redis_manager: Optional[RedisManager] = None,
-        memory_cache_size: int = 1000,
-        default_ttl: int = 3600,
+        memory_cache_size: int = MEMORY_CACHE_SIZE,
+        default_ttl: int = DEFAULT_CACHE_TTL,
         enable_stats: bool = True
     ):
         """
@@ -84,6 +91,7 @@ class CacheManager:
             default_ttl: Default TTL in seconds (1 hour)
             enable_stats: Enable statistics tracking
         """
+        self.logger = get_logger("cache_manager")
         self.redis = redis_manager or RedisManager()
         self.memory_cache: Dict[str, tuple[Any, float]] = {}  # (value, expiry_timestamp)
         self.memory_cache_size = memory_cache_size
@@ -100,6 +108,10 @@ class CacheManager:
             "task": "cache:task:",
             "general": "cache:general:"
         }
+
+    def _has_redis(self) -> bool:
+        """Check if Redis is available."""
+        return self.redis.connected and self.redis.client is not None
 
     def _make_hash(self, data: Any) -> str:
         """
@@ -161,7 +173,7 @@ class CacheManager:
         use_memory: bool = True
     ) -> Optional[Any]:
         """
-        Get value from cache.
+        Get value from cache with fallback support.
 
         Args:
             key: Cache key
@@ -181,25 +193,28 @@ class CacheManager:
                     self.stats.hits += 1
                 return value
 
-        # Try Redis cache (L2)
-        try:
-            redis_value = self.redis.client.get(full_key)
-            if redis_value:
-                # Deserialize
-                value = json.loads(redis_value)
+        # Try Redis cache (L2) only if connected
+        if self._has_redis():
+            try:
+                redis_value = self.redis.client.get(full_key)
+                if redis_value:
+                    # Deserialize
+                    value = json.loads(redis_value)
 
-                # Populate memory cache
-                if use_memory:
-                    # Get TTL from Redis
-                    ttl = self.redis.client.ttl(full_key)
-                    if ttl > 0:
-                        self._set_in_memory(full_key, value, ttl)
+                    # Populate memory cache
+                    if use_memory:
+                        # Get TTL from Redis
+                        ttl = self.redis.client.ttl(full_key)
+                        if ttl > 0:
+                            self._set_in_memory(full_key, value, ttl)
 
-                if self.enable_stats:
-                    self.stats.hits += 1
-                return value
-        except Exception as e:
-            print(f"Cache get error: {e}")
+                    if self.enable_stats:
+                        self.stats.hits += 1
+                    return value
+            except Exception as e:
+                self.logger.warning("Cache get failed from Redis",
+                                  key=key[:50],
+                                  error=str(e))
 
         if self.enable_stats:
             self.stats.misses += 1
@@ -214,7 +229,7 @@ class CacheManager:
         use_memory: bool = True
     ) -> bool:
         """
-        Set value in cache.
+        Set value in cache with fallback support.
 
         Args:
             key: Cache key
@@ -229,27 +244,28 @@ class CacheManager:
         ttl = ttl or self.default_ttl
         full_key = self._make_key(self.prefixes.get(prefix, self.prefixes["general"]), key)
 
-        try:
-            # Store in Redis (L2)
-            value_json = json.dumps(value)
-            self.redis.client.setex(full_key, ttl, value_json)
+        # Try to store in Redis (L2) if connected
+        if self._has_redis():
+            try:
+                value_json = json.dumps(value)
+                self.redis.client.setex(full_key, ttl, value_json)
+            except Exception as e:
+                self.logger.warning("Cache set failed in Redis",
+                                  key=key[:50],
+                                  error=str(e))
 
-            # Store in memory (L1)
-            if use_memory:
-                self._set_in_memory(full_key, value, ttl)
+        # Always store in memory (L1)
+        if use_memory:
+            self._set_in_memory(full_key, value, ttl)
 
-            if self.enable_stats:
-                self.stats.writes += 1
+        if self.enable_stats:
+            self.stats.writes += 1
 
-            return True
-
-        except Exception as e:
-            print(f"Cache set error: {e}")
-            return False
+        return True
 
     def delete(self, key: str, prefix: str = "general") -> bool:
         """
-        Delete value from cache.
+        Delete value from cache with fallback support.
 
         Args:
             key: Cache key
@@ -259,18 +275,24 @@ class CacheManager:
             True if deleted, False otherwise
         """
         full_key = self._make_key(self.prefixes.get(prefix, self.prefixes["general"]), key)
+        deleted = False
 
         # Remove from memory
         if full_key in self.memory_cache:
             del self.memory_cache[full_key]
+            deleted = True
 
-        # Remove from Redis
-        try:
-            deleted = self.redis.client.delete(full_key) > 0
-            return deleted
-        except Exception as e:
-            print(f"Cache delete error: {e}")
-            return False
+        # Remove from Redis if connected
+        if self._has_redis():
+            try:
+                if self.redis.client.delete(full_key) > 0:
+                    deleted = True
+            except Exception as e:
+                self.logger.warning("Cache delete failed from Redis",
+                                  key=key[:50],
+                                  error=str(e))
+
+        return deleted
 
     def cache_llm_response(
         self,
@@ -327,7 +349,7 @@ class CacheManager:
         task_description: str,
         context: Dict[str, Any],
         result: Dict[str, Any],
-        ttl: int = 1800
+        ttl: int = AGENT_CACHE_TTL
     ) -> bool:
         """
         Cache agent execution result.
@@ -455,7 +477,7 @@ class CacheManager:
 
     def clear_all(self, prefix: Optional[str] = None):
         """
-        Clear all cache entries (use with caution).
+        Clear all cache entries with fallback support (use with caution).
 
         Args:
             prefix: If specified, only clear entries with this prefix
@@ -470,16 +492,17 @@ class CacheManager:
         else:
             self.memory_cache.clear()
 
-        # Clear Redis cache
-        try:
-            if prefix:
-                full_prefix = self.prefixes.get(prefix, prefix)
-                pattern = f"{full_prefix}*"
-                keys = self.redis.client.keys(pattern)
-                if keys:
-                    self.redis.client.delete(*keys)
-            else:
-                # WARNING: This clears ALL Redis keys
-                self.redis.client.flushdb()
-        except Exception as e:
-            print(f"Cache clear error: {e}")
+        # Clear Redis cache if connected
+        if self._has_redis():
+            try:
+                if prefix:
+                    full_prefix = self.prefixes.get(prefix, prefix)
+                    pattern = f"{full_prefix}*"
+                    keys = self.redis.client.keys(pattern)
+                    if keys:
+                        self.redis.client.delete(*keys)
+                else:
+                    # WARNING: This clears ALL Redis keys
+                    self.redis.client.flushdb()
+            except Exception as e:
+                self.logger.warning("Cache clear failed from Redis", error=str(e))
