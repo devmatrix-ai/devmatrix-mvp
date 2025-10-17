@@ -427,6 +427,81 @@ final_state = app.invoke(initial_state)
 
 ---
 
+## 📋 Logging Configuration
+
+DevMatrix uses **structured logging** for production-ready observability.
+
+### Configuration
+
+Set environment variables in `.env`:
+
+```bash
+# Logging Configuration
+ENVIRONMENT=development    # development | production | test
+LOG_LEVEL=INFO            # DEBUG | INFO | WARNING | ERROR
+LOG_FORMAT=text           # json | text
+LOG_FILE=/app/logs/devmatrix.log  # Optional: enable file logging
+LOG_MAX_BYTES=10485760    # 10MB rotation size
+LOG_BACKUP_COUNT=5        # Keep 5 rotated files
+```
+
+### Formats
+
+**Development (text format)**:
+```
+2025-10-17 10:30:45 [INFO] orchestrator: Task execution started | task_id=task_1 workspace_id=ws_abc
+```
+
+**Production (JSON format)**:
+```json
+{
+  "timestamp": "2025-10-17T10:30:45.123Z",
+  "level": "INFO",
+  "logger": "orchestrator",
+  "message": "Task execution started",
+  "task_id": "task_1",
+  "workspace_id": "ws_abc"
+}
+```
+
+### Usage in Code
+
+```python
+from src.observability import get_logger
+
+logger = get_logger("my_module")
+
+# Log with context
+logger.info("Operation completed",
+    user_id="123",
+    duration_ms=150,
+    status="success"
+)
+
+# Error logging with exception info
+try:
+    risky_operation()
+except Exception as e:
+    logger.error("Operation failed",
+        error=str(e),
+        error_type=type(e).__name__,
+        exc_info=True
+    )
+```
+
+### Features
+
+- ✅ **Structured Logging**: JSON or text formats
+- ✅ **Log Rotation**: Automatic 10MB rotation with 5 backups
+- ✅ **Environment-Aware**: Different configs for dev/prod
+- ✅ **Context-Rich**: Automatic context injection (workspace_id, task_id, etc.)
+- ✅ **Separation of Concerns**: Internal logging (StructuredLogger) vs user display (Rich Console)
+- ✅ **Performance**: <5ms overhead per log call
+
+See [LOGGING_IMPROVEMENT_PLAN.md](DOCS/LOGGING_IMPROVEMENT_PLAN.md) for complete documentation.
+
+---
+
 ## 🧪 Development
 
 ### Running Tests
