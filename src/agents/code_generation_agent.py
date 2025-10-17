@@ -16,6 +16,7 @@ from src.llm.anthropic_client import AnthropicClient
 from src.tools.workspace_manager import WorkspaceManager
 from src.tools.git_operations import GitOperations
 from src.state.postgres_manager import PostgresManager
+from src.observability import get_logger
 
 
 # Message reducer
@@ -170,6 +171,7 @@ feat: add fibonacci calculator function"""
         """
         self.llm = AnthropicClient(api_key=api_key)
         self.console = Console()
+        self.logger = get_logger("code_generation")
         self.graph = self._build_graph()
         self.postgres = PostgresManager()
 
@@ -423,11 +425,25 @@ Be specific and actionable."""
             state["file_written"] = True
             state["file_path"] = str(file_path)
 
+            self.logger.info("File written successfully",
+                file_path=str(file_path),
+                filename=filename,
+                workspace_id=workspace_id,
+                code_size=len(code)
+            )
             self.console.print(f"[bold green]✓ File written:[/bold green] {file_path}\n")
 
         except Exception as e:
             state["file_written"] = False
             state["file_path"] = ""
+
+            self.logger.error("Failed to write file",
+                filename=filename,
+                workspace_id=workspace_id,
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True
+            )
             self.console.print(f"[bold red]✗ Error writing file:[/bold red] {e}\n")
 
         return state
@@ -461,6 +477,10 @@ Be specific and actionable."""
                 import subprocess
                 subprocess.run(["git", "init"], cwd=workspace_dir, check=True, capture_output=True)
                 git = GitOperations(workspace_dir)
+                self.logger.info("Initialized Git repository",
+                    workspace_id=workspace_id,
+                    workspace_dir=workspace_dir
+                )
                 self.console.print("[dim]Initialized Git repository[/dim]\n")
 
             # Generate commit message using LLM
@@ -490,6 +510,12 @@ Be specific and actionable."""
             state["git_commit_message"] = commit_message
             state["git_commit_hash"] = commit_info.get("hash", "")[:8]  # Short hash
 
+            self.logger.info("Git commit successful",
+                workspace_id=workspace_id,
+                commit_hash=state["git_commit_hash"],
+                commit_message=commit_message,
+                filename=filename
+            )
             self.console.print(
                 f"[bold green]✓ Git commit:[/bold green] {state['git_commit_hash']} - {commit_message}\n"
             )
@@ -498,6 +524,12 @@ Be specific and actionable."""
             state["git_committed"] = False
             state["git_commit_message"] = ""
             state["git_commit_hash"] = ""
+            self.logger.warning("Git commit failed",
+                workspace_id=workspace_id,
+                filename=filename,
+                error=str(e),
+                error_type=type(e).__name__
+            )
             self.console.print(f"[dim]Warning: Could not commit to Git: {e}[/dim]\n")
 
         return state
@@ -547,9 +579,24 @@ Be specific and actionable."""
 
             state["decision_id"] = decision_id
 
+            self.logger.info("Decision logged to PostgreSQL",
+                decision_id=decision_id,
+                task_id=task_id,
+                project_id=project_id,
+                approval_status=state["approval_status"],
+                workspace_id=state["workspace_id"],
+                git_committed=state.get("git_committed", False)
+            )
             self.console.print(f"[dim]Decision logged: {decision_id}[/dim]\n")
 
         except Exception as e:
+            self.logger.error("Failed to log decision to PostgreSQL",
+                workspace_id=state["workspace_id"],
+                approval_status=state["approval_status"],
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True
+            )
             self.console.print(f"[dim]Warning: Could not log decision: {e}[/dim]\n")
 
         return state

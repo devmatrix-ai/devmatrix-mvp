@@ -15,6 +15,7 @@ from src.llm.anthropic_client import AnthropicClient
 from src.state.postgres_manager import PostgresManager
 from src.agents.agent_registry import AgentRegistry, TaskType
 from src.state.shared_scratchpad import SharedScratchpad
+from src.observability import get_logger
 
 
 # Message reducer
@@ -173,6 +174,7 @@ Important:
         # Use Claude Opus 4.1 for complex orchestration reasoning
         self.llm = AnthropicClient(api_key=api_key, model="claude-opus-4-1-20250805")
         self.console = Console()
+        self.logger = get_logger("orchestrator")
         self.registry = agent_registry or AgentRegistry()
         self.progress_callback = progress_callback
         self.graph = self._build_graph()
@@ -196,7 +198,11 @@ Important:
                 self.progress_callback(event_type, data)
             except Exception as e:
                 # Don't let callback errors break orchestration
-                self.console.print(f"[dim]Warning: Progress callback error: {e}[/dim]")
+                self.logger.warning("Progress callback error",
+                    event_type=event_type,
+                    error=str(e),
+                    error_type=type(e).__name__
+                )
 
     def _build_graph(self) -> StateGraph:
         """Build LangGraph workflow for orchestration."""
@@ -226,6 +232,11 @@ Important:
     def _analyze_project(self, state: OrchestratorState) -> OrchestratorState:
         """Analyze project scope and complexity."""
         user_request = state["user_request"]
+
+        self.logger.info("Starting project analysis phase",
+            user_request=user_request[:100],  # First 100 chars
+            workspace_id=state.get("workspace_id", "unknown")
+        )
 
         # Emit phase start event
         self._emit_progress('phase_start', {
@@ -270,6 +281,13 @@ Important:
             "content": f"Project Analysis:\n{content}"
         })
 
+        self.logger.info("Project analysis completed",
+            project_type=project_type,
+            complexity=complexity,
+            workspace_id=state.get("workspace_id", "unknown")
+        )
+
+        # Display visual panel for user
         self.console.print(Panel.fit(
             f"[bold cyan]Project Analysis[/bold cyan]\n\n"
             f"Type: [yellow]{project_type}[/yellow]\n"
@@ -291,6 +309,12 @@ Important:
         user_request = state["user_request"]
         project_type = state["project_type"]
         complexity = state["complexity"]
+
+        self.logger.info("Starting task decomposition phase",
+            project_type=project_type,
+            complexity=complexity,
+            workspace_id=state.get("workspace_id", "unknown")
+        )
 
         # Emit phase start event
         self._emit_progress('phase_start', {
@@ -360,6 +384,12 @@ Important:
             "content": f"Task Decomposition:\n{json.dumps(tasks_data, indent=2)}"
         })
 
+        self.logger.info("Task decomposition completed",
+            num_tasks=len(tasks),
+            task_types=[t["task_type"] for t in tasks],
+            workspace_id=state.get("workspace_id", "unknown")
+        )
+
         # Emit phase complete event
         self._emit_progress('phase_complete', {
             'phase': 'decompose_tasks',
@@ -394,7 +424,11 @@ Important:
 
         for task_id in dependency_graph:
             if has_cycle(task_id, []):
-                self.console.print(f"[bold red]Warning: Circular dependency detected for {task_id}[/bold red]\n")
+                self.logger.warning("Circular dependency detected",
+                    task_id=task_id,
+                    dependencies=dependency_graph.get(task_id, []),
+                    workspace_id=state.get("workspace_id", "unknown")
+                )
 
         return state
 
@@ -424,9 +458,10 @@ Important:
             else:
                 # No agent available for this task type - mark as unassigned
                 task["assigned_agent"] = "unassigned"
-                self.console.print(
-                    f"[yellow]Warning: No agent available for task {task['id']} "
-                    f"(type: {task_type_str})[/yellow]\n"
+                self.logger.warning("No agent available for task",
+                    task_id=task['id'],
+                    task_type=task_type_str,
+                    workspace_id=state.get("workspace_id", "unknown")
                 )
 
         return state
@@ -510,8 +545,14 @@ Important:
         try:
             scratchpad = SharedScratchpad(workspace_id=workspace_id)
         except Exception as e:
-            self.console.print(f"[dim]Warning: Could not create SharedScratchpad ({e})[/dim]")
-            self.console.print("[dim]Continuing without SharedScratchpad (inter-agent communication disabled)[/dim]\n")
+            self.logger.warning("Could not create SharedScratchpad",
+                workspace_id=workspace_id,
+                error=str(e),
+                error_type=type(e).__name__
+            )
+            self.logger.info("Continuing without SharedScratchpad - inter-agent communication disabled",
+                workspace_id=workspace_id
+            )
             scratchpad = None
 
         # Initialize task status tracking
@@ -523,6 +564,11 @@ Important:
         execution_order = self._topological_sort(tasks, dependency_graph)
 
         if not execution_order:
+            self.logger.error("Circular dependencies detected in task graph",
+                workspace_id=workspace_id,
+                num_tasks=len(tasks),
+                dependency_graph=dependency_graph
+            )
             self.console.print("[bold red]Error: Circular dependencies detected![/bold red]\n")
             state["success"] = False
             state["error_message"] = "Circular dependencies detected in task graph"
@@ -543,6 +589,14 @@ Important:
                 'progress': f"{idx + 1}/{len(execution_order)}"
             })
 
+            self.logger.info("Executing task",
+                task_id=task_id,
+                task_type=task_type,
+                agent=assigned_agent,
+                progress=f"{idx + 1}/{len(execution_order)}",
+                workspace_id=workspace_id
+            )
+
             self.console.print(f"\n[cyan]Executing {task_id}[/cyan]: {task['description']}")
             self.console.print(f"  Agent: [yellow]{assigned_agent}[/yellow]")
 
@@ -553,6 +607,12 @@ Important:
             )
 
             if not dependencies_met:
+                self.logger.warning("Task dependencies not met",
+                    task_id=task_id,
+                    dependencies=task["dependencies"],
+                    completed_tasks=completed_tasks,
+                    workspace_id=workspace_id
+                )
                 self.console.print(f"  [red]❌ Dependencies not met, skipping[/red]")
                 failed_tasks.append(task_id)
                 task["status"] = "failed"
@@ -568,6 +628,11 @@ Important:
             try:
                 agent = self.registry.get_agent(assigned_agent, api_key=self.llm.api_key)
             except ValueError:
+                self.logger.error("Agent not found",
+                    agent_name=assigned_agent,
+                    task_id=task_id,
+                    workspace_id=workspace_id
+                )
                 self.console.print(f"  [red]❌ Agent '{assigned_agent}' not found[/red]")
                 failed_tasks.append(task_id)
                 task["status"] = "failed"
@@ -588,6 +653,12 @@ Important:
                 result = agent.execute(task, context)
 
                 if result.get("success"):
+                    self.logger.info("Task completed successfully",
+                        task_id=task_id,
+                        agent=assigned_agent,
+                        output_files=result.get("file_paths", []),
+                        workspace_id=workspace_id
+                    )
                     self.console.print(f"  [green]✓ Completed successfully[/green]")
                     completed_tasks.append(task_id)
                     task["status"] = "completed"
@@ -601,6 +672,12 @@ Important:
                     })
                 else:
                     error_msg = result.get("error", "Unknown error")
+                    self.logger.error("Task execution failed",
+                        task_id=task_id,
+                        agent=assigned_agent,
+                        error=error_msg,
+                        workspace_id=workspace_id
+                    )
                     self.console.print(f"  [red]❌ Failed: {error_msg}[/red]")
                     failed_tasks.append(task_id)
                     task["status"] = "failed"
@@ -612,6 +689,14 @@ Important:
                     })
 
             except Exception as e:
+                self.logger.error("Task execution exception",
+                    task_id=task_id,
+                    agent=assigned_agent,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                    workspace_id=workspace_id,
+                    exc_info=True
+                )
                 self.console.print(f"  [red]❌ Exception: {str(e)}[/red]")
                 failed_tasks.append(task_id)
                 task["status"] = "failed"
@@ -627,7 +712,15 @@ Important:
         state["failed_tasks"] = failed_tasks
         state["tasks"] = tasks  # Update with new statuses
 
-        # Summary
+        self.logger.info("Task execution phase completed",
+            total_tasks=len(tasks),
+            completed=len(completed_tasks),
+            failed=len(failed_tasks),
+            success=len(failed_tasks) == 0,
+            workspace_id=workspace_id
+        )
+
+        # Display summary panel for user
         self.console.print("\n")
         self.console.print(Panel.fit(
             f"[bold]Execution Summary[/bold]\n\n"
@@ -720,7 +813,11 @@ Important:
                 )
 
             except Exception as e:
-                self.console.print(f"[dim]Warning: Could not log orchestration: {e}[/dim]\n")
+                self.logger.warning("Could not log orchestration to PostgreSQL",
+                    workspace_id=state.get("workspace_id", "unknown"),
+                    error=str(e),
+                    error_type=type(e).__name__
+                )
 
         return state
 
