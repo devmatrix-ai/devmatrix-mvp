@@ -9,6 +9,7 @@ This workflow demonstrates:
 """
 
 from typing import Any
+from src.observability import get_logger
 from uuid import uuid4, UUID
 from datetime import datetime
 
@@ -64,9 +65,9 @@ class StatefulWorkflow:
             # Get or create task in PostgreSQL
             task_id_str = state.get("task_id")
             if not task_id_str or task_id_str == "":
-                print(f"[DEBUG] project_id from state: {project_id} (type: {type(project_id)})")
+                self.logger.debug("Project ID from state", project_id=project_id, project_id_type=type(project_id).__name__)
                 project_uuid = UUID(project_id) if project_id else uuid4()
-                print(f"[DEBUG] project_uuid: {project_uuid} (type: {type(project_uuid)})")
+                self.logger.debug("Project UUID", project_uuid=str(project_uuid), project_uuid_type=type(project_uuid).__name__)
 
                 task_id = self.postgres.create_task(
                     project_id=project_uuid,
@@ -159,7 +160,7 @@ class StatefulWorkflow:
             name=project_name, description=project_description
         )
 
-        print(f"[DEBUG] Created project_id: {project_id} (type: {type(project_id)})")
+        self.logger.debug("Created project ID", project_id=project_id, project_id_type=type(project_id).__name__)
 
         # Generate workflow ID
         workflow_id = str(uuid4())
