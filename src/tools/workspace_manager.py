@@ -8,6 +8,7 @@ Creates workspaces in ./workspace/{workspace_id}/
 import os
 import shutil
 from pathlib import Path
+from src.observability import get_logger
 from datetime import datetime
 from typing import Optional
 
@@ -33,6 +34,7 @@ class WorkspaceManager:
             workspace_id: Optional workspace ID (generates timestamp if None)
             auto_cleanup: Whether to cleanup workspace on exit
         """
+        self.logger = get_logger("workspace_manager")
         self.workspace_id = workspace_id or self._generate_workspace_id()
         self.auto_cleanup = auto_cleanup
         self.base_path = self.WORKSPACE_ROOT / self.workspace_id
@@ -233,7 +235,7 @@ class WorkspaceManager:
                 return True
             return False
         except Exception as e:
-            print(f"Error cleaning up workspace: {e}")
+            self.logger.error("Failed to cleanup workspace", workspace_id=self.workspace_id, error=str(e))
             return False
 
     def get_size(self) -> int:

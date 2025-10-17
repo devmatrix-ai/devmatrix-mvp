@@ -2,7 +2,19 @@
 API Usage Examples
 
 Example requests and responses for the Devmatrix API.
+
+Timeout Guidelines:
+- TASK_TIMEOUT_SHORT (180s / 3min): Fast operations (validation, simple fetches)
+- TASK_TIMEOUT_MEDIUM (300s / 5min): Standard operations (data fetch, reports)
+- TASK_TIMEOUT_LONG (600s / 10min): Complex operations (heavy processing, security audits)
 """
+
+from src.config.constants import (
+    TASK_TIMEOUT_SHORT,
+    TASK_TIMEOUT_MEDIUM,
+    TASK_TIMEOUT_LONG,
+    DEFAULT_MAX_RETRIES,
+)
 
 # Example 1: Create a simple workflow
 CREATE_WORKFLOW_EXAMPLE = {
@@ -14,32 +26,32 @@ CREATE_WORKFLOW_EXAMPLE = {
             "agent_type": "data_fetcher",
             "prompt": "Fetch data from source",
             "dependencies": [],
-            "max_retries": 3,
-            "timeout": 300
+            "max_retries": DEFAULT_MAX_RETRIES,
+            "timeout": TASK_TIMEOUT_MEDIUM  # Standard data fetch
         },
         {
             "task_id": "validate_data",
             "agent_type": "data_validator",
             "prompt": "Validate data quality",
             "dependencies": ["fetch_data"],
-            "max_retries": 2,
-            "timeout": 180
+            "max_retries": DEFAULT_MAX_RETRIES - 1,
+            "timeout": TASK_TIMEOUT_SHORT  # Fast validation
         },
         {
             "task_id": "process_data",
             "agent_type": "data_processor",
             "prompt": "Process and transform data",
             "dependencies": ["validate_data"],
-            "max_retries": 3,
-            "timeout": 600
+            "max_retries": DEFAULT_MAX_RETRIES,
+            "timeout": TASK_TIMEOUT_LONG  # Heavy processing
         },
         {
             "task_id": "generate_report",
             "agent_type": "report_generator",
             "prompt": "Generate analysis report",
             "dependencies": ["process_data"],
-            "max_retries": 2,
-            "timeout": 300
+            "max_retries": DEFAULT_MAX_RETRIES - 1,
+            "timeout": TASK_TIMEOUT_MEDIUM  # Standard report generation
         }
     ],
     "metadata": {
@@ -59,32 +71,32 @@ CODE_ANALYSIS_WORKFLOW = {
             "agent_type": "code_scanner",
             "prompt": "Scan codebase for issues",
             "dependencies": [],
-            "max_retries": 2,
-            "timeout": 300
+            "max_retries": DEFAULT_MAX_RETRIES - 1,
+            "timeout": TASK_TIMEOUT_MEDIUM  # Standard codebase scan
         },
         {
             "task_id": "analyze_patterns",
             "agent_type": "pattern_analyzer",
             "prompt": "Analyze code patterns and anti-patterns",
             "dependencies": ["scan_codebase"],
-            "max_retries": 2,
-            "timeout": 400
+            "max_retries": DEFAULT_MAX_RETRIES - 1,
+            "timeout": TASK_TIMEOUT_LONG  # Complex pattern analysis
         },
         {
             "task_id": "security_audit",
             "agent_type": "security_auditor",
             "prompt": "Perform security audit",
             "dependencies": ["scan_codebase"],
-            "max_retries": 3,
-            "timeout": 500
+            "max_retries": DEFAULT_MAX_RETRIES,
+            "timeout": TASK_TIMEOUT_LONG  # Comprehensive security analysis
         },
         {
             "task_id": "generate_recommendations",
             "agent_type": "recommendation_engine",
             "prompt": "Generate improvement recommendations",
             "dependencies": ["analyze_patterns", "security_audit"],
-            "max_retries": 2,
-            "timeout": 300
+            "max_retries": DEFAULT_MAX_RETRIES - 1,
+            "timeout": TASK_TIMEOUT_MEDIUM  # Standard recommendation generation
         }
     ],
     "metadata": {
@@ -120,8 +132,8 @@ WORKFLOW_RESPONSE_EXAMPLE = {
             "agent_type": "data_fetcher",
             "prompt": "Fetch data from source",
             "dependencies": [],
-            "max_retries": 3,
-            "timeout": 300
+            "max_retries": DEFAULT_MAX_RETRIES,
+            "timeout": TASK_TIMEOUT_MEDIUM
         }
     ],
     "metadata": {

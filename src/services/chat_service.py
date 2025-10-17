@@ -532,18 +532,19 @@ Respondé de manera natural, amigable y útil. Si es una pregunta de diseño o p
                 "done": False,
             }
 
-            # Create a queue for progress events
-            progress_queue = asyncio.Queue()
+            # Create a queue for progress events (using thread-safe queue)
+            import queue
+            progress_queue_sync = queue.Queue()
 
             # Create progress callback that puts events in queue
             def progress_callback(event_type: str, data: dict):
                 """Callback to capture progress events from orchestrator."""
                 try:
-                    # Put event in queue (non-blocking)
-                    asyncio.create_task(progress_queue.put({
+                    # Use thread-safe queue since this is called from thread pool
+                    progress_queue_sync.put({
                         "event_type": event_type,
                         "data": data
-                    }))
+                    })
                 except Exception as e:
                     self.logger.error(f"Error in progress callback: {e}")
 
@@ -568,50 +569,41 @@ Respondé de manera natural, amigable y útil. Si es una pregunta de diseño o p
 
             # Stream progress events while orchestration runs
             result = None
-            while True:
+            orchestration_done = False
+
+            while not orchestration_done:
+                # Check for progress events (non-blocking)
                 try:
-                    # Wait for either a progress event or orchestration completion
-                    done, pending = await asyncio.wait(
-                        [
-                            asyncio.create_task(progress_queue.get()),
-                            asyncio.create_task(orchestration_task)
-                        ],
-                        return_when=asyncio.FIRST_COMPLETED,
-                        timeout=0.1
-                    )
-
-                    for task in done:
-                        if task == orchestration_task or (hasattr(task, '_coro') and 'orchestrate' in str(task._coro)):
-                            # Orchestration completed
-                            result = await task
-                            break
-                        else:
-                            # Progress event received
-                            event = await task
-                            yield {
-                                "type": "progress",
-                                "event": event["event_type"],
-                                "data": event["data"],
-                                "done": False,
-                            }
-
-                    if result is not None:
-                        break
-
-                except asyncio.TimeoutError:
-                    continue
-
-            # Drain any remaining progress events
-            while not progress_queue.empty():
-                try:
-                    event = await asyncio.wait_for(progress_queue.get(), timeout=0.1)
+                    event = progress_queue_sync.get(block=False)
                     yield {
                         "type": "progress",
                         "event": event["event_type"],
                         "data": event["data"],
                         "done": False,
                     }
-                except asyncio.TimeoutError:
+                except:
+                    # No progress events, check if orchestration is done
+                    pass
+
+                # Check if orchestration task is done
+                if orchestration_task.done():
+                    result = await orchestration_task
+                    orchestration_done = True
+                else:
+                    # Small delay to avoid busy waiting
+                    await asyncio.sleep(0.1)
+
+            # Drain any remaining progress events
+            while not progress_queue_sync.empty():
+                try:
+                    event = progress_queue_sync.get(block=False)
+                    yield {
+                        "type": "progress",
+                        "event": event["event_type"],
+                        "data": event["data"],
+                        "done": False,
+                    }
+                except:
                     break
 
             # Format result as message

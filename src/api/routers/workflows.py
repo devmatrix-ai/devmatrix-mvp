@@ -10,6 +10,13 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
+from src.config.constants import (
+    DEFAULT_REQUEST_TIMEOUT,
+    DEFAULT_MAX_RETRIES,
+    MIN_TIMEOUT,
+    MAX_TIMEOUT,
+)
+
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
@@ -21,8 +28,8 @@ class TaskDefinition(BaseModel):
     agent_type: str = Field(..., description="Type of agent to execute task")
     prompt: str = Field(..., description="Task prompt")
     dependencies: List[str] = Field(default_factory=list, description="Task dependencies")
-    max_retries: int = Field(default=3, ge=0, le=10, description="Maximum retry attempts")
-    timeout: int = Field(default=300, ge=1, le=3600, description="Task timeout in seconds")
+    max_retries: int = Field(default=DEFAULT_MAX_RETRIES, ge=0, le=10, description="Maximum retry attempts")
+    timeout: int = Field(default=DEFAULT_REQUEST_TIMEOUT, ge=MIN_TIMEOUT, le=MAX_TIMEOUT, description="Task timeout in seconds")
 
 
 class WorkflowCreate(BaseModel):

@@ -11,6 +11,22 @@ from anthropic import Anthropic, APIError, APIConnectionError, RateLimitError
 from dotenv import load_dotenv
 
 from src.error_handling import RetryStrategy, RetryConfig, CircuitBreaker, CircuitBreakerConfig
+from src.config.constants import (
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_TEMPERATURE,
+    DEFAULT_MODEL,
+    DEFAULT_MAX_RETRIES,
+    RETRY_INITIAL_DELAY,
+    RETRY_MAX_DELAY,
+    RETRY_EXPONENTIAL_BASE,
+    CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+    CIRCUIT_BREAKER_SUCCESS_THRESHOLD,
+    CIRCUIT_BREAKER_TIMEOUT,
+    LLM_CACHE_TTL,
+    COST_PER_1M_INPUT_TOKENS_USD,
+    COST_PER_1M_OUTPUT_TOKENS_USD,
+    USD_TO_EUR_RATE,
+)
 
 # Load environment variables
 load_dotenv()
@@ -33,7 +49,7 @@ class AnthropicClient:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "claude-3-5-sonnet-20241022",
+        model: str = DEFAULT_MODEL,
         enable_cache: bool = True,
         cache_manager = None,
         enable_retry: bool = True,
@@ -81,10 +97,10 @@ class AnthropicClient:
         if self.enable_retry:
             self.retry_strategy = RetryStrategy(
                 RetryConfig(
-                    max_attempts=3,
-                    initial_delay=1.0,
-                    max_delay=30.0,
-                    exponential_base=2.0,
+                    max_attempts=DEFAULT_MAX_RETRIES,
+                    initial_delay=RETRY_INITIAL_DELAY,
+                    max_delay=RETRY_MAX_DELAY,
+                    exponential_base=RETRY_EXPONENTIAL_BASE,
                     jitter=True,
                     retryable_exceptions=(
                         APIConnectionError,
@@ -101,9 +117,9 @@ class AnthropicClient:
         if self.enable_circuit_breaker:
             self.circuit_breaker = CircuitBreaker(
                 CircuitBreakerConfig(
-                    failure_threshold=5,
-                    success_threshold=2,
-                    timeout=60.0,
+                    failure_threshold=CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+                    success_threshold=CIRCUIT_BREAKER_SUCCESS_THRESHOLD,
+                    timeout=CIRCUIT_BREAKER_TIMEOUT,
                     expected_exception=APIError,
                 )
             )
@@ -114,8 +130,8 @@ class AnthropicClient:
         self,
         messages: List[Dict[str, str]],
         system: Optional[str] = None,
-        max_tokens: int = 4096,
-        temperature: float = 0.7,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        temperature: float = DEFAULT_TEMPERATURE,
         use_cache: bool = True,
         **kwargs
     ) -> Dict[str, Any]:
@@ -194,7 +210,7 @@ class AnthropicClient:
                     prompt=prompt,
                     system=system,
                     response=result,
-                    ttl=3600  # Cache for 1 hour
+                    ttl=LLM_CACHE_TTL
                 )
 
             return result
@@ -208,8 +224,8 @@ class AnthropicClient:
         messages: List[Dict[str, str]],
         tools: List[Dict[str, Any]],
         system: Optional[str] = None,
-        max_tokens: int = 4096,
-        temperature: float = 0.7,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        temperature: float = DEFAULT_TEMPERATURE,
     ) -> Dict[str, Any]:
         """
         Generate completion with tool use.
@@ -287,9 +303,7 @@ class AnthropicClient:
             Cost in EUR
         """
         # Claude 3.5 Sonnet pricing (as of 2024)
-        # Input: $3 per 1M tokens
-        # Output: $15 per 1M tokens
-        input_cost_eur = (input_tokens / 1_000_000) * 3 * 0.92  # USD to EUR ~0.92
-        output_cost_eur = (output_tokens / 1_000_000) * 15 * 0.92
+        input_cost_eur = (input_tokens / 1_000_000) * COST_PER_1M_INPUT_TOKENS_USD * USD_TO_EUR_RATE
+        output_cost_eur = (output_tokens / 1_000_000) * COST_PER_1M_OUTPUT_TOKENS_USD * USD_TO_EUR_RATE
 
         return input_cost_eur + output_cost_eur
