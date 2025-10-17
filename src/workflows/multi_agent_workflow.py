@@ -6,6 +6,7 @@ Integrates OrchestratorAgent, AgentRegistry, SharedScratchpad, and ParallelExecu
 """
 
 from typing import Dict, Any, List, TypedDict, Annotated, Sequence
+from src.observability import get_logger
 from langgraph.graph import StateGraph, END
 import operator
 from pathlib import Path
@@ -346,9 +347,47 @@ class MultiAgentWorkflow:
 
             # Track in PostgreSQL if available
             if self.postgres:
-                # This would create project and task entries
-                # Simplified for now
-                pass
+                try:
+                    # Create project entry
+                    project_id = self.postgres.create_project(
+                        name=f"workflow_{state['workspace_id']}",
+                        description=state.get("project_request", "Multi-agent workflow execution")
+                    )
+
+                    # Log completed tasks
+                    for task_id in state["completed_tasks"]:
+                        task_data = next((t for t in state["tasks"] if t["id"] == task_id), None)
+                        if task_data:
+                            self.postgres.create_task(
+                                project_id=project_id,
+                                agent_name=task_data.get("assigned_agent", "unknown"),
+                                task_type=task_data.get("task_type", "unknown"),
+                                input_data=task_data.get("description", ""),
+                                output_data=str(task_data.get("output", {})),
+                                status="completed"
+                            )
+
+                    # Log failed tasks
+                    for task_id in state["failed_tasks"]:
+                        task_data = next((t for t in state["tasks"] if t["id"] == task_id), None)
+                        if task_data:
+                            self.postgres.create_task(
+                                project_id=project_id,
+                                agent_name=task_data.get("assigned_agent", "unknown"),
+                                task_type=task_data.get("task_type", "unknown"),
+                                input_data=task_data.get("description", ""),
+                                output_data=task_data.get("error", "Task failed"),
+                                status="failed"
+                            )
+
+                    state["messages"].append(
+                        f"📊 PostgreSQL: Logged {len(state['completed_tasks'])} completed, "
+                        f"{len(state['failed_tasks'])} failed tasks"
+                    )
+
+                except Exception as e:
+                    # Don't fail workflow if logging fails
+                    state["messages"].append(f"⚠️ PostgreSQL logging failed: {e}")
 
             return state
 
@@ -416,7 +455,7 @@ class MultiAgentWorkflow:
 
             # Print report if requested
             if show_performance_report:
-                print("\n" + self.performance_monitor.generate_report())
+                self.logger.info("Performance report", report=self.performance_monitor.generate_report())
         else:
             performance_metrics = {}
 
