@@ -162,7 +162,7 @@ Important:
 - Aim for 3-10 tasks total (don't over-decompose)
 """
 
-    def __init__(self, api_key: str = None, agent_registry: AgentRegistry = None, progress_callback=None):
+    def __init__(self, api_key: str = None, agent_registry: AgentRegistry = None, progress_callback=None, enable_rag: bool = True):
         """
         Initialize orchestrator agent.
 
@@ -170,6 +170,7 @@ Important:
             api_key: Anthropic API key (optional, uses env var if not provided)
             agent_registry: Agent registry for agent selection (optional, creates default if not provided)
             progress_callback: Optional callback function for progress updates
+            enable_rag: Enable RAG for task decomposition enhancement (default: True)
         """
         # Use Claude Opus 4.1 for complex orchestration reasoning
         self.llm = AnthropicClient(api_key=api_key, model="claude-opus-4-1-20250805")
@@ -184,6 +185,43 @@ Important:
             self.postgres = PostgresManager()
         except Exception:
             self.postgres = None
+
+        # Initialize RAG components if enabled
+        self.rag_enabled = enable_rag
+        self.retriever = None
+        self.context_builder = None
+
+        if enable_rag:
+            try:
+                from src.rag import (
+                    create_embedding_model,
+                    create_vector_store,
+                    create_retriever,
+                    create_context_builder,
+                    RetrievalStrategy,
+                    ContextTemplate,
+                )
+
+                embedding_model = create_embedding_model()
+                vector_store = create_vector_store(embedding_model)
+                self.retriever = create_retriever(
+                    vector_store,
+                    strategy=RetrievalStrategy.MMR,
+                    top_k=3  # Get 3 similar task breakdowns
+                )
+                self.context_builder = create_context_builder(
+                    template=ContextTemplate.SIMPLE  # Simple format for prompts
+                )
+
+                self.logger.info("RAG enabled for task decomposition")
+
+            except Exception as e:
+                self.logger.warning(
+                    "RAG initialization failed, continuing without RAG",
+                    error=str(e),
+                    error_type=type(e).__name__
+                )
+                self.rag_enabled = False
 
     def _emit_progress(self, event_type: str, data: dict):
         """
@@ -322,11 +360,51 @@ Important:
             'message': 'Descomponiendo proyecto en tareas...'
         })
 
+        # Try to retrieve similar task breakdowns from RAG
+        rag_context = ""
+        if self.rag_enabled and self.retriever:
+            try:
+                query = f"{project_type} project: {user_request}"
+                results = self.retriever.retrieve(
+                    query=query,
+                    top_k=3,
+                    min_similarity=0.65,  # Lower threshold for task breakdowns
+                    filters={"task_type": "task_breakdown"}  # Filter for task breakdown examples
+                )
+
+                if results:
+                    rag_context = self.context_builder.build_context(query, results)
+                    self.logger.info(
+                        "Retrieved similar task breakdowns",
+                        num_results=len(results),
+                        avg_similarity=sum(r.similarity for r in results) / len(results) if results else 0,
+                        workspace_id=state.get("workspace_id", "unknown")
+                    )
+
+            except Exception as e:
+                self.logger.warning(
+                    "RAG retrieval failed during task decomposition",
+                    error=str(e),
+                    error_type=type(e).__name__,
+                    workspace_id=state.get("workspace_id", "unknown")
+                )
+
+        # Build decomposition prompt (with or without RAG context)
         decomposition_prompt = self.TASK_DECOMPOSITION_PROMPT.format(
             request=user_request,
             project_type=project_type,
             complexity=complexity
         )
+
+        # Add RAG context if available
+        if rag_context:
+            decomposition_prompt = f"""{decomposition_prompt}
+
+Similar Task Breakdown Examples (for reference):
+{rag_context}
+
+Use these examples as inspiration for task decomposition patterns, but adapt to the specific requirements above.
+"""
 
         response = self.llm.generate(
             messages=[{"role": "user", "content": decomposition_prompt}],

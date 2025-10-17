@@ -3,11 +3,13 @@ Planning Agent
 
 AI agent that breaks down user requests into actionable tasks.
 Uses LangGraph for state management and Anthropic Claude for reasoning.
+Enhanced with RAG for retrieving similar planning examples.
 """
 
-from typing import TypedDict, Annotated, Sequence
+from typing import TypedDict, Annotated, Sequence, Optional
 from langgraph.graph import StateGraph, END
 from src.llm.anthropic_client import AnthropicClient
+from src.observability import get_logger
 
 
 class PlanningState(TypedDict):
@@ -56,15 +58,53 @@ Output your plan in the following JSON format:
 
 Be thorough but concise. Focus on actionable, well-defined tasks."""
 
-    def __init__(self, api_key: str = None):
+    def __init__(self, api_key: str = None, enable_rag: bool = True):
         """
         Initialize planning agent.
 
         Args:
             api_key: Anthropic API key (optional, uses env var if not provided)
+            enable_rag: Enable RAG for retrieving similar planning examples
         """
+        self.logger = get_logger("planning_agent")
         self.llm = AnthropicClient(api_key=api_key)
         self.graph = self._build_graph()
+
+        # Initialize RAG components
+        self.rag_enabled = enable_rag
+        self.retriever = None
+        self.context_builder = None
+
+        if enable_rag:
+            try:
+                from src.rag import (
+                    create_embedding_model,
+                    create_vector_store,
+                    create_retriever,
+                    create_context_builder,
+                    RetrievalStrategy,
+                    ContextTemplate,
+                )
+
+                embedding_model = create_embedding_model()
+                vector_store = create_vector_store(embedding_model)
+                self.retriever = create_retriever(
+                    vector_store,
+                    strategy=RetrievalStrategy.MMR,
+                    top_k=3  # Get 3 similar plans
+                )
+                self.context_builder = create_context_builder(
+                    template=ContextTemplate.SIMPLE
+                )
+
+                self.logger.info("RAG enabled for planning")
+
+            except Exception as e:
+                self.logger.warning(
+                    "RAG initialization failed, continuing without RAG",
+                    error=str(e)
+                )
+                self.rag_enabled = False
 
     def _build_graph(self) -> StateGraph:
         """Build LangGraph workflow."""
@@ -116,10 +156,34 @@ Respond in a structured format."""
         return state
 
     def _generate_plan(self, state: PlanningState) -> PlanningState:
-        """Generate detailed task breakdown."""
+        """Generate detailed task breakdown with RAG-enhanced examples."""
         user_request = state["user_request"]
         analysis = state["messages"][-1]["content"]
 
+        # Try to retrieve similar planning examples from RAG
+        rag_context = ""
+        if self.rag_enabled and self.retriever:
+            try:
+                query = f"planning: {user_request}"
+                results = self.retriever.retrieve(
+                    query=query,
+                    top_k=3,
+                    min_similarity=0.60,  # Lower threshold for planning
+                    filters={"task_type": "planning"}
+                )
+
+                if results:
+                    rag_context = self.context_builder.build_context(query, results)
+                    self.logger.info(
+                        "Retrieved similar planning examples",
+                        num_results=len(results),
+                        avg_similarity=sum(r.similarity for r in results) / len(results),
+                    )
+
+            except Exception as e:
+                self.logger.warning("RAG retrieval failed during planning")
+
+        # Build planning prompt with or without RAG context
         planning_prompt = f"""Based on this analysis, create a detailed implementation plan:
 
 Original Request: {user_request}
@@ -132,6 +196,15 @@ Ensure tasks are:
 - Properly ordered with dependencies
 - Have realistic time estimates
 - Include all necessary steps (setup, implementation, testing, documentation)"""
+
+        # Add RAG context if available
+        if rag_context:
+            planning_prompt = f"""{planning_prompt}
+
+Similar Planning Examples (for reference):
+{rag_context}
+
+Use these examples as inspiration for task structure and dependencies, but adapt to the specific requirements above."""
 
         response = self.llm.generate(
             messages=[{"role": "user", "content": planning_prompt}],

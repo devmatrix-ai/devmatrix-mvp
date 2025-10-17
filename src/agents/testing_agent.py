@@ -3,6 +3,7 @@ Testing Agent
 
 Specialized agent for test generation and execution in multi-agent workflows.
 Generates pytest tests and executes them to verify code correctness.
+Enhanced with RAG for retrieving similar test examples.
 """
 
 import subprocess
@@ -13,6 +14,7 @@ from src.llm.anthropic_client import AnthropicClient
 from src.tools.workspace_manager import WorkspaceManager
 from src.state.shared_scratchpad import SharedScratchpad, Artifact, ArtifactType
 from src.agents.agent_registry import AgentCapability
+from src.observability import get_logger
 
 
 class TestingAgent:
@@ -92,16 +94,54 @@ Output ONLY the test code in this format:
 
 Do not include explanations outside the code block."""
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, enable_rag: bool = True):
         """
         Initialize testing agent.
 
         Args:
             api_key: Anthropic API key (optional, uses env var if not provided)
+            enable_rag: Enable RAG for retrieving similar test examples
         """
+        self.logger = get_logger("testing_agent")
         # Use Claude Sonnet 4.5 for fast test generation
         self.llm = AnthropicClient(api_key=api_key, model="claude-sonnet-4-5-20250929")
         self.name = "TestingAgent"
+
+        # Initialize RAG components
+        self.rag_enabled = enable_rag
+        self.retriever = None
+        self.context_builder = None
+
+        if enable_rag:
+            try:
+                from src.rag import (
+                    create_embedding_model,
+                    create_vector_store,
+                    create_retriever,
+                    create_context_builder,
+                    RetrievalStrategy,
+                    ContextTemplate,
+                )
+
+                embedding_model = create_embedding_model()
+                vector_store = create_vector_store(embedding_model)
+                self.retriever = create_retriever(
+                    vector_store,
+                    strategy=RetrievalStrategy.MMR,
+                    top_k=3  # Get 3 similar test examples
+                )
+                self.context_builder = create_context_builder(
+                    template=ContextTemplate.SIMPLE
+                )
+
+                self.logger.info("RAG enabled for testing")
+
+            except Exception as e:
+                self.logger.warning(
+                    "RAG initialization failed, continuing without RAG",
+                    error=str(e)
+                )
+                self.rag_enabled = False
 
     def get_capabilities(self) -> Set[AgentCapability]:
         """Return agent capabilities."""
@@ -244,7 +284,7 @@ Do not include explanations outside the code block."""
         files: list
     ) -> str:
         """
-        Generate pytest tests using LLM.
+        Generate pytest tests using LLM with RAG-enhanced examples.
 
         Args:
             description: Task description
@@ -254,11 +294,44 @@ Do not include explanations outside the code block."""
         Returns:
             Generated pytest code
         """
+        # Try to retrieve similar test examples from RAG
+        rag_context = ""
+        if self.rag_enabled and self.retriever:
+            try:
+                query = f"pytest test for: {description}"
+                results = self.retriever.retrieve(
+                    query=query,
+                    top_k=3,
+                    min_similarity=0.65,
+                    filters={"pattern": "testing"}
+                )
+
+                if results:
+                    rag_context = self.context_builder.build_context(query, results)
+                    self.logger.info(
+                        "Retrieved similar test examples",
+                        num_results=len(results),
+                        avg_similarity=sum(r.similarity for r in results) / len(results),
+                    )
+
+            except Exception as e:
+                self.logger.warning("RAG retrieval failed during test generation")
+
+        # Build test prompt
         test_prompt = self.TEST_GENERATION_PROMPT.format(
             description=description,
             code_to_test=code_to_test,
             files=", ".join(files)
         )
+
+        # Add RAG context if available
+        if rag_context:
+            test_prompt = f"""{test_prompt}
+
+Similar Test Examples (for reference):
+{rag_context}
+
+Use these examples as inspiration for test structure and patterns, but adapt to the specific code being tested."""
 
         response = self.llm.generate(
             messages=[{"role": "user", "content": test_prompt}],
