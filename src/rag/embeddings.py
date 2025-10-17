@@ -5,11 +5,13 @@ This module provides semantic embeddings for code and text using sentence-transf
 Embeddings are used to convert code snippets into vector representations for similarity search.
 """
 
-from typing import List, Union
+from typing import List, Union, Optional
 import numpy as np
+import time
 from sentence_transformers import SentenceTransformer
 
 from src.observability import get_logger
+from .persistent_cache import get_cache, PersistentEmbeddingCache
 
 
 class EmbeddingModel:
@@ -23,9 +25,15 @@ class EmbeddingModel:
         model_name: Name of the sentence-transformers model
         model: Loaded SentenceTransformer instance
         dimension: Embedding vector dimension
+        cache: Persistent cache for embeddings (optional)
     """
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
+    def __init__(
+        self,
+        model_name: str = "all-MiniLM-L6-v2",
+        enable_cache: bool = True,
+        cache_dir: str = ".cache/rag",
+    ):
         """
         Initialize embedding model.
 
@@ -33,9 +41,12 @@ class EmbeddingModel:
             model_name: Name of the sentence-transformers model to use.
                        Default: all-MiniLM-L6-v2 (384 dimensions, balanced performance)
                        Alternative: all-mpnet-base-v2 (768 dimensions, higher quality)
+            enable_cache: Enable persistent caching of embeddings
+            cache_dir: Directory for cache storage
         """
         self.logger = get_logger("rag.embeddings")
         self.model_name = model_name
+        self.cache: Optional[PersistentEmbeddingCache] = None
 
         try:
             self.logger.info(f"Loading embedding model: {model_name}")
@@ -46,6 +57,18 @@ class EmbeddingModel:
                 model=model_name,
                 dimension=self.dimension
             )
+
+            # Initialize cache if enabled
+            if enable_cache:
+                try:
+                    self.cache = get_cache(cache_dir=cache_dir)
+                    self.logger.info("Persistent cache enabled")
+                except Exception as e:
+                    self.logger.warning(
+                        "Failed to initialize cache, continuing without cache",
+                        error=str(e)
+                    )
+
         except Exception as e:
             self.logger.error(
                 f"Failed to load embedding model",
@@ -58,6 +81,8 @@ class EmbeddingModel:
     def embed_text(self, text: str) -> List[float]:
         """
         Generate embedding for a single text.
+
+        Uses persistent cache if enabled to avoid re-computing embeddings.
 
         Args:
             text: Input text to embed
@@ -72,6 +97,16 @@ class EmbeddingModel:
         if not text or not text.strip():
             raise ValueError("Cannot embed empty text")
 
+        # Try cache first
+        if self.cache:
+            cached_embedding = self.cache.get(text, model=self.model_name)
+            if cached_embedding is not None:
+                self.logger.debug(
+                    "Cache hit for embedding",
+                    text_length=len(text)
+                )
+                return cached_embedding
+
         try:
             self.logger.debug(
                 "Generating embedding for single text",
@@ -79,18 +114,32 @@ class EmbeddingModel:
             )
 
             # Generate embedding
+            start = time.time()
+
             embedding = self.model.encode(
                 text,
                 convert_to_numpy=True,
                 show_progress_bar=False
             )
 
+            duration_ms = (time.time() - start) * 1000
+
             # Convert to list for ChromaDB compatibility
             embedding_list = embedding.tolist()
 
+            # Store in cache
+            if self.cache:
+                self.cache.put(
+                    text,
+                    embedding_list,
+                    model=self.model_name,
+                    embedding_time_ms=duration_ms
+                )
+
             self.logger.debug(
                 "Embedding generated successfully",
-                embedding_dimension=len(embedding_list)
+                embedding_dimension=len(embedding_list),
+                time_ms=duration_ms
             )
 
             return embedding_list
@@ -219,14 +268,61 @@ class EmbeddingModel:
         return float(max(0.0, min(1.0, similarity)))
 
 
-def create_embedding_model(model_name: str = "all-MiniLM-L6-v2") -> EmbeddingModel:
+    def get_cache_stats(self):
+        """
+        Get cache statistics.
+
+        Returns:
+            CacheStats object or None if cache is disabled
+        """
+        if self.cache:
+            return self.cache.get_stats()
+        return None
+
+    def warm_cache(self, queries: List[str]):
+        """
+        Warm cache with frequently used queries.
+
+        Args:
+            queries: List of queries to pre-compute embeddings
+        """
+        if not self.cache:
+            self.logger.warning("Cache not enabled, skipping cache warming")
+            return
+
+        self.cache.warm_cache(
+            queries,
+            embed_func=lambda q: self.model.encode(
+                q, convert_to_numpy=True, show_progress_bar=False
+            ).tolist(),
+            model=self.model_name,
+        )
+
+    def clear_cache(self):
+        """Clear all cached embeddings."""
+        if self.cache:
+            return self.cache.clear()
+        return 0
+
+
+def create_embedding_model(
+    model_name: str = "all-MiniLM-L6-v2",
+    enable_cache: bool = True,
+    cache_dir: str = ".cache/rag",
+) -> EmbeddingModel:
     """
     Factory function to create an embedding model instance.
 
     Args:
         model_name: Name of the sentence-transformers model
+        enable_cache: Enable persistent caching of embeddings
+        cache_dir: Directory for cache storage
 
     Returns:
         Initialized EmbeddingModel instance
     """
-    return EmbeddingModel(model_name=model_name)
+    return EmbeddingModel(
+        model_name=model_name,
+        enable_cache=enable_cache,
+        cache_dir=cache_dir,
+    )

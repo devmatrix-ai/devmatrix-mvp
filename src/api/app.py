@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..observability import StructuredLogger, MetricsCollector, HealthCheck, setup_logging
-from .routers import workflows, executions, metrics, health, websocket
+from .routers import workflows, executions, metrics, health, websocket, rag
 
 
 # Initialize logging system
@@ -81,6 +81,7 @@ def create_app() -> FastAPI:
     app.include_router(metrics.router, prefix="/api/v1")
     app.include_router(health.router, prefix="/api/v1")
     app.include_router(websocket.router, prefix="/api/v1")
+    app.include_router(rag.router, prefix="/api/v1")
 
     # Mount Socket.IO app
     app.mount("/socket.io", websocket.sio_app)

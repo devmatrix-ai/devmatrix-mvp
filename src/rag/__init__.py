@@ -67,6 +67,12 @@ from src.rag.metrics import (
     get_rag_metrics_tracker,
     get_rag_metrics,
 )
+from src.rag.persistent_cache import (
+    PersistentEmbeddingCache,
+    CacheEntry,
+    CacheStats,
+    get_cache,
+)
 
 __all__ = [
     "EmbeddingModel",
@@ -90,4 +96,8 @@ __all__ = [
     "RAGMetrics",
     "get_rag_metrics_tracker",
     "get_rag_metrics",
+    "PersistentEmbeddingCache",
+    "CacheEntry",
+    "CacheStats",
+    "get_cache",
 ]

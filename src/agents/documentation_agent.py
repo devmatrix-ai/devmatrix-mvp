@@ -3,6 +3,7 @@ Documentation Agent
 
 Specialized agent for documentation generation in multi-agent workflows.
 Generates docstrings, README files, and API documentation from code.
+Enhanced with RAG for retrieving similar documentation examples.
 """
 
 from typing import Dict, Any, Optional, Set
@@ -12,6 +13,7 @@ from src.llm.anthropic_client import AnthropicClient
 from src.tools.workspace_manager import WorkspaceManager
 from src.state.shared_scratchpad import SharedScratchpad, Artifact, ArtifactType
 from src.agents.agent_registry import AgentCapability
+from src.observability import get_logger
 
 
 class DocumentationAgent:
@@ -110,16 +112,54 @@ Output ONLY the README content in Markdown format.
 
 Do not include explanations outside the content."""
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, enable_rag: bool = True):
         """
         Initialize documentation agent.
 
         Args:
             api_key: Anthropic API key (optional, uses env var if not provided)
+            enable_rag: Enable RAG for retrieving similar documentation examples
         """
+        self.logger = get_logger("documentation_agent")
         # Use Claude Sonnet 4.5 for fast documentation generation
         self.llm = AnthropicClient(api_key=api_key, model="claude-sonnet-4-5-20250929")
         self.name = "DocumentationAgent"
+
+        # Initialize RAG components
+        self.rag_enabled = enable_rag
+        self.retriever = None
+        self.context_builder = None
+
+        if enable_rag:
+            try:
+                from src.rag import (
+                    create_embedding_model,
+                    create_vector_store,
+                    create_retriever,
+                    create_context_builder,
+                    RetrievalStrategy,
+                    ContextTemplate,
+                )
+
+                embedding_model = create_embedding_model()
+                vector_store = create_vector_store(embedding_model)
+                self.retriever = create_retriever(
+                    vector_store,
+                    strategy=RetrievalStrategy.MMR,
+                    top_k=3  # Get 3 similar documentation examples
+                )
+                self.context_builder = create_context_builder(
+                    template=ContextTemplate.SIMPLE
+                )
+
+                self.logger.info("RAG enabled for documentation")
+
+            except Exception as e:
+                self.logger.warning(
+                    "RAG initialization failed, continuing without RAG",
+                    error=str(e)
+                )
+                self.rag_enabled = False
 
     def get_capabilities(self) -> Set[AgentCapability]:
         """Return agent capabilities."""
@@ -241,7 +281,7 @@ Do not include explanations outside the content."""
         files: list
     ) -> str:
         """
-        Generate docstrings for code using LLM.
+        Generate docstrings for code using LLM with RAG-enhanced examples.
 
         Args:
             description: Task description
@@ -251,11 +291,44 @@ Do not include explanations outside the content."""
         Returns:
             Code with added docstrings
         """
+        # Try to retrieve similar documented code from RAG
+        rag_context = ""
+        if self.rag_enabled and self.retriever:
+            try:
+                query = f"documented code: {description}"
+                results = self.retriever.retrieve(
+                    query=query,
+                    top_k=3,
+                    min_similarity=0.65,
+                    filters={"has_docstring": True}
+                )
+
+                if results:
+                    rag_context = self.context_builder.build_context(query, results)
+                    self.logger.info(
+                        "Retrieved similar documentation examples",
+                        num_results=len(results),
+                        avg_similarity=sum(r.similarity for r in results) / len(results),
+                    )
+
+            except Exception as e:
+                self.logger.warning("RAG retrieval failed during documentation generation")
+
+        # Build documentation prompt
         doc_prompt = self.DOCSTRING_GENERATION_PROMPT.format(
             description=description,
             code_to_document=code_to_document,
             files=", ".join(files)
         )
+
+        # Add RAG context if available
+        if rag_context:
+            doc_prompt = f"""{doc_prompt}
+
+Similar Documented Code Examples (for reference):
+{rag_context}
+
+Use these examples as inspiration for docstring style and structure, but adapt to the specific code being documented."""
 
         response = self.llm.generate(
             messages=[{"role": "user", "content": doc_prompt}],
