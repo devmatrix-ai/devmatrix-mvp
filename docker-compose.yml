@@ -96,6 +96,9 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       ENVIRONMENT: development
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      LOG_FILE: ${LOG_FILE:-}
     ports:
       - "${APP_PORT:-8000}:8000"
     volumes:
