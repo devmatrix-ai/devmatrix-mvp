@@ -7,6 +7,7 @@ Stores: projects, tasks, decisions, git commits, cost tracking.
 
 import os
 from typing import Any, Optional
+from src.observability import get_logger
 from datetime import datetime
 from uuid import UUID, uuid4
 
@@ -74,31 +75,93 @@ class PostgresManager:
                 f"Failed to connect to PostgreSQL at {self.host}:{self.port}"
             ) from e
 
-    def _execute(self, query: str, params: tuple = None, fetch: bool = False) -> Any:
+    def _execute(
+        self,
+        query: str,
+        params: tuple = None,
+        fetch: bool = False,
+        operation: str = "unknown"
+    ) -> Any:
         """
-        Execute SQL query with error handling.
+        Execute SQL query with contextual error handling and logging.
 
         Args:
             query: SQL query string
             params: Query parameters
             fetch: Whether to fetch results
+            operation: Human-readable operation name for logging
 
         Returns:
             Query results if fetch=True, None otherwise
         """
+        # Extract operation type from query if not provided
+        if operation == "unknown":
+            query_lower = query.strip().lower()
+            if query_lower.startswith("insert"):
+                operation = "insert"
+            elif query_lower.startswith("update"):
+                operation = "update"
+            elif query_lower.startswith("delete"):
+                operation = "delete"
+            elif query_lower.startswith("select"):
+                operation = "select"
+            else:
+                operation = "query"
+
         try:
             with self.conn.cursor() as cursor:
+                # Log query execution for debugging
+                self.logger.debug(
+                    "Executing database operation",
+                    operation=operation,
+                    fetch=fetch
+                )
+
                 cursor.execute(query, params)
 
                 if fetch:
-                    return cursor.fetchall()
+                    results = cursor.fetchall()
+                    self.logger.debug(
+                        "Query executed successfully",
+                        operation=operation,
+                        rows_returned=len(results)
+                    )
+                    return results
 
                 self.conn.commit()
+                self.logger.debug(
+                    "Transaction committed successfully",
+                    operation=operation
+                )
                 return None
 
         except psycopg2.Error as e:
             self.conn.rollback()
-            print(f"Database error: {e}")
+
+            # Contextual error logging with useful information
+            error_context = {
+                "operation": operation,
+                "error_type": type(e).__name__,
+                "error_code": getattr(e, 'pgcode', None),
+                "error_message": str(e),
+                "query_type": query.strip().split()[0].upper() if query else "UNKNOWN"
+            }
+
+            # Add parameter info if available (but sanitize sensitive data)
+            if params:
+                # Don't log passwords or sensitive data
+                safe_params = []
+                for p in params:
+                    if isinstance(p, str) and len(p) > 50:
+                        safe_params.append(f"{p[:20]}...{p[-10:]}")
+                    else:
+                        safe_params.append(str(p)[:50])
+                error_context["params_preview"] = safe_params
+
+            self.logger.error(
+                "Database transaction failed and rolled back",
+                **error_context
+            )
             raise
 
     # ========================================
@@ -124,7 +187,12 @@ class PostgresManager:
             RETURNING id
         """
 
-        result = self._execute(query, (name, description), fetch=True)
+        result = self._execute(
+            query,
+            (name, description),
+            fetch=True,
+            operation=f"create_project:{name}"
+        )
         return result[0]["id"]
 
     def get_project(self, project_id: UUID) -> Optional[dict]:
@@ -142,7 +210,12 @@ class PostgresManager:
             WHERE id = %s
         """
 
-        results = self._execute(query, (str(project_id),), fetch=True)
+        results = self._execute(
+            query,
+            (str(project_id),),
+            fetch=True,
+            operation=f"get_project:{project_id}"
+        )
         return results[0] if results else None
 
     # ========================================
@@ -179,7 +252,10 @@ class PostgresManager:
         input_text = json_lib.dumps(input_data) if input_data else ""
 
         result = self._execute(
-            query, (str(project_id), agent_name, task_type, input_text, Json({})), fetch=True
+            query,
+            (str(project_id), agent_name, task_type, input_text, Json({})),
+            fetch=True,
+            operation=f"create_task:{task_type}:{agent_name}"
         )
         return result[0]["id"]
 
@@ -225,11 +301,18 @@ class PostgresManager:
                     status,
                     str(task_id),
                 ),
+                operation=f"update_task_status:{task_id}:{status}"
             )
             return True
 
         except Exception as e:
-            print(f"Error updating task status: {e}")
+            self.logger.error(
+                "Failed to update task status",
+                task_id=str(task_id),
+                status=status,
+                error=str(e),
+                error_type=type(e).__name__
+            )
             return False
 
     def get_task(self, task_id: UUID) -> Optional[dict]:
@@ -247,7 +330,12 @@ class PostgresManager:
             WHERE id = %s
         """
 
-        results = self._execute(query, (str(task_id),), fetch=True)
+        results = self._execute(
+            query,
+            (str(task_id),),
+            fetch=True,
+            operation=f"get_task:{task_id}"
+        )
         return results[0] if results else None
 
     def get_project_tasks(self, project_id: UUID) -> list[dict]:
@@ -266,7 +354,12 @@ class PostgresManager:
             ORDER BY created_at DESC
         """
 
-        return self._execute(query, (str(project_id),), fetch=True)
+        return self._execute(
+            query,
+            (str(project_id),),
+            fetch=True,
+            operation=f"get_project_tasks:{project_id}"
+        )
 
     # ========================================
     # Cost Tracking
@@ -310,6 +403,7 @@ class PostgresManager:
                 cost_usd,
             ),
             fetch=True,
+            operation=f"track_cost:{model_name}:${cost_usd:.4f}"
         )
         return result[0]["id"]
 
@@ -334,7 +428,12 @@ class PostgresManager:
             WHERE t.project_id = %s
         """
 
-        results = self._execute(query, (str(project_id),), fetch=True)
+        results = self._execute(
+            query,
+            (str(project_id),),
+            fetch=True,
+            operation=f"get_project_costs:{project_id}"
+        )
         return results[0] if results else {}
 
     def get_monthly_costs(self, year: int = None, month: int = None) -> dict[str, Any]:
@@ -366,7 +465,12 @@ class PostgresManager:
             GROUP BY model_name
         """
 
-        results = self._execute(query, (year, month), fetch=True)
+        results = self._execute(
+            query,
+            (year, month),
+            fetch=True,
+            operation=f"get_monthly_costs:{year}-{month:02d}"
+        )
 
         # Calculate totals
         total_cost = sum(r["total_cost"] or 0 for r in results)
@@ -422,6 +526,7 @@ class PostgresManager:
                 Json(metadata or {}),
             ),
             fetch=True,
+            operation=f"log_decision:{decision_type}:{'approved' if approved else 'pending'}"
         )
         return result[0]["id"]
 
