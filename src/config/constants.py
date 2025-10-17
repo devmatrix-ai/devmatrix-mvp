@@ -82,6 +82,34 @@ SOCKET_TIMEOUT = int(os.getenv("SOCKET_TIMEOUT", "5"))
 
 
 # ============================================================================
+# RAG (Retrieval-Augmented Generation) Configuration
+# ============================================================================
+
+# ChromaDB Configuration
+CHROMADB_HOST = os.getenv("CHROMADB_HOST", "localhost")
+CHROMADB_PORT = int(os.getenv("CHROMADB_PORT", "8000"))
+
+# Embedding Model Configuration
+# Default: all-MiniLM-L6-v2 (384 dimensions, balanced performance)
+# Alternative: all-mpnet-base-v2 (768 dimensions, higher quality)
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+
+# Retrieval Parameters
+RAG_TOP_K = int(os.getenv("RAG_TOP_K", "5"))  # Number of examples to retrieve
+RAG_SIMILARITY_THRESHOLD = float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.7"))  # Min similarity (0.0-1.0)
+RAG_ENABLE_FEEDBACK = os.getenv("RAG_ENABLE_FEEDBACK", "true").lower() == "true"  # Feedback loop enabled
+
+# ChromaDB Collection Configuration
+CHROMADB_COLLECTION_NAME = os.getenv("CHROMADB_COLLECTION_NAME", "devmatrix_code_examples")
+CHROMADB_DISTANCE_METRIC = os.getenv("CHROMADB_DISTANCE_METRIC", "cosine")  # cosine, l2, ip
+
+# RAG Performance Configuration
+RAG_BATCH_SIZE = int(os.getenv("RAG_BATCH_SIZE", "32"))  # Embedding batch size
+RAG_MAX_CONTEXT_LENGTH = int(os.getenv("RAG_MAX_CONTEXT_LENGTH", "8000"))  # Max tokens in context
+RAG_CACHE_ENABLED = os.getenv("RAG_CACHE_ENABLED", "true").lower() == "true"
+
+
+# ============================================================================
 # Retry Configuration
 # ============================================================================
 
@@ -214,6 +242,19 @@ def get_config_summary() -> Dict[str, Any]:
             "api_host": API_HOST,
             "postgres_host": POSTGRES_HOST,
             "redis_host": REDIS_HOST,
+            "chromadb_host": CHROMADB_HOST,
+            "chromadb_port": CHROMADB_PORT,
+        },
+        "rag": {
+            "embedding_model": EMBEDDING_MODEL,
+            "top_k": RAG_TOP_K,
+            "similarity_threshold": RAG_SIMILARITY_THRESHOLD,
+            "feedback_enabled": RAG_ENABLE_FEEDBACK,
+            "collection_name": CHROMADB_COLLECTION_NAME,
+            "distance_metric": CHROMADB_DISTANCE_METRIC,
+            "batch_size": RAG_BATCH_SIZE,
+            "max_context_length": RAG_MAX_CONTEXT_LENGTH,
+            "cache_enabled": RAG_CACHE_ENABLED,
         },
         "retry": {
             "default_max_retries": DEFAULT_MAX_RETRIES,
@@ -265,8 +306,25 @@ def validate_config() -> tuple[bool, list[str]]:
         ("POSTGRES_PORT", POSTGRES_PORT),
         ("REDIS_PORT", REDIS_PORT),
         ("UI_PORT", UI_PORT),
+        ("CHROMADB_PORT", CHROMADB_PORT),
     ]:
         if port_value < 1 or port_value > 65535:
             errors.append(f"Invalid {port_name}: {port_value}")
+
+    # Validate RAG configuration
+    if RAG_TOP_K < 1 or RAG_TOP_K > 100:
+        errors.append(f"Invalid RAG_TOP_K: {RAG_TOP_K} (must be 1-100)")
+
+    if RAG_SIMILARITY_THRESHOLD < 0.0 or RAG_SIMILARITY_THRESHOLD > 1.0:
+        errors.append(f"Invalid RAG_SIMILARITY_THRESHOLD: {RAG_SIMILARITY_THRESHOLD} (must be 0.0-1.0)")
+
+    if RAG_BATCH_SIZE < 1 or RAG_BATCH_SIZE > 1000:
+        errors.append(f"Invalid RAG_BATCH_SIZE: {RAG_BATCH_SIZE} (must be 1-1000)")
+
+    if RAG_MAX_CONTEXT_LENGTH < 1000 or RAG_MAX_CONTEXT_LENGTH > 200000:
+        errors.append(f"Invalid RAG_MAX_CONTEXT_LENGTH: {RAG_MAX_CONTEXT_LENGTH} (must be 1000-200000)")
+
+    if CHROMADB_DISTANCE_METRIC not in ["cosine", "l2", "ip"]:
+        errors.append(f"Invalid CHROMADB_DISTANCE_METRIC: {CHROMADB_DISTANCE_METRIC} (must be cosine, l2, or ip)")
 
     return len(errors) == 0, errors
