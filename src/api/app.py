@@ -13,9 +13,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from ..observability import StructuredLogger, MetricsCollector, HealthCheck
+from ..observability import StructuredLogger, MetricsCollector, HealthCheck, setup_logging
 from .routers import workflows, executions, metrics, health, websocket
 
+
+# Initialize logging system
+setup_logging()
 
 # Global instances
 logger = StructuredLogger("api", output_json=True)

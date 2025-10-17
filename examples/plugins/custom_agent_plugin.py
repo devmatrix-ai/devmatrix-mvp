@@ -66,20 +66,44 @@ class SentimentAnalysisAgent(BasePlugin):
 
         Returns:
             Dictionary with sentiment analysis results
+
+        Note:
+            This is a MOCK implementation for demonstration purposes.
+
+            For production, replace with real sentiment analysis:
+            - transformers: Use HuggingFace sentiment models
+              (e.g., "distilbert-base-uncased-finetuned-sst-2-english")
+            - TextBlob: Simple polarity/subjectivity scoring
+            - VADER: Rule-based sentiment for social media text
+            - spaCy: With custom sentiment training
+
+            Example production implementation:
+            ```python
+            from transformers import pipeline
+            classifier = pipeline("sentiment-analysis")
+            result = classifier(text)[0]
+            return {
+                "sentiment": result["label"].lower(),
+                "confidence": result["score"],
+                "model": "distilbert-base-uncased-finetuned-sst-2-english"
+            }
+            ```
         """
         if not self.is_enabled:
             raise RuntimeError("Plugin not enabled")
 
-        # Mock sentiment analysis
-        # In production, use actual NLP model
-        score = len(text) % 100 / 100  # Dummy score
+        # MOCK IMPLEMENTATION - Replace in production
+        # This dummy score is based on text length modulo 100
+        # and does NOT represent actual sentiment
+        score = len(text) % 100 / 100  # Dummy metric
         sentiment = "positive" if score > 0.5 else "negative"
 
         return {
             "text": text,
             "sentiment": sentiment,
             "confidence": score,
-            "model": self.config.get("model_name", "unknown"),
+            "model": self.config.get("model_name", "mock-model"),
+            "_mock": True,  # Flag indicating this is mock data
         }
 
     def cleanup(self) -> None:
