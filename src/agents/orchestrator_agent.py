@@ -746,7 +746,9 @@ Use these examples as inspiration for task decomposition patterns, but adapt to 
                     # Emit task complete event
                     self._emit_progress('task_complete', {
                         'task_id': task_id,
-                        'output_files': result.get("file_paths", [])
+                        'output_files': result.get("file_paths", []),
+                        'completed': len(completed_tasks),  # Current count of completed tasks
+                        'total_tasks': len(tasks)  # Total tasks
                     })
                 else:
                     error_msg = result.get("error", "Unknown error")

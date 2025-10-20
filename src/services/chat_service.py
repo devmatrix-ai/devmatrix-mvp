@@ -138,19 +138,30 @@ class ChatService:
     and streaming responses from agents.
     """
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, metrics_collector=None):
         """
         Initialize chat service.
 
         Args:
             api_key: Anthropic API key (optional, uses env var if not provided)
+            metrics_collector: MetricsCollector instance for LLM metrics (optional)
         """
         from src.llm.anthropic_client import AnthropicClient
+        from src.state.postgres_manager import PostgresManager
 
         self.logger = StructuredLogger("chat_service")
         self.conversations: Dict[str, Conversation] = {}
         self.registry = AgentRegistry()
         self.progress_callback = None  # Will be set per-request for WebSocket streaming
+        self.metrics_collector = metrics_collector
+
+        # Initialize PostgreSQL for conversation persistence
+        try:
+            self.db = PostgresManager()
+            self.logger.info("PostgreSQL connection established for chat persistence")
+        except Exception as e:
+            self.logger.warning(f"Failed to connect to PostgreSQL: {e}. Conversations will not be persisted.")
+            self.db = None
 
         # Register specialized agents
         self._register_agents()
@@ -159,7 +170,7 @@ class ChatService:
         self.api_key = api_key
 
         # Create shared LLM client for conversational mode
-        self.llm = AnthropicClient(api_key=api_key)
+        self.llm = AnthropicClient(api_key=api_key, metrics_collector=metrics_collector)
 
     def _register_agents(self):
         """Register all specialized agents in the registry."""
@@ -205,6 +216,7 @@ class ChatService:
         self,
         workspace_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None,
     ) -> str:
         """
         Create new conversation.
@@ -212,6 +224,7 @@ class ChatService:
         Args:
             workspace_id: Associated workspace ID
             metadata: Additional conversation metadata
+            session_id: WebSocket session ID for persistence
 
         Returns:
             Conversation ID
@@ -222,6 +235,18 @@ class ChatService:
         )
         self.conversations[conversation.conversation_id] = conversation
 
+        # Persist to database
+        if self.db and session_id:
+            try:
+                self.db.create_conversation(
+                    conversation_id=conversation.conversation_id,
+                    session_id=session_id,
+                    metadata=metadata or {}
+                )
+                self.logger.info(f"Conversation {conversation.conversation_id} persisted to database")
+            except Exception as e:
+                self.logger.error(f"Failed to persist conversation: {e}")
+
         self.logger.info(
             f"Created conversation {conversation.conversation_id}",
             extra={"workspace_id": workspace_id}
@@ -229,9 +254,88 @@ class ChatService:
 
         return conversation.conversation_id
 
+    def _save_message_to_db(
+        self,
+        conversation_id: str,
+        role: str,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ):
+        """Save a message to the database."""
+        if self.db:
+            try:
+                self.db.save_message(
+                    conversation_id=conversation_id,
+                    role=role,
+                    content=content,
+                    metadata=metadata or {}
+                )
+            except Exception as e:
+                self.logger.error(f"Failed to save message to database: {e}")
+
+    def load_conversation_from_db(self, conversation_id: str) -> Optional[Conversation]:
+        """
+        Load conversation history from database.
+
+        Args:
+            conversation_id: Conversation ID to load
+
+        Returns:
+            Conversation object with loaded history, or None if not found
+        """
+        if not self.db:
+            return None
+
+        try:
+            # Load conversation metadata
+            conv_data = self.db.get_conversation(conversation_id)
+            if not conv_data:
+                return None
+
+            # Create conversation object
+            conversation = Conversation(
+                conversation_id=conversation_id,
+                workspace_id=conv_data.get('metadata', {}).get('workspace_id'),
+                metadata=conv_data.get('metadata', {})
+            )
+
+            # Load messages
+            messages_data = self.db.get_conversation_messages(conversation_id)
+            for msg_data in messages_data:
+                message = Message(
+                    content=msg_data['content'],
+                    role=MessageRole(msg_data['role']),
+                    metadata=msg_data.get('metadata', {})
+                )
+                conversation.add_message(message)
+
+            # Add to in-memory cache
+            self.conversations[conversation_id] = conversation
+
+            self.logger.info(f"Loaded conversation {conversation_id} from database with {len(messages_data)} messages")
+            return conversation
+
+        except Exception as e:
+            self.logger.error(f"Failed to load conversation from database: {e}")
+            return None
+
     def get_conversation(self, conversation_id: str) -> Optional[Conversation]:
-        """Get conversation by ID."""
-        return self.conversations.get(conversation_id)
+        """
+        Get conversation by ID, loading from database if not in memory.
+
+        Args:
+            conversation_id: Conversation ID
+
+        Returns:
+            Conversation object or None if not found
+        """
+        # Try in-memory first
+        conversation = self.conversations.get(conversation_id)
+        if conversation:
+            return conversation
+
+        # Try loading from database
+        return self.load_conversation_from_db(conversation_id)
 
     def delete_conversation(self, conversation_id: str) -> bool:
         """
@@ -295,6 +399,14 @@ class ChatService:
         )
         conversation.add_message(user_message)
 
+        # Save user message to database
+        self._save_message_to_db(
+            conversation_id=conversation_id,
+            role=MessageRole.USER.value,
+            content=content,
+            metadata=metadata
+        )
+
         self.logger.info(
             f"Processing message in conversation {conversation_id}",
             extra={"message_length": len(content)}
@@ -330,6 +442,13 @@ class ChatService:
                 role=MessageRole.SYSTEM,
             )
             conversation.add_message(system_message)
+
+            # Save to database
+            self._save_message_to_db(
+                conversation_id=conversation.conversation_id,
+                role=MessageRole.SYSTEM.value,
+                content=response
+            )
 
         elif command == "/clear":
             conversation.messages.clear()
@@ -495,6 +614,13 @@ Respondé de manera natural, amigable y útil. Si es una pregunta de diseño o p
             )
             conversation.add_message(assistant_message)
 
+            # Save to database
+            self._save_message_to_db(
+                conversation_id=conversation.conversation_id,
+                role=MessageRole.ASSISTANT.value,
+                content=content
+            )
+
             # Yield response
             yield {
                 "type": "message",
@@ -633,6 +759,14 @@ Respondé de manera natural, amigable y útil. Si es una pregunta de diseño o p
                 metadata={"orchestration_result": result},
             )
             conversation.add_message(assistant_message)
+
+            # Save to database
+            self._save_message_to_db(
+                conversation_id=conversation.conversation_id,
+                role=MessageRole.ASSISTANT.value,
+                content=response,
+                metadata={"orchestration_result": result}
+            )
 
             # Yield final response
             yield {

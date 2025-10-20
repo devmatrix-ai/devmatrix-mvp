@@ -6,11 +6,13 @@ Wrapper for Anthropic API with retry logic, error handling, and caching.
 
 import os
 import logging
+import time
 from typing import Dict, Any, List, Optional
 from anthropic import Anthropic, APIError, APIConnectionError, RateLimitError
 from dotenv import load_dotenv
 
 from src.error_handling import RetryStrategy, RetryConfig, CircuitBreaker, CircuitBreakerConfig
+from src.observability.metrics_collector import MetricsCollector
 from src.config.constants import (
     DEFAULT_MAX_TOKENS,
     DEFAULT_TEMPERATURE,
@@ -54,6 +56,7 @@ class AnthropicClient:
         cache_manager = None,
         enable_retry: bool = True,
         enable_circuit_breaker: bool = True,
+        metrics_collector: Optional[MetricsCollector] = None,
     ):
         """
         Initialize Anthropic client.
@@ -65,6 +68,7 @@ class AnthropicClient:
             cache_manager: CacheManager instance (creates new if None)
             enable_retry: Enable retry with exponential backoff (default: True)
             enable_circuit_breaker: Enable circuit breaker protection (default: True)
+            metrics_collector: MetricsCollector instance (creates new if None)
         """
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
         if not self.api_key:
@@ -76,6 +80,9 @@ class AnthropicClient:
         self.client = Anthropic(api_key=self.api_key)
         self.model = model
         self.enable_cache = enable_cache
+
+        # Use provided metrics collector or create new one
+        self.metrics = metrics_collector if metrics_collector is not None else MetricsCollector()
 
         # Initialize cache manager if caching is enabled
         if self.enable_cache:
@@ -149,6 +156,9 @@ class AnthropicClient:
         Returns:
             Dictionary with response data including content and usage
         """
+        start_time = time.time()
+        cache_hit = False
+
         # Try cache first if enabled
         if self.enable_cache and use_cache and self.cache_manager:
             # Construct prompt for caching
@@ -158,9 +168,34 @@ class AnthropicClient:
                 system=system
             )
             if cached_response:
+                # Metrics: Cache hit
+                self.metrics.increment_counter(
+                    "llm_cache_hits_total",
+                    labels={"model": self.model},
+                    help_text="Total LLM cache hits"
+                )
                 # Add cache hit indicator
                 cached_response["cached"] = True
+                cache_hit = True
+
+                # Still record request metrics for cached responses
+                duration = time.time() - start_time
+                self.metrics.observe_histogram(
+                    "llm_request_duration_seconds",
+                    duration,
+                    labels={"model": self.model, "cached": "true"},
+                    help_text="LLM request duration"
+                )
+
                 return cached_response
+
+        # Metrics: Cache miss
+        if self.enable_cache and use_cache:
+            self.metrics.increment_counter(
+                "llm_cache_misses_total",
+                labels={"model": self.model},
+                help_text="Total LLM cache misses"
+            )
 
         # Define API call function for retry/circuit breaker
         def _make_api_call():
@@ -203,6 +238,47 @@ class AnthropicClient:
                 "cached": False
             }
 
+            # Metrics: Request completed
+            duration = time.time() - start_time
+            input_tokens = response.usage.input_tokens
+            output_tokens = response.usage.output_tokens
+
+            self.metrics.increment_counter(
+                "llm_requests_total",
+                labels={"model": self.model, "status": "success"},
+                help_text="Total LLM requests"
+            )
+
+            self.metrics.observe_histogram(
+                "llm_request_duration_seconds",
+                duration,
+                labels={"model": self.model, "cached": "false"},
+                help_text="LLM request duration"
+            )
+
+            self.metrics.increment_counter(
+                "llm_tokens_total",
+                value=input_tokens,
+                labels={"model": self.model, "type": "input"},
+                help_text="Total LLM tokens"
+            )
+
+            self.metrics.increment_counter(
+                "llm_tokens_total",
+                value=output_tokens,
+                labels={"model": self.model, "type": "output"},
+                help_text="Total LLM tokens"
+            )
+
+            # Calculate and record cost
+            cost_eur = self.calculate_cost(input_tokens, output_tokens)
+            self.metrics.observe_histogram(
+                "llm_cost_eur",
+                cost_eur,
+                labels={"model": self.model},
+                help_text="LLM API cost in EUR"
+            )
+
             # Cache response if enabled
             if self.enable_cache and use_cache and self.cache_manager:
                 prompt = "\n".join([m.get("content", "") for m in messages])
@@ -216,6 +292,20 @@ class AnthropicClient:
             return result
 
         except Exception as e:
+            # Metrics: Request failed
+            self.metrics.increment_counter(
+                "llm_requests_total",
+                labels={"model": self.model, "status": "error"},
+                help_text="Total LLM requests"
+            )
+
+            error_type = type(e).__name__
+            self.metrics.increment_counter(
+                "llm_errors_total",
+                labels={"model": self.model, "error_type": error_type},
+                help_text="Total LLM errors"
+            )
+
             logger.error(f"Anthropic API error after all retries: {str(e)}")
             raise RuntimeError(f"Anthropic API error: {str(e)}") from e
 

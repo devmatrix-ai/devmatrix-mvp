@@ -53,6 +53,9 @@ class PostgresManager:
         self.user = user or os.getenv("POSTGRES_USER", "devmatrix")
         self.password = password or os.getenv("POSTGRES_PASSWORD", "devmatrix")
 
+        # Initialize logger
+        self.logger = get_logger(__name__)
+
         # Create connection
         self.conn = None
         self._connect()
@@ -121,6 +124,7 @@ class PostgresManager:
 
                 if fetch:
                     results = cursor.fetchall()
+                    self.conn.commit()  # Commit even when fetching results
                     self.logger.debug(
                         "Query executed successfully",
                         operation=operation,
@@ -529,6 +533,163 @@ class PostgresManager:
             operation=f"log_decision:{decision_type}:{'approved' if approved else 'pending'}"
         )
         return result[0]["id"]
+
+    # ========================================
+    # Conversation Operations
+    # ========================================
+
+    def create_conversation(
+        self,
+        conversation_id: str,
+        session_id: str,
+        metadata: dict = None,
+    ) -> str:
+        """
+        Create a new conversation.
+
+        Args:
+            conversation_id: Unique conversation identifier
+            session_id: WebSocket session ID
+            metadata: Additional conversation metadata
+
+        Returns:
+            Conversation ID
+        """
+        query = """
+            INSERT INTO conversations (id, session_id, metadata)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (id) DO NOTHING
+            RETURNING id
+        """
+
+        result = self._execute(
+            query,
+            (conversation_id, session_id, Json(metadata or {})),
+            fetch=True,
+            operation=f"create_conversation:{conversation_id}"
+        )
+        return result[0]["id"] if result else conversation_id
+
+    def get_conversation(self, conversation_id: str) -> Optional[dict]:
+        """
+        Retrieve conversation by ID.
+
+        Args:
+            conversation_id: Conversation identifier
+
+        Returns:
+            Conversation dict if found, None otherwise
+        """
+        query = """
+            SELECT * FROM conversations
+            WHERE id = %s
+        """
+
+        results = self._execute(
+            query,
+            (conversation_id,),
+            fetch=True,
+            operation=f"get_conversation:{conversation_id}"
+        )
+        return results[0] if results else None
+
+    def save_message(
+        self,
+        conversation_id: str,
+        role: str,
+        content: str,
+        metadata: dict = None,
+    ) -> int:
+        """
+        Save a message to a conversation.
+
+        Args:
+            conversation_id: Conversation identifier
+            role: Message role (user, assistant, system)
+            content: Message content
+            metadata: Additional message metadata
+
+        Returns:
+            Message ID
+        """
+        query = """
+            INSERT INTO messages (conversation_id, role, content, metadata)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
+        """
+
+        result = self._execute(
+            query,
+            (conversation_id, role, content, Json(metadata or {})),
+            fetch=True,
+            operation=f"save_message:{conversation_id}:{role}"
+        )
+        return result[0]["id"]
+
+    def get_conversation_messages(
+        self,
+        conversation_id: str,
+        limit: int = 100
+    ) -> list[dict]:
+        """
+        Get all messages for a conversation.
+
+        Args:
+            conversation_id: Conversation identifier
+            limit: Maximum number of messages to return
+
+        Returns:
+            List of message dicts ordered by creation time
+        """
+        query = """
+            SELECT * FROM messages
+            WHERE conversation_id = %s
+            ORDER BY created_at ASC
+            LIMIT %s
+        """
+
+        return self._execute(
+            query,
+            (conversation_id, limit),
+            fetch=True,
+            operation=f"get_conversation_messages:{conversation_id}"
+        )
+
+    def update_conversation(
+        self,
+        conversation_id: str,
+        metadata: dict = None,
+    ) -> bool:
+        """
+        Update conversation metadata.
+
+        Args:
+            conversation_id: Conversation identifier
+            metadata: Updated metadata
+
+        Returns:
+            True if updated, False otherwise
+        """
+        query = """
+            UPDATE conversations
+            SET metadata = %s
+            WHERE id = %s
+        """
+
+        try:
+            self._execute(
+                query,
+                (Json(metadata or {}), conversation_id),
+                operation=f"update_conversation:{conversation_id}"
+            )
+            return True
+        except Exception as e:
+            self.logger.error(
+                "Failed to update conversation",
+                conversation_id=conversation_id,
+                error=str(e)
+            )
+            return False
 
     def close(self):
         """Close database connection."""

@@ -1,0 +1,57 @@
+# Prometheus Configuration for DevMatrix
+# Scrapes metrics from services for monitoring and alerting
+
+global:
+  scrape_interval: 15s      # Default scrape interval
+  evaluation_interval: 15s  # How often to evaluate rules
+  external_labels:
+    cluster: 'devmatrix-local'
+    environment: 'development'
+
+# Scrape configuration
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: 'prometheus'
+          component: 'monitoring'
+
+  # DevMatrix API Application
+  - job_name: 'devmatrix-api'
+    metrics_path: '/api/v1/metrics'
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['api:8000']
+        labels:
+          service: 'api'
+          component: 'backend'
+          application: 'devmatrix'
+
+  # PostgreSQL Exporter
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+        labels:
+          service: 'postgres'
+          component: 'database'
+
+  # Redis Exporter
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+        labels:
+          service: 'redis'
+          component: 'cache'
+
+# Alerting configuration (basic)
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+          # Configure alertmanager if needed
+
+# Rule files (for alerting rules)
+rule_files:
+  - "alerts.yml"

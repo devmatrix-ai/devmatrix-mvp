@@ -8,12 +8,12 @@ Devmatrix is an agentic AI system that generates production-ready code with huma
 
 ## 🎯 Project Status
 
-**Version**: 0.4.0 (Production Ready!)
-**Phase**: Phase 4 - Task Execution ✅ COMPLETE
-**Progress**: Phase 0 ✅ | Phase 1 ✅ | Phase 2 ✅ | Phase 3 ✅ | Phase 4 ✅ (Days 1-70)
+**Version**: 0.5.0 (Production Ready + Chat Persistence!)
+**Phase**: Phase 4 + Enhancements ✅ COMPLETE
+**Progress**: Phase 0 ✅ | Phase 1 ✅ | Phase 2 ✅ | Phase 3 ✅ | Phase 4 ✅ | Chat Persistence ✅
 **Tests**: 244 passing | Coverage: 92% | E2E: ✅ Passing
 **Current Focus**: Production deployment and polish
-**Target**: ✅ ACHIEVED - Full autonomous development system working end-to-end! 🎉
+**Target**: ✅ ACHIEVED - Full autonomous development system with persistent chat! 🎉
 
 ---
 
@@ -21,6 +21,8 @@ Devmatrix is an agentic AI system that generates production-ready code with huma
 
 ### Core Capabilities
 - ✅ **Conversational Web UI**: React-based chat interface for natural project discussions
+- ✅ **Chat Persistence**: PostgreSQL-backed conversation history with session management
+- ✅ **Conversation History UI**: Sidebar with conversation list, switching, and management
 - ✅ **Intelligent Orchestration**: Multi-agent system with specialized agents (Frontend, Backend, Testing, Documentation)
 - ✅ **Task Execution System**: Dependency-aware task execution with topological sorting
 - ✅ **Real-time Progress Streaming**: Live updates via WebSocket during orchestration
@@ -37,9 +39,12 @@ Devmatrix is an agentic AI system that generates production-ready code with huma
 ### Technical Features
 - ✅ **Multi-Agent System**: OrchestratorAgent coordinating specialized domain agents
 - ✅ **LangGraph Workflows**: State machine orchestration with conditional routing
-- ✅ **State Persistence**: Redis (realtime) + PostgreSQL (historical)
+- ✅ **State Persistence**: Redis (realtime) + PostgreSQL (conversations, messages, historical data)
+- ✅ **PostgreSQL Schema**: Conversations and messages tables with proper indexing
+- ✅ **REST API**: Full CRUD operations for conversations and message history
 - ✅ **React 18 + TypeScript**: Modern web UI with Vite build system and Tailwind CSS
 - ✅ **WebSocket Streaming**: Real-time bidirectional communication for agent interactions
+- ✅ **Session Management**: Persistent chat sessions across page refreshes
 - ✅ **Markdown Rendering**: Syntax highlighting and rich formatting for code responses
 - ✅ **Cost Tracking**: Token usage and cost monitoring per task
 - ✅ **CLI + Web Interface**: Rich terminal and conversational web interface
@@ -608,6 +613,18 @@ black src/ tests/
 - [x] **E2E Testing** - Full orchestration flow validated
 - **Status**: ✅ System fully functional end-to-end!
 
+### ✅ Chat Persistence Enhancement (2025-10-18) - COMPLETED
+- [x] **PostgreSQL Integration** - All conversations and messages saved to database
+- [x] **Database Schema** - conversations and messages tables with CASCADE deletes
+- [x] **REST API** - GET/DELETE endpoints for conversation management
+- [x] **Conversation History UI** - Sidebar with conversation list and switching
+- [x] **Session Management** - Persistent sessions across page refreshes and server restarts
+- [x] **useChat Hook Enhancement** - switchConversation() function for session switching
+- [x] **ConversationHistory Component** - Full-featured sidebar with delete, preview, timestamps
+- [x] **Auto-reconnection** - Smart handling of server restarts and stale conversation IDs
+- [x] **Date Formatting** - Relative timestamps in Spanish ("hace 2 horas")
+- **Status**: ✅ Chat persistence fully functional!
+
 ### 🚀 Phase 5: Production Deployment (Days 71+) - NEXT
 - [ ] Docker compose production configuration
 - [ ] Environment-based configuration (dev/staging/prod)
@@ -621,12 +638,24 @@ black src/ tests/
 
 ## 📚 Documentation
 
-- [Architecture](DOCS/ARCHITECTURE.md) - Complete technical architecture
-- [Work Plan](DOCS/WORKPLAN.md) - Detailed development roadmap with completed phases
-- [Web UI](DOCS/WEB_UI.md) - Complete Web UI and chat system documentation
-- [Features Completed](DOCS/FEATURES_COMPLETED.md) - Comprehensive list of implemented features
-- [Frontend Roadmap](DOCS/FRONTEND_ROADMAP.md) - UI enhancement roadmap and implementation guide
-- [Project Memory](DOCS/PROJECT_MEMORY.md) - Decision log and progress tracking
+### Main Documentation
+- **[Documentation Index](DOCS/README.md)** - Complete documentation index and navigation
+- **[Current State](DOCS/CURRENT_STATE.md)** - Complete current system state and capabilities
+- **[Architecture](DOCS/reference/ARCHITECTURE.md)** - System architecture and design
+- **[API Reference](DOCS/reference/API_REFERENCE.md)** - Complete API documentation
+- **[Work Plan](DOCS/WORKPLAN.md)** - Detailed development roadmap
+
+### Guides
+- **[Troubleshooting](DOCS/guides/TROUBLESHOOTING.md)** - Common issues and solutions
+- **[Web UI](DOCS/guides/WEB_UI.md)** - Web UI documentation
+- **[Frontend Roadmap](DOCS/guides/FRONTEND_ROADMAP.md)** - UI enhancement roadmap
+- **[Monitoring](DOCS/reference/MONITORING_GUIDE.md)** - Monitoring and observability
+- **[Operations](DOCS/reference/LOCAL_OPERATIONS_RUNBOOK.md)** - Operational procedures
+
+### Project Management
+- **[Features Completed](DOCS/FEATURES_COMPLETED.md)** - Implemented features list
+- **[Project Memory](DOCS/PROJECT_MEMORY.md)** - Decision log and history
+- **[RAG Metrics](DOCS/RAG_METRICS.md)** - RAG system metrics
 
 ---
 
@@ -659,4 +688,24 @@ TBD - License to be determined
 
 ---
 
-**Last Updated**: 2025-10-16 (Phase 4 COMPLETE - Full Task Execution System! 🎉)
+**Last Updated**: 2025-10-18 (v0.5.0 - Chat Persistence System Complete! 🎉)
+
+---
+
+## 🆕 What's New in v0.5.0
+
+### Chat Persistence System
+- **PostgreSQL Backend**: All conversations and messages now persist across sessions
+- **Conversation History**: Beautiful sidebar with all your past conversations
+- **Session Switching**: Seamlessly switch between conversations
+- **Smart Reconnection**: Handles server restarts gracefully
+- **REST API**: Full CRUD operations for conversation management
+
+### How to Use
+1. **Open Chat History**: Click the hamburger menu (☰) in the top-left corner
+2. **Browse Conversations**: See all your past conversations with previews
+3. **Switch Sessions**: Click any conversation to load it
+4. **Create New**: Click "Nueva Conversación" to start fresh
+5. **Delete Old Chats**: Click the delete icon (🗑️) to remove conversations
+
+For complete documentation, see [CURRENT_STATE.md](DOCS/CURRENT_STATE.md)

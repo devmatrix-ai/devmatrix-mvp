@@ -4,12 +4,16 @@ export class WebSocketService {
   private socket: Socket | null = null
   private listeners: Map<string, Set<Function>> = new Map()
 
-  connect(url: string = 'http://localhost:8000'): void {
+  connect(url?: string): void {
     if (this.socket?.connected) {
       return
     }
 
-    this.socket = io(url, {
+    // Use relative URL for Socket.IO to work with Vite proxy
+    const socketUrl = url || window.location.origin
+
+    this.socket = io(socketUrl, {
+      path: '/socket.io',
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionDelay: 1000,
@@ -53,11 +57,19 @@ export class WebSocketService {
   }
 
   send(event: string, data?: any): void {
-    if (this.socket?.connected) {
-      this.socket.emit(event, data)
-    } else {
-      console.warn('WebSocket not connected, cannot send:', event)
+    if (!this.socket) {
+      console.warn('WebSocket not initialized, cannot send:', event)
+      return
     }
+
+    // If socket exists but not yet connected, wait a bit and retry
+    if (!this.socket.connected) {
+      console.log('WebSocket connecting, waiting...')
+      setTimeout(() => this.send(event, data), 100)
+      return
+    }
+
+    this.socket.emit(event, data)
   }
 
   on(event: string, callback: Function): () => void {

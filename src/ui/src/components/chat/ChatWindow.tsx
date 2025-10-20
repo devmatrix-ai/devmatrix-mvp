@@ -4,6 +4,7 @@ import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts'
 import { MessageList } from './MessageList'
 import { ChatInput } from './ChatInput'
 import { ProgressIndicator } from './ProgressIndicator'
+import { ConversationHistory } from './ConversationHistory'
 import { FiMessageSquare, FiX, FiMinus, FiPlusCircle, FiDownload } from 'react-icons/fi'
 
 interface ChatWindowProps {
@@ -27,6 +28,7 @@ export function ChatWindow({
     progress,
     sendMessage,
     clearMessages,
+    switchConversation,
   } = useChat({ workspaceId })
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -50,10 +52,18 @@ export function ChatWindow({
 
   const handleNewProject = () => {
     if (confirm('¿Empezar un nuevo proyecto? Esto borrará el historial del chat actual.')) {
-      clearMessages()
-      // Reconnect to create a new conversation
-      window.location.reload()
+      // Clear current conversation and start fresh
+      switchConversation(null)
     }
+  }
+
+  const handleSelectConversation = (convId: string) => {
+    if (convId === conversationId) {
+      return // Already on this conversation
+    }
+
+    // Switch to selected conversation
+    switchConversation(convId)
   }
 
   const handleExportChat = () => {
@@ -114,7 +124,15 @@ export function ChatWindow({
   ])
 
   return (
-    <div className="flex flex-col h-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl">
+    <>
+      {/* Conversation History Sidebar */}
+      <ConversationHistory
+        currentConversationId={conversationId}
+        onSelectConversation={handleSelectConversation}
+        onNewConversation={handleNewProject}
+      />
+
+      <div className="flex flex-col h-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-primary-600 to-primary-700">
         <div className="flex items-center space-x-2">
@@ -202,10 +220,23 @@ export function ChatWindow({
 
             <MessageList messages={messages} isLoading={isLoading} />
 
-            {/* Progress Indicator */}
-            {progress && (
+            {/* Progress Indicator - Show when loading or progress events */}
+            {(isLoading || progress) && (
               <div className="mt-4">
-                <ProgressIndicator progress={progress} />
+                {progress ? (
+                  <ProgressIndicator progress={progress} />
+                ) : (
+                  <div className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                    <div className="flex space-x-1">
+                      <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                    </div>
+                    <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                      Procesando tu mensaje...
+                    </span>
+                  </div>
+                )}
               </div>
             )}
 
@@ -235,5 +266,6 @@ export function ChatWindow({
         </div>
       )}
     </div>
+    </>
   )
 }

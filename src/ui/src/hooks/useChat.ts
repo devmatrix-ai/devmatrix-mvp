@@ -22,11 +22,19 @@ export interface UseChatOptions {
   onProgress?: (event: ProgressEvent) => void
 }
 
+// Helper to get localStorage key for conversation
+const getConversationKey = (workspaceId?: string) => {
+  return `devmatrix_conversation_${workspaceId || 'default'}`
+}
+
 export function useChat(options: UseChatOptions = {}) {
   const { isConnected, send, on } = useWebSocket()
-  const [conversationId, setConversationId] = useState<string | null>(
-    options.conversationId || null
-  )
+
+  // Try to restore conversation_id from localStorage
+  const savedConversationId = options.conversationId ||
+    (typeof window !== 'undefined' ? localStorage.getItem(getConversationKey(options.workspaceId)) : null)
+
+  const [conversationId, setConversationId] = useState<string | null>(savedConversationId)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isJoined, setIsJoined] = useState(false)
@@ -37,9 +45,15 @@ export function useChat(options: UseChatOptions = {}) {
     if (!isConnected) return
 
     const cleanup1 = on('chat_joined', (data: any) => {
-      setConversationId(data.conversation_id)
+      const convId = data.conversation_id
+      setConversationId(convId)
       setMessages(data.history || [])
       setIsJoined(true)
+
+      // Save conversation_id to localStorage for persistence
+      if (convId && typeof window !== 'undefined') {
+        localStorage.setItem(getConversationKey(options.workspaceId), convId)
+      }
     })
 
     const cleanup2 = on('message', (data: any) => {
@@ -110,17 +124,15 @@ export function useChat(options: UseChatOptions = {}) {
   useEffect(() => {
     if (!isConnected || isJoined) return
 
+    // Use saved conversation_id if available
     send('join_chat', {
-      conversation_id: options.conversationId,
+      conversation_id: conversationId,
       workspace_id: options.workspaceId,
     })
 
-    return () => {
-      if (conversationId) {
-        send('leave_chat', { conversation_id: conversationId })
-      }
-    }
-  }, [isConnected, isJoined, options.conversationId, options.workspaceId, send, conversationId])
+    // No cleanup needed - server handles disconnections automatically
+    // Cleanup would cause issues with React StrictMode in development
+  }, [isConnected, isJoined, conversationId, options.workspaceId, send])
 
   const sendMessage = useCallback(
     (content: string, metadata?: Record<string, any>) => {
@@ -141,7 +153,33 @@ export function useChat(options: UseChatOptions = {}) {
 
   const clearMessages = useCallback(() => {
     setMessages([])
-  }, [])
+    // Clear conversation from localStorage to start fresh
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(getConversationKey(options.workspaceId))
+    }
+    setConversationId(null)
+    setIsJoined(false)
+  }, [options.workspaceId])
+
+  const switchConversation = useCallback((newConversationId: string | null) => {
+    // Clear current conversation
+    setMessages([])
+    setIsJoined(false)
+    setIsLoading(false)
+    setProgress(null)
+
+    // Update conversation ID
+    setConversationId(newConversationId)
+
+    // Update localStorage
+    if (typeof window !== 'undefined') {
+      if (newConversationId) {
+        localStorage.setItem(getConversationKey(options.workspaceId), newConversationId)
+      } else {
+        localStorage.removeItem(getConversationKey(options.workspaceId))
+      }
+    }
+  }, [options.workspaceId])
 
   return {
     conversationId,
@@ -151,5 +189,6 @@ export function useChat(options: UseChatOptions = {}) {
     progress,
     sendMessage,
     clearMessages,
+    switchConversation,
   }
 }

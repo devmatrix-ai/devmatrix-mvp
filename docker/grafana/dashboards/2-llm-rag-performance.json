@@ -1,0 +1,431 @@
+{
+  "title": "2. LLM & RAG Performance",
+  "tags": [
+    "devmatrix",
+    "llm",
+    "rag",
+    "anthropic",
+    "embeddings"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "10s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "LLM Request Rate",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "sum by (model, status) (rate(llm_requests_total[5m]))",
+          "legendFormat": "{{model}} ({{status}})"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "reqps",
+          "label": "Requests/sec"
+        },
+        {
+          "format": "short"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "LLM Request Latency",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 0
+      },
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(llm_request_duration_seconds_bucket{cached=\"false\"}[5m])) by (le, model))",
+          "legendFormat": "p95 {{model}}"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(llm_request_duration_seconds_bucket{cached=\"false\"}[5m])) by (le, model))",
+          "legendFormat": "p50 {{model}}"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "s",
+          "label": "Duration"
+        },
+        {
+          "format": "short"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "LLM Cache Hit Rate %",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "sum(rate(llm_cache_hits_total[5m])) / (sum(rate(llm_cache_hits_total[5m])) + sum(rate(llm_cache_misses_total[5m]))) * 100"
+        }
+      ],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": 0,
+                "color": "red"
+              },
+              {
+                "value": 50,
+                "color": "yellow"
+              },
+              {
+                "value": 80,
+                "color": "green"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Token Usage Rate (Input vs Output)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "sum by (type) (rate(llm_tokens_total[5m]))",
+          "legendFormat": "{{type}}"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "tokens/s",
+          "label": "Tokens/sec"
+        },
+        {
+          "format": "short"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Total Tokens (Last Hour)",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 8
+      },
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "sum(increase(llm_tokens_total[1h]))"
+        }
+      ],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "LLM Cost (EUR/hour)",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 8
+      },
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "sum(rate(llm_cost_eur_sum[1h])) * 3600"
+        }
+      ],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyEUR",
+          "decimals": 4
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "RAG Retrieval Latency",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(rag_retrieval_duration_seconds_bucket[5m])) by (le, strategy))",
+          "legendFormat": "p95 {{strategy}}"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(rag_retrieval_duration_seconds_bucket[5m])) by (le, strategy))",
+          "legendFormat": "p50 {{strategy}}"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "s",
+          "label": "Duration"
+        },
+        {
+          "format": "short"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "RAG Cache Hit Rate %",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 16
+      },
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "sum(rate(rag_retrieval_cache_hits_total[5m])) / (sum(rate(rag_retrieval_cache_hits_total[5m])) + sum(rate(rag_retrieval_cache_misses_total[5m]))) * 100"
+        }
+      ],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": 0,
+                "color": "red"
+              },
+              {
+                "value": 50,
+                "color": "yellow"
+              },
+              {
+                "value": 80,
+                "color": "green"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "Embedding Generation Rate",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 16
+      },
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "rate(rag_embeddings_generated_total[5m])"
+        }
+      ],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "emb/s"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "RAG Indexing Performance",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 24
+      },
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(rag_indexing_duration_seconds_bucket[5m]))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "rate(rag_examples_indexed_total[5m])",
+          "legendFormat": "Examples/sec"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "s",
+          "label": "Duration / Rate"
+        },
+        {
+          "format": "short"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Vector Store Size",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 24
+      },
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "rag_vector_store_examples_total",
+          "legendFormat": "Total Examples"
+        },
+        {
+          "expr": "rag_vector_store_size_mb",
+          "legendFormat": "Size (MB)"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "short",
+          "label": "Count / MB"
+        },
+        {
+          "format": "short"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Similarity Scores Distribution",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 24
+      },
+      "type": "heatmap",
+      "targets": [
+        {
+          "expr": "sum(increase(rag_similarity_scores_bucket[5m])) by (le)",
+          "format": "heatmap",
+          "legendFormat": "{{le}}"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Context Building Time",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(rag_context_build_duration_seconds_bucket[5m]))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.50, rate(rag_context_build_duration_seconds_bucket[5m]))",
+          "legendFormat": "p50"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "s",
+          "label": "Duration"
+        },
+        {
+          "format": "short"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "LLM Errors by Type",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "type": "table",
+      "targets": [
+        {
+          "expr": "sum by (model, error_type) (rate(llm_errors_total[5m]))",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "model": "Model",
+              "error_type": "Error Type",
+              "Value": "Errors/sec"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

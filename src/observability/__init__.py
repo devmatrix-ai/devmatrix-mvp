@@ -14,6 +14,7 @@ from typing import Optional
 from .structured_logger import StructuredLogger, LogContext, LogLevel
 from .metrics_collector import MetricsCollector, MetricType, Metric
 from .health_check import HealthCheck, HealthStatus, ComponentHealth
+from .middleware import MetricsMiddleware
 
 __all__ = [
     "StructuredLogger",
@@ -25,6 +26,7 @@ __all__ = [
     "HealthCheck",
     "HealthStatus",
     "ComponentHealth",
+    "MetricsMiddleware",
     "setup_logging",
     "get_logger",
 ]

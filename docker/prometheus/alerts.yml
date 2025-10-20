@@ -1,0 +1,178 @@
+# Prometheus Alerting Rules for DevMatrix
+# Basic alerts for critical system conditions
+
+groups:
+  - name: api_alerts
+    interval: 30s
+    rules:
+      - alert: HighAPIErrorRate
+        expr: sum(rate(http_errors_total{error_type="server_error"}[5m])) / sum(rate(http_requests_total[5m])) * 100 > 1
+        for: 5m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "High API error rate detected"
+          description: "API error rate is {{ $value }}% (threshold: 1%)"
+
+      - alert: HighAPILatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "High API latency detected"
+          description: "API p95 latency is {{ $value }}s (threshold: 2s)"
+
+      - alert: APIServiceDown
+        expr: up{job="devmatrix-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "API service is down"
+          description: "API service has been down for more than 1 minute"
+
+  - name: websocket_alerts
+    interval: 30s
+    rules:
+      - alert: HighWebSocketErrors
+        expr: rate(websocket_errors_total[5m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: websocket
+        annotations:
+          summary: "High WebSocket error rate"
+          description: "WebSocket errors: {{ $value }} errors/sec"
+
+      - alert: NoActiveWebSocketConnections
+        expr: websocket_connections_active == 0
+        for: 10m
+        labels:
+          severity: info
+          component: websocket
+        annotations:
+          summary: "No active WebSocket connections"
+          description: "No WebSocket connections for 10 minutes (might be expected)"
+
+  - name: llm_alerts
+    interval: 30s
+    rules:
+      - alert: HighLLMErrorRate
+        expr: sum(rate(llm_requests_total{status="error"}[5m])) / sum(rate(llm_requests_total[5m])) * 100 > 5
+        for: 5m
+        labels:
+          severity: critical
+          component: llm
+        annotations:
+          summary: "High LLM error rate"
+          description: "LLM error rate is {{ $value }}% (threshold: 5%)"
+
+      - alert: LowLLMCacheHitRate
+        expr: sum(rate(llm_cache_hits_total[5m])) / (sum(rate(llm_cache_hits_total[5m])) + sum(rate(llm_cache_misses_total[5m]))) * 100 < 30
+        for: 10m
+        labels:
+          severity: info
+          component: llm
+        annotations:
+          summary: "Low LLM cache hit rate"
+          description: "LLM cache hit rate is {{ $value }}% (threshold: 30%)"
+
+      - alert: HighLLMCost
+        expr: sum(rate(llm_cost_eur_sum[1h])) * 3600 > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: llm
+        annotations:
+          summary: "High LLM API cost"
+          description: "LLM cost is €{{ $value }}/hour (threshold: €10/hour)"
+
+  - name: database_alerts
+    interval: 30s
+    rules:
+      - alert: HighPostgreSQLConnections
+        expr: pg_stat_database_numbackends{datname="devmatrix"} > 50
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "High PostgreSQL connection count"
+          description: "PostgreSQL has {{ $value }} active connections (threshold: 50)"
+
+      - alert: LowPostgreSQLCacheHitRatio
+        expr: pg_stat_database_blks_hit / (pg_stat_database_blks_hit + pg_stat_database_blks_read) * 100 < 90
+        for: 10m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Low PostgreSQL cache hit ratio"
+          description: "PostgreSQL cache hit ratio is {{ $value }}% (threshold: 90%)"
+
+      - alert: PostgreSQLDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "PostgreSQL has been down for more than 1 minute"
+
+      - alert: HighRedisMemoryUsage
+        expr: redis_memory_used_bytes / redis_memory_max_bytes * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          component: cache
+        annotations:
+          summary: "High Redis memory usage"
+          description: "Redis memory usage is {{ $value }}% (threshold: 80%)"
+
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: cache
+        annotations:
+          summary: "Redis is down"
+          description: "Redis has been down for more than 1 minute"
+
+      - alert: HighRedisEvictionRate
+        expr: rate(redis_evicted_keys_total[5m]) > 100
+        for: 5m
+        labels:
+          severity: warning
+          component: cache
+        annotations:
+          summary: "High Redis key eviction rate"
+          description: "Redis is evicting {{ $value }} keys/sec (threshold: 100)"
+
+  - name: rag_alerts
+    interval: 30s
+    rules:
+      - alert: HighRAGRetrievalLatency
+        expr: histogram_quantile(0.95, rate(rag_retrieval_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: rag
+        annotations:
+          summary: "High RAG retrieval latency"
+          description: "RAG p95 retrieval latency is {{ $value }}s (threshold: 1s)"
+
+      - alert: LowRAGCacheHitRate
+        expr: sum(rate(rag_retrieval_cache_hits_total[5m])) / (sum(rate(rag_retrieval_cache_hits_total[5m])) + sum(rate(rag_retrieval_cache_misses_total[5m]))) * 100 < 50
+        for: 10m
+        labels:
+          severity: info
+          component: rag
+        annotations:
+          summary: "Low RAG cache hit rate"
+          description: "RAG cache hit rate is {{ $value }}% (threshold: 50%)"
