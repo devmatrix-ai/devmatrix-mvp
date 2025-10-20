@@ -13,8 +13,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from ..observability import StructuredLogger, MetricsCollector, HealthCheck, setup_logging
-from .routers import workflows, executions, metrics, health, websocket, rag
+from ..observability import StructuredLogger, HealthCheck, MetricsMiddleware, setup_logging
+from ..observability.global_metrics import metrics_collector
+from .routers import workflows, executions, metrics, health, websocket, rag, chat
 
 
 # Initialize logging system
@@ -22,7 +23,6 @@ setup_logging()
 
 # Global instances
 logger = StructuredLogger("api", output_json=True)
-metrics_collector = MetricsCollector()
 health_check = HealthCheck()
 
 
@@ -75,6 +75,9 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Add metrics middleware
+    app.add_middleware(MetricsMiddleware, metrics_collector=metrics_collector)
+
     # Include routers
     app.include_router(workflows.router, prefix="/api/v1")
     app.include_router(executions.router, prefix="/api/v1")
@@ -82,6 +85,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router, prefix="/api/v1")
     app.include_router(websocket.router, prefix="/api/v1")
     app.include_router(rag.router, prefix="/api/v1")
+    app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
 
     # Mount Socket.IO app
     app.mount("/socket.io", websocket.sio_app)

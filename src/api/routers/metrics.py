@@ -39,13 +39,13 @@ async def get_prometheus_metrics() -> Response:
     from .executions import executions_db, ExecutionStatus
 
     # Update metrics
-    metrics_collector.increment("workflows_total", len(workflows_db))
-    metrics_collector.increment("executions_total", len(executions_db))
+    metrics_collector.set_gauge("workflows_total", len(workflows_db))
+    metrics_collector.set_gauge("executions_total", len(executions_db))
 
     # Count executions by status
     for execution in executions_db.values():
         status = execution["status"]
-        metrics_collector.increment(
+        metrics_collector.increment_counter(
             "executions_by_status_total",
             1,
             labels={"status": status.value},

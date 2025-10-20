@@ -527,7 +527,17 @@ def seed_examples(
     for i in range(0, len(examples), batch_size):
         batch = examples[i : i + batch_size]
         codes = [code for code, _ in batch]
-        metadatas = [metadata for _, metadata in batch]
+
+        # Convert list values to strings for ChromaDB compatibility
+        metadatas = []
+        for _, metadata in batch:
+            cleaned_metadata = {}
+            for key, value in metadata.items():
+                if isinstance(value, list):
+                    cleaned_metadata[key] = ",".join(str(v) for v in value)
+                else:
+                    cleaned_metadata[key] = value
+            metadatas.append(cleaned_metadata)
 
         try:
             code_ids = vector_store.add_batch(codes, metadatas)

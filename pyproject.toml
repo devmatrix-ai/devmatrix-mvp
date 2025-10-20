@@ -75,13 +75,28 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = [
+    "-v",
     "--strict-markers",
     "--tb=short",
-    "--cov=src",
-    "--cov-report=term-missing",
-    "--cov-report=html",
+    "--disable-warnings",
 ]
 asyncio_mode = "auto"
+timeout = 120
+timeout_method = "thread"
+log_cli = false
+log_cli_level = "INFO"
+log_file = "tests/test.log"
+log_file_level = "DEBUG"
+env_files = [".env.test"]
+markers = [
+    "unit: Unit tests (fast, no external dependencies)",
+    "integration: Integration tests (require services)",
+    "e2e: End-to-end tests (full workflow)",
+    "real_api: Tests using real Anthropic API (slow, costs money)",
+    "real_services: Tests requiring real PostgreSQL/Redis/ChromaDB",
+    "slow: Tests that take >30 seconds",
+    "smoke: Quick smoke tests",
+]
 
 [tool.coverage.run]
 source = ["src"]

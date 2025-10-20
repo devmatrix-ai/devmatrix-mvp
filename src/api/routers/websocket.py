@@ -12,10 +12,13 @@ import socketio
 from src.services.chat_service import ChatService
 from src.services.workspace_service import WorkspaceService
 from src.observability import StructuredLogger
+from src.observability.global_metrics import metrics_collector
 
 
 router = APIRouter()
 logger = StructuredLogger("websocket")
+# Use global metrics collector
+metrics = metrics_collector
 
 # Socket.IO server
 sio = socketio.AsyncServer(
@@ -25,8 +28,8 @@ sio = socketio.AsyncServer(
     engineio_logger=True,
 )
 
-# Services
-chat_service = ChatService()
+# Services - use global metrics collector for LLM metrics
+chat_service = ChatService(metrics_collector=metrics)
 workspace_service = WorkspaceService()
 
 # Active connections tracking
@@ -44,6 +47,20 @@ active_connections: Dict[str, Set[str]] = {
 async def connect(sid, environ):
     """Handle client connection."""
     logger.info(f"Client connected: {sid}")
+
+    # Metrics
+    metrics.increment_counter(
+        "websocket_connections_total",
+        labels={"type": "connect"},
+        help_text="Total WebSocket connections"
+    )
+    current_active = len(active_connections['chat']) + len(active_connections['executions'])
+    metrics.set_gauge(
+        "websocket_connections_active",
+        current_active + 1,
+        help_text="Active WebSocket connections"
+    )
+
     await sio.emit('connected', {'sid': sid}, room=sid)
 
 
@@ -55,6 +72,19 @@ async def disconnect(sid):
     # Remove from all rooms
     for room_set in active_connections.values():
         room_set.discard(sid)
+
+    # Metrics
+    metrics.increment_counter(
+        "websocket_connections_total",
+        labels={"type": "disconnect"},
+        help_text="Total WebSocket disconnections"
+    )
+    current_active = len(active_connections['chat']) + len(active_connections['executions'])
+    metrics.set_gauge(
+        "websocket_connections_active",
+        current_active,
+        help_text="Active WebSocket connections"
+    )
 
 
 # ==========================================
@@ -80,14 +110,20 @@ async def join_chat(sid, data):
         if conversation_id:
             conversation = chat_service.get_conversation(conversation_id)
             if not conversation:
-                await sio.emit('error', {
-                    'message': f'Conversation {conversation_id} not found'
-                }, room=sid)
-                return
+                # Conversation not found (e.g., after server restart)
+                # Create a new one and notify client of the new ID
+                logger.info(f"Conversation {conversation_id} not found, creating new one")
+                conversation_id = chat_service.create_conversation(
+                    workspace_id=workspace_id,
+                    metadata={'sid': sid, 'recreated': True},
+                    session_id=sid
+                )
+                conversation = chat_service.get_conversation(conversation_id)
         else:
             conversation_id = chat_service.create_conversation(
                 workspace_id=workspace_id,
-                metadata={'sid': sid}
+                metadata={'sid': sid},
+                session_id=sid
             )
             conversation = chat_service.get_conversation(conversation_id)
 
@@ -124,6 +160,9 @@ async def send_message(sid, data):
             "metadata": {}  # optional
         }
     """
+    import time
+    start_time = time.time()
+
     try:
         conversation_id = data.get('conversation_id')
         content = data.get('content')
@@ -133,7 +172,19 @@ async def send_message(sid, data):
             await sio.emit('error', {
                 'message': 'conversation_id and content are required'
             }, room=sid)
+            metrics.increment_counter(
+                "websocket_errors_total",
+                labels={"event": "send_message", "error_type": "validation"},
+                help_text="Total WebSocket errors"
+            )
             return
+
+        # Metrics: Message received
+        metrics.increment_counter(
+            "websocket_messages_total",
+            labels={"event": "send_message", "direction": "received"},
+            help_text="Total WebSocket messages"
+        )
 
         # Echo user message immediately
         await sio.emit('message', {
@@ -143,16 +194,40 @@ async def send_message(sid, data):
         }, room=f"chat_{conversation_id}")
 
         # Process message and stream response
+        chunk_count = 0
         async for chunk in chat_service.send_message(
             conversation_id=conversation_id,
             content=content,
             metadata=metadata,
         ):
             await sio.emit('message', chunk, room=f"chat_{conversation_id}")
+            chunk_count += 1
+
+        # Metrics: Response sent
+        metrics.increment_counter(
+            "websocket_messages_total",
+            value=chunk_count,
+            labels={"event": "send_message", "direction": "sent"},
+            help_text="Total WebSocket messages"
+        )
+
+        # Metrics: Message duration
+        duration = time.time() - start_time
+        metrics.observe_histogram(
+            "websocket_message_duration_seconds",
+            duration,
+            labels={"event": "send_message"},
+            help_text="WebSocket message processing duration"
+        )
 
     except Exception as e:
         logger.error(f"Error sending message: {e}", exc_info=True)
         await sio.emit('error', {'message': str(e)}, room=sid)
+        metrics.increment_counter(
+            "websocket_errors_total",
+            labels={"event": "send_message", "error_type": "processing"},
+            help_text="Total WebSocket errors"
+        )
 
 
 @sio.event
@@ -273,6 +348,13 @@ async def write_file(sid, data):
         )
 
         if success:
+            # Metrics
+            metrics.increment_counter(
+                "websocket_workspace_operations_total",
+                labels={"operation": "write_file", "result": "success"},
+                help_text="Total workspace operations"
+            )
+
             await sio.emit('file_written', {
                 'workspace_id': workspace_id,
                 'file_path': file_path,
@@ -287,6 +369,11 @@ async def write_file(sid, data):
                     'tree': file_tree.to_dict(),
                 }, room=f"workspace_{workspace_id}")
         else:
+            metrics.increment_counter(
+                "websocket_workspace_operations_total",
+                labels={"operation": "write_file", "result": "failure"},
+                help_text="Total workspace operations"
+            )
             await sio.emit('error', {
                 'message': f'Failed to write file {file_path}'
             }, room=sid)
@@ -294,6 +381,11 @@ async def write_file(sid, data):
     except Exception as e:
         logger.error(f"Error writing file: {e}", exc_info=True)
         await sio.emit('error', {'message': str(e)}, room=sid)
+        metrics.increment_counter(
+            "websocket_errors_total",
+            labels={"event": "write_file", "error_type": "processing"},
+            help_text="Total WebSocket errors"
+        )
 
 
 # ==========================================

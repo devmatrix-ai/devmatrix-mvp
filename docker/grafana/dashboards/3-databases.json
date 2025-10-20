@@ -1,0 +1,403 @@
+{
+  "title": "3. Databases (PostgreSQL & Redis)",
+  "tags": [
+    "devmatrix",
+    "database",
+    "postgres",
+    "redis",
+    "cache"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "10s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "PostgreSQL Active Connections",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "pg_stat_database_numbackends{datname=\"devmatrix\"}",
+          "legendFormat": "Active Connections"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "short",
+          "label": "Connections"
+        },
+        {
+          "format": "short"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "PostgreSQL Transaction Rate",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 0
+      },
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "rate(pg_stat_database_xact_commit{datname=\"devmatrix\"}[5m])",
+          "legendFormat": "Commits"
+        },
+        {
+          "expr": "rate(pg_stat_database_xact_rollback{datname=\"devmatrix\"}[5m])",
+          "legendFormat": "Rollbacks"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "ops",
+          "label": "Transactions/sec"
+        },
+        {
+          "format": "short"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "PostgreSQL Database Size",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "pg_database_size_bytes{datname=\"devmatrix\"}"
+        }
+      ],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "PostgreSQL Tuple Operations",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "rate(pg_stat_database_tup_inserted{datname=\"devmatrix\"}[5m])",
+          "legendFormat": "Inserts"
+        },
+        {
+          "expr": "rate(pg_stat_database_tup_updated{datname=\"devmatrix\"}[5m])",
+          "legendFormat": "Updates"
+        },
+        {
+          "expr": "rate(pg_stat_database_tup_deleted{datname=\"devmatrix\"}[5m])",
+          "legendFormat": "Deletes"
+        },
+        {
+          "expr": "rate(pg_stat_database_tup_fetched{datname=\"devmatrix\"}[5m])",
+          "legendFormat": "Fetched"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "ops",
+          "label": "Operations/sec"
+        },
+        {
+          "format": "short"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "PostgreSQL Cache Hit Ratio",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "pg_stat_database_blks_hit{datname=\"devmatrix\"} / (pg_stat_database_blks_hit{datname=\"devmatrix\"} + pg_stat_database_blks_read{datname=\"devmatrix\"}) * 100"
+        }
+      ],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": 0,
+                "color": "red"
+              },
+              {
+                "value": 90,
+                "color": "yellow"
+              },
+              {
+                "value": 95,
+                "color": "green"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Redis Connected Clients",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 16
+      },
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "redis_connected_clients",
+          "legendFormat": "Connected Clients"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "short",
+          "label": "Clients"
+        },
+        {
+          "format": "short"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Redis Memory Usage",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 16
+      },
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "redis_memory_used_bytes",
+          "legendFormat": "Used Memory"
+        },
+        {
+          "expr": "redis_memory_max_bytes",
+          "legendFormat": "Max Memory"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "bytes",
+          "label": "Memory"
+        },
+        {
+          "format": "short"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Redis Commands/sec",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 16
+      },
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "rate(redis_commands_processed_total[5m])",
+          "legendFormat": "Commands"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "ops",
+          "label": "Commands/sec"
+        },
+        {
+          "format": "short"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Redis Keyspace Hit Rate %",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 24
+      },
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "rate(redis_keyspace_hits_total[5m]) / (rate(redis_keyspace_hits_total[5m]) + rate(redis_keyspace_misses_total[5m])) * 100"
+        }
+      ],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": 0,
+                "color": "red"
+              },
+              {
+                "value": 70,
+                "color": "yellow"
+              },
+              {
+                "value": 90,
+                "color": "green"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Redis Total Keys",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 24
+      },
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "sum(redis_db_keys)"
+        }
+      ],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 11,
+      "title": "Redis Evicted Keys",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 24
+      },
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "rate(redis_evicted_keys_total[5m])",
+          "legendFormat": "Evicted Keys/sec"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "keys/s",
+          "label": "Keys/sec"
+        },
+        {
+          "format": "short"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "PostgreSQL Query Duration",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "rate(pg_stat_statements_total_time_seconds[5m])",
+          "legendFormat": "Total Query Time"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "s",
+          "label": "Time (seconds)"
+        },
+        {
+          "format": "short"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Redis Operations by Command",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "topk(10, rate(redis_commands_duration_seconds_total[5m]))",
+          "legendFormat": "{{cmd}}"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "s",
+          "label": "Duration"
+        },
+        {
+          "format": "short"
+        }
+      ]
+    }
+  ]
+}
