@@ -247,39 +247,39 @@
 **Assignee:** api-engineer
 
 - [x] 2.3.0 Complete authentication API endpoints
-  - [ ] 2.3.1 Write 2-6 focused tests for new auth endpoints
+  - [x] 2.3.1 Write 2-6 focused tests for new auth endpoints
     - Test POST /api/v1/auth/verify-email success and error cases
     - Test POST /api/v1/auth/resend-verification
     - Test POST /api/v1/auth/forgot-password
     - Test POST /api/v1/auth/reset-password
     - Skip exhaustive testing of all scenarios
-  - [ ] 2.3.2 Extend AuthRouter with email verification endpoints
+  - [x] 2.3.2 Extend AuthRouter with email verification endpoints
     - Endpoint: `POST /api/v1/auth/verify-email` - Request body: {token}
     - Response: 200 {message, user_id} or 400 {error}
     - File: `src/api/routers/auth.py` (extend existing)
-  - [ ] 2.3.3 Add resend verification endpoint
+  - [x] 2.3.3 Add resend verification endpoint
     - Endpoint: `POST /api/v1/auth/resend-verification` - Requires authentication
     - Response: 200 {message} or 400/429
     - Check if already verified before resending
-  - [ ] 2.3.4 Add forgot password endpoint
+  - [x] 2.3.4 Add forgot password endpoint
     - Endpoint: `POST /api/v1/auth/forgot-password` - Request body: {email}
     - Response: Always 200 {message} (don't reveal if email exists)
     - Call PasswordResetService.request_password_reset()
-  - [ ] 2.3.5 Add reset password endpoint
+  - [x] 2.3.5 Add reset password endpoint
     - Endpoint: `POST /api/v1/auth/reset-password` - Request body: {token, new_password}
     - Response: 200 {message} or 400/422
     - Validate password meets requirements (8+ chars)
     - Call PasswordResetService.reset_password()
-  - [ ] 2.3.6 Update existing registration endpoint
+  - [x] 2.3.6 Update existing registration endpoint
     - Check `EMAIL_VERIFICATION_REQUIRED` config
     - If true: Set is_verified=False, generate verification token, send email
     - If false: Set is_verified=True, no email
     - Return appropriate response message
-  - [ ] 2.3.7 Add Pydantic request/response models
+  - [x] 2.3.7 Add Pydantic request/response models
     - VerifyEmailRequest, ResendVerificationResponse
     - ForgotPasswordRequest, ResetPasswordRequest
     - Add to: `src/api/routers/auth.py` or `src/api/schemas/auth.py`
-  - [ ] 2.3.8 Ensure auth endpoint tests pass
+  - [x] 2.3.8 Ensure auth endpoint tests pass
     - Run ONLY the 2-6 tests written in 2.3.1
     - Verify endpoints respond correctly
     - Do NOT run entire test suite
@@ -308,40 +308,40 @@
 **Assignee:** api-engineer
 
 - [x] 3.1.0 Complete email service infrastructure
-  - [ ] 3.1.1 Write 2-4 focused tests for email service
+  - [x] 3.1.1 Write 2-4 focused tests for email service
     - Test SMTP connection (mocked)
     - Test email sending with retry logic
     - Test email template rendering
     - Skip live SMTP integration tests (use mocks)
-  - [ ] 3.1.2 Create EmailService class
+  - [x] 3.1.2 Create EmailService class
     - Method: `send_email(to, subject, html_body, text_body)` - Core sending logic
     - Method: `send_verification_email(user_email, username, token)` - Uses template
     - Method: `send_password_reset_email(user_email, username, token)` - Uses template
     - Method: `send_welcome_email(user_email, username)` - Uses template
     - File: `src/services/email_service.py`
-  - [ ] 3.1.3 Implement SMTP configuration
+  - [x] 3.1.3 Implement SMTP configuration
     - Load from environment: SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM_EMAIL, SMTP_FROM_NAME
     - Use Python's smtplib or library like `aiosmtplib` for async
     - Add to: `src/config/constants.py`
-  - [ ] 3.1.4 Create HTML email templates
+  - [x] 3.1.4 Create HTML email templates
     - Template: `email_verification.html` - Verification link with token
     - Template: `password_reset.html` - Reset link with token
     - Template: `welcome.html` - Welcome message after registration
     - Directory: `src/templates/emails/`
     - Include plain text versions for all templates
-  - [ ] 3.1.5 Implement email template rendering
+  - [x] 3.1.5 Implement email template rendering
     - Use Jinja2 for template rendering
     - Variables: username, verification_url, reset_url, frontend_url
     - Frontend URL from env var: FRONTEND_URL
-  - [ ] 3.1.6 Add retry logic and error handling
+  - [x] 3.1.6 Add retry logic and error handling
     - Retry failed sends up to 3 times with exponential backoff
     - Log all email sending attempts (success/failure)
     - Graceful degradation if email service unavailable
-  - [ ] 3.1.7 Update environment variables documentation
+  - [x] 3.1.7 Update environment variables documentation
     - Add all SMTP settings to `.env.example`
     - Document SendGrid configuration (recommended provider)
     - File: `.env.example`
-  - [ ] 3.1.8 Ensure email service tests pass
+  - [x] 3.1.8 Ensure email service tests pass
     - Run ONLY the 2-4 tests written in 3.1.1
     - Verify email rendering and sending logic
     - Do NOT run entire test suite
@@ -374,40 +374,40 @@
 **Assignee:** api-engineer
 
 - [x] 4.1.0 Complete workspace isolation service
-  - [ ] 4.1.1 Write 2-6 focused tests for workspace service
+  - [x] 4.1.1 Write 2-6 focused tests for workspace service
     - Test workspace creation on user registration
     - Test workspace path validation (path traversal prevention)
     - Test workspace size calculation
     - Test workspace cleanup on user deletion
     - Skip comprehensive file system edge cases
-  - [ ] 4.1.2 Create WorkspaceService class
+  - [x] 4.1.2 Create WorkspaceService class
     - Method: `create_user_workspace(user_id)` - Create /workspaces/{user_id}/ with subdirs
     - Method: `get_workspace_path(user_id)` - Return absolute path to workspace
     - Method: `validate_file_path(user_id, relative_path)` - Prevent path traversal
     - Method: `calculate_workspace_size(user_id)` - Return total bytes used
     - Method: `cleanup_workspace(user_id)` - Delete workspace (soft delete option)
     - File: `src/services/workspace_service.py`
-  - [ ] 4.1.3 Implement workspace directory structure
+  - [x] 4.1.3 Implement workspace directory structure
     - Create subdirectories: projects/, temp/, .git/
     - Initialize git repository in workspace
     - Set appropriate permissions (owner only)
-  - [ ] 4.1.4 Implement path traversal protection
+  - [x] 4.1.4 Implement path traversal protection
     - Use Path.resolve() to get absolute path
     - Ensure resolved path is child of workspace path
     - Raise SecurityError if path escape detected
-  - [ ] 4.1.5 Implement workspace size calculation
+  - [x] 4.1.5 Implement workspace size calculation
     - Recursively iterate all files in workspace
     - Sum file sizes using os.stat()
     - Cache result for performance (update daily)
     - Method should be async for background processing
-  - [ ] 4.1.6 Integrate workspace creation into registration flow
+  - [x] 4.1.6 Integrate workspace creation into registration flow
     - Call WorkspaceService.create_user_workspace() after user creation
     - Handle errors gracefully (rollback user if workspace fails)
     - Update: `src/services/auth_service.py` register_user method
-  - [ ] 4.1.7 Add workspace configuration
+  - [x] 4.1.7 Add workspace configuration
     - Environment variable: WORKSPACES_ROOT (default: /workspaces)
     - Add to: `src/config/constants.py`
-  - [ ] 4.1.8 Ensure workspace service tests pass
+  - [x] 4.1.8 Ensure workspace service tests pass
     - Run ONLY the 2-6 tests written in 4.1.1
     - Verify workspace operations work correctly
     - Do NOT run entire test suite
@@ -435,40 +435,40 @@
 **Assignee:** api-engineer
 
 - [x] 4.2.0 Complete database query filtering for multi-tenancy
-  - [ ] 4.2.1 Write 2-8 focused tests for multi-tenancy isolation
+  - [x] 4.2.1 Write 2-8 focused tests for multi-tenancy isolation
     - Test user can access only their masterplans
     - Test user cannot access other user's masterplans (404 response)
     - Test user can access only their conversations
     - Test admin can access all data
     - Test query filtering applied automatically
     - Skip exhaustive permission combination testing
-  - [ ] 4.2.2 Update MasterplanService with user_id filtering
+  - [x] 4.2.2 Update MasterplanService with user_id filtering
     - Method: `list_by_user(user_id)` - Filter masterplans by user_id
     - Method: `get_by_id(masterplan_id, user_id)` - Get masterplan only if owned by user
     - Method: `create(user_id, ...)` - Always set user_id on creation
     - File: `src/services/masterplan_service.py` or similar
-  - [ ] 4.2.3 Update DiscoveryService with user_id filtering
+  - [x] 4.2.3 Update DiscoveryService with user_id filtering
     - Apply same filtering pattern as masterplans
     - Ensure all queries include `filter(DiscoveryDocument.user_id == user_id)`
-  - [ ] 4.2.4 Create ConversationService with user_id filtering
+  - [x] 4.2.4 Create ConversationService with user_id filtering
     - Method: `list_by_user(user_id)` - Get user's conversations
     - Method: `get_by_id(conversation_id, user_id)` - Verify ownership
     - Method: `create(user_id, title)` - Create conversation for user
     - File: `src/services/conversation_service.py` (new)
-  - [ ] 4.2.5 Implement 404 vs 403 response pattern
+  - [x] 4.2.5 Implement 404 vs 403 response pattern
     - When resource not found OR not owned by user: Return 404
     - Don't reveal resource existence to unauthorized users
     - Apply across all service methods
-  - [ ] 4.2.6 Update existing API endpoints to use user_id from token
+  - [x] 4.2.6 Update existing API endpoints to use user_id from token
     - Masterplan endpoints: Add `current_user: User = Depends(get_current_active_user)`
     - Pass `current_user.user_id` to service methods
     - Remove any client-provided user_id (security)
     - Files: `src/api/routers/masterplans.py`, etc.
-  - [ ] 4.2.7 Add admin bypass logic
+  - [x] 4.2.7 Add admin bypass logic
     - If `current_user.is_superuser`, allow access to all resources
     - Implement in service layer, not middleware
     - Use for impersonation feature
-  - [ ] 4.2.8 Ensure multi-tenancy tests pass
+  - [x] 4.2.8 Ensure multi-tenancy tests pass
     - Run ONLY the 2-8 tests written in 4.2.1
     - Verify complete data isolation
     - Do NOT run entire test suite
@@ -500,40 +500,40 @@
 **Assignee:** api-engineer
 
 - [x] 5.1.0 Complete usage tracking service
-  - [ ] 5.1.1 Write 2-6 focused tests for usage tracking
+  - [x] 5.1.1 Write 2-6 focused tests for usage tracking
     - Test LLM token tracking increments usage
     - Test monthly usage aggregation
     - Test masterplan creation tracking
     - Test storage usage updates
     - Skip comprehensive usage report testing
-  - [ ] 5.1.2 Create UsageTrackingService class
+  - [x] 5.1.2 Create UsageTrackingService class
     - Method: `track_llm_usage(user_id, model, input_tokens, output_tokens, cached_tokens, cost_usd)` - Increment monthly totals
     - Method: `track_masterplan_created(user_id)` - Increment counter
     - Method: `track_storage_usage(user_id, bytes_used)` - Update storage field
     - Method: `get_current_month_usage(user_id)` - Return current month's usage record
     - Method: `get_or_create_month_usage(user_id, month)` - Get or create usage record for month
     - File: `src/services/usage_tracking_service.py`
-  - [ ] 5.1.3 Implement monthly usage aggregation
+  - [x] 5.1.3 Implement monthly usage aggregation
     - Store one record per user per month in user_usage table
     - Month field: First day of month (e.g., 2025-10-01)
     - Auto-create record on first usage each month
-  - [ ] 5.1.4 Create LLM usage tracking decorator
+  - [x] 5.1.4 Create LLM usage tracking decorator
     - Decorator: `@track_llm_call` - Wraps LLM calls to automatically track usage
     - Extract token counts from response metadata
     - Calculate cost based on model pricing
     - File: `src/llm/usage_decorator.py` or add to existing LLM module
-  - [ ] 5.1.5 Calculate LLM costs from token usage
+  - [x] 5.1.5 Calculate LLM costs from token usage
     - Method: `calculate_cost(model, input_tokens, output_tokens, cached_tokens)` - Return USD cost
     - Pricing table for models (Claude Sonnet 4.5, etc.)
     - Add to: `src/llm/pricing.py` or constants
-  - [ ] 5.1.6 Integrate usage tracking into LLM service
+  - [x] 5.1.6 Integrate usage tracking into LLM service
     - Update all LLM API calls to use tracking decorator
     - Pass user_id to decorator from request context
     - File: `src/llm/enhanced_anthropic_client.py` or similar
-  - [ ] 5.1.7 Integrate usage tracking into masterplan creation
+  - [x] 5.1.7 Integrate usage tracking into masterplan creation
     - Call `track_masterplan_created(user_id)` after successful creation
     - Update: Masterplan service or router
-  - [ ] 5.1.8 Ensure usage tracking tests pass
+  - [x] 5.1.8 Ensure usage tracking tests pass
     - Run ONLY the 2-6 tests written in 5.1.1
     - Verify usage increments correctly
     - Do NOT run entire test suite
@@ -563,40 +563,40 @@
 **Assignee:** api-engineer
 
 - [x] 5.2.0 Complete quota enforcement service
-  - [ ] 5.2.1 Write 2-6 focused tests for quota enforcement
+  - [x] 5.2.1 Write 2-6 focused tests for quota enforcement
     - Test quota check allows usage under limit
     - Test quota check blocks usage over limit (429 error)
     - Test 5% grace period works
     - Test admin bypass works
     - Test null quota = unlimited
     - Skip exhaustive quota combination testing
-  - [ ] 5.2.2 Create QuotaService class
+  - [x] 5.2.2 Create QuotaService class
     - Method: `get_user_quotas(user_id)` - Get quotas from DB or defaults
     - Method: `check_token_quota(user_id)` - Return True if under limit, raise error if exceeded
     - Method: `check_masterplan_quota(user_id)` - Check masterplan limit
     - Method: `check_storage_quota(user_id, additional_bytes)` - Check storage limit
     - Method: `get_default_quotas()` - Return default quotas from config
     - File: `src/services/quota_service.py`
-  - [ ] 5.2.3 Implement default quotas
+  - [x] 5.2.3 Implement default quotas
     - Load from environment: DEFAULT_LLM_TOKENS_MONTHLY, DEFAULT_MASTERPLANS_LIMIT, DEFAULT_STORAGE_BYTES_LIMIT
     - Default values: 1M tokens, 50 masterplans, 5GB storage
     - Add to: `src/config/constants.py`
-  - [ ] 5.2.4 Implement quota checking with grace period
+  - [x] 5.2.4 Implement quota checking with grace period
     - Allow 5% overage (e.g., 1.05M tokens if limit is 1M)
     - Only enforce hard limit after grace period
     - Document rationale: Prevent hard cutoffs mid-operation
-  - [ ] 5.2.5 Implement admin quota bypass
+  - [x] 5.2.5 Implement admin quota bypass
     - If user `is_superuser=True`, skip quota checks
     - Return unlimited quotas for admins
-  - [ ] 5.2.6 Create quota exceeded error responses
+  - [x] 5.2.6 Create quota exceeded error responses
     - HTTP 429 for token quota exceeded
     - Error body: {error, quota, used, reset_date, percent_used}
     - HTTP 413 for storage quota exceeded
-  - [ ] 5.2.7 Integrate quota checks into API endpoints
+  - [x] 5.2.7 Integrate quota checks into API endpoints
     - Before LLM call: `quota_service.check_token_quota(user_id)`
     - Before masterplan creation: `quota_service.check_masterplan_quota(user_id)`
     - Before file write: `quota_service.check_storage_quota(user_id, file_size)`
-  - [ ] 5.2.8 Ensure quota enforcement tests pass
+  - [x] 5.2.8 Ensure quota enforcement tests pass
     - Run ONLY the 2-6 tests written in 5.2.1
     - Verify quota limits enforced correctly
     - Do NOT run entire test suite
@@ -626,33 +626,33 @@
 **Assignee:** api-engineer
 
 - [x] 5.3.0 Complete storage tracking background job
-  - [ ] 5.3.1 Write 2-4 focused tests for storage tracking
+  - [x] 5.3.1 Write 2-4 focused tests for storage tracking
     - Test workspace size calculation
     - Test storage usage update in database
     - Test daily cron job execution (mocked)
     - Skip long-running integration tests
-  - [ ] 5.3.2 Create storage calculation background task
+  - [x] 5.3.2 Create storage calculation background task
     - Function: `calculate_all_users_storage()` - Iterate all users, calculate workspace sizes
     - Call WorkspaceService.calculate_workspace_size() for each user
     - Update user_usage.storage_bytes
     - File: `src/tasks/storage_calculation.py` (new)
-  - [ ] 5.3.3 Implement async processing for large workspaces
+  - [x] 5.3.3 Implement async processing for large workspaces
     - Use asyncio for concurrent processing
     - Process users in batches (e.g., 10 at a time)
     - Add progress logging
-  - [ ] 5.3.4 Add cron job scheduling
+  - [x] 5.3.4 Add cron job scheduling
     - Use APScheduler or similar for background tasks
     - Schedule: Daily at 2 AM
     - File: `src/tasks/scheduler.py` (new or extend)
-  - [ ] 5.3.5 Add manual refresh endpoint for admins
+  - [x] 5.3.5 Add manual refresh endpoint for admins
     - Endpoint: `POST /api/v1/admin/refresh-storage` - Triggers immediate calculation
     - Admin-only, returns job status
     - File: `src/api/routers/admin.py`
-  - [ ] 5.3.6 Add storage calculation error handling
+  - [x] 5.3.6 Add storage calculation error handling
     - Handle permission errors gracefully
     - Log errors but continue processing other users
     - Send alert if calculation fails for multiple users
-  - [ ] 5.3.7 Ensure storage tracking tests pass
+  - [x] 5.3.7 Ensure storage tracking tests pass
     - Run ONLY the 2-4 tests written in 5.3.1
     - Verify storage calculation logic
     - Do NOT run entire test suite
@@ -680,32 +680,32 @@
 **Assignee:** api-engineer
 
 - [x] 5.4.0 Complete usage statistics API
-  - [ ] 5.4.1 Write 2-4 focused tests for usage statistics API
+  - [x] 5.4.1 Write 2-4 focused tests for usage statistics API
     - Test GET /api/v1/users/me/usage returns correct data
     - Test usage percentages calculated correctly
     - Test human-readable storage formatting
     - Skip extensive formatting edge cases
-  - [ ] 5.4.2 Create UserRouter for user management endpoints
+  - [x] 5.4.2 Create UserRouter for user management endpoints
     - File: `src/api/routers/users.py` (new)
     - Register router in main app
-  - [ ] 5.4.3 Implement GET /api/v1/users/me/usage endpoint
+  - [x] 5.4.3 Implement GET /api/v1/users/me/usage endpoint
     - Get current user from auth dependency
     - Get current month usage from UsageTrackingService
     - Get quotas from QuotaService
     - Calculate percentages: (used / limit) * 100
     - Format storage as human-readable (125 MB / 5 GB)
-  - [ ] 5.4.4 Create response model for usage statistics
+  - [x] 5.4.4 Create response model for usage statistics
     - UsageStatsResponse: month, llm_tokens_used, llm_tokens_limit, llm_tokens_percent, llm_cost_usd, masterplans_created, masterplans_limit, storage_bytes, storage_limit_bytes, storage_human, storage_percent
     - File: `src/api/schemas/usage.py` (new)
-  - [ ] 5.4.5 Implement storage formatting helper
+  - [x] 5.4.5 Implement storage formatting helper
     - Function: `format_bytes(bytes)` - Return "125 MB", "1.2 GB", etc.
     - Use appropriate units (KB, MB, GB, TB)
     - Add to: `src/utils/formatting.py` (new)
-  - [ ] 5.4.6 Add caching for usage statistics
+  - [x] 5.4.6 Add caching for usage statistics
     - Cache response for 1 minute using Redis or in-memory cache
     - Cache key: `usage_stats:{user_id}:{month}`
     - Reduces database queries for frequent requests
-  - [ ] 5.4.7 Ensure usage statistics API tests pass
+  - [x] 5.4.7 Ensure usage statistics API tests pass
     - Run ONLY the 2-4 tests written in 5.4.1
     - Verify endpoint returns correct format
     - Do NOT run entire test suite
@@ -736,37 +736,37 @@
 **Assignee:** api-engineer
 
 - [x] 6.1.0 Complete admin user management API
-  - [ ] 6.1.1 Write 2-8 focused tests for admin endpoints
+  - [x] 6.1.1 Write 2-8 focused tests for admin endpoints
     - Test GET /api/v1/admin/users with pagination, search, filtering
     - Test GET /api/v1/admin/users/{user_id} returns detailed info
     - Test PATCH /api/v1/admin/users/{user_id} activates/deactivates user
     - Test DELETE /api/v1/admin/users/{user_id} soft deletes user
     - Test non-admin cannot access admin endpoints (403)
     - Skip exhaustive permission testing
-  - [ ] 6.1.2 Create AdminRouter
+  - [x] 6.1.2 Create AdminRouter
     - File: `src/api/routers/admin.py` (new)
     - All endpoints require `Depends(get_current_superuser)`
     - Register router with `/admin` prefix
-  - [ ] 6.1.3 Implement GET /api/v1/admin/users (list all users)
+  - [x] 6.1.3 Implement GET /api/v1/admin/users (list all users)
     - Query params: page, per_page (max 100), sort_by, sort_order, filter_active, search
     - Search across email and username fields
     - Include usage_summary for each user (tokens this month, masterplans count, storage MB)
     - Return paginated response: {users, total, page, per_page, total_pages}
-  - [ ] 6.1.4 Implement GET /api/v1/admin/users/{user_id} (user details)
+  - [x] 6.1.4 Implement GET /api/v1/admin/users/{user_id} (user details)
     - Return: user object, quotas, usage_current_month, statistics (total masterplans, conversations, LLM cost, workspace path)
     - Join user_quotas and user_usage tables
-  - [ ] 6.1.5 Implement PATCH /api/v1/admin/users/{user_id} (update user)
+  - [x] 6.1.5 Implement PATCH /api/v1/admin/users/{user_id} (update user)
     - Accept: is_active field (activate/deactivate)
     - Update user record, return updated user object
     - Log admin action for audit trail (future enhancement)
-  - [ ] 6.1.6 Implement DELETE /api/v1/admin/users/{user_id} (soft delete)
+  - [x] 6.1.6 Implement DELETE /api/v1/admin/users/{user_id} (soft delete)
     - Set is_active=False, optionally set deleted_at timestamp
     - Do NOT hard delete (preserve data for 30 days)
     - Consider adding deleted_at column in future migration
-  - [ ] 6.1.7 Create Pydantic schemas for admin endpoints
+  - [x] 6.1.7 Create Pydantic schemas for admin endpoints
     - AdminUserListResponse, AdminUserDetailResponse, UpdateUserRequest
     - File: `src/api/schemas/admin.py` (new)
-  - [ ] 6.1.8 Ensure admin user management tests pass
+  - [x] 6.1.8 Ensure admin user management tests pass
     - Run ONLY the 2-8 tests written in 6.1.1
     - Verify admin endpoints work correctly
     - Do NOT run entire test suite
@@ -794,35 +794,35 @@
 **Assignee:** api-engineer
 
 - [x] 6.2.0 Complete admin quota management and statistics
-  - [ ] 6.2.1 Write 2-6 focused tests for admin quota and stats endpoints
+  - [x] 6.2.1 Write 2-6 focused tests for admin quota and stats endpoints
     - Test PATCH /api/v1/admin/users/{user_id}/quotas updates quotas
     - Test GET /api/v1/admin/statistics returns global stats
     - Test GET /api/v1/admin/usage-by-user returns usage report
     - Test null quota = unlimited
     - Skip comprehensive statistics edge cases
-  - [ ] 6.2.2 Implement PATCH /api/v1/admin/users/{user_id}/quotas
+  - [x] 6.2.2 Implement PATCH /api/v1/admin/users/{user_id}/quotas
     - Accept: llm_tokens_monthly_limit, masterplans_limit, storage_bytes_limit, api_calls_per_minute
     - Create or update user_quotas record
     - Null value = unlimited quota
     - Return updated quotas object
-  - [ ] 6.2.3 Create AdminService for complex admin operations
+  - [x] 6.2.3 Create AdminService for complex admin operations
     - Method: `get_global_statistics()` - Aggregate stats across all users
     - Method: `get_usage_by_user(start_date, end_date)` - Usage report per user
     - File: `src/services/admin_service.py` (new)
-  - [ ] 6.2.4 Implement GET /api/v1/admin/statistics endpoint
+  - [x] 6.2.4 Implement GET /api/v1/admin/statistics endpoint
     - Return: total users, active users, new users this month/today
     - Usage this month: total tokens, cost, masterplans, storage
     - All-time usage: total tokens, cost, masterplans, conversations
     - Top 10 users by token usage
-  - [ ] 6.2.5 Implement GET /api/v1/admin/usage-by-user endpoint
+  - [x] 6.2.5 Implement GET /api/v1/admin/usage-by-user endpoint
     - Query params: start_date, end_date (optional)
     - Return array of: {user_id, email, tokens_used, cost_usd, masterplans, storage}
     - Order by tokens_used descending
-  - [ ] 6.2.6 Add caching for global statistics
+  - [x] 6.2.6 Add caching for global statistics
     - Cache for 5 minutes using Redis or in-memory
     - Cache key: `admin_stats:global`
     - Invalidate on quota updates or user changes
-  - [ ] 6.2.7 Ensure admin quota/stats tests pass
+  - [x] 6.2.7 Ensure admin quota/stats tests pass
     - Run ONLY the 2-6 tests written in 6.2.1
     - Verify quota updates and statistics
     - Do NOT run entire test suite
@@ -908,41 +908,41 @@
 **Assignee:** api-engineer
 
 - [x] 7.1.0 Complete rate limiting infrastructure
-  - [ ] 7.1.1 Write 2-6 focused tests for rate limiting
+  - [x] 7.1.1 Write 2-6 focused tests for rate limiting
     - Test rate limit enforced for auth endpoints (5 req/min)
     - Test rate limit headers returned (X-RateLimit-*)
     - Test 429 error with Retry-After header
     - Test Redis counter increments and TTL
     - Skip comprehensive rate limit scenarios
-  - [ ] 7.1.2 Install and configure rate limiting library
+  - [x] 7.1.2 Install and configure rate limiting library
     - Install: slowapi (recommended) or fastapi-limiter
     - Add to: `requirements.txt`
     - Initialize in: `src/api/app.py`
-  - [ ] 7.1.3 Configure Redis for rate limiting
+  - [x] 7.1.3 Configure Redis for rate limiting
     - Redis already available in project
     - Create Redis client for rate limiting
     - Configure connection pool
     - File: `src/config/redis.py` (new or extend)
-  - [ ] 7.1.4 Create RateLimitService class
+  - [x] 7.1.4 Create RateLimitService class
     - Method: `check_rate_limit(key, limit, window_seconds)` - Check and increment counter
     - Method: `get_rate_limit_info(key)` - Return limit, remaining, reset timestamp
     - Method: `reset_rate_limit(key)` - Clear counter (for testing)
     - File: `src/services/rate_limit_service.py` (new)
     - Use Redis INCR and EXPIRE commands
-  - [ ] 7.1.5 Implement rate limit response headers
+  - [x] 7.1.5 Implement rate limit response headers
     - Headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset
     - Add to all rate-limited endpoint responses
     - Helper function to add headers
-  - [ ] 7.1.6 Implement 429 error response
+  - [x] 7.1.6 Implement 429 error response
     - Custom exception: RateLimitExceeded
     - Response: {error: "Too many requests", retry_after: seconds}
     - Status: 429 with Retry-After header
     - File: `src/api/exceptions.py` (new or extend)
-  - [ ] 7.1.7 Add rate limit configuration
+  - [x] 7.1.7 Add rate limit configuration
     - Environment variables: RATE_LIMIT_AUTH_PER_MINUTE, RATE_LIMIT_API_PER_MINUTE, RATE_LIMIT_ADMIN_PER_MINUTE
     - Defaults: 5, 30, 100
     - Add to: `src/config/constants.py`
-  - [ ] 7.1.8 Ensure rate limiting tests pass
+  - [x] 7.1.8 Ensure rate limiting tests pass
     - Run ONLY the 2-6 tests written in 7.1.1
     - Verify rate limits enforced
     - Do NOT run entire test suite
@@ -972,35 +972,35 @@
 **Assignee:** api-engineer
 
 - [x] 7.2.0 Complete rate limit application to endpoints
-  - [ ] 7.2.1 Write 2-4 focused tests for endpoint rate limiting
+  - [x] 7.2.1 Write 2-4 focused tests for endpoint rate limiting
     - Test auth endpoints rate limited by IP
     - Test API endpoints rate limited by user_id
     - Test admin endpoints have higher limits
     - Skip testing all endpoint combinations
-  - [ ] 7.2.2 Apply rate limits to authentication endpoints
+  - [x] 7.2.2 Apply rate limits to authentication endpoints
     - POST /api/v1/auth/login: 5 req/min per IP
     - POST /api/v1/auth/register: 5 req/min per IP
     - POST /api/v1/auth/forgot-password: 3 req/hour per IP
     - POST /api/v1/auth/reset-password: 5 req/min per IP
     - POST /api/v1/auth/resend-verification: 1 req/2min per user
     - Use IP address as rate limit key
-  - [ ] 7.2.3 Create rate limit decorators
+  - [x] 7.2.3 Create rate limit decorators
     - Decorator: `@rate_limit_by_ip(limit, window)` - For unauthenticated endpoints
     - Decorator: `@rate_limit_by_user(limit, window)` - For authenticated endpoints
     - File: `src/api/decorators/rate_limit.py` (new)
-  - [ ] 7.2.4 Apply rate limits to API endpoints
+  - [x] 7.2.4 Apply rate limits to API endpoints
     - Chat/conversation endpoints: 30 req/min per user
     - Masterplan endpoints: 20 req/min per user
     - User endpoints: 60 req/min per user
     - Use user_id from JWT as rate limit key
-  - [ ] 7.2.5 Apply rate limits to admin endpoints
+  - [x] 7.2.5 Apply rate limits to admin endpoints
     - All admin endpoints: 100 req/min per admin user
     - Higher limit due to dashboard usage patterns
-  - [ ] 7.2.6 Implement per-user rate limit overrides
+  - [x] 7.2.6 Implement per-user rate limit overrides
     - Check user_quotas.api_calls_per_minute for custom limits
     - Fall back to default if not set
     - Premium users can have higher limits
-  - [ ] 7.2.7 Ensure endpoint rate limiting tests pass
+  - [x] 7.2.7 Ensure endpoint rate limiting tests pass
     - Run ONLY the 2-4 tests written in 7.2.1
     - Verify rate limits applied correctly
     - Do NOT run entire test suite
@@ -1342,16 +1342,16 @@
 **Assignee:** qa-engineer
 
 - [x] 9.1.0 Complete integration testing
-  - [ ] 9.1.1 Review existing tests from all phases
+  - [x] 9.1.1 Review existing tests from all phases
     - Review tests from Task Groups 1.1, 2.1, 2.2, 2.3, 3.1, 4.1, 4.2, 5.1, 5.2, 6.1, 6.2, 7.1, 8.1, 8.2, 8.3
     - Identify gaps in integration workflows
     - Total existing tests: approximately 30-70 tests
-  - [ ] 9.1.2 Analyze test coverage gaps for authentication & multi-tenancy
+  - [x] 9.1.2 Analyze test coverage gaps for authentication & multi-tenancy
     - Focus on end-to-end user workflows
     - Identify missing integration points
     - Prioritize business-critical flows
     - DO NOT assess entire application coverage
-  - [ ] 9.1.3 Write up to 10 additional integration tests maximum
+  - [x] 9.1.3 Write up to 10 additional integration tests maximum
     - Test: Complete registration → email verification → login flow
     - Test: Password reset flow end-to-end
     - Test: Multi-user data isolation (User A cannot see User B's data)
@@ -1362,17 +1362,17 @@
     - Test: Impersonation flow works correctly
     - DO NOT write comprehensive coverage for all scenarios
     - Focus on critical happy paths and key security checks
-  - [ ] 9.1.4 Run feature-specific tests only
+  - [x] 9.1.4 Run feature-specific tests only
     - Run ONLY tests related to Phase 6 features
     - Expected total: approximately 40-80 tests
     - DO NOT run entire DevMatrix test suite
     - Verify all critical workflows pass
-  - [ ] 9.1.5 Create test data fixtures
+  - [x] 9.1.5 Create test data fixtures
     - Fixture: Test users (regular and admin)
     - Fixture: User quotas (default and custom)
     - Fixture: Usage data samples
     - File: `tests/fixtures/auth_fixtures.py`
-  - [ ] 9.1.6 Document test coverage
+  - [x] 9.1.6 Document test coverage
     - Generate coverage report for Phase 6 code only
     - Document known gaps and justification
     - Add to: `tests/PHASE6_TEST_COVERAGE.md`
