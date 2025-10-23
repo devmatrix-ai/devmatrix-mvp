@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ..observability import StructuredLogger, HealthCheck, MetricsMiddleware, setup_logging
 from ..observability.global_metrics import metrics_collector
-from .routers import workflows, executions, metrics, health, websocket, rag, chat
+from .routers import workflows, executions, metrics, health, websocket, rag, chat, masterplans, auth, usage
 
 
 # Initialize logging system
@@ -79,6 +79,8 @@ def create_app() -> FastAPI:
     app.add_middleware(MetricsMiddleware, metrics_collector=metrics_collector)
 
     # Include routers
+    app.include_router(auth.router)  # Authentication (includes /api/v1 prefix)
+    app.include_router(usage.router)  # Usage & Quotas (includes /api/v1 prefix)
     app.include_router(workflows.router, prefix="/api/v1")
     app.include_router(executions.router, prefix="/api/v1")
     app.include_router(metrics.router, prefix="/api/v1")
@@ -86,6 +88,7 @@ def create_app() -> FastAPI:
     app.include_router(websocket.router, prefix="/api/v1")
     app.include_router(rag.router, prefix="/api/v1")
     app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
+    app.include_router(masterplans.router)
 
     # Mount Socket.IO app
     app.mount("/socket.io", websocket.sio_app)

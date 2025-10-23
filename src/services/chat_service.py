@@ -96,6 +96,7 @@ class ChatCommand:
 
     COMMANDS = {
         "/orchestrate": "Orchestrate multi-agent workflow",
+        "/masterplan": "Generate complete MasterPlan (Discovery + 50-task plan)",
         "/analyze": "Analyze project or code",
         "/test": "Run tests",
         "/help": "Show available commands",
@@ -138,13 +139,14 @@ class ChatService:
     and streaming responses from agents.
     """
 
-    def __init__(self, api_key: Optional[str] = None, metrics_collector=None):
+    def __init__(self, api_key: Optional[str] = None, metrics_collector=None, websocket_manager=None):
         """
         Initialize chat service.
 
         Args:
             api_key: Anthropic API key (optional, uses env var if not provided)
             metrics_collector: MetricsCollector instance for LLM metrics (optional)
+            websocket_manager: WebSocketManager instance for real-time progress (optional)
         """
         from src.llm.anthropic_client import AnthropicClient
         from src.state.postgres_manager import PostgresManager
@@ -154,6 +156,7 @@ class ChatService:
         self.registry = AgentRegistry()
         self.progress_callback = None  # Will be set per-request for WebSocket streaming
         self.metrics_collector = metrics_collector
+        self.websocket_manager = websocket_manager
 
         # Initialize PostgreSQL for conversation persistence
         try:
@@ -253,6 +256,34 @@ class ChatService:
         )
 
         return conversation.conversation_id
+
+    def update_conversation_metadata(
+        self,
+        conversation_id: str,
+        metadata: Dict[str, Any]
+    ):
+        """
+        Update conversation metadata (e.g., updating SID on reconnection).
+
+        Args:
+            conversation_id: Conversation ID
+            metadata: Updated metadata dictionary
+        """
+        # Update in-memory conversation
+        conversation = self.conversations.get(conversation_id)
+        if conversation:
+            conversation.metadata = metadata
+
+        # Persist to database
+        if self.db:
+            try:
+                self.db.update_conversation_metadata(
+                    conversation_id=conversation_id,
+                    metadata=metadata
+                )
+                self.logger.debug(f"Updated metadata for conversation {conversation_id}")
+            except Exception as e:
+                self.logger.error(f"Failed to update conversation metadata: {e}")
 
     def _save_message_to_db(
         self,
@@ -484,6 +515,19 @@ class ChatService:
 
             # Execute orchestration
             async for chunk in self._execute_orchestration(conversation, args):
+                yield chunk
+
+        elif command == "/masterplan":
+            if not args:
+                yield {
+                    "type": "error",
+                    "content": "Usage: /masterplan <project description>",
+                    "done": True,
+                }
+                return
+
+            # Execute MasterPlan generation
+            async for chunk in self._execute_masterplan_generation(conversation, args):
                 yield chunk
 
         else:
@@ -779,6 +823,139 @@ Respondé de manera natural, amigable y útil. Si es una pregunta de diseño o p
 
         except Exception as e:
             error_message = f"Error during orchestration: {str(e)}"
+            self.logger.error(error_message, exc_info=True)
+
+            yield {
+                "type": "error",
+                "content": error_message,
+                "done": True,
+            }
+
+    async def _execute_masterplan_generation(
+        self,
+        conversation: Conversation,
+        request: str,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """
+        Execute MasterPlan generation (Discovery + MasterPlan) with real-time progress.
+
+        Yields:
+            Progress updates and final result
+        """
+        try:
+            from src.services import DiscoveryAgent, MasterPlanGenerator
+
+            # Get session_id from conversation metadata (should be socket.io sid)
+            session_id = conversation.metadata.get('sid', conversation.conversation_id)
+            user_id = conversation.metadata.get('user_id', 'default_user')
+
+            # Send initial status
+            yield {
+                "type": "status",
+                "content": "🔍 Iniciando análisis DDD...",
+                "done": False,
+            }
+
+            # STEP 1: Discovery (with WebSocket progress)
+            # WebSocket events will be emitted automatically by DiscoveryAgent
+            discovery_agent = DiscoveryAgent(
+                metrics_collector=self.metrics_collector,
+                websocket_manager=self.websocket_manager
+            )
+
+            discovery_id = await discovery_agent.conduct_discovery(
+                user_request=request,
+                session_id=session_id,
+                user_id=user_id
+            )
+
+            discovery = discovery_agent.get_discovery(discovery_id)
+
+            # Send discovery complete message
+            yield {
+                "type": "status",
+                "content": f"✅ Discovery completado: {discovery.domain}",
+                "done": False,
+            }
+
+            yield {
+                "type": "message",
+                "role": MessageRole.ASSISTANT.value,
+                "content": f"""## Discovery Completado
+
+**Dominio**: {discovery.domain}
+**Bounded Contexts**: {len(discovery.bounded_contexts)}
+**Aggregates**: {len(discovery.aggregates)}
+**Costo**: ${discovery.llm_cost_usd:.4f}
+
+Ahora generando MasterPlan con 50 tareas...""",
+                "done": False,
+            }
+
+            # STEP 2: MasterPlan Generation (with WebSocket progress)
+            # WebSocket events will be emitted automatically by MasterPlanGenerator
+            masterplan_generator = MasterPlanGenerator(
+                metrics_collector=self.metrics_collector,
+                use_rag=True,  # Enable RAG to retrieve similar example masterplans
+                websocket_manager=self.websocket_manager
+            )
+
+            masterplan_id = await masterplan_generator.generate_masterplan(
+                discovery_id=discovery_id,
+                session_id=session_id,  # Important: this is used for WebSocket events
+                user_id=user_id
+            )
+
+            masterplan = masterplan_generator.get_masterplan(masterplan_id)
+
+            # Format final result
+            response = f"""## MasterPlan Generado ✅
+
+**Proyecto**: {masterplan.project_name}
+**Fases**: {masterplan.total_phases}
+**Milestones**: {masterplan.total_milestones}
+**Tareas**: {masterplan.total_tasks}
+
+**Tech Stack**:
+{chr(10).join([f"- **{k}**: {v}" for k, v in masterplan.tech_stack.items()])}
+
+**Costo de Generación**: ${masterplan.generation_cost_usd:.4f}
+**Costo Estimado Total**: ${masterplan.estimated_cost_usd:.2f}
+**Duración Estimada**: {masterplan.estimated_duration_minutes} minutos
+
+**MasterPlan ID**: `{masterplan_id}`
+
+El plan completo ha sido guardado en la base de datos. Puedes comenzar la ejecución cuando estés listo."""
+
+            # Save assistant message to conversation
+            assistant_message = Message(
+                content=response,
+                role=MessageRole.ASSISTANT,
+            )
+            conversation.add_message(assistant_message)
+
+            # Save to database
+            self._save_message_to_db(
+                conversation_id=conversation.conversation_id,
+                role=MessageRole.ASSISTANT.value,
+                content=response
+            )
+
+            yield {
+                "type": "message",
+                "role": MessageRole.ASSISTANT.value,
+                "content": response,
+                "metadata": {
+                    "masterplan_id": str(masterplan_id),
+                    "discovery_id": str(discovery_id),
+                    "total_tasks": masterplan.total_tasks,
+                    "estimated_cost_usd": masterplan.estimated_cost_usd,
+                },
+                "done": True,
+            }
+
+        except Exception as e:
+            error_message = f"Error durante generación de MasterPlan: {str(e)}"
             self.logger.error(error_message, exc_info=True)
 
             yield {

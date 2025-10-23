@@ -39,12 +39,14 @@ export function useChat(options: UseChatOptions = {}) {
   const [isLoading, setIsLoading] = useState(false)
   const [isJoined, setIsJoined] = useState(false)
   const [progress, setProgress] = useState<ProgressEvent | null>(null)
+  const [masterPlanProgress, setMasterPlanProgress] = useState<ProgressEvent | null>(null)
 
   // Register event listeners (only once when connected)
   useEffect(() => {
     if (!isConnected) return
 
     const cleanup1 = on('chat_joined', (data: any) => {
+      console.log('✅ [useChat] chat_joined event received:', data)
       const convId = data.conversation_id
       setConversationId(convId)
       setMessages(data.history || [])
@@ -112,17 +114,113 @@ export function useChat(options: UseChatOptions = {}) {
       }
     })
 
+    // Discovery Progress Events (lines 118-146)
+    const cleanup4 = on('discovery_generation_start', (data: any) => {
+      console.log('🔍 [WebSocket] discovery_generation_start received:', data)
+      console.log('🔍 [WebSocket] Setting masterPlanProgress state...')
+      setMasterPlanProgress({ event: 'discovery_generation_start', data })
+      console.log('🔍 [WebSocket] masterPlanProgress state set complete')
+    })
+
+    const cleanup5 = on('discovery_tokens_progress', (data: any) => {
+      console.log('📊 [WebSocket] discovery_tokens_progress received:', data)
+      setMasterPlanProgress({ event: 'discovery_tokens_progress', data })
+    })
+
+    const cleanup6 = on('discovery_entity_discovered', (data: any) => {
+      console.log('🔍 [WebSocket] discovery_entity_discovered received:', data)
+      setMasterPlanProgress({ event: 'discovery_entity_discovered', data })
+    })
+
+    const cleanup7 = on('discovery_parsing_complete', (data: any) => {
+      console.log('✅ [WebSocket] discovery_parsing_complete received:', data)
+      setMasterPlanProgress({ event: 'discovery_parsing_complete', data })
+    })
+
+    const cleanup8 = on('discovery_saving_start', (data: any) => {
+      console.log('💾 [WebSocket] discovery_saving_start received:', data)
+      setMasterPlanProgress({ event: 'discovery_saving_start', data })
+    })
+
+    const cleanup9 = on('discovery_generation_complete', (data: any) => {
+      console.log('🎉 [WebSocket] discovery_generation_complete received:', data)
+      setMasterPlanProgress({ event: 'discovery_generation_complete', data })
+    })
+
+    // MasterPlan Progress Events
+    const cleanup10 = on('masterplan_generation_start', (data: any) => {
+      console.log('🚀 [WebSocket] masterplan_generation_start received:', data)
+      setMasterPlanProgress({ event: 'masterplan_generation_start', data })
+    })
+
+    const cleanup11 = on('masterplan_tokens_progress', (data: any) => {
+      console.log('📊 [WebSocket] masterplan_tokens_progress received:', data)
+      setMasterPlanProgress({ event: 'masterplan_tokens_progress', data })
+    })
+
+    const cleanup12 = on('masterplan_entity_discovered', (data: any) => {
+      console.log('🔍 [WebSocket] masterplan_entity_discovered received:', data)
+      setMasterPlanProgress({ event: 'masterplan_entity_discovered', data })
+    })
+
+    const cleanup13 = on('masterplan_parsing_complete', (data: any) => {
+      console.log('✅ [WebSocket] masterplan_parsing_complete received:', data)
+      setMasterPlanProgress({ event: 'masterplan_parsing_complete', data })
+    })
+
+    const cleanup14 = on('masterplan_validation_start', (data: any) => {
+      console.log('🔬 [WebSocket] masterplan_validation_start received:', data)
+      setMasterPlanProgress({ event: 'masterplan_validation_start', data })
+    })
+
+    const cleanup15 = on('masterplan_saving_start', (data: any) => {
+      console.log('💾 [WebSocket] masterplan_saving_start received:', data)
+      setMasterPlanProgress({ event: 'masterplan_saving_start', data })
+    })
+
+    const cleanup16 = on('masterplan_generation_complete', (data: any) => {
+      console.log('🎉 [WebSocket] masterplan_generation_complete received:', data)
+      setMasterPlanProgress({ event: 'masterplan_generation_complete', data })
+      // Hide progress after 3 seconds
+      setTimeout(() => setMasterPlanProgress(null), 3000)
+    })
+
     return () => {
       cleanup1()
       cleanup2()
       cleanup3()
+      cleanup4()
+      cleanup5()
+      cleanup6()
+      cleanup7()
+      cleanup8()
+      cleanup9()
+      cleanup10()
+      cleanup11()
+      cleanup12()
+      cleanup13()
+      cleanup14()
+      cleanup15()
+      cleanup16()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, on])
 
-  // Join chat room (separate effect)
+  // Join chat room when connection is established
   useEffect(() => {
-    if (!isConnected || isJoined) return
+    console.log('📡 [useChat] Join effect triggered:', { isConnected, isJoined, conversationId })
+
+    if (!isConnected) {
+      console.log('⏸️  [useChat] Not connected, waiting...')
+      return
+    }
+
+    if (isJoined) {
+      console.log('✅ [useChat] Already joined, skipping')
+      return
+    }
+
+    console.log('📡 [useChat] Joining chat room...', conversationId || 'new')
 
     // Use saved conversation_id if available
     send('join_chat', {
@@ -133,6 +231,14 @@ export function useChat(options: UseChatOptions = {}) {
     // No cleanup needed - server handles disconnections automatically
     // Cleanup would cause issues with React StrictMode in development
   }, [isConnected, isJoined, conversationId, options.workspaceId, send])
+
+  // Reset join status when connection is lost
+  useEffect(() => {
+    if (!isConnected && isJoined) {
+      console.log('⚠️ Connection lost - will rejoin when reconnected')
+      setIsJoined(false)
+    }
+  }, [isConnected, isJoined])
 
   const sendMessage = useCallback(
     (content: string, metadata?: Record<string, any>) => {
@@ -167,6 +273,7 @@ export function useChat(options: UseChatOptions = {}) {
     setIsJoined(false)
     setIsLoading(false)
     setProgress(null)
+    setMasterPlanProgress(null)
 
     // Update conversation ID
     setConversationId(newConversationId)
@@ -181,12 +288,36 @@ export function useChat(options: UseChatOptions = {}) {
     }
   }, [options.workspaceId])
 
+  const finalIsConnected = isConnected && isJoined
+
+  // Debug log connection state
+  useEffect(() => {
+    console.log('🔍 [useChat] Connection state:', {
+      wsConnected: isConnected,
+      chatJoined: isJoined,
+      finalIsConnected
+    })
+  }, [isConnected, isJoined, finalIsConnected])
+
+  // Debug log masterPlanProgress changes
+  useEffect(() => {
+    if (masterPlanProgress) {
+      console.log('📊 [useChat] masterPlanProgress STATE CHANGED:', {
+        event: masterPlanProgress.event,
+        dataKeys: Object.keys(masterPlanProgress.data || {})
+      })
+    } else {
+      console.log('📊 [useChat] masterPlanProgress CLEARED (null)')
+    }
+  }, [masterPlanProgress])
+
   return {
     conversationId,
     messages,
     isLoading,
-    isConnected: isConnected && isJoined,
+    isConnected: finalIsConnected,
     progress,
+    masterPlanProgress,
     sendMessage,
     clearMessages,
     switchConversation,

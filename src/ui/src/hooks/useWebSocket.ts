@@ -7,14 +7,35 @@ export function useWebSocket(url?: string) {
   useEffect(() => {
     wsService.connect(url)
 
-    const cleanup1 = wsService.on('connected', () => setIsConnected(true))
-    const cleanup2 = wsService.on('disconnected', () => setIsConnected(false))
-
+    // Set initial state
     setIsConnected(wsService.isConnected())
+
+    // Listen for connection events
+    const cleanup1 = wsService.on('connected', () => {
+      console.log('🟢 [useWebSocket] Connected event received')
+      setIsConnected(true)
+    })
+    const cleanup2 = wsService.on('disconnected', () => {
+      console.log('🔴 [useWebSocket] Disconnected event received')
+      setIsConnected(false)
+    })
+
+    // Poll connection status every second to handle HMR and missed events
+    // This ensures UI stays in sync with actual WebSocket state
+    const interval = setInterval(() => {
+      const actualStatus = wsService.isConnected()
+      setIsConnected(prev => {
+        if (prev !== actualStatus) {
+          console.log(`🔄 [useWebSocket] Connection status changed: ${prev} -> ${actualStatus}`)
+        }
+        return actualStatus
+      })
+    }, 1000)
 
     return () => {
       cleanup1()
       cleanup2()
+      clearInterval(interval)
     }
   }, [url])
 

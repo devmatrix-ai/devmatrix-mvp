@@ -4,6 +4,7 @@ import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts'
 import { MessageList } from './MessageList'
 import { ChatInput } from './ChatInput'
 import { ProgressIndicator } from './ProgressIndicator'
+import { MasterPlanProgressIndicator } from './MasterPlanProgressIndicator'
 import { ConversationHistory } from './ConversationHistory'
 import { FiMessageSquare, FiX, FiMinus, FiPlusCircle, FiDownload } from 'react-icons/fi'
 
@@ -26,6 +27,7 @@ export function ChatWindow({
     isLoading,
     isConnected,
     progress,
+    masterPlanProgress,
     sendMessage,
     clearMessages,
     switchConversation,
@@ -209,16 +211,44 @@ export function ChatWindow({
                 </p>
                 <div className="mt-4 text-xs space-y-1">
                   <p className="font-mono text-primary-600 dark:text-primary-400">
-                    Try: /orchestrate Create a REST API
+                    Try: /masterplan Create a Task Management API
                   </p>
                   <p className="font-mono text-primary-600 dark:text-primary-400">
-                    Or: /help for available commands
+                    Or: /orchestrate for full workflow execution
+                  </p>
+                  <p className="font-mono text-primary-600 dark:text-primary-400">
+                    Or: /help for all commands
                   </p>
                 </div>
               </div>
             )}
 
             <MessageList messages={messages} isLoading={isLoading} />
+
+            {/* MasterPlan Progress Indicator - Show during MasterPlan generation */}
+            {(() => {
+              console.log('🎨 [ChatWindow] Checking masterPlanProgress:', {
+                isTruthy: !!masterPlanProgress,
+                value: masterPlanProgress
+              })
+
+              if (!masterPlanProgress) {
+                console.log('⏸️ [ChatWindow] masterPlanProgress is falsy, not rendering indicator')
+                return null
+              }
+
+              console.log('✅ [ChatWindow] Rendering MasterPlanProgressIndicator with:', masterPlanProgress)
+              return (
+                <div className="mt-4">
+                  <MasterPlanProgressIndicator
+                    event={masterPlanProgress}
+                    onComplete={() => {
+                      // Progress will be cleared automatically by the hook after 3s
+                    }}
+                  />
+                </div>
+              )
+            })()}
 
             {/* Progress Indicator - Show when loading or progress events */}
             {(isLoading || progress) && (
