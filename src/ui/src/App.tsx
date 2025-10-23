@@ -15,6 +15,8 @@ import { ResetPasswordPage } from './pages/ResetPasswordPage'
 import { ProfilePage } from './pages/ProfilePage'
 import { AdminDashboardPage } from './pages/AdminDashboardPage'
 import { AdminRoute } from './components/AdminRoute'
+import { VerifyEmailPage } from './pages/VerifyEmailPage'
+import { VerifyEmailPendingPage } from './pages/VerifyEmailPendingPage'
 
 function AppContent() {
   const { workspaceId } = useChatStore()
@@ -31,7 +33,7 @@ function AppContent() {
   }
 
   // Check if current route is an auth page
-  const isAuthPage = ['/login', '/register', '/forgot-password', '/reset-password'].some(
+  const isAuthPage = ['/login', '/register', '/forgot-password', '/reset-password', '/verify-email', '/verify-email-pending'].some(
     path => location.pathname.startsWith(path)
   )
 
@@ -50,6 +52,8 @@ function AppContent() {
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/verify-email" element={<VerifyEmailPage />} />
+          <Route path="/verify-email-pending" element={<VerifyEmailPendingPage />} />
         </Routes>
       </div>
     )
