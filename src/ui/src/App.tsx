@@ -5,7 +5,7 @@ import { ProtectedRoute } from './components/ProtectedRoute'
 import { useChatStore } from './stores/chatStore'
 import { useTheme } from './contexts/ThemeContext'
 import { useAuth } from './contexts/AuthContext'
-import { FiMessageSquare, FiHome, FiSettings, FiSun, FiMoon, FiMonitor, FiTarget, FiUser, FiLogOut } from 'react-icons/fi'
+import { FiMessageSquare, FiHome, FiSettings, FiSun, FiMoon, FiMonitor, FiTarget, FiUser, FiLogOut, FiShield } from 'react-icons/fi'
 import { MasterplansPage } from './pages/MasterplansPage'
 import { MasterplanDetailPage } from './pages/MasterplanDetailPage'
 import { LoginPage } from './pages/LoginPage'
@@ -13,6 +13,8 @@ import { RegisterPage } from './pages/RegisterPage'
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage'
 import { ResetPasswordPage } from './pages/ResetPasswordPage'
 import { ProfilePage } from './pages/ProfilePage'
+import { AdminDashboardPage } from './pages/AdminDashboardPage'
+import { AdminRoute } from './components/AdminRoute'
 
 function AppContent() {
   const { workspaceId } = useChatStore()
@@ -109,6 +111,21 @@ function AppContent() {
           >
             <FiSettings size={24} />
           </button>
+
+          {/* Admin Panel - Only visible to superusers */}
+          {isAuthenticated && user?.is_superuser && (
+            <button
+              onClick={() => navigate('/admin')}
+              className={`p-3 rounded-lg transition-colors ${
+                isActive('/admin')
+                  ? 'bg-primary-100 dark:bg-primary-900 text-primary-600 dark:text-primary-400'
+                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}
+              aria-label="Admin"
+            >
+              <FiShield size={24} />
+            </button>
+          )}
         </div>
 
         {/* User Menu - Bottom */}
@@ -216,6 +233,12 @@ function AppContent() {
             <ProtectedRoute>
               <ProfilePage />
             </ProtectedRoute>
+          } />
+
+          <Route path="/admin" element={
+            <AdminRoute>
+              <AdminDashboardPage />
+            </AdminRoute>
           } />
 
           <Route path="/settings" element={
