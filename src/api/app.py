@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ..observability import StructuredLogger, HealthCheck, MetricsMiddleware, setup_logging
 from ..observability.global_metrics import metrics_collector
-from .routers import workflows, executions, metrics, health, websocket, rag, chat, masterplans, auth, usage
+from .routers import workflows, executions, metrics, health, websocket, rag, chat, masterplans, auth, usage, admin
 
 
 # Initialize logging system
@@ -75,12 +75,17 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Add rate limiting middleware (must be before other middleware)
+    from ..api.middleware.rate_limit_middleware import RateLimitMiddleware
+    app.add_middleware(RateLimitMiddleware)
+
     # Add metrics middleware
     app.add_middleware(MetricsMiddleware, metrics_collector=metrics_collector)
 
     # Include routers
     app.include_router(auth.router)  # Authentication (includes /api/v1 prefix)
     app.include_router(usage.router)  # Usage & Quotas (includes /api/v1 prefix)
+    app.include_router(admin.router)  # Admin (includes /api/v1 prefix)
     app.include_router(workflows.router, prefix="/api/v1")
     app.include_router(executions.router, prefix="/api/v1")
     app.include_router(metrics.router, prefix="/api/v1")

@@ -77,11 +77,12 @@ async def get_token_from_header(
     return credentials.credentials
 
 
-async def get_current_user(token: str = Depends(get_token_from_header)) -> User:
+async def get_current_user(request: Request, token: str = Depends(get_token_from_header)) -> User:
     """
     Get current authenticated user from JWT token.
 
     Args:
+        request: FastAPI request (for storing user in state)
         token: JWT access token
 
     Returns:
@@ -99,6 +100,9 @@ async def get_current_user(token: str = Depends(get_token_from_header)) -> User:
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"}
         )
+
+    # Store user in request state for rate limiting middleware
+    request.state.user = user
 
     logger.debug(f"Authenticated user: {user.user_id} ({user.email})")
     return user
