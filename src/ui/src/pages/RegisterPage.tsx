@@ -49,8 +49,11 @@ export function RegisterPage() {
         username: formData.username,
         password: formData.password,
       })
-      // Redirect to chat after successful registration
-      navigate('/chat', { replace: true })
+      // Redirect to email verification page after successful registration
+      navigate('/verify-email-pending', {
+        replace: true,
+        state: { email: formData.email }
+      })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed')
     } finally {
