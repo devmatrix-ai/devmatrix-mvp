@@ -1,22 +1,56 @@
 import { useState } from 'react'
-import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom'
 import { ChatWindow } from './components/chat/ChatWindow'
+import { ProtectedRoute } from './components/ProtectedRoute'
 import { useChatStore } from './stores/chatStore'
 import { useTheme } from './contexts/ThemeContext'
-import { FiMessageSquare, FiHome, FiSettings, FiSun, FiMoon, FiMonitor, FiTarget } from 'react-icons/fi'
+import { useAuth } from './contexts/AuthContext'
+import { FiMessageSquare, FiHome, FiSettings, FiSun, FiMoon, FiMonitor, FiTarget, FiUser, FiLogOut } from 'react-icons/fi'
 import { MasterplansPage } from './pages/MasterplansPage'
 import { MasterplanDetailPage } from './pages/MasterplanDetailPage'
+import { LoginPage } from './pages/LoginPage'
+import { RegisterPage } from './pages/RegisterPage'
+import { ForgotPasswordPage } from './pages/ForgotPasswordPage'
+import { ResetPasswordPage } from './pages/ResetPasswordPage'
+import { ProfilePage } from './pages/ProfilePage'
 
 function AppContent() {
   const { workspaceId } = useChatStore()
   const { theme, setTheme, actualTheme } = useTheme()
+  const { user, isAuthenticated, logout } = useAuth()
   const [isMinimized, setIsMinimized] = useState(false)
+  const [showUserMenu, setShowUserMenu] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
 
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/'
     return location.pathname.startsWith(path)
+  }
+
+  // Check if current route is an auth page
+  const isAuthPage = ['/login', '/register', '/forgot-password', '/reset-password'].some(
+    path => location.pathname.startsWith(path)
+  )
+
+  const handleLogout = async () => {
+    await logout()
+    setShowUserMenu(false)
+    navigate('/login')
+  }
+
+  // Don't show sidebar on auth pages
+  if (isAuthPage) {
+    return (
+      <div className="min-h-screen">
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
+        </Routes>
+      </div>
+    )
   }
 
   return (
@@ -76,11 +110,64 @@ function AppContent() {
             <FiSettings size={24} />
           </button>
         </div>
+
+        {/* User Menu - Bottom */}
+        {isAuthenticated && user && (
+          <div className="relative">
+            <button
+              onClick={() => setShowUserMenu(!showUserMenu)}
+              className="p-3 rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              aria-label="User menu"
+            >
+              <FiUser size={24} />
+            </button>
+
+            {/* User Dropdown Menu */}
+            {showUserMenu && (
+              <>
+                <div
+                  className="fixed inset-0 z-10"
+                  onClick={() => setShowUserMenu(false)}
+                />
+                <div className="absolute bottom-full left-16 mb-2 w-64 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-xl z-20">
+                  <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+                    <p className="font-medium text-gray-900 dark:text-white">
+                      {user.username}
+                    </p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      {user.email}
+                    </p>
+                  </div>
+                  <div className="p-2">
+                    <button
+                      onClick={() => {
+                        navigate('/profile')
+                        setShowUserMenu(false)
+                      }}
+                      className="w-full flex items-center gap-3 px-4 py-2 text-left text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                    >
+                      <FiUser size={18} />
+                      <span>Profile</span>
+                    </button>
+                    <button
+                      onClick={handleLogout}
+                      className="w-full flex items-center gap-3 px-4 py-2 text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                    >
+                      <FiLogOut size={18} />
+                      <span>Logout</span>
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col">
         <Routes>
+          {/* Home Page */}
           <Route path="/" element={
             <div className="flex-1 flex items-center justify-center p-8">
               <div className="text-center">
@@ -100,18 +187,36 @@ function AppContent() {
             </div>
           } />
 
+          {/* Protected Routes */}
           <Route path="/chat" element={
-            <div className="flex-1 p-8">
-              <ChatWindow
-                workspaceId={workspaceId || undefined}
-                isMinimized={isMinimized}
-                onToggleMinimize={() => setIsMinimized(!isMinimized)}
-              />
-            </div>
+            <ProtectedRoute>
+              <div className="flex-1 p-8">
+                <ChatWindow
+                  workspaceId={workspaceId || undefined}
+                  isMinimized={isMinimized}
+                  onToggleMinimize={() => setIsMinimized(!isMinimized)}
+                />
+              </div>
+            </ProtectedRoute>
           } />
 
-          <Route path="/masterplans" element={<MasterplansPage />} />
-          <Route path="/masterplans/:id" element={<MasterplanDetailPage />} />
+          <Route path="/masterplans" element={
+            <ProtectedRoute>
+              <MasterplansPage />
+            </ProtectedRoute>
+          } />
+
+          <Route path="/masterplans/:id" element={
+            <ProtectedRoute>
+              <MasterplanDetailPage />
+            </ProtectedRoute>
+          } />
+
+          <Route path="/profile" element={
+            <ProtectedRoute>
+              <ProfilePage />
+            </ProtectedRoute>
+          } />
 
           <Route path="/settings" element={
             <div className="flex-1 p-8 overflow-auto">
@@ -173,16 +278,12 @@ function AppContent() {
                     </div>
                   </div>
                 </div>
-
-                {/* More settings coming soon */}
-                <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-                  <p className="text-gray-600 dark:text-gray-400">
-                    More settings coming soon...
-                  </p>
-                </div>
               </div>
             </div>
           } />
+
+          {/* Catch-all redirect */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>
     </div>
