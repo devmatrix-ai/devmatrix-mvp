@@ -56,8 +56,7 @@ export class WebSocketService {
       reconnectionAttempts: Infinity,  // Keep trying forever
       // Timeout settings - match backend configuration
       timeout: 30000,  // Connection timeout: 30s
-      pingTimeout: 120000,  // Ping timeout: 120s (match backend)
-      pingInterval: 60000,  // Ping interval: 60s (match backend)
+      // Note: pingTimeout and pingInterval are handled server-side
       // Performance settings
       upgrade: true,  // Allow transport upgrades
       rememberUpgrade: true,  // Remember successful upgrade
