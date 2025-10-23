@@ -1,19 +1,38 @@
 """Alembic environment configuration."""
+import sys
+from pathlib import Path
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
 
 from alembic import context
 
+# Add project root to Python path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Import database configuration and models
+from src.config.database import Base, DATABASE_URL
+
+# Import ALL models to register them with Base.metadata
+import src.models.user  # noqa - Register User model
+import src.models.user_quota  # noqa - Register UserQuota model
+import src.models.user_usage  # noqa - Register UserUsage model
+import src.models.conversation  # noqa - Register Conversation model
+import src.models.message  # noqa - Register Message model
+import src.models.masterplan  # noqa - Register MasterPlan models
+
 # Alembic Config object
 config = context.config
+
+# Set sqlalchemy.url from environment
+config.set_main_option("sqlalchemy.url", DATABASE_URL)
 
 # Interpret the config file for Python logging
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Metadata for autogenerate support
-target_metadata = None
+target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""

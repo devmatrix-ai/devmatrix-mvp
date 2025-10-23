@@ -570,6 +570,31 @@ class PostgresManager:
         )
         return result[0]["id"] if result else conversation_id
 
+    def update_conversation_metadata(
+        self,
+        conversation_id: str,
+        metadata: dict
+    ):
+        """
+        Update conversation metadata.
+
+        Args:
+            conversation_id: Conversation identifier
+            metadata: Updated metadata dictionary
+        """
+        query = """
+            UPDATE conversations
+            SET metadata = %s, updated_at = NOW()
+            WHERE id = %s
+        """
+
+        self._execute(
+            query,
+            (Json(metadata), conversation_id),
+            fetch=False,
+            operation=f"update_conversation_metadata:{conversation_id}"
+        )
+
     def get_conversation(self, conversation_id: str) -> Optional[dict]:
         """
         Retrieve conversation by ID.

@@ -13,6 +13,7 @@ from src.services.chat_service import ChatService
 from src.services.workspace_service import WorkspaceService
 from src.observability import StructuredLogger
 from src.observability.global_metrics import metrics_collector
+from src.websocket import WebSocketManager
 
 
 router = APIRouter()
@@ -20,16 +21,28 @@ logger = StructuredLogger("websocket")
 # Use global metrics collector
 metrics = metrics_collector
 
-# Socket.IO server
+# Socket.IO server with robust timeout configuration
+# These settings prevent disconnections during long-running operations (e.g., masterplan generation)
 sio = socketio.AsyncServer(
     async_mode='asgi',
     cors_allowed_origins='*',
     logger=True,
     engineio_logger=True,
+    # Increase intervals to handle long-running operations
+    ping_timeout=120,  # Wait 120s for ping response before disconnecting (2x ping_interval)
+    ping_interval=60,  # Send ping every 60s to keep connection alive
+    max_http_buffer_size=10_000_000,  # 10MB buffer for large messages
+    # Enable compression for large payloads
+    compression_threshold=1024,  # Compress payloads > 1KB
+    # Allow longer timeouts for slow clients
+    http_compression=True,
 )
 
+# WebSocket Manager (global instance)
+ws_manager = WebSocketManager(sio)
+
 # Services - use global metrics collector for LLM metrics
-chat_service = ChatService(metrics_collector=metrics)
+chat_service = ChatService(metrics_collector=metrics, websocket_manager=ws_manager)
 workspace_service = WorkspaceService()
 
 # Active connections tracking
@@ -119,6 +132,11 @@ async def join_chat(sid, data):
                     session_id=sid
                 )
                 conversation = chat_service.get_conversation(conversation_id)
+            else:
+                # Update metadata with current SID (important for reconnections)
+                # This ensures Discovery/MasterPlan events reach the correct client
+                conversation.metadata['sid'] = sid
+                chat_service.update_conversation_metadata(conversation_id, conversation.metadata)
         else:
             conversation_id = chat_service.create_conversation(
                 workspace_id=workspace_id,

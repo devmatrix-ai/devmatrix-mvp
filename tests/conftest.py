@@ -17,6 +17,40 @@ from src.state.postgres_manager import PostgresManager
 from src.state.redis_manager import RedisManager
 from src.rag import create_embedding_model, create_vector_store, create_retriever
 from src.tools.workspace_manager import WorkspaceManager
+from src.config.database import DatabaseConfig, TEST_DATABASE_URL
+
+
+@pytest.fixture(scope="function")
+def db_session():
+    """
+    Create a test database session with SQLite in-memory.
+    All tables are created fresh for each test and dropped after.
+    """
+    # Use SQLite in-memory for tests
+    engine = DatabaseConfig.get_engine(url=TEST_DATABASE_URL, echo=False)
+    SessionLocal = DatabaseConfig.get_session_factory()
+
+    # Import all models to register them
+    import src.models.user  # noqa
+    import src.models.user_quota  # noqa
+    import src.models.user_usage  # noqa
+    import src.models.conversation  # noqa
+    import src.models.message  # noqa
+    import src.models.masterplan  # noqa
+
+    # Create all tables
+    Base = DatabaseConfig.get_base()
+    Base.metadata.create_all(bind=engine)
+
+    # Create session
+    session = SessionLocal()
+
+    try:
+        yield session
+    finally:
+        session.close()
+        # Drop all tables after test
+        Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture(scope="session")

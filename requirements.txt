@@ -73,6 +73,7 @@ flower==2.0.1                     # Celery monitoring
 # Utilities
 # ========================================
 python-dotenv==1.0.1              # Environment variables
+python-dateutil==2.8.2            # Date/time utilities
 pyyaml==6.0.2                     # YAML parsing
 aiofiles==24.1.0                  # Async file operations
 python-json-logger==2.0.7         # Structured logging
@@ -92,10 +93,12 @@ prometheus-client==0.20.0         # Metrics export (future)
 sentry-sdk[fastapi]==2.14.0       # Error tracking (future)
 
 # ========================================
-# Security
+# Security & Authentication
 # ========================================
 cryptography==43.0.0              # Encryption utilities
-python-jose[cryptography]==3.3.0  # JWT handling (future auth)
+python-jose[cryptography]==3.3.0  # JWT handling
+PyJWT==2.9.0                      # JWT encoding/decoding
+bcrypt==4.2.0                     # Password hashing
 python-multipart==0.0.9           # Form data parsing
 
 # ========================================

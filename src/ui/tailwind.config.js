@@ -20,6 +20,22 @@ export default {
           900: '#0c4a6e',
         },
       },
+      animation: {
+        'fade-in': 'fadeIn 0.5s ease-out',
+        'bounce-slow': 'bounce 2s infinite',
+        'scale-in': 'scaleIn 0.3s ease-out',
+      },
+      keyframes: {
+        fadeIn: {
+          '0%': { opacity: '0', transform: 'translateY(10px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        scaleIn: {
+          '0%': { transform: 'scale(0)' },
+          '50%': { transform: 'scale(1.2)' },
+          '100%': { transform: 'scale(1)' },
+        },
+      },
     },
   },
   plugins: [],

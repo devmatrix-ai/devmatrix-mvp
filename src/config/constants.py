@@ -87,7 +87,7 @@ SOCKET_TIMEOUT = int(os.getenv("SOCKET_TIMEOUT", "5"))
 
 # ChromaDB Configuration
 CHROMADB_HOST = os.getenv("CHROMADB_HOST", "localhost")
-CHROMADB_PORT = int(os.getenv("CHROMADB_PORT", "8000"))
+CHROMADB_PORT = int(os.getenv("CHROMADB_PORT", "8001"))
 
 # Embedding Model Configuration
 # Default: all-MiniLM-L6-v2 (384 dimensions, balanced performance)
@@ -107,6 +107,31 @@ CHROMADB_DISTANCE_METRIC = os.getenv("CHROMADB_DISTANCE_METRIC", "cosine")  # co
 RAG_BATCH_SIZE = int(os.getenv("RAG_BATCH_SIZE", "32"))  # Embedding batch size
 RAG_MAX_CONTEXT_LENGTH = int(os.getenv("RAG_MAX_CONTEXT_LENGTH", "8000"))  # Max tokens in context
 RAG_CACHE_ENABLED = os.getenv("RAG_CACHE_ENABLED", "true").lower() == "true"
+
+
+# ============================================================================
+# Authentication & Email Verification Configuration
+# ============================================================================
+
+# Email verification settings (Task Group 2.1)
+EMAIL_VERIFICATION_REQUIRED = os.getenv("EMAIL_VERIFICATION_REQUIRED", "false").lower() == "true"
+EMAIL_VERIFICATION_TOKEN_EXPIRY_HOURS = int(os.getenv("EMAIL_VERIFICATION_TOKEN_EXPIRY_HOURS", "24"))
+
+# Email Service Configuration (Task Group 3.1)
+EMAIL_ENABLED = os.getenv("EMAIL_ENABLED", "false").lower() == "true"
+EMAIL_FROM_ADDRESS = os.getenv("EMAIL_FROM_ADDRESS", "noreply@devmatrix.local")
+EMAIL_FROM_NAME = os.getenv("EMAIL_FROM_NAME", "Devmatrix")
+
+# SMTP Configuration
+SMTP_HOST = os.getenv("SMTP_HOST", "localhost")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "false").lower() == "true"
+
+# Frontend URL for email links
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 
 # ============================================================================
@@ -256,6 +281,20 @@ def get_config_summary() -> Dict[str, Any]:
             "max_context_length": RAG_MAX_CONTEXT_LENGTH,
             "cache_enabled": RAG_CACHE_ENABLED,
         },
+        "authentication": {
+            "email_verification_required": EMAIL_VERIFICATION_REQUIRED,
+            "email_verification_token_expiry_hours": EMAIL_VERIFICATION_TOKEN_EXPIRY_HOURS,
+        },
+        "email": {
+            "enabled": EMAIL_ENABLED,
+            "from_address": EMAIL_FROM_ADDRESS,
+            "from_name": EMAIL_FROM_NAME,
+            "smtp_host": SMTP_HOST,
+            "smtp_port": SMTP_PORT,
+            "smtp_use_tls": SMTP_USE_TLS,
+            "smtp_use_ssl": SMTP_USE_SSL,
+            "frontend_url": FRONTEND_URL,
+        },
         "retry": {
             "default_max_retries": DEFAULT_MAX_RETRIES,
             "initial_delay": RETRY_INITIAL_DELAY,
@@ -326,5 +365,9 @@ def validate_config() -> tuple[bool, list[str]]:
 
     if CHROMADB_DISTANCE_METRIC not in ["cosine", "l2", "ip"]:
         errors.append(f"Invalid CHROMADB_DISTANCE_METRIC: {CHROMADB_DISTANCE_METRIC} (must be cosine, l2, or ip)")
+
+    # Validate email verification configuration
+    if EMAIL_VERIFICATION_TOKEN_EXPIRY_HOURS < 1 or EMAIL_VERIFICATION_TOKEN_EXPIRY_HOURS > 168:
+        errors.append(f"Invalid EMAIL_VERIFICATION_TOKEN_EXPIRY_HOURS: {EMAIL_VERIFICATION_TOKEN_EXPIRY_HOURS} (must be 1-168)")
 
     return len(errors) == 0, errors
