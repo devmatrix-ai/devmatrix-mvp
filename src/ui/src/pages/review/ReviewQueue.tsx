@@ -218,7 +218,7 @@ const ReviewQueue: React.FC = () => {
       {/* Filters */}
       <Paper sx={{ p: 2, mb: 3 }}>
         <Grid container spacing={2} alignItems="center">
-          <Grid item xs={12} md={4}>
+          <Grid size={{ xs: 12, md: 4 }}>
             <TextField
               fullWidth
               label="Search"
@@ -230,7 +230,7 @@ const ReviewQueue: React.FC = () => {
             />
           </Grid>
 
-          <Grid item xs={12} md={3}>
+          <Grid size={{ xs: 12, md: 3 }}>
             <FormControl fullWidth size="small">
               <InputLabel>Status</InputLabel>
               <Select
@@ -247,7 +247,7 @@ const ReviewQueue: React.FC = () => {
             </FormControl>
           </Grid>
 
-          <Grid item xs={12} md={3}>
+          <Grid size={{ xs: 12, md: 3 }}>
             <Button
               variant="outlined"
               onClick={fetchReviewQueue}
@@ -257,7 +257,7 @@ const ReviewQueue: React.FC = () => {
             </Button>
           </Grid>
 
-          <Grid item xs={12} md={2}>
+          <Grid size={{ xs: 12, md: 2 }}>
             <Typography variant="body2" color="text.secondary">
               Total: {filteredReviews.length} items
             </Typography>
@@ -423,7 +423,7 @@ const ReviewQueue: React.FC = () => {
             <DialogContent>
               <Grid container spacing={2}>
                 {/* Code View */}
-                <Grid item xs={12} md={8}>
+                <Grid size={{ xs: 12, md: 8 }}>
                   <CodeDiffViewer
                     code={selectedReview.atom.code}
                     language={selectedReview.atom.language}
@@ -432,7 +432,7 @@ const ReviewQueue: React.FC = () => {
                 </Grid>
 
                 {/* AI Suggestions Panel */}
-                <Grid item xs={12} md={4}>
+                <Grid size={{ xs: 12, md: 4 }}>
                   <AISuggestionsPanel
                     analysis={selectedReview.ai_analysis}
                     confidenceScore={selectedReview.confidence_score}
@@ -440,7 +440,7 @@ const ReviewQueue: React.FC = () => {
                 </Grid>
 
                 {/* Review Actions */}
-                <Grid item xs={12}>
+                <Grid size={{ xs: 12 }}>
                   <ReviewActions
                     reviewId={selectedReview.review_id}
                     atomId={selectedReview.atom_id}
