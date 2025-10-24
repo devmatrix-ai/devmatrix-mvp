@@ -1,0 +1,269 @@
+{
+  "dashboard": {
+    "title": "MGE V2 - Execution & Performance",
+    "tags": ["mge-v2", "execution", "performance"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Execution Time (Target: <1.5h)",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "v2_execution_time_seconds",
+            "legendFormat": "{{project_name}}"
+          }
+        ],
+        "yaxes": [
+          {"format": "s", "label": "Time"},
+          {"format": "short"}
+        ],
+        "alert": {
+          "conditions": [
+            {
+              "evaluator": {"type": "gt", "params": [5400]},
+              "operator": {"type": "and"},
+              "query": {"params": ["A", "5m", "now"]},
+              "reducer": {"type": "avg"},
+              "type": "query"
+            }
+          ],
+          "executionErrorState": "alerting",
+          "frequency": "60s",
+          "handler": 1,
+          "name": "Execution Time Alert",
+          "noDataState": "no_data",
+          "notifications": []
+        }
+      },
+      {
+        "id": 2,
+        "title": "Precision (Target: ≥98%)",
+        "type": "gauge",
+        "gridPos": {"x": 12, "y": 0, "w": 6, "h": 8},
+        "targets": [
+          {
+            "expr": "v2_precision_percent",
+            "legendFormat": "Precision"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "red"},
+                {"value": 95, "color": "yellow"},
+                {"value": 98, "color": "green"}
+              ]
+            },
+            "unit": "percent",
+            "min": 0,
+            "max": 100
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Cost per Project (Target: <$200)",
+        "type": "gauge",
+        "gridPos": {"x": 18, "y": 0, "w": 6, "h": 8},
+        "targets": [
+          {
+            "expr": "v2_cost_per_project_usd",
+            "legendFormat": "Cost"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "green"},
+                {"value": 150, "color": "yellow"},
+                {"value": 200, "color": "red"}
+              ]
+            },
+            "unit": "currencyUSD",
+            "min": 0,
+            "max": 300
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Atoms: Generated vs Failed",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(v2_atoms_generated_total[5m])",
+            "legendFormat": "Generated"
+          },
+          {
+            "expr": "rate(v2_atoms_failed_total[5m])",
+            "legendFormat": "Failed"
+          },
+          {
+            "expr": "rate(v2_atoms_completed_total[5m])",
+            "legendFormat": "Completed"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Parallel Execution (Target: 100+)",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "v2_parallel_atoms",
+            "legendFormat": "Wave {{wave_number}}"
+          }
+        ],
+        "yaxes": [
+          {"format": "short", "label": "Atoms"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Context Completeness (Target: ≥95%)",
+        "type": "heatmap",
+        "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "v2_context_completeness",
+            "legendFormat": "Completeness"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Validation Pass Rate by Level",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(v2_validation_passed{validation_level='atomic'}[5m]) / (rate(v2_validation_passed{validation_level='atomic'}[5m]) + rate(v2_validation_failed{validation_level='atomic'}[5m])) * 100",
+            "legendFormat": "Level 1 (Atomic) - Target: 99%"
+          },
+          {
+            "expr": "rate(v2_validation_passed{validation_level='module'}[5m]) / (rate(v2_validation_passed{validation_level='module'}[5m]) + rate(v2_validation_failed{validation_level='module'}[5m])) * 100",
+            "legendFormat": "Level 2 (Module) - Target: 95%"
+          },
+          {
+            "expr": "rate(v2_validation_passed{validation_level='component'}[5m]) / (rate(v2_validation_passed{validation_level='component'}[5m]) + rate(v2_validation_failed{validation_level='component'}[5m])) * 100",
+            "legendFormat": "Level 3 (Component) - Target: 90%"
+          },
+          {
+            "expr": "rate(v2_validation_passed{validation_level='system'}[5m]) / (rate(v2_validation_passed{validation_level='system'}[5m]) + rate(v2_validation_failed{validation_level='system'}[5m])) * 100",
+            "legendFormat": "Level 4 (System) - Target: 85%"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Retry Success Rate",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 24, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(v2_retry_success{attempt_number='1'}[5m]) / rate(v2_retry_attempts{attempt_number='1'}[5m]) * 100",
+            "legendFormat": "Attempt 1"
+          },
+          {
+            "expr": "rate(v2_retry_success{attempt_number='2'}[5m]) / rate(v2_retry_attempts{attempt_number='2'}[5m]) * 100",
+            "legendFormat": "Attempt 2"
+          },
+          {
+            "expr": "rate(v2_retry_success{attempt_number='3'}[5m]) / rate(v2_retry_attempts{attempt_number='3'}[5m]) * 100",
+            "legendFormat": "Attempt 3"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Human Review Queue",
+        "type": "stat",
+        "gridPos": {"x": 12, "y": 24, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "sum(v2_review_queue_size{status='pending'})",
+            "legendFormat": "Pending Review"
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "LOC per Atom (Target: ~10)",
+        "type": "heatmap",
+        "gridPos": {"x": 18, "y": 24, "w": 6, "h": 8},
+        "targets": [
+          {
+            "expr": "v2_loc_per_atom",
+            "legendFormat": "LOC"
+          }
+        ]
+      },
+      {
+        "id": 11,
+        "title": "Wave Execution Duration",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 32, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "v2_wave_duration_seconds",
+            "legendFormat": "Wave {{wave_number}}"
+          }
+        ]
+      },
+      {
+        "id": 12,
+        "title": "Dependency Graph Stats",
+        "type": "table",
+        "gridPos": {"x": 12, "y": 32, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "v2_waves_executed_total",
+            "legendFormat": "Total Waves",
+            "format": "table"
+          },
+          {
+            "expr": "v2_graph_edges",
+            "legendFormat": "Total Edges",
+            "format": "table"
+          },
+          {
+            "expr": "v2_parallel_atoms",
+            "legendFormat": "Max Parallel",
+            "format": "table"
+          },
+          {
+            "expr": "v2_graph_has_cycles",
+            "legendFormat": "Has Cycles",
+            "format": "table"
+          }
+        ]
+      }
+    ],
+    "refresh": "30s",
+    "time": {"from": "now-6h", "to": "now"},
+    "timepicker": {
+      "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h"]
+    },
+    "templating": {
+      "list": [
+        {
+          "name": "masterplan_id",
+          "type": "query",
+          "datasource": "Prometheus",
+          "query": "label_values(v2_execution_time_seconds, masterplan_id)",
+          "refresh": 1,
+          "includeAll": true
+        }
+      ]
+    }
+  }
+}

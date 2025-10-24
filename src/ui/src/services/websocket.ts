@@ -42,8 +42,8 @@ export class WebSocketService {
       return
     }
 
-    // Use relative URL for Socket.IO to work with Vite proxy
-    const socketUrl = url || window.location.origin
+    // Use environment variable or default to backend URL
+    const socketUrl = url || import.meta.env.VITE_WS_URL || 'http://localhost:8000'
     console.log('🔌 [WebSocketService] Creating NEW socket, connecting to:', socketUrl)
 
     this.socket = io(socketUrl, {

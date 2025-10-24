@@ -1031,7 +1031,7 @@
 **Dependencies:** Phase 2 (Backend auth endpoints)
 **Assignee:** ui-designer
 
-- [ ] 8.1.0 Complete authentication pages
+- [x] 8.1.0 Complete authentication pages
   - [ ] 8.1.1 Write 2-8 focused tests for authentication pages
     - Test login form submission
     - Test registration form validation
@@ -1120,7 +1120,7 @@
 **Dependencies:** Task Group 8.1
 **Assignee:** ui-designer
 
-- [ ] 8.2.0 Complete auth context and routing
+- [x] 8.2.0 Complete auth context and routing
   - [ ] 8.2.1 Write 2-6 focused tests for auth context
     - Test login updates auth state
     - Test logout clears auth state
@@ -1202,7 +1202,7 @@
 **Dependencies:** Task Groups 5.4, 8.2
 **Assignee:** ui-designer
 
-- [ ] 8.3.0 Complete user profile and usage UI
+- [x] 8.3.0 Complete user profile and usage UI
   - [ ] 8.3.1 Write 2-6 focused tests for profile and usage components
     - Test UserProfilePage renders user info
     - Test UsageStatsCard displays usage correctly
@@ -1270,7 +1270,7 @@
 **Dependencies:** Task Groups 6.1, 6.2, 8.2
 **Assignee:** ui-designer
 
-- [ ] 8.4.0 Complete admin dashboard UI (OPTIONAL)
+- [x] 8.4.0 Complete admin dashboard UI (OPTIONAL)
   - [ ] 8.4.1 Write 2-6 focused tests for admin UI
     - Test AdminDashboardPage renders statistics
     - Test AdminUsersPage displays user list

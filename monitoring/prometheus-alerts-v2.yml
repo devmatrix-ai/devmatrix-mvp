@@ -1,0 +1,155 @@
+groups:
+  - name: mge_v2_alerts
+    interval: 30s
+    rules:
+      # Precision Alerts
+      - alert: V2PrecisionBelowTarget
+        expr: v2_precision_percent < 95
+        for: 5m
+        labels:
+          severity: critical
+          component: mge-v2
+        annotations:
+          summary: "MGE V2 precision below 95% (current: {{ $value }}%)"
+          description: "MasterPlan {{ $labels.masterplan_id }} has precision {{ $value }}%, target is ≥98%"
+
+      # Execution Time Alerts
+      - alert: V2ExecutionTimeTooHigh
+        expr: v2_execution_time_seconds > 7200
+        for: 1m
+        labels:
+          severity: warning
+          component: mge-v2
+        annotations:
+          summary: "MGE V2 execution time exceeds 2 hours"
+          description: "MasterPlan {{ $labels.masterplan_id }} took {{ $value }}s ({{ humanizeDuration $value }}), target is <1.5h"
+
+      # Cost Alerts
+      - alert: V2CostExceedsBudget
+        expr: v2_cost_per_project_usd > 200
+        for: 1m
+        labels:
+          severity: warning
+          component: mge-v2
+        annotations:
+          summary: "MGE V2 cost exceeds budget"
+          description: "MasterPlan {{ $labels.masterplan_id }} cost ${{ $value }}, budget is <$200"
+
+      # Failure Rate Alerts
+      - alert: V2HighFailureRate
+        expr: (rate(v2_atoms_failed_total[5m]) / rate(v2_atoms_generated_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          component: mge-v2
+        annotations:
+          summary: "MGE V2 atom failure rate above 5%"
+          description: "MasterPlan {{ $labels.masterplan_id }} has {{ $value | humanizePercentage }} failure rate"
+
+      # Context Completeness Alerts
+      - alert: V2LowContextCompleteness
+        expr: histogram_quantile(0.5, rate(v2_context_completeness_bucket[5m])) < 0.95
+        for: 5m
+        labels:
+          severity: warning
+          component: mge-v2
+        annotations:
+          summary: "MGE V2 context completeness below 95%"
+          description: "MasterPlan {{ $labels.masterplan_id }} median context completeness is {{ $value }}, target is ≥0.95"
+
+      # Validation Alerts
+      - alert: V2AtomicValidationFailures
+        expr: (rate(v2_validation_failed{validation_level="atomic"}[5m]) / rate(v2_validation_passed{validation_level="atomic"}[5m]) + rate(v2_validation_failed{validation_level="atomic"}[5m])) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+          component: mge-v2
+        annotations:
+          summary: "MGE V2 atomic validation failure rate above 1%"
+          description: "Level 1 (Atomic) validation failing at {{ $value | humanizePercentage }}, target is 99% pass"
+
+      - alert: V2ModuleValidationFailures
+        expr: (rate(v2_validation_failed{validation_level="module"}[5m]) / rate(v2_validation_passed{validation_level="module"}[5m]) + rate(v2_validation_failed{validation_level="module"}[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: mge-v2
+        annotations:
+          summary: "MGE V2 module validation failure rate above 5%"
+          description: "Level 2 (Module) validation failing at {{ $value | humanizePercentage }}, target is 95% pass"
+
+      # Retry Alerts
+      - alert: V2HighRetryRate
+        expr: rate(v2_retry_attempts[5m]) > 0.3 * rate(v2_atoms_generated_total[5m])
+        for: 5m
+        labels:
+          severity: warning
+          component: mge-v2
+        annotations:
+          summary: "MGE V2 retry rate above 30%"
+          description: "MasterPlan {{ $labels.masterplan_id }} requires retries for {{ $value | humanizePercentage }} of atoms"
+
+      - alert: V2RetryExhaustion
+        expr: rate(v2_retry_attempts{attempt_number="3"}[5m]) / rate(v2_retry_attempts[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+          component: mge-v2
+        annotations:
+          summary: "MGE V2 atoms exhausting all 3 retry attempts"
+          description: "{{ $value | humanizePercentage }} of atoms requiring 3rd retry attempt"
+
+      # Human Review Alerts
+      - alert: V2ReviewQueueBacklog
+        expr: v2_review_queue_size{status="pending"} > 50
+        for: 10m
+        labels:
+          severity: warning
+          component: mge-v2
+        annotations:
+          summary: "MGE V2 human review queue backlog"
+          description: "{{ $value }} atoms pending human review"
+
+      # Parallelization Alerts
+      - alert: V2LowParallelization
+        expr: v2_parallel_atoms < 50
+        for: 5m
+        labels:
+          severity: warning
+          component: mge-v2
+        annotations:
+          summary: "MGE V2 parallelization below target"
+          description: "Only {{ $value }} atoms running in parallel, target is 100+"
+
+      # Dependency Graph Alerts
+      - alert: V2GraphHasCycles
+        expr: v2_graph_has_cycles == 1
+        for: 1m
+        labels:
+          severity: critical
+          component: mge-v2
+        annotations:
+          summary: "MGE V2 dependency graph contains cycles"
+          description: "Dependency graph {{ $labels.graph_id }} has circular dependencies"
+
+      # LOC Alerts
+      - alert: V2AtomsTooLarge
+        expr: histogram_quantile(0.9, rate(v2_loc_per_atom_bucket[5m])) > 15
+        for: 5m
+        labels:
+          severity: warning
+          component: mge-v2
+        annotations:
+          summary: "MGE V2 atoms exceeding 15 LOC target"
+          description: "90th percentile atom size is {{ $value }} LOC, target is ≤15"
+
+      # Complexity Alerts
+      - alert: V2ComplexityTooHigh
+        expr: histogram_quantile(0.9, rate(v2_complexity_per_atom_bucket[5m])) > 3.0
+        for: 5m
+        labels:
+          severity: warning
+          component: mge-v2
+        annotations:
+          summary: "MGE V2 atom complexity too high"
+          description: "90th percentile complexity is {{ $value }}, target is <3.0"

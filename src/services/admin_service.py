@@ -140,7 +140,7 @@ class AdminService:
             ).first()
 
             # Get resource counts
-            conversations_count = db.query(func.count(Conversation.conversation_id)).filter(
+            conversations_count = db.query(func.count()).select_from(Conversation).filter(
                 Conversation.user_id == user_id
             ).scalar()
 
@@ -360,7 +360,7 @@ class AdminService:
             ).scalar()
 
             # Resource statistics
-            total_conversations = db.query(func.count(Conversation.conversation_id)).scalar()
+            total_conversations = db.query(func.count()).select_from(Conversation).scalar()
             total_masterplans = db.query(func.count(MasterPlan.masterplan_id)).scalar()
 
             # Usage statistics (current month)
