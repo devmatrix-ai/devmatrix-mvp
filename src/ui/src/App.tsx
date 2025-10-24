@@ -5,8 +5,9 @@ import { ProtectedRoute } from './components/ProtectedRoute'
 import { useChatStore } from './stores/chatStore'
 import { useTheme } from './contexts/ThemeContext'
 import { useAuth } from './contexts/AuthContext'
-import { FiMessageSquare, FiHome, FiSettings, FiSun, FiMoon, FiMonitor, FiTarget, FiUser, FiLogOut, FiShield } from 'react-icons/fi'
+import { FiMessageSquare, FiHome, FiSettings, FiSun, FiMoon, FiMonitor, FiTarget, FiUser, FiLogOut, FiShield, FiCheckCircle } from 'react-icons/fi'
 import { MasterplansPage } from './pages/MasterplansPage'
+import { ReviewQueue } from './pages/review/ReviewQueue'
 import { MasterplanDetailPage } from './pages/MasterplanDetailPage'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
@@ -102,6 +103,18 @@ function AppContent() {
             aria-label="Masterplans"
           >
             <FiTarget size={24} />
+          </button>
+
+          <button
+            onClick={() => navigate('/review')}
+            className={`p-3 rounded-lg transition-colors ${
+              isActive('/review')
+                ? 'bg-primary-100 dark:bg-primary-900 text-primary-600 dark:text-primary-400'
+                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+            }`}
+            aria-label="Review Queue"
+          >
+            <FiCheckCircle size={24} />
           </button>
 
           <button
@@ -230,6 +243,12 @@ function AppContent() {
           <Route path="/masterplans/:id" element={
             <ProtectedRoute>
               <MasterplanDetailPage />
+            </ProtectedRoute>
+          } />
+
+          <Route path="/review" element={
+            <ProtectedRoute>
+              <ReviewQueue />
             </ProtectedRoute>
           } />
 

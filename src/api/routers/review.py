@@ -12,9 +12,9 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
 
-from ...db.session import get_db
-from ...services.review_service import ReviewService
-from ...models import AtomicUnit
+from src.config.database import get_db
+from src.services.review_service import ReviewService
+from src.models import AtomicUnit
 
 
 router = APIRouter(
