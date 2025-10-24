@@ -6,7 +6,7 @@ Tracks per-user monthly usage metrics for LLM tokens, masterplans, storage, and 
 
 import uuid
 from datetime import date
-from sqlalchemy import Column, Integer, BigInteger, Date, ForeignKey, Index, UniqueConstraint, Numeric
+from sqlalchemy import Column, String, Integer, BigInteger, Date, ForeignKey, Index, UniqueConstraint, Numeric
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -40,14 +40,14 @@ class UserUsage(Base):
         ForeignKey("users.user_id", ondelete="CASCADE"),
         nullable=False
     )
-    month = Column(Date, nullable=False)
+    month = Column(String(7), nullable=False)  # Format: YYYY-MM
 
-    # Usage metrics
-    llm_tokens_used = Column(Integer, default=0, nullable=False)
-    llm_cost_usd = Column(Numeric(10, 4), default=0.0, nullable=True)
-    masterplans_created = Column(Integer, default=0, nullable=True)
-    storage_bytes = Column(BigInteger, default=0, nullable=True)
-    api_calls = Column(Integer, default=0, nullable=True)
+    # Usage metrics (mapped to actual DB column names)
+    llm_tokens_used = Column('total_tokens_used', BigInteger, default=0, nullable=False)
+    llm_cost_usd = Column('total_cost_usd', Numeric(10, 4), default=0.0, nullable=False)
+    masterplans_created = Column('masterplans_count', Integer, default=0, nullable=False)
+    storage_bytes = Column('storage_used_mb', Numeric(10, 2), default=0, nullable=False)
+    api_calls = Column('api_calls_count', Integer, default=0, nullable=False)
 
     # Constraints and indexes
     __table_args__ = (

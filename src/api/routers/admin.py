@@ -391,7 +391,7 @@ async def get_top_users(
     top_users = admin.get_top_users_by_usage(limit=limit)
 
     logger.info(f"Superuser {current_user.user_id} retrieved top {limit} users")
-    return {"top_users": top_users, "limit": limit}
+    return top_users
 
 
 @router.get("/health")

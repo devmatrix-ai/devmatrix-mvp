@@ -367,35 +367,29 @@ class AdminService:
 
             # Usage statistics (current month)
             today = date.today()
-            current_month = date(today.year, today.month, 1)
+            current_month_str = today.strftime('%Y-%m')
 
             current_month_usage = db.query(
-                func.sum(UserUsage.total_tokens_used).label('total_tokens'),
-                func.sum(UserUsage.total_cost_usd).label('total_cost'),
-                func.sum(UserUsage.api_calls_count).label('total_api_calls')
+                func.sum(UserUsage.llm_tokens_used).label('total_tokens'),
+                func.sum(UserUsage.llm_cost_usd).label('total_cost'),
+                func.sum(UserUsage.api_calls).label('total_api_calls')
             ).filter(
-                UserUsage.month == current_month
+                UserUsage.month == current_month_str
             ).first()
 
             logger.info("Admin retrieved system statistics")
 
             return {
-                "users": {
-                    "total": total_users,
-                    "active": active_users,
-                    "verified": verified_users,
-                    "superusers": superusers,
-                },
-                "resources": {
-                    "conversations": total_conversations,
-                    "masterplans": total_masterplans,
-                },
-                "current_month_usage": {
-                    "month": str(current_month),
-                    "total_llm_tokens": int(current_month_usage.total_tokens or 0),
-                    "total_cost_usd": float(current_month_usage.total_cost or 0.0),
-                    "total_api_calls": int(current_month_usage.total_api_calls or 0),
-                }
+                "total_users": total_users,
+                "active_users": active_users,
+                "verified_users": verified_users,
+                "total_conversations": total_conversations,
+                "total_messages": 0,  # TODO: Add message count when available
+                "total_masterplans": total_masterplans,
+                "total_llm_tokens_used": int(current_month_usage.total_tokens or 0),
+                "total_storage_bytes": 0,  # TODO: Add storage calculation
+                "avg_tokens_per_user": int(current_month_usage.total_tokens or 0) // total_users if total_users > 0 else 0,
+                "avg_masterplans_per_user": total_masterplans // total_users if total_users > 0 else 0,
             }
 
     def get_top_users_by_usage(self, limit: int = 10, month: Optional[date] = None) -> List[Dict[str, Any]]:
@@ -411,22 +405,22 @@ class AdminService:
         """
         if month is None:
             today = date.today()
-            month = date(today.year, today.month, 1)
+            month = today.strftime('%Y-%m')
 
         with get_db_context() as db:
             results = db.query(
                 User.user_id,
                 User.email,
                 User.username,
-                UserUsage.total_tokens_used,
-                UserUsage.total_cost_usd,
-                UserUsage.api_calls_count
+                UserUsage.llm_tokens_used,
+                UserUsage.llm_cost_usd,
+                UserUsage.api_calls
             ).join(
                 UserUsage, User.user_id == UserUsage.user_id
             ).filter(
                 UserUsage.month == month
             ).order_by(
-                desc(UserUsage.total_tokens_used)
+                desc(UserUsage.llm_tokens_used)
             ).limit(limit).all()
 
             top_users = [
@@ -434,9 +428,9 @@ class AdminService:
                     "user_id": str(result.user_id),
                     "email": result.email,
                     "username": result.username,
-                    "llm_tokens_used": result.total_tokens_used,
-                    "llm_cost_usd": float(result.total_cost_usd),
-                    "api_calls": result.api_calls_count,
+                    "llm_tokens_used": result.llm_tokens_used,
+                    "llm_cost_usd": float(result.llm_cost_usd),
+                    "api_calls": result.api_calls,
                 }
                 for result in results
             ]
