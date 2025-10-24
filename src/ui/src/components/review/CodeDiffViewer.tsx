@@ -1,5 +1,5 @@
 /**
- * CodeDiffViewer - Code viewer with syntax highlighting and issue markers
+ * CodeDiffViewer - Code viewer with Monaco Editor syntax highlighting
  *
  * Author: DevMatrix Team
  * Date: 2025-10-24
@@ -15,6 +15,7 @@ import {
   Chip,
   Tooltip,
   IconButton,
+  Alert,
 } from '@mui/material';
 import {
   ContentCopy as CopyIcon,
@@ -22,8 +23,7 @@ import {
   Warning as WarningIcon,
   Info as InfoIcon,
 } from '@mui/icons-material';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import Editor from '@monaco-editor/react';
 
 interface Issue {
   type: string;
@@ -50,7 +50,7 @@ const CodeDiffViewer: React.FC<CodeDiffViewerProps> = ({
   const [activeTab, setActiveTab] = useState<'current' | 'diff'>(
     originalCode ? 'diff' : 'current'
   );
-  const [copiedshown, setCopiedShown] = useState(false);
+  const [copiedShown, setCopiedShown] = useState(false);
 
   // Handle copy code
   const handleCopyCode = () => {
@@ -90,113 +90,25 @@ const CodeDiffViewer: React.FC<CodeDiffViewerProps> = ({
     }
   };
 
-  // Custom line number renderer with issue markers
-  const lineProps = (lineNumber: number) => {
-    const lineIssues = issueLines.get(lineNumber);
-
-    if (!lineIssues || lineIssues.length === 0) {
-      return {};
-    }
-
-    return {
-      style: {
-        backgroundColor: lineIssues.some(i => i.severity === 'critical' || i.severity === 'high')
-          ? 'rgba(244, 67, 54, 0.1)'
-          : lineIssues.some(i => i.severity === 'medium')
-          ? 'rgba(255, 152, 0, 0.1)'
-          : 'rgba(33, 150, 243, 0.1)',
-        borderLeft: lineIssues.some(i => i.severity === 'critical' || i.severity === 'high')
-          ? '3px solid #f44336'
-          : lineIssues.some(i => i.severity === 'medium')
-          ? '3px solid #ff9800'
-          : '3px solid #2196f3',
-      },
+  // Map language to Monaco language ID
+  const getMonacoLanguage = (lang: string): string => {
+    const langMap: Record<string, string> = {
+      'python': 'python',
+      'javascript': 'javascript',
+      'typescript': 'typescript',
+      'jsx': 'javascript',
+      'tsx': 'typescript',
+      'json': 'json',
+      'html': 'html',
+      'css': 'css',
+      'sql': 'sql',
+      'java': 'java',
+      'go': 'go',
+      'rust': 'rust',
+      'cpp': 'cpp',
+      'c': 'c',
     };
-  };
-
-  // Render code with syntax highlighting
-  const renderCode = (codeContent: string) => {
-    const lines = codeContent.split('\n');
-
-    return (
-      <Box sx={{ position: 'relative' }}>
-        {/* Copy button */}
-        <Box sx={{ position: 'absolute', top: 8, right: 8, zIndex: 1 }}>
-          <Tooltip title={copiedshown ? 'Copied!' : 'Copy code'}>
-            <IconButton
-              size="small"
-              onClick={handleCopyCode}
-              sx={{
-                bgcolor: 'rgba(255, 255, 255, 0.1)',
-                '&:hover': { bgcolor: 'rgba(255, 255, 255, 0.2)' },
-              }}
-            >
-              <CopyIcon sx={{ fontSize: 18, color: 'white' }} />
-            </IconButton>
-          </Tooltip>
-        </Box>
-
-        {/* Syntax highlighted code */}
-        <SyntaxHighlighter
-          language={language}
-          style={vscDarkPlus}
-          showLineNumbers
-          wrapLines
-          lineProps={lineProps}
-          customStyle={{
-            margin: 0,
-            borderRadius: 0,
-            fontSize: '0.9rem',
-          }}
-        >
-          {codeContent}
-        </SyntaxHighlighter>
-
-        {/* Issue markers */}
-        {Array.from(issueLines.entries()).map(([lineNum, lineIssues]) => (
-          <Box
-            key={lineNum}
-            sx={{
-              position: 'absolute',
-              left: 0,
-              top: `${(lineNum - 1) * 21}px`, // Approximate line height
-              width: '100%',
-              pointerEvents: 'none',
-            }}
-          >
-            <Box sx={{ display: 'flex', gap: 0.5, ml: 1, pointerEvents: 'auto' }}>
-              {lineIssues.map((issue, idx) => (
-                <Tooltip
-                  key={idx}
-                  title={
-                    <Box>
-                      <Typography variant="caption" sx={{ fontWeight: 'bold' }}>
-                        {issue.description}
-                      </Typography>
-                      <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
-                        {issue.explanation}
-                      </Typography>
-                    </Box>
-                  }
-                  arrow
-                >
-                  <Chip
-                    icon={getSeverityIcon(issue.severity)}
-                    label={issue.type}
-                    size="small"
-                    sx={{
-                      height: 16,
-                      fontSize: '0.65rem',
-                      cursor: 'pointer',
-                    }}
-                  />
-                </Tooltip>
-              ))}
-            </Box>
-          </Box>
-        ))}
-      </Box>
-    );
+    return langMap[lang.toLowerCase()] || 'plaintext';
   };
 
   return (
@@ -205,7 +117,12 @@ const CodeDiffViewer: React.FC<CodeDiffViewerProps> = ({
       <Box sx={{ borderBottom: 1, borderColor: 'divider', p: 2 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="h6">Code Review</Typography>
-          <Box sx={{ display: 'flex', gap: 1 }}>
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+            <Tooltip title={copiedShown ? 'Copied!' : 'Copy code'}>
+              <IconButton size="small" onClick={handleCopyCode}>
+                <CopyIcon />
+              </IconButton>
+            </Tooltip>
             <Chip
               label={`${issues.length} issues`}
               size="small"
@@ -233,30 +150,106 @@ const CodeDiffViewer: React.FC<CodeDiffViewerProps> = ({
       </Box>
 
       {/* Code content */}
-      <Box sx={{ flex: 1, overflow: 'auto' }}>
+      <Box sx={{ flex: 1, overflow: 'auto', position: 'relative' }}>
         {activeTab === 'current' ? (
-          renderCode(code)
+          <Box sx={{ height: '100%' }}>
+            <Editor
+              height="100%"
+              language={getMonacoLanguage(language)}
+              value={code}
+              theme="vs-dark"
+              options={{
+                readOnly: true,
+                minimap: { enabled: false },
+                scrollBeyondLastLine: false,
+                fontSize: 14,
+                lineNumbers: 'on',
+                renderLineHighlight: 'all',
+                automaticLayout: true,
+              }}
+            />
+          </Box>
         ) : (
           <Box sx={{ display: 'flex', height: '100%' }}>
             <Box sx={{ flex: 1, borderRight: 1, borderColor: 'divider' }}>
-              <Typography variant="caption" sx={{ p: 1, display: 'block', bgcolor: 'error.light' }}>
+              <Typography variant="caption" sx={{ p: 1, display: 'block', bgcolor: 'error.light', color: 'white' }}>
                 Original
               </Typography>
-              {renderCode(originalCode || '')}
+              <Editor
+                height="calc(100% - 32px)"
+                language={getMonacoLanguage(language)}
+                value={originalCode || ''}
+                theme="vs-dark"
+                options={{
+                  readOnly: true,
+                  minimap: { enabled: false },
+                  scrollBeyondLastLine: false,
+                  fontSize: 14,
+                  lineNumbers: 'on',
+                }}
+              />
             </Box>
             <Box sx={{ flex: 1 }}>
-              <Typography variant="caption" sx={{ p: 1, display: 'block', bgcolor: 'success.light' }}>
+              <Typography variant="caption" sx={{ p: 1, display: 'block', bgcolor: 'success.light', color: 'white' }}>
                 Modified
               </Typography>
-              {renderCode(code)}
+              <Editor
+                height="calc(100% - 32px)"
+                language={getMonacoLanguage(language)}
+                value={code}
+                theme="vs-dark"
+                options={{
+                  readOnly: true,
+                  minimap: { enabled: false },
+                  scrollBeyondLastLine: false,
+                  fontSize: 14,
+                  lineNumbers: 'on',
+                }}
+              />
             </Box>
           </Box>
         )}
       </Box>
 
+      {/* Issues list below editor */}
+      {issues.length > 0 && (
+        <Box sx={{ borderTop: 1, borderColor: 'divider', p: 2, maxHeight: '200px', overflow: 'auto' }}>
+          <Typography variant="subtitle2" sx={{ mb: 1 }}>
+            Issues Found ({issues.length})
+          </Typography>
+          {Array.from(issueLines.entries()).map(([lineNum, lineIssues]) => (
+            <Box key={lineNum} sx={{ mb: 1 }}>
+              {lineIssues.map((issue, idx) => (
+                <Alert
+                  key={idx}
+                  severity={
+                    issue.severity === 'critical' || issue.severity === 'high'
+                      ? 'error'
+                      : issue.severity === 'medium'
+                      ? 'warning'
+                      : 'info'
+                  }
+                  icon={getSeverityIcon(issue.severity)}
+                  sx={{ mb: 0.5 }}
+                >
+                  <Box>
+                    <Typography variant="caption" sx={{ fontWeight: 'bold' }}>
+                      Line {lineNum}: {issue.description}
+                    </Typography>
+                    <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
+                      {issue.explanation}
+                    </Typography>
+                  </Box>
+                </Alert>
+              ))}
+            </Box>
+          ))}
+        </Box>
+      )}
+
       {/* Issue summary */}
       {issues.length > 0 && (
-        <Box sx={{ borderTop: 1, borderColor: 'divider', p: 2 }}>
+        <Box sx={{ borderTop: 1, borderColor: 'divider', p: 1, bgcolor: 'grey.100' }}>
           <Typography variant="caption" color="text.secondary">
             {issues.filter(i => i.severity === 'critical' || i.severity === 'high').length} critical/high •{' '}
             {issues.filter(i => i.severity === 'medium').length} medium •{' '}
