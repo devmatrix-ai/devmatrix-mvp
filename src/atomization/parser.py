@@ -69,20 +69,16 @@ class MultiLanguageParser:
 
     def __init__(self) -> None:
         """Initialize parsers for all supported languages"""
-        # Build tree-sitter languages
-        self.py_language = tree_sitter.Language(python_language())
-        self.ts_language = tree_sitter.Language(language_typescript())
-        self.js_language = tree_sitter.Language(javascript_language())
+        # tree-sitter 0.21+ API: language functions return Language objects
+        # But Parser.set_language() is the correct method (not .language property)
+        self.py_language = python_language()
+        self.ts_language = language_typescript()
+        self.js_language = javascript_language()
 
-        # Create parsers
-        self.py_parser = tree_sitter.Parser()
-        self.py_parser.language = self.py_language
-
-        self.ts_parser = tree_sitter.Parser()
-        self.ts_parser.language = self.ts_language
-
-        self.js_parser = tree_sitter.Parser()
-        self.js_parser.language = self.js_language
+        # Create parsers with set_language() method
+        self.py_parser = tree_sitter.Parser(self.py_language)
+        self.ts_parser = tree_sitter.Parser(self.ts_language)
+        self.js_parser = tree_sitter.Parser(self.js_language)
 
         logger.info("MultiLanguageParser initialized for Python, TypeScript, JavaScript")
 
