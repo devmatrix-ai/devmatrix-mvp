@@ -14,9 +14,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ...database import get_db
-from ...services.execution_service_v2 import ExecutionServiceV2
-from ...observability import StructuredLogger
+from src.config.database import get_db
+from src.services.execution_service_v2 import ExecutionServiceV2
+from src.observability import StructuredLogger
 
 
 logger = StructuredLogger("execution_v2_api", output_json=True)
