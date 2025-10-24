@@ -361,16 +361,18 @@ class AdminService:
 
             # Resource statistics
             total_conversations = db.query(func.count()).select_from(Conversation).scalar()
-            total_masterplans = db.query(func.count(MasterPlan.masterplan_id)).scalar()
+            # TODO: Re-enable when masterplans table is created via migrations
+            # total_masterplans = db.query(func.count(MasterPlan.masterplan_id)).scalar()
+            total_masterplans = 0  # Temporarily disabled
 
             # Usage statistics (current month)
             today = date.today()
             current_month = date(today.year, today.month, 1)
 
             current_month_usage = db.query(
-                func.sum(UserUsage.llm_tokens_used).label('total_tokens'),
-                func.sum(UserUsage.llm_cost_usd).label('total_cost'),
-                func.sum(UserUsage.api_calls).label('total_api_calls')
+                func.sum(UserUsage.total_tokens_used).label('total_tokens'),
+                func.sum(UserUsage.total_cost_usd).label('total_cost'),
+                func.sum(UserUsage.api_calls_count).label('total_api_calls')
             ).filter(
                 UserUsage.month == current_month
             ).first()
@@ -416,15 +418,15 @@ class AdminService:
                 User.user_id,
                 User.email,
                 User.username,
-                UserUsage.llm_tokens_used,
-                UserUsage.llm_cost_usd,
-                UserUsage.api_calls
+                UserUsage.total_tokens_used,
+                UserUsage.total_cost_usd,
+                UserUsage.api_calls_count
             ).join(
                 UserUsage, User.user_id == UserUsage.user_id
             ).filter(
                 UserUsage.month == month
             ).order_by(
-                desc(UserUsage.llm_tokens_used)
+                desc(UserUsage.total_tokens_used)
             ).limit(limit).all()
 
             top_users = [
@@ -432,9 +434,9 @@ class AdminService:
                     "user_id": str(result.user_id),
                     "email": result.email,
                     "username": result.username,
-                    "llm_tokens_used": result.llm_tokens_used,
-                    "llm_cost_usd": float(result.llm_cost_usd),
-                    "api_calls": result.api_calls,
+                    "llm_tokens_used": result.total_tokens_used,
+                    "llm_cost_usd": float(result.total_cost_usd),
+                    "api_calls": result.api_calls_count,
                 }
                 for result in results
             ]
