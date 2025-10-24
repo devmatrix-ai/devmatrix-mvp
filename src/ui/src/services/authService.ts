@@ -240,14 +240,16 @@ class AuthService {
 
   /**
    * Get auth headers for authenticated requests
+   * Reads directly from localStorage to ensure consistency across page navigations
    */
   getAuthHeaders(): Record<string, string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     }
 
-    if (this.accessToken) {
-      headers['Authorization'] = `Bearer ${this.accessToken}`
+    const token = localStorage.getItem('access_token')
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
     }
 
     return headers
@@ -255,9 +257,10 @@ class AuthService {
 
   /**
    * Check if user is authenticated
+   * Reads directly from localStorage to ensure consistency across page navigations
    */
   isAuthenticated(): boolean {
-    return !!this.accessToken
+    return !!localStorage.getItem('access_token')
   }
 
   /**
