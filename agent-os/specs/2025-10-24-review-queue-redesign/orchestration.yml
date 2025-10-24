@@ -1,0 +1,107 @@
+# Orchestration Configuration: Review Queue Complete Redesign
+# Phase 2 of UI Unification Project
+# Date: 2025-10-24
+
+spec_name: review-queue-redesign
+spec_path: agent-os/specs/2025-10-24-review-queue-redesign
+
+# Task Groups Assignment
+task_groups:
+  - name: Review UI Components
+    description: Create ReviewCard, ReviewModal, LoadingState, EmptyState, ErrorState components
+    tasks_file: tasks.md
+    section: "Task Group 1"
+    estimated_time: "2-3 hours"
+    dependencies: ["ui-design-system (Phase 1 completed)"]
+    suggested_subagent: frontend-architect
+    claude_code_subagent: frontend-architect
+    why: "Specialized in creating accessible, performant UI components with modern frameworks. Created all Phase 1 design system components successfully."
+    deliverables:
+      - "5 new review-specific components"
+      - "2-8 focused tests for new components"
+      - "All components use design system components"
+      - "TypeScript interfaces exported"
+
+  - name: ReviewQueue Page Redesign
+    description: Migrate ReviewQueue from Material-UI to design system with card grid layout
+    tasks_file: tasks.md
+    section: "Task Group 2"
+    estimated_time: "2-3 hours"
+    dependencies: ["Task Group 1"]
+    suggested_subagent: frontend-architect
+    claude_code_subagent: frontend-architect
+    why: "Best suited for page-level integration work, responsive design, and ensuring visual consistency. Successfully integrated POC in Phase 1."
+    deliverables:
+      - "Zero Material-UI imports in ReviewQueue.tsx"
+      - "Card grid layout working responsively"
+      - "Modal opens/closes correctly"
+      - "All functionality preserved"
+      - "2-8 integration tests passing"
+
+  - name: QA and Final Polish
+    description: Testing, visual QA, build verification, documentation updates
+    tasks_file: tasks.md
+    section: "Task Group 3"
+    estimated_time: "2-3 hours"
+    dependencies: ["Task Group 1", "Task Group 2"]
+    suggested_subagent: quality-engineer
+    claude_code_subagent: quality-engineer
+    why: "Specialized in comprehensive testing strategies and systematic edge case detection. Successfully validated all Phase 1 components with 48 tests."
+    deliverables:
+      - "All ReviewQueue tests pass (~20-30 tests total)"
+      - "Visual appearance matches MasterplansPage 100%"
+      - "Build succeeds with no errors"
+      - "No console errors in browser"
+      - "Documentation updated"
+
+# Execution Strategy
+execution_mode: sequential
+reason: "Task Group 2 depends on Task Group 1 components, Task Group 3 validates both"
+
+# Quality Gates
+quality_gates:
+  - gate: "Task Group 1 Complete"
+    criteria:
+      - "All 5 components created"
+      - "2-8 component tests passing"
+      - "TypeScript compilation passes"
+      - "Components render correctly"
+
+  - gate: "Task Group 2 Complete"
+    criteria:
+      - "Zero Material-UI imports"
+      - "Card grid layout working"
+      - "Modal functionality working"
+      - "2-8 integration tests passing"
+      - "No console warnings"
+
+  - gate: "Task Group 3 Complete"
+    criteria:
+      - "All tests passing (~20-30 total)"
+      - "Visual QA checklist complete"
+      - "Build verification passed"
+      - "Documentation updated"
+
+# Success Metrics
+success_criteria:
+  - "5 new components created"
+  - "Zero Material-UI imports in ReviewQueue"
+  - "Card grid layout working responsively"
+  - "100% visual consistency with MasterplansPage"
+  - "All functionality preserved"
+  - "~20-30 tests passing"
+
+# Resources
+reference_files:
+  - "src/ui/src/components/design-system/" # Design system components
+  - "src/ui/src/pages/review/ReviewQueue.tsx" # Current implementation
+  - "src/ui/src/pages/MasterplansPage.tsx" # Visual reference
+  - "agent-os/specs/2025-10-24-ui-design-system/INTEGRATION_GUIDE.md" # Phase 1 patterns
+
+# Notes
+notes:
+  - "Follow Phase 1 testing philosophy: 2-8 focused tests per group"
+  - "Maximum 10 additional strategic tests in Task Group 3"
+  - "Run only ReviewQueue-related tests, not entire suite"
+  - "Preserve all existing functionality (search, filter, sort, actions)"
+  - "Ensure accessibility (keyboard navigation, ARIA labels)"

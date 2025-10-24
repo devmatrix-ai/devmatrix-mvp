@@ -33,7 +33,7 @@ interface ReviewActionsProps {
 
 const ReviewActions: React.FC<ReviewActionsProps> = ({
   reviewId,
-  atomId,
+  atomId: _atomId,
   currentCode,
   onActionComplete,
 }) => {

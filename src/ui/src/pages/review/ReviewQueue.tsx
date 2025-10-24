@@ -8,45 +8,12 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import {
-  Box,
-  Container,
-  Typography,
-  Paper,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  TableSortLabel,
-  Button,
-  Chip,
-  TextField,
-  Select,
-  MenuItem,
-  FormControl,
-  InputLabel,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  CircularProgress,
-  Alert,
-  Grid,
-} from '@mui/material';
-import {
-  CheckCircle as ApproveIcon,
-  Cancel as RejectIcon,
-  Edit as EditIcon,
-  Refresh as RegenerateIcon,
-  Visibility as ViewIcon,
-} from '@mui/icons-material';
-
-import CodeDiffViewer from '../../components/review/CodeDiffViewer';
-import AISuggestionsPanel from '../../components/review/AISuggestionsPanel';
-import ReviewActions from '../../components/review/ReviewActions';
-import ConfidenceIndicator from '../../components/review/ConfidenceIndicator';
+import { PageHeader, SearchBar, FilterButton, GlassCard, GlassButton } from '../../components/design-system';
+import ReviewCard from '../../components/review/ReviewCard';
+import ReviewModal from '../../components/review/ReviewModal';
+import LoadingState from '../../components/review/LoadingState';
+import EmptyState from '../../components/review/EmptyState';
+import ErrorState from '../../components/review/ErrorState';
 
 interface ReviewItem {
   review_id: string;
@@ -101,8 +68,8 @@ const ReviewQueue: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
 
   // Sorting
-  const [orderBy, setOrderBy] = useState<'priority' | 'confidence_score' | 'created_at'>('priority');
-  const [order, setOrder] = useState<'asc' | 'desc'>('desc');
+  const [orderBy] = useState<'priority' | 'confidence_score' | 'created_at'>('priority');
+  const [order] = useState<'asc' | 'desc'>('desc');
 
   // Fetch review queue
   useEffect(() => {
@@ -133,13 +100,6 @@ const ReviewQueue: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  // Handle sorting
-  const handleSort = (property: 'priority' | 'confidence_score' | 'created_at') => {
-    const isAsc = orderBy === property && order === 'asc';
-    setOrder(isAsc ? 'desc' : 'asc');
-    setOrderBy(property);
   };
 
   // Sort reviews
@@ -174,291 +134,131 @@ const ReviewQueue: React.FC = () => {
     setDialogOpen(true);
   };
 
-  // Handle review action completed
-  const handleActionComplete = () => {
+  // Handle close modal
+  const handleCloseModal = () => {
     setDialogOpen(false);
     setSelectedReview(null);
+  };
+
+  // Handle review action completed
+  const handleActionComplete = () => {
     fetchReviewQueue(); // Refresh queue
   };
 
-  // Get status color
-  const getStatusColor = (status: string): 'default' | 'primary' | 'success' | 'error' | 'warning' => {
-    switch (status) {
-      case 'pending': return 'warning';
-      case 'in_review': return 'primary';
-      case 'approved': return 'success';
-      case 'rejected': return 'error';
-      default: return 'default';
-    }
-  };
-
-  // Get severity color
-  const getSeverityColor = (severity: string): 'default' | 'error' | 'warning' | 'info' => {
-    switch (severity) {
-      case 'critical': return 'error';
-      case 'high': return 'error';
-      case 'medium': return 'warning';
-      case 'low': return 'info';
-      default: return 'default';
-    }
-  };
 
   return (
-    <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
-      {/* Header */}
-      <Box sx={{ mb: 3 }}>
-        <Typography variant="h4" gutterBottom>
-          Review Queue
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          Low-confidence atoms flagged for human review
-        </Typography>
-      </Box>
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900/20 to-blue-900/20 p-8">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <PageHeader
+          emoji="🔍"
+          title="Review Queue"
+          subtitle="Low-confidence atoms flagged for human review"
+          className="mb-8"
+        />
 
-      {/* Filters */}
-      <Paper sx={{ p: 2, mb: 3 }}>
-        <Grid container spacing={2} alignItems="center">
-          <Grid size={{ xs: 12, md: 4 }}>
-            <TextField
-              fullWidth
-              label="Search"
-              variant="outlined"
-              size="small"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by description, file, or ID..."
-            />
-          </Grid>
+        {/* Filters */}
+        <GlassCard className="mb-6">
+          <div className="flex flex-col md:flex-row gap-4 items-center">
+            {/* Search Bar */}
+            <div className="w-full md:w-96">
+              <SearchBar
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search by description, file, or ID..."
+              />
+            </div>
 
-          <Grid size={{ xs: 12, md: 3 }}>
-            <FormControl fullWidth size="small">
-              <InputLabel>Status</InputLabel>
-              <Select
-                value={statusFilter}
-                label="Status"
-                onChange={(e) => setStatusFilter(e.target.value)}
+            {/* Status Filter Buttons */}
+            <div className="flex gap-2 flex-wrap">
+              <FilterButton
+                active={statusFilter === 'all'}
+                onClick={() => setStatusFilter('all')}
               >
-                <MenuItem value="all">All</MenuItem>
-                <MenuItem value="pending">Pending</MenuItem>
-                <MenuItem value="in_review">In Review</MenuItem>
-                <MenuItem value="approved">Approved</MenuItem>
-                <MenuItem value="rejected">Rejected</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
+                All
+              </FilterButton>
+              <FilterButton
+                active={statusFilter === 'pending'}
+                onClick={() => setStatusFilter('pending')}
+              >
+                Pending
+              </FilterButton>
+              <FilterButton
+                active={statusFilter === 'in_review'}
+                onClick={() => setStatusFilter('in_review')}
+              >
+                In Review
+              </FilterButton>
+              <FilterButton
+                active={statusFilter === 'approved'}
+                onClick={() => setStatusFilter('approved')}
+              >
+                Approved
+              </FilterButton>
+              <FilterButton
+                active={statusFilter === 'rejected'}
+                onClick={() => setStatusFilter('rejected')}
+              >
+                Rejected
+              </FilterButton>
+            </div>
 
-          <Grid size={{ xs: 12, md: 3 }}>
-            <Button
-              variant="outlined"
+            {/* Refresh Button */}
+            <GlassButton
+              variant="secondary"
+              size="sm"
               onClick={fetchReviewQueue}
-              fullWidth
             >
-              Refresh Queue
-            </Button>
-          </Grid>
+              Refresh
+            </GlassButton>
 
-          <Grid size={{ xs: 12, md: 2 }}>
-            <Typography variant="body2" color="text.secondary">
-              Total: {filteredReviews.length} items
-            </Typography>
-          </Grid>
-        </Grid>
-      </Paper>
+            {/* Total Count */}
+            <div className="text-gray-400 text-sm ml-auto whitespace-nowrap">
+              {filteredReviews.length} items
+            </div>
+          </div>
+        </GlassCard>
 
-      {/* Loading State */}
-      {loading && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
-          <CircularProgress />
-        </Box>
-      )}
+        {/* Loading State */}
+        {loading && <LoadingState message="Loading reviews..." />}
 
-      {/* Error State */}
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
+        {/* Error State */}
+        {error && <ErrorState error={error} onRetry={fetchReviewQueue} />}
 
-      {/* Review Queue Table */}
-      {!loading && !error && (
-        <TableContainer component={Paper}>
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableCell>
-                  <TableSortLabel
-                    active={orderBy === 'priority'}
-                    direction={orderBy === 'priority' ? order : 'asc'}
-                    onClick={() => handleSort('priority')}
-                  >
-                    Priority
-                  </TableSortLabel>
-                </TableCell>
-                <TableCell>
-                  <TableSortLabel
-                    active={orderBy === 'confidence_score'}
-                    direction={orderBy === 'confidence_score' ? order : 'asc'}
-                    onClick={() => handleSort('confidence_score')}
-                  >
-                    Confidence
-                  </TableSortLabel>
-                </TableCell>
-                <TableCell>Description</TableCell>
-                <TableCell>File</TableCell>
-                <TableCell>Issues</TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell>Recommendation</TableCell>
-                <TableCell>Actions</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {filteredReviews.map((review) => (
-                <TableRow key={review.review_id} hover>
-                  <TableCell>
-                    <Chip
-                      label={review.priority}
-                      size="small"
-                      color={review.priority >= 75 ? 'error' : review.priority >= 50 ? 'warning' : 'default'}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <ConfidenceIndicator score={review.confidence_score} />
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">
-                      {review.atom.description}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      Complexity: {review.atom.complexity.toFixed(1)}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>
-                      {review.atom.file_path}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                      {review.ai_analysis.issues_by_severity.critical > 0 && (
-                        <Chip
-                          label={`${review.ai_analysis.issues_by_severity.critical} Critical`}
-                          size="small"
-                          color="error"
-                        />
-                      )}
-                      {review.ai_analysis.issues_by_severity.high > 0 && (
-                        <Chip
-                          label={`${review.ai_analysis.issues_by_severity.high} High`}
-                          size="small"
-                          color="error"
-                          variant="outlined"
-                        />
-                      )}
-                      {review.ai_analysis.issues_by_severity.medium > 0 && (
-                        <Chip
-                          label={`${review.ai_analysis.issues_by_severity.medium} Medium`}
-                          size="small"
-                          color="warning"
-                        />
-                      )}
-                    </Box>
-                  </TableCell>
-                  <TableCell>
-                    <Chip
-                      label={review.status}
-                      size="small"
-                      color={getStatusColor(review.status)}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
-                      {review.ai_analysis.recommendation}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      size="small"
-                      startIcon={<ViewIcon />}
-                      onClick={() => handleViewReview(review)}
-                    >
-                      Review
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      )}
-
-      {/* Empty State */}
-      {!loading && !error && filteredReviews.length === 0 && (
-        <Paper sx={{ p: 4, textAlign: 'center' }}>
-          <Typography variant="h6" color="text.secondary">
-            No reviews found
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {statusFilter === 'pending'
-              ? 'All atoms have been reviewed!'
-              : 'Try changing the filters'}
-          </Typography>
-        </Paper>
-      )}
-
-      {/* Review Detail Dialog */}
-      <Dialog
-        open={dialogOpen}
-        onClose={() => setDialogOpen(false)}
-        maxWidth="lg"
-        fullWidth
-      >
-        {selectedReview && (
-          <>
-            <DialogTitle>
-              Review: {selectedReview.atom.description}
-              <Typography variant="caption" display="block" color="text.secondary">
-                {selectedReview.atom.file_path}
-              </Typography>
-            </DialogTitle>
-            <DialogContent>
-              <Grid container spacing={2}>
-                {/* Code View */}
-                <Grid size={{ xs: 12, md: 8 }}>
-                  <CodeDiffViewer
-                    code={selectedReview.atom.code}
-                    language={selectedReview.atom.language}
-                    issues={selectedReview.ai_analysis.issues}
-                  />
-                </Grid>
-
-                {/* AI Suggestions Panel */}
-                <Grid size={{ xs: 12, md: 4 }}>
-                  <AISuggestionsPanel
-                    analysis={selectedReview.ai_analysis}
-                    confidenceScore={selectedReview.confidence_score}
-                  />
-                </Grid>
-
-                {/* Review Actions */}
-                <Grid size={{ xs: 12 }}>
-                  <ReviewActions
-                    reviewId={selectedReview.review_id}
-                    atomId={selectedReview.atom_id}
-                    currentCode={selectedReview.atom.code}
-                    onActionComplete={handleActionComplete}
-                  />
-                </Grid>
-              </Grid>
-            </DialogContent>
-            <DialogActions>
-              <Button onClick={() => setDialogOpen(false)}>
-                Close
-              </Button>
-            </DialogActions>
-          </>
+        {/* Review Cards Grid */}
+        {!loading && !error && filteredReviews.length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredReviews.map((review) => (
+              <ReviewCard
+                key={review.review_id}
+                review={review}
+                onClick={() => handleViewReview(review)}
+              />
+            ))}
+          </div>
         )}
-      </Dialog>
-    </Container>
+
+        {/* Empty State */}
+        {!loading && !error && filteredReviews.length === 0 && (
+          <EmptyState
+            icon="📭"
+            message={
+              statusFilter === 'pending'
+                ? 'All atoms have been reviewed!'
+                : 'No reviews found. Try changing the filters.'
+            }
+          />
+        )}
+
+        {/* Review Detail Modal */}
+        <ReviewModal
+          review={selectedReview}
+          open={dialogOpen}
+          onClose={handleCloseModal}
+          onActionComplete={handleActionComplete}
+        />
+      </div>
+    </div>
   );
 };
 
