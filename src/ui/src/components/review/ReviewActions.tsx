@@ -6,23 +6,18 @@
  */
 
 import React, { useState } from 'react';
+import { GlassButton } from '../design-system/GlassButton';
+import { GlassInput } from '../design-system/GlassInput';
+import { GlassCard } from '../design-system/GlassCard';
+import { CustomAlert } from './CustomAlert';
+import LoadingState from './LoadingState';
 import {
-  Box,
-  Button,
-  TextField,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Alert,
-  CircularProgress,
-} from '@mui/material';
-import {
-  CheckCircle as ApproveIcon,
-  Cancel as RejectIcon,
-  Edit as EditIcon,
-  Refresh as RegenerateIcon,
-} from '@mui/icons-material';
+  FiCheckCircle,
+  FiXCircle,
+  FiEdit2,
+  FiRefreshCw,
+  FiX,
+} from 'react-icons/fi';
 
 interface ReviewActionsProps {
   reviewId: string;
@@ -196,154 +191,189 @@ const ReviewActions: React.FC<ReviewActionsProps> = ({
   };
 
   return (
-    <Box>
+    <div>
       {/* Action Buttons */}
-      <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
-        <Button
-          variant="contained"
-          color="success"
-          startIcon={<ApproveIcon />}
-          onClick={handleApprove}
-          disabled={loading}
-        >
+      <div className="flex gap-2 mb-4">
+        <GlassButton variant="primary" onClick={handleApprove} disabled={loading}>
+          <FiCheckCircle className="inline mr-2" size={16} />
           Approve
-        </Button>
+        </GlassButton>
 
-        <Button
-          variant="outlined"
-          color="error"
-          startIcon={<RejectIcon />}
-          onClick={() => setRejectDialogOpen(true)}
-          disabled={loading}
-        >
+        <GlassButton variant="ghost" onClick={() => setRejectDialogOpen(true)} disabled={loading}>
+          <FiXCircle className="inline mr-2 text-red-400" size={16} />
           Reject
-        </Button>
+        </GlassButton>
 
-        <Button
-          variant="outlined"
-          color="primary"
-          startIcon={<EditIcon />}
-          onClick={() => setEditDialogOpen(true)}
-          disabled={loading}
-        >
+        <GlassButton variant="ghost" onClick={() => setEditDialogOpen(true)} disabled={loading}>
+          <FiEdit2 className="inline mr-2" size={16} />
           Edit Code
-        </Button>
+        </GlassButton>
 
-        <Button
-          variant="outlined"
-          color="warning"
-          startIcon={<RegenerateIcon />}
-          onClick={() => setRegenerateDialogOpen(true)}
-          disabled={loading}
-        >
+        <GlassButton variant="ghost" onClick={() => setRegenerateDialogOpen(true)} disabled={loading}>
+          <FiRefreshCw className="inline mr-2 text-amber-400" size={16} />
           Regenerate
-        </Button>
-      </Box>
+        </GlassButton>
+      </div>
 
       {/* Status Messages */}
-      {loading && (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <CircularProgress size={20} />
-          <Alert severity="info">Processing...</Alert>
-        </Box>
-      )}
+      {loading && <LoadingState message="Processing..." />}
 
       {error && (
-        <Alert severity="error" onClose={() => setError(null)}>
-          {error}
-        </Alert>
+        <div className="mb-4">
+          <CustomAlert severity="error" message={error} onClose={() => setError(null)} />
+        </div>
       )}
 
       {success && (
-        <Alert severity="success" onClose={() => setSuccess(null)}>
-          {success}
-        </Alert>
+        <div className="mb-4">
+          <CustomAlert severity="success" message={success} onClose={() => setSuccess(null)} />
+        </div>
       )}
 
       {/* Reject Dialog */}
-      <Dialog open={rejectDialogOpen} onClose={() => setRejectDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Reject Atom</DialogTitle>
-        <DialogContent>
-          <TextField
-            fullWidth
-            multiline
-            rows={4}
-            label="Rejection Feedback (Required)"
-            placeholder="Explain why this code is being rejected..."
-            value={rejectFeedback}
-            onChange={(e) => setRejectFeedback(e.target.value)}
-            sx={{ mt: 2 }}
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setRejectDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleReject} variant="contained" color="error" disabled={loading}>
-            Reject
-          </Button>
-        </DialogActions>
-      </Dialog>
+      {rejectDialogOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50"
+          onClick={() => setRejectDialogOpen(false)}
+        >
+          <div className="w-full max-w-md" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+          <GlassCard>
+            {/* Header */}
+            <div className="border-b border-white/10 p-4 flex justify-between items-center">
+              <h3 className="text-lg font-bold text-white">Reject Atom</h3>
+              <button
+                onClick={() => setRejectDialogOpen(false)}
+                className="text-gray-400 hover:text-white transition-colors"
+              >
+                <FiX size={20} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-4">
+              <GlassInput
+                multiline
+                rows={4}
+                placeholder="Explain why this code is being rejected..."
+                value={rejectFeedback}
+                onChange={(e) => setRejectFeedback(e.target.value)}
+              />
+            </div>
+
+            {/* Actions */}
+            <div className="border-t border-white/10 p-4 flex justify-end gap-2">
+              <GlassButton variant="ghost" onClick={() => setRejectDialogOpen(false)}>
+                Cancel
+              </GlassButton>
+              <GlassButton variant="primary" onClick={handleReject} disabled={loading}>
+                Reject
+              </GlassButton>
+            </div>
+          </GlassCard>
+          </div>
+        </div>
+      )}
 
       {/* Edit Dialog */}
-      <Dialog open={editDialogOpen} onClose={() => setEditDialogOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>Edit Code</DialogTitle>
-        <DialogContent>
-          <TextField
-            fullWidth
-            multiline
-            rows={15}
-            label="Code"
-            value={editedCode}
-            onChange={(e) => setEditedCode(e.target.value)}
-            sx={{ mt: 2, fontFamily: 'monospace' }}
-            InputProps={{
-              style: { fontFamily: 'monospace', fontSize: '0.9rem' },
-            }}
-          />
-          <TextField
-            fullWidth
-            multiline
-            rows={2}
-            label="Edit Notes (Optional)"
-            placeholder="Describe the changes made..."
-            value={editFeedback}
-            onChange={(e) => setEditFeedback(e.target.value)}
-            sx={{ mt: 2 }}
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setEditDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleEdit} variant="contained" color="primary" disabled={loading}>
-            Save Changes
-          </Button>
-        </DialogActions>
-      </Dialog>
+      {editDialogOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50"
+          onClick={() => setEditDialogOpen(false)}
+        >
+          <div className="w-full max-w-2xl" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+          <GlassCard>
+            {/* Header */}
+            <div className="border-b border-white/10 p-4 flex justify-between items-center">
+              <h3 className="text-lg font-bold text-white">Edit Code</h3>
+              <button
+                onClick={() => setEditDialogOpen(false)}
+                className="text-gray-400 hover:text-white transition-colors"
+              >
+                <FiX size={20} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-4 space-y-4">
+              <GlassInput
+                multiline
+                rows={15}
+                placeholder="Code..."
+                value={editedCode}
+                onChange={(e) => setEditedCode(e.target.value)}
+                className="font-mono text-sm"
+              />
+              <GlassInput
+                multiline
+                rows={2}
+                placeholder="Describe the changes made... (optional)"
+                value={editFeedback}
+                onChange={(e) => setEditFeedback(e.target.value)}
+              />
+            </div>
+
+            {/* Actions */}
+            <div className="border-t border-white/10 p-4 flex justify-end gap-2">
+              <GlassButton variant="ghost" onClick={() => setEditDialogOpen(false)}>
+                Cancel
+              </GlassButton>
+              <GlassButton variant="primary" onClick={handleEdit} disabled={loading}>
+                Save Changes
+              </GlassButton>
+            </div>
+          </GlassCard>
+          </div>
+        </div>
+      )}
 
       {/* Regenerate Dialog */}
-      <Dialog open={regenerateDialogOpen} onClose={() => setRegenerateDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Request Regeneration</DialogTitle>
-        <DialogContent>
-          <Alert severity="info" sx={{ mb: 2 }}>
-            The AI will regenerate this code using your feedback as instructions.
-          </Alert>
-          <TextField
-            fullWidth
-            multiline
-            rows={4}
-            label="Regeneration Instructions (Required)"
-            placeholder="What should be changed in the regenerated code?"
-            value={regenerateFeedback}
-            onChange={(e) => setRegenerateFeedback(e.target.value)}
-            sx={{ mt: 2 }}
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setRegenerateDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleRegenerate} variant="contained" color="warning" disabled={loading}>
-            Request Regeneration
-          </Button>
-        </DialogActions>
-      </Dialog>
-    </Box>
+      {regenerateDialogOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50"
+          onClick={() => setRegenerateDialogOpen(false)}
+        >
+          <div className="w-full max-w-md" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+          <GlassCard>
+            {/* Header */}
+            <div className="border-b border-white/10 p-4 flex justify-between items-center">
+              <h3 className="text-lg font-bold text-white">Request Regeneration</h3>
+              <button
+                onClick={() => setRegenerateDialogOpen(false)}
+                className="text-gray-400 hover:text-white transition-colors"
+              >
+                <FiX size={20} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-4 space-y-4">
+              <CustomAlert
+                severity="info"
+                message="The AI will regenerate this code using your feedback as instructions."
+              />
+              <GlassInput
+                multiline
+                rows={4}
+                placeholder="What should be changed in the regenerated code?"
+                value={regenerateFeedback}
+                onChange={(e) => setRegenerateFeedback(e.target.value)}
+              />
+            </div>
+
+            {/* Actions */}
+            <div className="border-t border-white/10 p-4 flex justify-end gap-2">
+              <GlassButton variant="ghost" onClick={() => setRegenerateDialogOpen(false)}>
+                Cancel
+              </GlassButton>
+              <GlassButton variant="primary" onClick={handleRegenerate} disabled={loading}>
+                Request Regeneration
+              </GlassButton>
+            </div>
+          </GlassCard>
+          </div>
+        </div>
+      )}
+    </div>
   );
 };
 

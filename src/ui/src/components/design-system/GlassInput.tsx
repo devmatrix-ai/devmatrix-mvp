@@ -4,11 +4,11 @@ import { cn } from './utils'
 /**
  * Props for the GlassInput component
  */
-export interface GlassInputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+export interface GlassInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'onChange'> {
   /** Input value */
   value?: string
   /** Change handler */
-  onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void
+  onChange?: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void
   /** Placeholder text */
   placeholder?: string
   /** Input type (text, email, password, etc.) */
@@ -17,13 +17,17 @@ export interface GlassInputProps extends React.InputHTMLAttributes<HTMLInputElem
   icon?: React.ReactNode
   /** Additional CSS classes */
   className?: string
+  /** Render as textarea instead of input */
+  multiline?: boolean
+  /** Number of rows for textarea (default: 4) */
+  rows?: number
 }
 
 /**
  * GlassInput - Glassmorphism-styled text input component
  *
- * A text input with glassmorphism styling, optional icon support, and purple focus ring.
- * Supports all standard HTML input attributes.
+ * A text input or textarea with glassmorphism styling, optional icon support, and purple focus ring.
+ * Supports all standard HTML input/textarea attributes.
  *
  * @example
  * ```tsx
@@ -45,38 +49,60 @@ export interface GlassInputProps extends React.InputHTMLAttributes<HTMLInputElem
  *         type="email"
  *         placeholder="Email address"
  *       />
+ *       <GlassInput
+ *         multiline
+ *         rows={6}
+ *         placeholder="Enter your message..."
+ *       />
  *     </>
  *   )
  * }
  * ```
  */
-export const GlassInput = React.forwardRef<HTMLInputElement, GlassInputProps>(
-  ({ value, onChange, placeholder, type = 'text', icon, className, ...props }, ref) => {
+export const GlassInput = React.forwardRef<HTMLInputElement | HTMLTextAreaElement, GlassInputProps>(
+  ({ value, onChange, placeholder, type = 'text', icon, className, multiline = false, rows = 4, ...props }, ref) => {
     const hasIcon = !!icon
+
+    const sharedClasses = cn(
+      'w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg',
+      'text-white placeholder-gray-400',
+      'focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent',
+      'transition-all',
+      hasIcon && 'pl-12',
+      className
+    )
 
     return (
       <div className="relative">
         {icon && (
-          <div className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400">
+          <div className={cn(
+            'absolute left-4 text-gray-400',
+            multiline ? 'top-3' : 'top-1/2 transform -translate-y-1/2'
+          )}>
             {icon}
           </div>
         )}
-        <input
-          ref={ref}
-          type={type}
-          value={value}
-          onChange={onChange}
-          placeholder={placeholder}
-          className={cn(
-            'w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg',
-            'text-white placeholder-gray-400',
-            'focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent',
-            'transition-all',
-            hasIcon && 'pl-12',
-            className
-          )}
-          {...props}
-        />
+        {multiline ? (
+          <textarea
+            ref={ref as React.Ref<HTMLTextAreaElement>}
+            rows={rows}
+            value={value}
+            onChange={onChange}
+            placeholder={placeholder}
+            className={cn(sharedClasses, 'resize-none')}
+            {...(props as React.TextareaHTMLAttributes<HTMLTextAreaElement>)}
+          />
+        ) : (
+          <input
+            ref={ref as React.Ref<HTMLInputElement>}
+            type={type}
+            value={value}
+            onChange={onChange}
+            placeholder={placeholder}
+            className={sharedClasses}
+            {...(props as React.InputHTMLAttributes<HTMLInputElement>)}
+          />
+        )}
       </div>
     )
   }
