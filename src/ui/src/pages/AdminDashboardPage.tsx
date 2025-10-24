@@ -15,7 +15,6 @@ import {
   FiActivity,
   FiDatabase,
   FiCpu,
-  FiSearch,
   FiEdit2,
   FiTrash2,
   FiX,
@@ -23,6 +22,17 @@ import {
   FiAlertCircle,
   FiTrendingUp,
 } from 'react-icons/fi'
+import {
+  PageHeader,
+  GlassCard,
+  GlassButton,
+  GlassInput,
+  SearchBar,
+  StatusBadge,
+  cn,
+} from '../components/design-system'
+import { CustomAlert } from '../components/review/CustomAlert'
+import LoadingState from '../components/review/LoadingState'
 
 export function AdminDashboardPage() {
   const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'analytics'>('overview')
@@ -115,48 +125,44 @@ export function AdminDashboardPage() {
   }
 
   return (
-    <div className="flex-1 p-8 overflow-auto">
+    <div className="flex-1 p-8 overflow-auto bg-gradient-to-br from-gray-900 via-purple-900/20 to-blue-900/20">
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
-            Admin Dashboard
-          </h1>
-          <p className="mt-2 text-gray-600 dark:text-gray-400">
-            System management and user administration
-          </p>
-        </div>
+        <PageHeader emoji="🛡️" title="Admin Dashboard" />
 
         {/* Tabs */}
-        <div className="border-b border-gray-200 dark:border-gray-700">
+        <div className="border-b border-white/10">
           <nav className="flex gap-8">
             <button
               onClick={() => setActiveTab('overview')}
-              className={`pb-4 border-b-2 font-medium transition-colors ${
+              className={cn(
+                'pb-4 px-4 border-b-2 font-medium transition-colors',
                 activeTab === 'overview'
-                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
-                  : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
-              }`}
+                  ? 'border-purple-600 bg-purple-600 text-white'
+                  : 'border-transparent text-gray-400 hover:text-white hover:bg-white/10'
+              )}
             >
               Overview
             </button>
             <button
               onClick={() => setActiveTab('users')}
-              className={`pb-4 border-b-2 font-medium transition-colors ${
+              className={cn(
+                'pb-4 px-4 border-b-2 font-medium transition-colors',
                 activeTab === 'users'
-                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
-                  : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
-              }`}
+                  ? 'border-purple-600 bg-purple-600 text-white'
+                  : 'border-transparent text-gray-400 hover:text-white hover:bg-white/10'
+              )}
             >
               Users
             </button>
             <button
               onClick={() => setActiveTab('analytics')}
-              className={`pb-4 border-b-2 font-medium transition-colors ${
+              className={cn(
+                'pb-4 px-4 border-b-2 font-medium transition-colors',
                 activeTab === 'analytics'
-                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
-                  : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
-              }`}
+                  ? 'border-purple-600 bg-purple-600 text-white'
+                  : 'border-transparent text-gray-400 hover:text-white hover:bg-white/10'
+              )}
             >
               Analytics
             </button>
@@ -165,21 +171,15 @@ export function AdminDashboardPage() {
 
         {/* Error Display */}
         {error && (
-          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 flex items-start gap-3">
-            <FiAlertCircle className="text-red-600 dark:text-red-400 mt-0.5" size={20} />
-            <div>
-              <p className="font-medium text-red-900 dark:text-red-100">Error</p>
-              <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
-            </div>
-          </div>
+          <CustomAlert
+            severity="error"
+            message={error}
+            onClose={() => setError(null)}
+          />
         )}
 
         {/* Loading State */}
-        {isLoading && (
-          <div className="flex justify-center py-12">
-            <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary-600 border-r-transparent"></div>
-          </div>
-        )}
+        {isLoading && <LoadingState />}
 
         {/* Overview Tab */}
         {!isLoading && activeTab === 'overview' && stats && (
@@ -187,60 +187,60 @@ export function AdminDashboardPage() {
             {/* Stats Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {/* Total Users */}
-              <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+              <GlassCard className="p-6">
                 <div className="flex items-center gap-3 mb-2">
-                  <div className="p-2 bg-blue-100 dark:bg-blue-900/20 rounded-lg">
-                    <FiUsers className="text-blue-600 dark:text-blue-400" size={24} />
+                  <div className="p-2 bg-blue-500/20 backdrop-blur-sm rounded-lg">
+                    <FiUsers className="text-blue-400" size={24} />
                   </div>
-                  <h3 className="text-sm font-medium text-gray-600 dark:text-gray-400">Total Users</h3>
+                  <h3 className="text-sm font-medium text-gray-300">Total Users</h3>
                 </div>
-                <p className="text-3xl font-bold text-gray-900 dark:text-white">{formatNumber(stats.total_users)}</p>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                <p className="text-3xl font-bold text-white">{formatNumber(stats.total_users)}</p>
+                <p className="text-sm text-gray-300 mt-1">
                   {formatNumber(stats.active_users)} active · {formatNumber(stats.verified_users)} verified
                 </p>
-              </div>
+              </GlassCard>
 
               {/* Conversations */}
-              <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+              <GlassCard className="p-6">
                 <div className="flex items-center gap-3 mb-2">
-                  <div className="p-2 bg-green-100 dark:bg-green-900/20 rounded-lg">
-                    <FiActivity className="text-green-600 dark:text-green-400" size={24} />
+                  <div className="p-2 bg-emerald-500/20 backdrop-blur-sm rounded-lg">
+                    <FiActivity className="text-emerald-400" size={24} />
                   </div>
-                  <h3 className="text-sm font-medium text-gray-600 dark:text-gray-400">Activity</h3>
+                  <h3 className="text-sm font-medium text-gray-300">Activity</h3>
                 </div>
-                <p className="text-3xl font-bold text-gray-900 dark:text-white">{formatNumber(stats.total_conversations)}</p>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                <p className="text-3xl font-bold text-white">{formatNumber(stats.total_conversations)}</p>
+                <p className="text-sm text-gray-300 mt-1">
                   {formatNumber(stats.total_messages)} messages · {formatNumber(stats.total_masterplans)} masterplans
                 </p>
-              </div>
+              </GlassCard>
 
               {/* Token Usage */}
-              <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+              <GlassCard className="p-6">
                 <div className="flex items-center gap-3 mb-2">
-                  <div className="p-2 bg-purple-100 dark:bg-purple-900/20 rounded-lg">
-                    <FiCpu className="text-purple-600 dark:text-purple-400" size={24} />
+                  <div className="p-2 bg-purple-500/20 backdrop-blur-sm rounded-lg">
+                    <FiCpu className="text-purple-400" size={24} />
                   </div>
-                  <h3 className="text-sm font-medium text-gray-600 dark:text-gray-400">LLM Tokens</h3>
+                  <h3 className="text-sm font-medium text-gray-300">LLM Tokens</h3>
                 </div>
-                <p className="text-3xl font-bold text-gray-900 dark:text-white">{formatNumber(stats.total_llm_tokens_used)}</p>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                <p className="text-3xl font-bold text-white">{formatNumber(stats.total_llm_tokens_used)}</p>
+                <p className="text-sm text-gray-300 mt-1">
                   {formatNumber(Math.round(stats.avg_tokens_per_user))} avg per user
                 </p>
-              </div>
+              </GlassCard>
 
               {/* Storage */}
-              <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+              <GlassCard className="p-6">
                 <div className="flex items-center gap-3 mb-2">
-                  <div className="p-2 bg-orange-100 dark:bg-orange-900/20 rounded-lg">
-                    <FiDatabase className="text-orange-600 dark:text-orange-400" size={24} />
+                  <div className="p-2 bg-amber-500/20 backdrop-blur-sm rounded-lg">
+                    <FiDatabase className="text-amber-400" size={24} />
                   </div>
-                  <h3 className="text-sm font-medium text-gray-600 dark:text-gray-400">Storage</h3>
+                  <h3 className="text-sm font-medium text-gray-300">Storage</h3>
                 </div>
-                <p className="text-3xl font-bold text-gray-900 dark:text-white">{formatBytes(stats.total_storage_bytes)}</p>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                <p className="text-3xl font-bold text-white">{formatBytes(stats.total_storage_bytes)}</p>
+                <p className="text-sm text-gray-300 mt-1">
                   Total system usage
                 </p>
-              </div>
+              </GlassCard>
             </div>
           </div>
         )}
@@ -249,98 +249,88 @@ export function AdminDashboardPage() {
         {!isLoading && activeTab === 'users' && (
           <div className="space-y-6">
             {/* Search Bar */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-              <div className="relative">
-                <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-                <input
-                  type="text"
-                  placeholder="Search by email or username..."
-                  value={searchQuery}
-                  onChange={(e) => {
-                    setSearchQuery(e.target.value)
-                    setCurrentPage(1)
-                  }}
-                  className="w-full pl-10 pr-4 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
-                />
-              </div>
-            </div>
+            <GlassCard className="p-4">
+              <SearchBar
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value)
+                  setCurrentPage(1)
+                }}
+                placeholder="Search by email or username..."
+              />
+            </GlassCard>
 
             {/* Users Table */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <GlassCard className="overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full">
-                  <thead className="bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600">
+                  <thead className="bg-white/5 border-b border-white/10">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                         User
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                         Status
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                         Joined
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                         Last Login
                       </th>
-                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-300 uppercase tracking-wider">
                         Actions
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                  <tbody className="divide-y divide-white/10">
                     {users.map((user) => (
-                      <tr key={user.user_id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                      <tr key={user.user_id} className="hover:bg-white/5 transition-colors">
                         <td className="px-6 py-4">
                           <div>
-                            <p className="font-medium text-gray-900 dark:text-white">{user.username}</p>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">{user.email}</p>
+                            <p className="font-medium text-white">{user.username}</p>
+                            <p className="text-sm text-gray-400">{user.email}</p>
                           </div>
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex flex-col gap-1">
                             {user.is_superuser && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 dark:bg-purple-900/20 text-purple-800 dark:text-purple-200">
-                                Admin
-                              </span>
+                              <StatusBadge status="warning">Admin</StatusBadge>
                             )}
                             {user.is_active ? (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-200">
-                                Active
-                              </span>
+                              <StatusBadge status="success">Active</StatusBadge>
                             ) : (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-200">
-                                Inactive
-                              </span>
+                              <StatusBadge status="default">Inactive</StatusBadge>
                             )}
                             {user.is_verified && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-200">
-                                Verified
-                              </span>
+                              <StatusBadge status="info">✓ Verified</StatusBadge>
                             )}
                           </div>
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
+                        <td className="px-6 py-4 text-sm text-gray-400">
                           {new Date(user.created_at).toLocaleDateString()}
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
+                        <td className="px-6 py-4 text-sm text-gray-400">
                           {user.last_login_at ? new Date(user.last_login_at).toLocaleDateString() : 'Never'}
                         </td>
                         <td className="px-6 py-4 text-right">
-                          <button
+                          <GlassButton
+                            variant="ghost"
+                            size="sm"
                             onClick={() => setSelectedUser(user)}
-                            className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 mr-3"
                             aria-label="Edit user"
                           >
-                            <FiEdit2 size={18} />
-                          </button>
-                          <button
+                            <FiEdit2 size={16} />
+                          </GlassButton>
+                          <GlassButton
+                            variant="ghost"
+                            size="sm"
                             onClick={() => setDeleteConfirmUser(user)}
-                            className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
                             aria-label="Delete user"
+                            className="ml-2"
                           >
-                            <FiTrash2 size={18} />
-                          </button>
+                            <FiTrash2 size={16} className="text-red-400" />
+                          </GlassButton>
                         </td>
                       </tr>
                     ))}
@@ -349,30 +339,30 @@ export function AdminDashboardPage() {
               </div>
 
               {/* Pagination */}
-              <div className="px-6 py-4 bg-gray-50 dark:bg-gray-700 border-t border-gray-200 dark:border-gray-600 flex items-center justify-between">
-                <p className="text-sm text-gray-700 dark:text-gray-300">
+              <div className="px-6 py-4 bg-white/5 border-t border-white/10 flex items-center justify-between">
+                <p className="text-sm text-gray-400">
                   Showing <span className="font-medium">{(currentPage - 1) * pageSize + 1}</span> to{' '}
                   <span className="font-medium">{Math.min(currentPage * pageSize, totalUsers)}</span> of{' '}
                   <span className="font-medium">{totalUsers}</span> users
                 </p>
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                  <GlassButton
+                    variant="ghost"
                     disabled={currentPage === 1}
-                    className="px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                    onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
                   >
                     Previous
-                  </button>
-                  <button
-                    onClick={() => setCurrentPage(currentPage + 1)}
+                  </GlassButton>
+                  <GlassButton
+                    variant="ghost"
                     disabled={currentPage * pageSize >= totalUsers}
-                    className="px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                    onClick={() => setCurrentPage(currentPage + 1)}
                   >
                     Next
-                  </button>
+                  </GlassButton>
                 </div>
               </div>
-            </div>
+            </GlassCard>
           </div>
         )}
 
@@ -380,47 +370,47 @@ export function AdminDashboardPage() {
         {!isLoading && activeTab === 'analytics' && (
           <div className="space-y-6">
             {/* Metric Selector */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <GlassCard className="p-4">
+              <label className="block text-sm font-medium text-white mb-2">
                 Top Users By
               </label>
               <select
                 value={topUsersMetric}
                 onChange={(e) => setTopUsersMetric(e.target.value as any)}
-                className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
               >
-                <option value="tokens">LLM Tokens Used</option>
-                <option value="masterplans">Masterplans Created</option>
-                <option value="storage">Storage Used</option>
-                <option value="api_calls">API Calls</option>
+                <option value="tokens" className="bg-gray-800">LLM Tokens Used</option>
+                <option value="masterplans" className="bg-gray-800">Masterplans Created</option>
+                <option value="storage" className="bg-gray-800">Storage Used</option>
+                <option value="api_calls" className="bg-gray-800">API Calls</option>
               </select>
-            </div>
+            </GlassCard>
 
             {/* Top Users List */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-                <FiTrendingUp /> Top 10 Users
+            <GlassCard className="p-6">
+              <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                <FiTrendingUp className="text-purple-400" /> Top 10 Users
               </h3>
               <div className="space-y-3">
                 {topUsers.map((user, index) => (
                   <div
                     key={user.user_id}
-                    className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg"
+                    className="flex items-center justify-between p-4 bg-white/5 rounded-lg hover:bg-white/10 transition-colors"
                   >
                     <div className="flex items-center gap-4">
-                      <div className="flex items-center justify-center w-8 h-8 bg-primary-100 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 rounded-full font-bold">
+                      <div className="flex items-center justify-center w-8 h-8 bg-purple-500/20 text-purple-400 rounded-full font-bold">
                         {index + 1}
                       </div>
                       <div>
-                        <p className="font-medium text-gray-900 dark:text-white">{user.username}</p>
-                        <p className="text-sm text-gray-500 dark:text-gray-400">{user.email}</p>
+                        <p className="font-medium text-white">{user.username}</p>
+                        <p className="text-sm text-gray-400">{user.email}</p>
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="font-bold text-gray-900 dark:text-white">
+                      <p className="font-bold text-gray-300">
                         {topUsersMetric === 'storage' ? formatBytes(user.metric_value) : formatNumber(user.metric_value)}
                       </p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                      <p className="text-xs text-gray-400">
                         {topUsersMetric === 'tokens' && 'tokens'}
                         {topUsersMetric === 'masterplans' && 'masterplans'}
                         {topUsersMetric === 'storage' && 'used'}
@@ -430,7 +420,7 @@ export function AdminDashboardPage() {
                   </div>
                 ))}
               </div>
-            </div>
+            </GlassCard>
           </div>
         )}
       </div>
@@ -492,13 +482,18 @@ function UserEditModal({ user, onClose, onUpdateStatus, onUpdateQuota }: UserEdi
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="sticky top-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex items-center justify-between">
-          <h2 className="text-xl font-bold text-gray-900 dark:text-white">Edit User</h2>
+    <div
+      className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      onClick={onClose}
+    >
+      <div onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+        <GlassCard className="max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+          <div className="sticky top-0 bg-gray-900/80 backdrop-blur-sm border-b border-white/10 px-6 py-4 flex items-center justify-between">
+          <h2 className="text-xl font-bold text-white">Edit User</h2>
           <button
             onClick={onClose}
-            className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+            className="text-gray-400 hover:text-white transition-colors"
+            aria-label="Close modal"
           >
             <FiX size={24} />
           </button>
@@ -507,125 +502,124 @@ function UserEditModal({ user, onClose, onUpdateStatus, onUpdateQuota }: UserEdi
         <div className="p-6 space-y-6">
           {/* User Info */}
           <div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">User Information</h3>
+            <h3 className="text-lg font-semibold text-white mb-3">User Information</h3>
             <div className="space-y-2 text-sm">
-              <p className="text-gray-600 dark:text-gray-400">
+              <p className="text-gray-300">
                 <span className="font-medium">Username:</span> {user.username}
               </p>
-              <p className="text-gray-600 dark:text-gray-400">
+              <p className="text-gray-300">
                 <span className="font-medium">Email:</span> {user.email}
               </p>
-              <p className="text-gray-600 dark:text-gray-400">
+              <p className="text-gray-300">
                 <span className="font-medium">User ID:</span> {user.user_id}
               </p>
-              <p className="text-gray-600 dark:text-gray-400">
+              <p className="text-gray-300">
                 <span className="font-medium">Created:</span> {new Date(user.created_at).toLocaleString()}
               </p>
             </div>
           </div>
 
           {/* Status Settings */}
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">Status Settings</h3>
+          <div className="border-t border-white/10 pt-6">
+            <h3 className="text-lg font-semibold text-white mb-3">Status Settings</h3>
             <div className="space-y-3">
               <label className="flex items-center gap-3">
                 <input
                   type="checkbox"
                   checked={isActive}
                   onChange={(e) => setIsActive(e.target.checked)}
-                  className="w-4 h-4 text-primary-600 rounded focus:ring-2 focus:ring-primary-500"
+                  className="w-4 h-4 text-purple-600 bg-white/10 border-white/20 rounded focus:ring-2 focus:ring-purple-500"
                 />
-                <span className="text-gray-700 dark:text-gray-300">Active</span>
+                <span className="text-gray-300">Active</span>
               </label>
               <label className="flex items-center gap-3">
                 <input
                   type="checkbox"
                   checked={isVerified}
                   onChange={(e) => setIsVerified(e.target.checked)}
-                  className="w-4 h-4 text-primary-600 rounded focus:ring-2 focus:ring-primary-500"
+                  className="w-4 h-4 text-purple-600 bg-white/10 border-white/20 rounded focus:ring-2 focus:ring-purple-500"
                 />
-                <span className="text-gray-700 dark:text-gray-300">Verified</span>
+                <span className="text-gray-300">Verified</span>
               </label>
               <label className="flex items-center gap-3">
                 <input
                   type="checkbox"
                   checked={isSuperuser}
                   onChange={(e) => setIsSuperuser(e.target.checked)}
-                  className="w-4 h-4 text-primary-600 rounded focus:ring-2 focus:ring-primary-500"
+                  className="w-4 h-4 text-purple-600 bg-white/10 border-white/20 rounded focus:ring-2 focus:ring-purple-500"
                 />
-                <span className="text-gray-700 dark:text-gray-300">Superuser (Admin)</span>
+                <span className="text-gray-300">Superuser (Admin)</span>
               </label>
             </div>
-            <button
+            <GlassButton
+              variant="primary"
               onClick={handleSaveStatus}
-              className="mt-4 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors flex items-center gap-2"
+              className="mt-4"
             >
               <FiCheck size={18} />
               Save Status
-            </button>
+            </GlassButton>
           </div>
 
           {/* Quota Settings */}
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">Quota Settings</h3>
+          <div className="border-t border-white/10 pt-6">
+            <h3 className="text-lg font-semibold text-white mb-3">Quota Settings</h3>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-gray-300 mb-1">
                   LLM Tokens Monthly Limit
                 </label>
-                <input
+                <GlassInput
                   type="number"
                   value={tokenLimit}
                   onChange={(e) => setTokenLimit(e.target.value)}
                   placeholder="Unlimited"
-                  className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-gray-300 mb-1">
                   Masterplans Limit
                 </label>
-                <input
+                <GlassInput
                   type="number"
                   value={masterplansLimit}
                   onChange={(e) => setMasterplansLimit(e.target.value)}
                   placeholder="Unlimited"
-                  className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-gray-300 mb-1">
                   Storage Limit (bytes)
                 </label>
-                <input
+                <GlassInput
                   type="number"
                   value={storageLimit}
                   onChange={(e) => setStorageLimit(e.target.value)}
                   placeholder="Unlimited"
-                  className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-gray-300 mb-1">
                   API Calls Per Minute
                 </label>
-                <input
+                <GlassInput
                   type="number"
                   value={apiCallsLimit}
                   onChange={(e) => setApiCallsLimit(e.target.value)}
-                  className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
                 />
               </div>
             </div>
-            <button
+            <GlassButton
+              variant="primary"
               onClick={handleSaveQuota}
-              className="mt-4 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors flex items-center gap-2"
+              className="mt-4"
             >
               <FiCheck size={18} />
               Save Quota
-            </button>
+            </GlassButton>
           </div>
         </div>
+        </GlassCard>
       </div>
     </div>
   )
@@ -640,32 +634,41 @@ interface DeleteConfirmModalProps {
 
 function DeleteConfirmModal({ user, onConfirm, onCancel }: DeleteConfirmModalProps) {
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-lg max-w-md w-full p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="p-2 bg-red-100 dark:bg-red-900/20 rounded-lg">
-            <FiAlertCircle className="text-red-600 dark:text-red-400" size={24} />
+    <div
+      className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      onClick={onCancel}
+    >
+      <div onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+        <GlassCard className="max-w-md w-full mx-4">
+          <div className="p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 bg-red-500/20 backdrop-blur-sm rounded-lg">
+              <FiAlertCircle className="text-red-400" size={24} />
+            </div>
+            <h2 className="text-xl font-bold text-white">Delete User</h2>
           </div>
-          <h2 className="text-xl font-bold text-gray-900 dark:text-white">Delete User</h2>
-        </div>
-        <p className="text-gray-600 dark:text-gray-400 mb-6">
-          Are you sure you want to delete user <span className="font-medium">{user.username}</span> ({user.email})?
-          This action cannot be undone.
-        </p>
-        <div className="flex gap-3">
-          <button
-            onClick={onConfirm}
-            className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-          >
-            Delete
-          </button>
-          <button
-            onClick={onCancel}
-            className="flex-1 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
-          >
-            Cancel
-          </button>
-        </div>
+          <p className="text-gray-300 mb-6">
+            Are you sure you want to delete user <span className="font-medium text-white">{user.username}</span> ({user.email})?
+            This action cannot be undone.
+          </p>
+          <div className="flex gap-3">
+            <GlassButton
+              variant="primary"
+              onClick={onConfirm}
+              className="flex-1 bg-red-600 hover:bg-red-700"
+            >
+              Delete
+            </GlassButton>
+            <GlassButton
+              variant="ghost"
+              onClick={onCancel}
+              className="flex-1"
+            >
+              Cancel
+            </GlassButton>
+          </div>
+          </div>
+        </GlassCard>
       </div>
     </div>
   )
