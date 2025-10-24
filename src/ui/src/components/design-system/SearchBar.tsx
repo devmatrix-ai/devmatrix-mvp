@@ -1,11 +1,11 @@
 import React from 'react'
 import { FiSearch } from 'react-icons/fi'
-import { GlassInput, GlassInputProps } from './GlassInput'
+import { GlassInput } from './GlassInput'
 
 /**
  * Props for the SearchBar component
  */
-export interface SearchBarProps extends Omit<GlassInputProps, 'icon' | 'type'> {
+export interface SearchBarProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'onChange'> {
   /** Search value */
   value: string
   /** Change handler */
@@ -50,7 +50,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
     <GlassInput
       type="text"
       value={value}
-      onChange={onChange}
+      onChange={onChange as (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void}
       placeholder={placeholder}
       icon={<FiSearch className="w-5 h-5" />}
       className={className}

@@ -6,24 +6,14 @@
  */
 
 import React, { useState } from 'react';
-import {
-  Box,
-  Paper,
-  Typography,
-  Tabs,
-  Tab,
-  Chip,
-  Tooltip,
-  IconButton,
-  Alert,
-} from '@mui/material';
-import {
-  ContentCopy as CopyIcon,
-  Error as ErrorIcon,
-  Warning as WarningIcon,
-  Info as InfoIcon,
-} from '@mui/icons-material';
+import { FiCopy } from 'react-icons/fi';
 import Editor from '@monaco-editor/react';
+
+import { GlassCard } from '../design-system/GlassCard';
+import { GlassButton } from '../design-system/GlassButton';
+import { StatusBadge } from '../design-system/StatusBadge';
+import { CustomAlert } from './CustomAlert';
+import { cn } from '../design-system/utils';
 
 interface Issue {
   type: string;
@@ -75,18 +65,18 @@ const CodeDiffViewer: React.FC<CodeDiffViewerProps> = ({
 
   const issueLines = getIssueLines();
 
-  // Get severity icon
-  const getSeverityIcon = (severity: string) => {
+  // Get severity type for CustomAlert
+  const getSeverityType = (severity: string): 'error' | 'warning' | 'info' | 'success' => {
     switch (severity) {
       case 'critical':
       case 'high':
-        return <ErrorIcon sx={{ fontSize: 16, color: '#f44336' }} />;
+        return 'error';
       case 'medium':
-        return <WarningIcon sx={{ fontSize: 16, color: '#ff9800' }} />;
+        return 'warning';
       case 'low':
-        return <InfoIcon sx={{ fontSize: 16, color: '#2196f3' }} />;
+        return 'info';
       default:
-        return <InfoIcon sx={{ fontSize: 16 }} />;
+        return 'info';
     }
   };
 
@@ -112,47 +102,70 @@ const CodeDiffViewer: React.FC<CodeDiffViewerProps> = ({
   };
 
   return (
-    <Paper sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <GlassCard className="h-full flex flex-col">
       {/* Header */}
-      <Box sx={{ borderBottom: 1, borderColor: 'divider', p: 2 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Typography variant="h6">Code Review</Typography>
-          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-            <Tooltip title={copiedShown ? 'Copied!' : 'Copy code'}>
-              <IconButton size="small" onClick={handleCopyCode}>
-                <CopyIcon />
-              </IconButton>
-            </Tooltip>
-            <Chip
-              label={`${issues.length} issues`}
-              size="small"
-              color={issues.length > 0 ? 'error' : 'success'}
-            />
-            <Chip
-              label={language}
-              size="small"
-              variant="outlined"
-            />
-          </Box>
-        </Box>
+      <div className="border-b border-white/10 p-4">
+        <div className="flex justify-between items-center">
+          <h3 className="text-lg font-bold text-white">Code Review</h3>
+          <div className="flex items-center gap-2">
+            {/* Copy Button */}
+            <GlassButton
+              variant="ghost"
+              size="sm"
+              onClick={handleCopyCode}
+              aria-label={copiedShown ? 'Copied!' : 'Copy code'}
+            >
+              <FiCopy size={16} />
+              <span className="ml-2 text-xs">
+                {copiedShown ? 'Copied!' : 'Copy'}
+              </span>
+            </GlassButton>
 
-        {/* Tabs for diff view */}
+            {/* Issues Badge */}
+            <StatusBadge status={issues.length > 0 ? 'error' : 'success'}>
+              {issues.length} issues
+            </StatusBadge>
+
+            {/* Language Badge */}
+            <StatusBadge status="default">{language}</StatusBadge>
+          </div>
+        </div>
+
+        {/* Custom Tabs (if diff view) */}
         {originalCode && (
-          <Tabs
-            value={activeTab}
-            onChange={(_, value) => setActiveTab(value)}
-            sx={{ mt: 1 }}
-          >
-            <Tab label="Current Code" value="current" />
-            <Tab label="Diff View" value="diff" />
-          </Tabs>
+          <div className="flex gap-2 mt-4">
+            <button
+              className={cn(
+                'px-4 py-2 text-sm font-medium rounded-t-lg transition-all',
+                activeTab === 'current'
+                  ? 'bg-purple-600 text-white'
+                  : 'text-gray-400 hover:text-white hover:bg-white/10'
+              )}
+              onClick={() => setActiveTab('current')}
+              aria-label="Current Code"
+            >
+              Current Code
+            </button>
+            <button
+              className={cn(
+                'px-4 py-2 text-sm font-medium rounded-t-lg transition-all',
+                activeTab === 'diff'
+                  ? 'bg-purple-600 text-white'
+                  : 'text-gray-400 hover:text-white hover:bg-white/10'
+              )}
+              onClick={() => setActiveTab('diff')}
+              aria-label="Diff View"
+            >
+              Diff View
+            </button>
+          </div>
         )}
-      </Box>
+      </div>
 
-      {/* Code content */}
-      <Box sx={{ flex: 1, overflow: 'auto', position: 'relative' }}>
+      {/* Monaco Editor Section - KEEP UNCHANGED */}
+      <div className="flex-1 overflow-auto">
         {activeTab === 'current' ? (
-          <Box sx={{ height: '100%' }}>
+          <div className="h-full">
             <Editor
               height="100%"
               language={getMonacoLanguage(language)}
@@ -168,13 +181,14 @@ const CodeDiffViewer: React.FC<CodeDiffViewerProps> = ({
                 automaticLayout: true,
               }}
             />
-          </Box>
+          </div>
         ) : (
-          <Box sx={{ display: 'flex', height: '100%' }}>
-            <Box sx={{ flex: 1, borderRight: 1, borderColor: 'divider' }}>
-              <Typography variant="caption" sx={{ p: 1, display: 'block', bgcolor: 'error.light', color: 'white' }}>
-                Original
-              </Typography>
+          <div className="flex h-full">
+            {/* Original */}
+            <div className="flex-1 border-r border-white/10">
+              <div className="bg-red-500/20 border-b border-white/10 px-4 py-2">
+                <span className="text-xs text-red-200 font-medium">Original</span>
+              </div>
               <Editor
                 height="calc(100% - 32px)"
                 language={getMonacoLanguage(language)}
@@ -188,11 +202,12 @@ const CodeDiffViewer: React.FC<CodeDiffViewerProps> = ({
                   lineNumbers: 'on',
                 }}
               />
-            </Box>
-            <Box sx={{ flex: 1 }}>
-              <Typography variant="caption" sx={{ p: 1, display: 'block', bgcolor: 'success.light', color: 'white' }}>
-                Modified
-              </Typography>
+            </div>
+            {/* Modified */}
+            <div className="flex-1">
+              <div className="bg-emerald-500/20 border-b border-white/10 px-4 py-2">
+                <span className="text-xs text-emerald-200 font-medium">Modified</span>
+              </div>
               <Editor
                 height="calc(100% - 32px)"
                 language={getMonacoLanguage(language)}
@@ -206,58 +221,53 @@ const CodeDiffViewer: React.FC<CodeDiffViewerProps> = ({
                   lineNumbers: 'on',
                 }}
               />
-            </Box>
-          </Box>
+            </div>
+          </div>
         )}
-      </Box>
+      </div>
 
-      {/* Issues list below editor */}
+      {/* Issues List */}
       {issues.length > 0 && (
-        <Box sx={{ borderTop: 1, borderColor: 'divider', p: 2, maxHeight: '200px', overflow: 'auto' }}>
-          <Typography variant="subtitle2" sx={{ mb: 1 }}>
+        <div className="border-t border-white/10 p-4 max-h-[200px] overflow-auto">
+          <h4 className="text-sm font-medium text-white mb-3">
             Issues Found ({issues.length})
-          </Typography>
-          {Array.from(issueLines.entries()).map(([lineNum, lineIssues]) => (
-            <Box key={lineNum} sx={{ mb: 1 }}>
-              {lineIssues.map((issue, idx) => (
-                <Alert
-                  key={idx}
-                  severity={
-                    issue.severity === 'critical' || issue.severity === 'high'
-                      ? 'error'
-                      : issue.severity === 'medium'
-                      ? 'warning'
-                      : 'info'
-                  }
-                  icon={getSeverityIcon(issue.severity)}
-                  sx={{ mb: 0.5 }}
-                >
-                  <Box>
-                    <Typography variant="caption" sx={{ fontWeight: 'bold' }}>
-                      Line {lineNum}: {issue.description}
-                    </Typography>
-                    <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
-                      {issue.explanation}
-                    </Typography>
-                  </Box>
-                </Alert>
-              ))}
-            </Box>
-          ))}
-        </Box>
+          </h4>
+          <div className="space-y-2">
+            {Array.from(issueLines.entries()).map(([lineNum, lineIssues]) => (
+              <div key={lineNum}>
+                {lineIssues.map((issue, idx) => (
+                  <CustomAlert
+                    key={idx}
+                    severity={getSeverityType(issue.severity)}
+                    message={
+                      <div>
+                        <p className="font-medium text-sm">
+                          Line {lineNum}: {issue.description}
+                        </p>
+                        <p className="text-xs mt-1 opacity-80">
+                          {issue.explanation}
+                        </p>
+                      </div>
+                    }
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
-      {/* Issue summary */}
+      {/* Issues Summary Footer */}
       {issues.length > 0 && (
-        <Box sx={{ borderTop: 1, borderColor: 'divider', p: 1, bgcolor: 'grey.100' }}>
-          <Typography variant="caption" color="text.secondary">
+        <div className="border-t border-white/10 px-4 py-2 bg-white/5">
+          <p className="text-xs text-gray-400">
             {issues.filter(i => i.severity === 'critical' || i.severity === 'high').length} critical/high •{' '}
             {issues.filter(i => i.severity === 'medium').length} medium •{' '}
             {issues.filter(i => i.severity === 'low').length} low
-          </Typography>
-        </Box>
+          </p>
+        </div>
       )}
-    </Paper>
+    </GlassCard>
   );
 };
 
