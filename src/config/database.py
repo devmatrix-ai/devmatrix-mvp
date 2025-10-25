@@ -4,7 +4,6 @@ Database Configuration
 PostgreSQL connection and session management.
 """
 
-import os
 import logging
 from typing import Generator
 from contextlib import contextmanager
@@ -14,19 +13,6 @@ from sqlalchemy.orm import sessionmaker, Session, declarative_base
 from sqlalchemy.pool import StaticPool
 
 logger = logging.getLogger(__name__)
-
-# Environment variables
-POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
-POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
-POSTGRES_DB = os.getenv("POSTGRES_DB", "devmatrix")
-POSTGRES_USER = os.getenv("POSTGRES_USER", "devmatrix")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "devmatrix")
-
-# Build connection URL
-DATABASE_URL = (
-    f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
-    f"@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
-)
 
 # For testing
 TEST_DATABASE_URL = "sqlite:///:memory:"
@@ -40,20 +26,26 @@ class DatabaseConfig:
     _base = None
 
     @classmethod
-    def get_engine(cls, url: str = DATABASE_URL, echo: bool = False):
+    def get_engine(cls, url: str = None, echo: bool = False):
         """
         Get SQLAlchemy engine (singleton).
 
         Args:
-            url: Database URL
+            url: Database URL (if None, loads from settings)
             echo: Echo SQL statements
 
         Returns:
             SQLAlchemy engine
         """
         if cls._engine is None:
+            # Load DATABASE_URL from settings if not provided
+            if url is None:
+                from src.config.settings import get_settings
+                settings = get_settings()
+                url = settings.DATABASE_URL
+
             # PostgreSQL engine config
-            if url.startswith("postgresql"):
+            if url.startswith(("postgresql", "postgres")):
                 cls._engine = create_engine(
                     url,
                     echo=echo,
@@ -71,7 +63,7 @@ class DatabaseConfig:
                     poolclass=StaticPool,
                 )
 
-            logger.info(f"Database engine created: {url.split('@')[-1]}")  # Hide password
+            logger.info(f"Database engine created: {url.split('@')[-1] if '@' in url else 'test-db'}")  # Hide password
 
         return cls._engine
 
@@ -189,8 +181,3 @@ def init_db():
     DatabaseConfig.create_all()
 
     logger.info("Database initialization complete")
-
-
-# Enable SQLAlchemy query logging for development
-if os.getenv("ENV") == "development":
-    logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO)

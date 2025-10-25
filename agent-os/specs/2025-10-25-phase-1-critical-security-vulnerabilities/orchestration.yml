@@ -1,0 +1,15 @@
+task_groups:
+  - name: Foundation & Configuration Layer
+    claude_code_subagent: implementer
+  - name: Core Security Infrastructure
+    claude_code_subagent: implementer
+  - name: Authentication Security Layer
+    claude_code_subagent: implementer
+  - name: Authorization & Access Control Layer
+    claude_code_subagent: implementer
+  - name: API Security Layer
+    claude_code_subagent: implementer
+  - name: Testing & Quality Assurance
+    claude_code_subagent: implementer
+  - name: Documentation & Deployment
+    claude_code_subagent: implementer
