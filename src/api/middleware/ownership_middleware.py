@@ -10,12 +10,13 @@ Group 4: Authorization & Access Control Layer
 import functools
 from typing import Callable
 from uuid import UUID
-from fastapi import HTTPException, status
+from fastapi import HTTPException, status, Request
 
 from src.models.conversation import Conversation
 from src.models.user import User
 from src.config.database import get_db_context
 from src.observability import get_logger
+from src.observability.audit_logger import audit_logger
 
 logger = get_logger("ownership_middleware")
 
@@ -54,6 +55,9 @@ def require_resource_ownership(resource_type: str) -> Callable:
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
+            # Extract request object (for audit logging)
+            request = kwargs.get('request')
+
             # Extract conversation_id from kwargs
             conversation_id_str = kwargs.get('conversation_id')
             if not conversation_id_str:
@@ -129,6 +133,32 @@ def require_resource_ownership(resource_type: str) -> Callable:
                                 "is_superuser": False
                             }
                         )
+
+                        # Log authorization denial to audit logs
+                        if request:
+                            # Determine action from HTTP method
+                            method_to_action = {
+                                "GET": "read",
+                                "PUT": "update",
+                                "PATCH": "update",
+                                "DELETE": "delete",
+                                "POST": "create"
+                            }
+                            action_attempted = method_to_action.get(
+                                request.method if hasattr(request, 'method') else "unknown",
+                                "access"
+                            )
+
+                            await audit_logger.log_authorization_denied(
+                                user_id=current_user.user_id,
+                                resource_type=resource_type,
+                                resource_id=conversation_id,
+                                action_attempted=action_attempted,
+                                ip_address=request.client.host if hasattr(request, 'client') and request.client else None,
+                                user_agent=request.headers.get("user-agent") if hasattr(request, 'headers') else None,
+                                correlation_id=getattr(request.state, 'correlation_id', None) if hasattr(request, 'state') else None
+                            )
+
                         raise HTTPException(
                             status_code=status.HTTP_403_FORBIDDEN,
                             detail=f"Access denied: You do not own this {resource_type}"
