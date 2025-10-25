@@ -5,18 +5,19 @@ Provides user registration, login, token refresh, user info endpoints,
 email verification, and password reset functionality.
 
 Extended with Task Group 2.3: Email Verification & Password Reset endpoints
+Updated with Group 3: Token blacklist and logout functionality
 """
 
 from typing import Optional
 from uuid import UUID
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Request
 from pydantic import BaseModel, EmailStr, Field
 
 from src.services.auth_service import AuthService
 from src.services.email_verification_service import EmailVerificationService
 from src.services.password_reset_service import PasswordResetService
 from src.models.user import User
-from src.api.middleware.auth_middleware import get_current_user, get_current_active_user
+from src.api.middleware.auth_middleware import get_current_user, get_current_active_user, get_token_from_header
 from src.config.constants import EMAIL_VERIFICATION_REQUIRED
 from src.observability import get_logger
 
@@ -67,6 +68,18 @@ class LoginRequest(BaseModel):
 class RefreshTokenRequest(BaseModel):
     """Refresh token request"""
     refresh_token: str
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+            }
+        }
+
+
+class LogoutRequest(BaseModel):
+    """Logout request (optional refresh token)"""
+    refresh_token: Optional[str] = Field(None, description="Optional refresh token to blacklist")
 
     class Config:
         schema_extra = {
@@ -364,29 +377,74 @@ async def get_current_user_info(current_user: User = Depends(get_current_active_
 
 
 @router.post("/logout")
-async def logout(current_user: User = Depends(get_current_user)):
+async def logout(
+    request: Request,
+    logout_request: Optional[LogoutRequest] = None,
+    access_token: str = Depends(get_token_from_header),
+    current_user: User = Depends(get_current_user)
+):
     """
-    Logout current user.
+    Logout current user and blacklist tokens.
 
-    Note: Since we're using stateless JWT, this endpoint primarily serves
-    as a confirmation. The client should delete the stored tokens.
-
-    In production, you may want to implement token blacklisting.
+    Group 3 Security Update: Now implements token blacklisting.
+    - Blacklists the current access token (required)
+    - Optionally blacklists refresh token if provided in request body
 
     **Example**:
     ```bash
+    # Logout with access token only
     curl -X POST http://localhost:8000/api/v1/auth/logout \\
       -H "Authorization: Bearer <access_token>"
+
+    # Logout with both tokens
+    curl -X POST http://localhost:8000/api/v1/auth/logout \\
+      -H "Authorization: Bearer <access_token>" \\
+      -H "Content-Type: application/json" \\
+      -d '{"refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."}'
     ```
 
     **Returns**:
     - message: Logout confirmation
+    - blacklisted_tokens: List of token types blacklisted
 
     **Errors**:
     - 401: Missing or invalid token
     """
-    logger.info(f"User logged out: {current_user.user_id}")
-    return {"message": "Successfully logged out"}
+    correlation_id = getattr(request.state, 'correlation_id', None)
+    blacklisted_tokens = []
+
+    # Blacklist access token (required)
+    success = auth_service.blacklist_token(access_token, token_type="access", correlation_id=correlation_id)
+    if success:
+        blacklisted_tokens.append("access")
+        logger.info(
+            f"Access token blacklisted for user: {current_user.user_id}",
+            extra={"correlation_id": correlation_id}
+        )
+
+    # Blacklist refresh token if provided (optional)
+    if logout_request and logout_request.refresh_token:
+        success = auth_service.blacklist_token(
+            logout_request.refresh_token,
+            token_type="refresh",
+            correlation_id=correlation_id
+        )
+        if success:
+            blacklisted_tokens.append("refresh")
+            logger.info(
+                f"Refresh token blacklisted for user: {current_user.user_id}",
+                extra={"correlation_id": correlation_id}
+            )
+
+    logger.info(
+        f"User logged out: {current_user.user_id}",
+        extra={"correlation_id": correlation_id}
+    )
+
+    return {
+        "message": "Successfully logged out",
+        "blacklisted_tokens": blacklisted_tokens
+    }
 
 
 # ============================================================================
