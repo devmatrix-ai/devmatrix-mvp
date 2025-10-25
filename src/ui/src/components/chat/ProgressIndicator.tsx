@@ -73,15 +73,15 @@ export const ProgressIndicator: React.FC<ProgressIndicatorProps> = ({ progress }
       case 'task_complete':
       case 'phase_complete':
       case 'execution_complete':
-        return 'text-green-600 dark:text-green-400'
+        return 'text-green-400'
       case 'task_failed':
-        return 'text-red-600 dark:text-red-400'
+        return 'text-red-400'
       case 'task_start':
       case 'phase_start':
       case 'execution_start':
-        return 'text-blue-600 dark:text-blue-400'
+        return 'text-blue-400'
       default:
-        return 'text-gray-600 dark:text-gray-400'
+        return 'text-gray-400'
     }
   }
 
@@ -95,18 +95,18 @@ export const ProgressIndicator: React.FC<ProgressIndicatorProps> = ({ progress }
     <div className="space-y-2">
       {/* Progress bar - only show during execution */}
       {showProgressBar && (
-        <div className="px-4 py-3 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/30 dark:to-indigo-900/30 rounded-lg border border-blue-200 dark:border-blue-800">
+        <div className="px-4 py-3 bg-blue-500/20 backdrop-blur-sm rounded-lg border border-blue-400/30">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-semibold text-blue-900 dark:text-blue-100">
+            <span className="text-sm font-semibold text-blue-100">
               Progreso General
             </span>
-            <span className="text-sm font-bold text-blue-700 dark:text-blue-300">
+            <span className="text-sm font-bold text-blue-300">
               {taskProgress.completed}/{taskProgress.total} tareas ({progressPercentage}%)
             </span>
           </div>
-          <div className="w-full bg-blue-200 dark:bg-blue-800 rounded-full h-3 overflow-hidden">
+          <div className="w-full bg-white/10 rounded-full h-3 overflow-hidden">
             <div
-              className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-400 dark:to-indigo-500 rounded-full transition-all duration-500 ease-out flex items-center justify-end pr-1"
+              className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full transition-all duration-500 ease-out flex items-center justify-end pr-1"
               style={{ width: `${progressPercentage}%` }}
             >
               {progressPercentage > 10 && (
@@ -120,7 +120,7 @@ export const ProgressIndicator: React.FC<ProgressIndicatorProps> = ({ progress }
       )}
 
       {/* Current event message */}
-      <div className="flex items-center gap-3 px-4 py-2.5 bg-white dark:bg-gray-800 rounded-lg border-2 border-blue-300 dark:border-blue-700 shadow-sm">
+      <div className="flex items-center gap-3 px-4 py-2.5 bg-white/5 backdrop-blur-sm rounded-lg border-2 border-blue-400/30 shadow-sm">
         <span className="text-xl animate-pulse">
           {getProgressIcon(progress.event)}
         </span>

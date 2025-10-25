@@ -309,7 +309,7 @@ export const MasterplanDetailPage: React.FC = () => {
                                             </span>
                                           ))}
                                           {task.target_files.length > 3 && (
-                                            <span className="text-xs px-2 py-1 bg-gray-500/20 text-gray-400 rounded">
+                                            <span className="text-xs px-2 py-1 bg-purple-500/20 text-purple-400 rounded">
                                               +{task.target_files.length - 3} more
                                             </span>
                                           )}

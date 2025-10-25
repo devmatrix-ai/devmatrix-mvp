@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useState } from 'react'
 import { useChat } from '../../hooks/useChat'
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts'
 import { MessageList } from './MessageList'
@@ -6,7 +6,7 @@ import { ChatInput } from './ChatInput'
 import { ProgressIndicator } from './ProgressIndicator'
 import { MasterPlanProgressIndicator } from './MasterPlanProgressIndicator'
 import { ConversationHistory } from './ConversationHistory'
-import { FiMessageSquare, FiX, FiMinus, FiPlusCircle, FiDownload } from 'react-icons/fi'
+import { FiMessageSquare, FiX, FiMinus, FiPlusCircle, FiDownload, FiMenu } from 'react-icons/fi'
 
 interface ChatWindowProps {
   workspaceId?: string
@@ -35,6 +35,7 @@ export function ChatWindow({
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<{ focus: () => void }>(null)
+  const [showHistory, setShowHistory] = useState(false)
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -132,16 +133,25 @@ export function ChatWindow({
         currentConversationId={conversationId}
         onSelectConversation={handleSelectConversation}
         onNewConversation={handleNewProject}
+        isOpen={showHistory}
+        onClose={() => setShowHistory(false)}
       />
 
-      <div className="flex flex-col h-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl">
+      <div className="flex flex-col h-full bg-gradient-to-br from-gray-900/40 via-purple-900/20 to-blue-900/20 backdrop-blur-xl border border-purple-500/20 rounded-lg shadow-xl shadow-purple-500/10">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-primary-600 to-primary-700">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-purple-500/20 bg-gradient-to-r from-purple-500/10 via-blue-500/10 to-purple-500/10 backdrop-blur-md">
         <div className="flex items-center space-x-2">
-          <FiMessageSquare className="text-white" size={20} />
+          <button
+            onClick={() => setShowHistory(true)}
+            className="text-purple-400 hover:bg-purple-500/20 backdrop-blur-sm p-2 rounded transition-colors border border-purple-500/20"
+            title="Historial de conversaciones"
+          >
+            <FiMenu size={20} />
+          </button>
+          <FiMessageSquare className="text-purple-400" size={20} />
           <div>
-            <h3 className="text-white font-semibold">DevMatrix Chat</h3>
-            <p className="text-xs text-primary-100">
+            <h3 className="text-purple-100 font-semibold">DevMatrix Chat</h3>
+            <p className="text-xs text-purple-300">
               {isConnected ? (
                 <span className="flex items-center">
                   <span className="w-2 h-2 bg-green-400 rounded-full mr-1.5 animate-pulse" />
@@ -160,7 +170,7 @@ export function ChatWindow({
         <div className="flex items-center space-x-2">
           <button
             onClick={handleExportChat}
-            className="text-white hover:bg-primary-800 px-2 py-1.5 rounded transition-colors flex items-center space-x-1.5 text-sm"
+            className="text-purple-200 hover:bg-purple-500/20 backdrop-blur-sm px-2 py-1.5 rounded transition-colors flex items-center space-x-1.5 text-sm border border-purple-500/20"
             aria-label="Export Chat"
             title="Exportar Chat"
             disabled={messages.length === 0}
@@ -170,7 +180,7 @@ export function ChatWindow({
           </button>
           <button
             onClick={handleNewProject}
-            className="text-white hover:bg-primary-800 px-2 py-1.5 rounded transition-colors flex items-center space-x-1.5 text-sm"
+            className="text-purple-200 hover:bg-purple-500/20 backdrop-blur-sm px-2 py-1.5 rounded transition-colors flex items-center space-x-1.5 text-sm border border-purple-500/20"
             aria-label="New Project"
             title="Nuevo Proyecto"
           >
@@ -180,7 +190,7 @@ export function ChatWindow({
           {onToggleMinimize && (
             <button
               onClick={onToggleMinimize}
-              className="text-white hover:bg-primary-800 p-1.5 rounded transition-colors"
+              className="text-purple-200 hover:bg-purple-500/20 backdrop-blur-sm p-1.5 rounded transition-colors border border-purple-500/20"
               aria-label={isMinimized ? 'Maximize' : 'Minimize'}
             >
               <FiMinus size={18} />
@@ -189,7 +199,7 @@ export function ChatWindow({
           {onClose && (
             <button
               onClick={onClose}
-              className="text-white hover:bg-primary-800 p-1.5 rounded transition-colors"
+              className="text-purple-200 hover:bg-purple-500/20 backdrop-blur-sm p-1.5 rounded transition-colors border border-purple-500/20"
               aria-label="Close"
             >
               <FiX size={18} />
@@ -203,20 +213,20 @@ export function ChatWindow({
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {messages.length === 0 && (
-              <div className="flex flex-col items-center justify-center h-full text-center text-gray-500 dark:text-gray-400">
+              <div className="flex flex-col items-center justify-center h-full text-center text-gray-400">
                 <FiMessageSquare size={48} className="mb-4 opacity-50" />
                 <p className="text-lg font-medium">Start a conversation</p>
                 <p className="text-sm mt-2">
                   Ask me to create workflows, analyze code, or help with development tasks.
                 </p>
                 <div className="mt-4 text-xs space-y-1">
-                  <p className="font-mono text-primary-600 dark:text-primary-400">
+                  <p className="font-mono text-primary-400">
                     Try: /masterplan Create a Task Management API
                   </p>
-                  <p className="font-mono text-primary-600 dark:text-primary-400">
+                  <p className="font-mono text-primary-400">
                     Or: /orchestrate for full workflow execution
                   </p>
-                  <p className="font-mono text-primary-600 dark:text-primary-400">
+                  <p className="font-mono text-primary-400">
                     Or: /help for all commands
                   </p>
                 </div>
@@ -256,13 +266,13 @@ export function ChatWindow({
                 {progress ? (
                   <ProgressIndicator progress={progress} />
                 ) : (
-                  <div className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                  <div className="flex items-center gap-3 px-4 py-3 bg-blue-500/20 backdrop-blur-sm rounded-lg border border-blue-400/30">
                     <div className="flex space-x-1">
-                      <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                      <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                      <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                      <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                     </div>
-                    <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                    <span className="text-sm font-medium text-blue-300">
                       Procesando tu mensaje...
                     </span>
                   </div>
@@ -274,7 +284,7 @@ export function ChatWindow({
           </div>
 
           {/* Input */}
-          <div className="border-t border-gray-200 dark:border-gray-700 p-4">
+          <div className="border-t border-white/10 p-4">
             <ChatInput
               ref={inputRef}
               onSend={handleSendMessage}
@@ -291,7 +301,7 @@ export function ChatWindow({
 
       {/* Conversation ID (debug) */}
       {conversationId && import.meta.env.DEV && (
-        <div className="px-4 py-2 text-xs text-gray-500 border-t border-gray-200 dark:border-gray-700">
+        <div className="px-4 py-2 text-xs text-gray-400 border-t border-white/10">
           Conversation: {conversationId}
         </div>
       )}

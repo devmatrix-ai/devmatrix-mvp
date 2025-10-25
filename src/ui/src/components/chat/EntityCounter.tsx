@@ -20,10 +20,10 @@ export const EntityCounter: React.FC<EntityCounterProps> = ({
   return (
     <div
       className={`
-        p-3 rounded-lg transition-all duration-500 ease-out transform
+        p-3 rounded-lg transition-all duration-500 ease-out transform backdrop-blur-sm
         ${complete
-          ? 'bg-gradient-to-br from-green-100 to-green-50 dark:from-green-900/40 dark:to-green-900/20 border-2 border-green-400 dark:border-green-600 scale-105'
-          : 'bg-white dark:bg-gray-800 border-2 border-purple-200 dark:border-purple-700'
+          ? 'bg-green-500/20 border-2 border-green-400/50 scale-105'
+          : 'bg-white/5 border-2 border-purple-400/30'
         }
       `}
     >
@@ -37,8 +37,8 @@ export const EntityCounter: React.FC<EntityCounterProps> = ({
         className={`
           text-xl font-bold transition-colors duration-300
           ${complete
-            ? 'text-green-700 dark:text-green-300'
-            : 'text-purple-700 dark:text-purple-300'
+            ? 'text-green-300'
+            : 'text-purple-300'
           }
         `}
       >
@@ -46,12 +46,12 @@ export const EntityCounter: React.FC<EntityCounterProps> = ({
       </div>
 
       {/* Label */}
-      <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+      <div className="text-xs text-gray-400 mt-1">
         {label}
       </div>
 
       {/* Mini progress bar */}
-      <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5 mt-2 overflow-hidden">
+      <div className="w-full bg-white/10 rounded-full h-1.5 mt-2 overflow-hidden">
         <div
           className={`
             h-full rounded-full transition-all duration-500 ease-out

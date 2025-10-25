@@ -35,6 +35,7 @@ from .validation_result import ValidationResult, ValidationLevel
 from .execution_wave import ExecutionWave, WaveStatus
 from .atom_retry import AtomRetryHistory
 from .human_review import HumanReviewQueue, ReviewStatus, ReviewResolution
+from .acceptance_test import AcceptanceTest, AcceptanceTestResult
 
 __all__ = [
     # Enums
@@ -68,6 +69,8 @@ __all__ = [
     "ExecutionWave",
     "AtomRetryHistory",
     "HumanReviewQueue",
+    "AcceptanceTest",
+    "AcceptanceTestResult",
 
     # MGE V2 enums
     "AtomStatus",

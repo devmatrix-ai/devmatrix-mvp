@@ -103,16 +103,16 @@ export const ChatInput = forwardRef<{ focus: () => void }, ChatInputProps>(
     <form onSubmit={handleSubmit} className="relative">
       {/* Command Suggestions */}
       {showSuggestions && (
-        <div className="absolute bottom-full left-0 right-0 mb-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg overflow-hidden">
+        <div className="absolute bottom-full left-0 right-0 mb-2 bg-gray-900/90 backdrop-blur-md border border-purple-500/20 rounded-lg shadow-lg overflow-hidden">
           {suggestions.map((suggestion, index) => (
             <button
               key={suggestion}
               type="button"
               onClick={() => selectSuggestion(suggestion)}
-              className={`w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${
+              className={`w-full text-left px-4 py-2 hover:bg-purple-500/10 transition-colors ${
                 index === selectedSuggestion
-                  ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-400'
-                  : ''
+                  ? 'bg-purple-500/20 text-purple-400 border-l-2 border-purple-400'
+                  : 'text-gray-300'
               }`}
             >
               <span className="font-mono text-sm">{suggestion}</span>
@@ -132,11 +132,11 @@ export const ChatInput = forwardRef<{ focus: () => void }, ChatInputProps>(
             placeholder={placeholder || 'Type a message...'}
             disabled={disabled}
             rows={1}
-            className="w-full px-4 py-3 pr-12 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-gray-500 dark:placeholder:text-gray-400"
+            className="w-full px-4 py-3 pr-12 bg-white/5 backdrop-blur-sm text-gray-100 border border-purple-500/20 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500/50 disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-gray-400"
             style={{ maxHeight: '200px' }}
           />
-          <div className="absolute bottom-3 right-3 text-xs text-gray-400">
-            <kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded">
+          <div className="absolute bottom-3 right-3 text-xs text-purple-300">
+            <kbd className="px-1.5 py-0.5 bg-purple-500/10 backdrop-blur-sm rounded border border-purple-500/20">
               Enter
             </kbd>{' '}
             to send
@@ -146,7 +146,7 @@ export const ChatInput = forwardRef<{ focus: () => void }, ChatInputProps>(
         <button
           type="submit"
           disabled={disabled || !message.trim()}
-          className="flex-shrink-0 p-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="flex-shrink-0 p-3 bg-gradient-to-r from-purple-600/90 to-blue-600/90 backdrop-blur-sm text-white rounded-lg hover:from-purple-700/90 hover:to-blue-700/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-purple-400/30 shadow-lg shadow-purple-500/20"
           aria-label="Send message"
         >
           <FiSend size={20} />

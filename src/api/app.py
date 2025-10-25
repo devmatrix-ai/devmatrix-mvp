@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ..observability import StructuredLogger, HealthCheck, MetricsMiddleware, setup_logging
 from ..observability.global_metrics import metrics_collector
-from .routers import workflows, executions, metrics, health, websocket, rag, chat, masterplans, auth, usage, admin, validation, execution_v2, atomization, dependency, review
+from .routers import workflows, executions, metrics, health, websocket, rag, chat, masterplans, auth, usage, admin, validation, execution_v2, atomization, dependency, review, testing
 
 
 # Initialize logging system
@@ -102,6 +102,7 @@ def create_app() -> FastAPI:
     app.include_router(validation.router)  # Phase 4: Validation
     app.include_router(execution_v2.router)  # Phase 5: Execution
     app.include_router(review.router)  # Phase 6: Human Review
+    app.include_router(testing.router)  # Phase 6 Week 12: Acceptance Testing
 
     # Mount Socket.IO app
     app.mount("/socket.io", websocket.sio_app)

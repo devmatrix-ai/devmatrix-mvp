@@ -73,6 +73,7 @@ class ExecutionWave(Base):
 
     # Relationships
     graph = relationship("DependencyGraph", back_populates="waves")
+    acceptance_test_results = relationship("AcceptanceTestResult", back_populates="wave", cascade="all, delete-orphan")
 
     # Indexes and Constraints
     __table_args__ = (

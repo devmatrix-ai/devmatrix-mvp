@@ -21,14 +21,14 @@ export function MessageList({ messages, isLoading }: MessageListProps) {
 
       {isLoading && (
         <div className="flex items-start space-x-3">
-          <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-100 dark:bg-primary-900 flex items-center justify-center">
-            <FiCpu className="text-primary-600 dark:text-primary-400" size={16} />
+          <div className="flex-shrink-0 w-8 h-8 rounded-full bg-purple-500/20 backdrop-blur-sm flex items-center justify-center border border-purple-400/30">
+            <FiCpu className="text-purple-400" size={16} />
           </div>
-          <div className="flex-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-3">
+          <div className="flex-1 bg-white/5 backdrop-blur-sm rounded-lg p-3 border border-white/10">
             <div className="flex space-x-2">
-              <div className="w-2 h-2 bg-primary-600 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-              <div className="w-2 h-2 bg-primary-600 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-              <div className="w-2 h-2 bg-primary-600 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+              <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+              <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
             </div>
           </div>
         </div>
@@ -47,18 +47,18 @@ function Message({ message }: MessageProps) {
   const isSystem = message.role === 'system'
 
   const icon = isUser ? (
-    <FiUser className="text-gray-600 dark:text-gray-400" size={16} />
+    <FiUser className="text-purple-100" size={16} />
   ) : isSystem ? (
-    <FiInfo className="text-yellow-600 dark:text-yellow-400" size={16} />
+    <FiInfo className="text-yellow-400" size={16} />
   ) : (
-    <FiCpu className="text-primary-600 dark:text-primary-400" size={16} />
+    <FiCpu className="text-purple-400" size={16} />
   )
 
   const bgColor = isUser
-    ? 'bg-primary-600 text-white'
+    ? 'bg-gradient-to-r from-purple-600/80 to-blue-600/80 backdrop-blur-sm text-white border border-purple-400/30'
     : isSystem
-    ? 'bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 text-yellow-900 dark:text-yellow-100'
-    : 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100'
+    ? 'bg-yellow-500/20 backdrop-blur-sm border border-yellow-400/30 text-yellow-100'
+    : 'bg-white/5 backdrop-blur-sm text-gray-100 border border-white/10'
 
   const timestamp = format(new Date(message.timestamp), 'HH:mm')
 
@@ -75,7 +75,7 @@ function Message({ message }: MessageProps) {
 
   return (
     <div className={`group flex items-start space-x-3 ${isUser ? 'flex-row-reverse space-x-reverse' : ''}`}>
-      <div className={`flex-shrink-0 w-8 h-8 rounded-full ${isUser ? 'bg-primary-600' : isSystem ? 'bg-yellow-100 dark:bg-yellow-900' : 'bg-primary-100 dark:bg-primary-900'} flex items-center justify-center`}>
+      <div className={`flex-shrink-0 w-8 h-8 rounded-full ${isUser ? 'bg-gradient-to-br from-purple-600 to-blue-600 border border-purple-400/30' : isSystem ? 'bg-yellow-500/20 backdrop-blur-sm border border-yellow-400/30' : 'bg-purple-500/20 backdrop-blur-sm border border-purple-400/30'} flex items-center justify-center`}>
         {icon}
       </div>
 
@@ -105,28 +105,28 @@ function Message({ message }: MessageProps) {
           )}
         </div>
         <div className={`flex items-center gap-2 mt-1 ${isUser ? 'justify-end' : ''}`}>
-          <p className="text-xs text-gray-500 dark:text-gray-400">
+          <p className="text-xs text-gray-400">
             {timestamp}
           </p>
           {!isUser && (
             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
               <button
                 onClick={handleCopyMessage}
-                className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                className="p-1 rounded hover:bg-white/10 transition-colors backdrop-blur-sm"
                 title="Copy message"
               >
                 {copied ? (
-                  <FiCheck size={12} className="text-green-600" />
+                  <FiCheck size={12} className="text-green-400" />
                 ) : (
-                  <FiCopy size={12} className="text-gray-500 dark:text-gray-400" />
+                  <FiCopy size={12} className="text-gray-400" />
                 )}
               </button>
               <button
                 onClick={handleRegenerate}
-                className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                className="p-1 rounded hover:bg-white/10 transition-colors backdrop-blur-sm"
                 title="Regenerate response"
               >
-                <FiRefreshCw size={12} className="text-gray-500 dark:text-gray-400" />
+                <FiRefreshCw size={12} className="text-gray-400" />
               </button>
             </div>
           )}

@@ -12,10 +12,14 @@ from typing import List, Dict, Any, Optional, Callable
 from dataclasses import dataclass, field
 from enum import Enum
 import numpy as np
+import time
 
 from src.rag.vector_store import VectorStore
 from src.config import RAG_TOP_K, RAG_SIMILARITY_THRESHOLD, RAG_CACHE_ENABLED
 from src.observability import get_logger
+
+# Import MGE V2 RAG caching
+from src.mge.v2.caching import RAGQueryCache
 
 
 class RetrievalStrategy(Enum):
@@ -100,6 +104,8 @@ class Retriever:
         self,
         vector_store: VectorStore,
         config: Optional[RetrievalConfig] = None,
+        enable_v2_caching: bool = True,  # NEW: Enable MGE V2 RAG caching
+        redis_url: str = "redis://localhost:6379"  # NEW: Redis URL for V2 caching
     ):
         """
         Initialize retriever.
@@ -107,17 +113,28 @@ class Retriever:
         Args:
             vector_store: VectorStore instance
             config: Optional retrieval configuration
+            enable_v2_caching: Enable MGE V2 RAG query caching (default: True)
+            redis_url: Redis connection URL for V2 caching
         """
         self.logger = get_logger("rag.retriever")
         self.vector_store = vector_store
         self.config = config or RetrievalConfig()
-        self.cache: Dict[str, List[RetrievalResult]] = {}
+        self.cache: Dict[str, List[RetrievalResult]] = {}  # Legacy in-memory cache
+
+        # NEW: Initialize MGE V2 RAG query cache
+        self.enable_v2_caching = enable_v2_caching
+        if self.enable_v2_caching:
+            self.rag_cache = RAGQueryCache(redis_url=redis_url)
+            self.logger.info("MGE V2 RAG query caching enabled")
+        else:
+            self.rag_cache = None
 
         self.logger.info(
             "Retriever initialized",
             strategy=self.config.strategy.value,
             top_k=self.config.top_k,
-            min_similarity=self.config.min_similarity
+            min_similarity=self.config.min_similarity,
+            v2_caching=enable_v2_caching
         )
 
     def retrieve(
@@ -210,7 +227,7 @@ class Retriever:
             )
             raise
 
-    def _retrieve_similarity(
+    async def _retrieve_similarity_async(
         self,
         query: str,
         top_k: int,
@@ -218,7 +235,7 @@ class Retriever:
         filters: Optional[Dict[str, Any]],
     ) -> List[RetrievalResult]:
         """
-        Pure similarity-based retrieval.
+        Pure similarity-based retrieval with V2 caching support (async version).
 
         Args:
             query: Query text
@@ -229,6 +246,44 @@ class Retriever:
         Returns:
             List of RetrievalResult objects
         """
+        # NEW: Check V2 RAG cache if enabled
+        query_embedding = None
+        if self.enable_v2_caching and self.rag_cache:
+            # Get query embedding for cache lookup
+            query_embedding = self.vector_store.embedding_model.embed_text(query)
+            embedding_model_name = getattr(self.vector_store.embedding_model, 'model_name', 'sentence-transformers')
+
+            # Check cache
+            cached_result = await self.rag_cache.get(
+                query=query,
+                query_embedding=query_embedding,
+                embedding_model=embedding_model_name,
+                top_k=top_k
+            )
+
+            if cached_result:
+                # Cache hit! Convert cached documents to RetrievalResult
+                self.logger.info(
+                    f"V2 RAG cache HIT: Returning cached results "
+                    f"(age={(time.time() - cached_result.cached_at) / 60:.1f}min)"
+                )
+
+                results = []
+                for doc in cached_result.documents:
+                    result = RetrievalResult(
+                        id=doc["id"],
+                        code=doc["code"],
+                        metadata=doc["metadata"],
+                        similarity=doc["similarity"],
+                        relevance_score=doc["similarity"]
+                    )
+                    results.append(result)
+
+                return results
+
+        # Cache miss - continue with normal retrieval
+        self.logger.debug("V2 RAG cache MISS: Querying vector store")
+
         # Search vector store
         raw_results = self.vector_store.search_with_metadata(
             query=query,
@@ -249,7 +304,69 @@ class Retriever:
             )
             results.append(result)
 
+        # NEW: Save to V2 cache (fire and forget)
+        if self.enable_v2_caching and self.rag_cache:
+            if query_embedding is None:
+                query_embedding = self.vector_store.embedding_model.embed_text(query)
+            embedding_model_name = getattr(self.vector_store.embedding_model, 'model_name', 'sentence-transformers')
+
+            # Convert results back to dict format for caching
+            documents = [
+                {
+                    "id": r.id,
+                    "code": r.code,
+                    "metadata": r.metadata,
+                    "similarity": r.similarity
+                }
+                for r in results
+            ]
+
+            # Save to cache (async, don't await)
+            import asyncio
+            import time
+            asyncio.create_task(
+                self.rag_cache.set(
+                    query=query,
+                    query_embedding=query_embedding,
+                    embedding_model=embedding_model_name,
+                    top_k=top_k,
+                    documents=documents
+                )
+            )
+            self.logger.debug("V2 RAG cache: Saved query results")
+
         return results
+
+    def _retrieve_similarity(
+        self,
+        query: str,
+        top_k: int,
+        min_similarity: float,
+        filters: Optional[Dict[str, Any]],
+    ) -> List[RetrievalResult]:
+        """
+        Pure similarity-based retrieval (sync wrapper for backward compatibility).
+
+        Args:
+            query: Query text
+            top_k: Number of results
+            min_similarity: Minimum similarity
+            filters: Metadata filters
+
+        Returns:
+            List of RetrievalResult objects
+        """
+        import asyncio
+        # Run async version in sync context
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        return loop.run_until_complete(
+            self._retrieve_similarity_async(query, top_k, min_similarity, filters)
+        )
 
     def _retrieve_mmr(
         self,

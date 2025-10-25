@@ -18,7 +18,7 @@ export function AdminRoute({ children }: AdminRouteProps) {
   if (isLoading) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary-600 border-r-transparent"></div>
+        <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-purple-500 border-r-transparent"></div>
       </div>
     )
   }

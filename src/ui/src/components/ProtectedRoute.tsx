@@ -19,10 +19,10 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   // Show loading state while checking authentication
   if (isLoading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-gray-50 dark:bg-gray-900">
+      <div className="flex h-screen items-center justify-center bg-gradient-to-br from-gray-900 via-purple-900/20 to-blue-900/20">
         <div className="text-center">
-          <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary-600 border-r-transparent"></div>
-          <p className="mt-4 text-sm text-gray-600 dark:text-gray-400">
+          <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-purple-500 border-r-transparent"></div>
+          <p className="mt-4 text-sm text-purple-300">
             Loading...
           </p>
         </div>

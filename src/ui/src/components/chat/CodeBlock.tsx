@@ -23,7 +23,7 @@ export function CodeBlock({ children, className, inline }: CodeBlockProps) {
   // Inline code (backticks)
   if (inline) {
     return (
-      <code className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-sm font-mono">
+      <code className="px-1.5 py-0.5 bg-gray-700/90 backdrop-blur-sm rounded text-sm font-mono text-gray-100 border border-white/10">
         {children}
       </code>
     )
@@ -31,12 +31,12 @@ export function CodeBlock({ children, className, inline }: CodeBlockProps) {
 
   // Code block (triple backticks)
   return (
-    <div className="relative group">
-      <div className="flex items-center justify-between bg-gray-800 text-gray-300 px-4 py-2 rounded-t-lg text-sm">
+    <div className="relative group border border-white/10 rounded-lg backdrop-blur-sm bg-gray-900/90">
+      <div className="flex items-center justify-between bg-gray-800/90 backdrop-blur-sm text-gray-300 px-4 py-2 rounded-t-lg text-sm border-b border-white/10">
         <span className="font-mono">{language}</span>
         <button
           onClick={handleCopy}
-          className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-700 transition-colors"
+          className="flex items-center gap-1 px-2 py-1 rounded hover:bg-white/10 transition-colors"
           title="Copy code"
         >
           {copied ? (
@@ -52,7 +52,7 @@ export function CodeBlock({ children, className, inline }: CodeBlockProps) {
           )}
         </button>
       </div>
-      <pre className="bg-gray-900 text-gray-100 p-4 rounded-b-lg overflow-x-auto">
+      <pre className="bg-gray-900/95 text-gray-100 p-4 rounded-b-lg overflow-x-auto">
         <code className={className}>{children}</code>
       </pre>
     </div>

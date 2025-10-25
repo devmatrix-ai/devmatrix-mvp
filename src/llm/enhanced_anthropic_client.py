@@ -20,6 +20,9 @@ from src.llm.prompt_cache_manager import PromptCacheManager, CacheableContext
 from src.llm.anthropic_client import AnthropicClient  # Base client
 from src.observability.metrics_collector import MetricsCollector
 
+# Import MGE V2 caching
+from src.mge.v2.caching import LLMPromptCache, RequestBatcher
+
 logger = logging.getLogger(__name__)
 
 
@@ -55,7 +58,10 @@ class EnhancedAnthropicClient:
         api_key: Optional[str] = None,
         use_opus: bool = False,  # MVP: disabled
         cost_optimization: bool = True,  # MVP: enabled (use Haiku)
-        metrics_collector: Optional[MetricsCollector] = None
+        metrics_collector: Optional[MetricsCollector] = None,
+        enable_v2_caching: bool = True,  # NEW: Enable MGE V2 caching
+        enable_v2_batching: bool = False,  # NEW: Enable MGE V2 request batching (disabled by default)
+        redis_url: str = "redis://localhost:6379"  # NEW: Redis URL for V2 caching
     ):
         """
         Initialize enhanced client.
@@ -65,6 +71,9 @@ class EnhancedAnthropicClient:
             use_opus: Enable Opus 4.1 (default: False for MVP)
             cost_optimization: Use Haiku for simple tasks (default: True)
             metrics_collector: Metrics collector instance
+            enable_v2_caching: Enable MGE V2 LLM response caching (default: True)
+            enable_v2_batching: Enable MGE V2 request batching (default: False)
+            redis_url: Redis connection URL for V2 caching
         """
         # Initialize base client (for retry/circuit breaker)
         self.base_client = AnthropicClient(
@@ -87,9 +96,30 @@ class EnhancedAnthropicClient:
         # Metrics
         self.metrics = metrics_collector if metrics_collector else MetricsCollector()
 
+        # NEW: Initialize MGE V2 caching components
+        self.enable_v2_caching = enable_v2_caching
+        self.enable_v2_batching = enable_v2_batching
+
+        if self.enable_v2_caching:
+            self.llm_cache = LLMPromptCache(redis_url=redis_url)
+            logger.info("MGE V2 LLM response caching enabled")
+        else:
+            self.llm_cache = None
+
+        if self.enable_v2_batching:
+            self.request_batcher = RequestBatcher(
+                llm_client=self,  # Pass self as client
+                max_batch_size=5,
+                batch_window_ms=500
+            )
+            logger.info("MGE V2 request batching enabled")
+        else:
+            self.request_batcher = None
+
         logger.info(
             f"EnhancedAnthropicClient initialized: "
-            f"use_opus={use_opus}, cost_optimization={cost_optimization}"
+            f"use_opus={use_opus}, cost_optimization={cost_optimization}, "
+            f"v2_caching={enable_v2_caching}, v2_batching={enable_v2_batching}"
         )
 
     async def generate_with_caching(
@@ -106,6 +136,11 @@ class EnhancedAnthropicClient:
         Generate completion with prompt caching and auto model selection.
 
         This is the PRIMARY method for MVP.
+
+        With MGE V2 caching enabled:
+        1. Checks LLMPromptCache for cached responses (24h TTL)
+        2. On cache hit: Returns cached response immediately
+        3. On cache miss: Calls Anthropic API → caches result → returns
 
         Args:
             task_type: Type of task (discovery, task_execution, etc.)
@@ -126,6 +161,63 @@ class EnhancedAnthropicClient:
             task_type=task_type,
             complexity=complexity,
             force_model=force_model
+        )
+
+        # NEW: Check MGE V2 LLM cache BEFORE building prompt
+        # Build full prompt for cache key generation
+        full_prompt = self._build_full_prompt(cacheable_context, variable_prompt)
+
+        if self.enable_v2_caching and self.llm_cache:
+            cached_response = await self.llm_cache.get(
+                prompt=full_prompt,
+                model=model,
+                temperature=temperature
+            )
+
+            if cached_response:
+                # Cache hit! Return cached response
+                logger.info(
+                    f"V2 cache HIT: Returning cached response "
+                    f"(saved API call, age={(time.time() - cached_response.cached_at) / 3600:.1f}h)"
+                )
+
+                # Calculate cost savings (would have cost full price without cache)
+                model_pricing = self.model_selector.get_model_pricing(model)
+                estimated_input_tokens = cached_response.prompt_tokens
+                estimated_output_tokens = cached_response.completion_tokens
+                full_cost = (
+                    (estimated_input_tokens / 1_000_000) * model_pricing["input_mtok"] +
+                    (estimated_output_tokens / 1_000_000) * model_pricing["output_mtok"]
+                )
+
+                # Emit cost savings metric
+                from src.mge.v2.caching.metrics import CACHE_COST_SAVINGS_USD
+                CACHE_COST_SAVINGS_USD.labels(cache_layer="llm").inc(full_cost)
+
+                # Return cached response in same format as API response
+                return {
+                    "content": cached_response.response_text,
+                    "model": cached_response.model,
+                    "usage": {
+                        "input_tokens": cached_response.prompt_tokens,
+                        "output_tokens": cached_response.completion_tokens,
+                        "cache_read_input_tokens": 0  # Not applicable for V2 cache
+                    },
+                    "cost_usd": 0,  # Cached response = no cost
+                    "cost_analysis": {
+                        "cost_with_cache": 0,
+                        "cost_without_cache": full_cost,
+                        "savings": full_cost,
+                        "savings_percent": 100
+                    },
+                    "stop_reason": "end_turn",  # Assume normal completion
+                    "duration_seconds": time.time() - start_time,
+                    "cached": True  # Flag to indicate cache hit
+                }
+
+        # Cache miss - continue with normal API call
+        logger.info(
+            "V2 cache MISS: Calling Anthropic API"
         )
 
         logger.info(
@@ -226,15 +318,33 @@ class EnhancedAnthropicClient:
                 model_pricing=model_pricing
             )
 
+            # NEW: Save response to V2 cache (async, no waiting)
+            response_text = response.content[0].text
+            if self.enable_v2_caching and self.llm_cache:
+                # Save to cache (don't await - fire and forget for performance)
+                import asyncio
+                asyncio.create_task(
+                    self.llm_cache.set(
+                        prompt=full_prompt,
+                        model=model,
+                        temperature=temperature,
+                        response_text=response_text,
+                        prompt_tokens=cache_stats["input_tokens"],
+                        completion_tokens=cache_stats["output_tokens"]
+                    )
+                )
+                logger.debug("V2 cache: Saved response to cache")
+
             # Build result
             result = {
-                "content": response.content[0].text,
+                "content": response_text,
                 "model": response.model,
                 "usage": cache_stats,
                 "cost_usd": cost_analysis["cost_with_cache"],
                 "cost_analysis": cost_analysis,
                 "stop_reason": response.stop_reason,
-                "duration_seconds": time.time() - start_time
+                "duration_seconds": time.time() - start_time,
+                "cached": False  # Flag to indicate new API call
             }
 
             # Metrics
@@ -311,6 +421,40 @@ class EnhancedAnthropicClient:
         )
 
         return response["content"]
+
+    async def generate(
+        self,
+        prompt: str,
+        model: str,
+        temperature: float = 0.7,
+        max_tokens: int = 8000
+    ):
+        """
+        Direct generation method for RequestBatcher compatibility.
+
+        Args:
+            prompt: User prompt
+            model: Model to use
+            temperature: Sampling temperature
+            max_tokens: Maximum output tokens
+
+        Returns:
+            Object with .text attribute containing response
+        """
+        # Call Anthropic API directly
+        response = self.anthropic.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        # Return object with .text attribute (RequestBatcher expects this)
+        class SimpleResponse:
+            def __init__(self, text):
+                self.text = text
+
+        return SimpleResponse(text=response.content[0].text)
 
     def get_model_for_task(
         self,
@@ -464,3 +608,49 @@ class EnhancedAnthropicClient:
                     labels={"model": model},
                     help_text="Total cached tokens read"
                 )
+
+    def _build_full_prompt(
+        self,
+        cacheable_context: Dict[str, Any],
+        variable_prompt: str
+    ) -> str:
+        """
+        Build full prompt string for V2 cache key generation.
+
+        Combines system prompt and variable prompt into single string for hashing.
+
+        Args:
+            cacheable_context: Dict with system_prompt, discovery_doc, etc.
+            variable_prompt: Variable prompt
+
+        Returns:
+            Full prompt string
+        """
+        import json
+
+        parts = []
+
+        # System prompt
+        if "system_prompt" in cacheable_context:
+            parts.append(f"SYSTEM:\n{cacheable_context['system_prompt']}")
+
+        # Discovery doc
+        if "discovery_doc" in cacheable_context:
+            parts.append(f"DISCOVERY:\n{json.dumps(cacheable_context['discovery_doc'], sort_keys=True)}")
+
+        # RAG examples
+        if "rag_examples" in cacheable_context:
+            parts.append(f"RAG:\n{json.dumps(cacheable_context['rag_examples'], sort_keys=True)}")
+
+        # DB schema
+        if "db_schema" in cacheable_context:
+            parts.append(f"SCHEMA:\n{json.dumps(cacheable_context['db_schema'], sort_keys=True)}")
+
+        # Project structure
+        if "project_structure" in cacheable_context:
+            parts.append(f"PROJECT:\n{json.dumps(cacheable_context['project_structure'], sort_keys=True)}")
+
+        # Variable prompt
+        parts.append(f"PROMPT:\n{variable_prompt}")
+
+        return "\n\n".join(parts)
