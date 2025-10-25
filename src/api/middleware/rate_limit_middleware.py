@@ -1,15 +1,16 @@
 """
 Rate Limiting Middleware
 
-Implements API rate limiting based on user quotas.
-Task Group 7.1-7.2 - Phase 6: Authentication & Multi-tenancy
+Implements API rate limiting based on Redis sliding window algorithm.
+Updated for Phase 1 Critical Security Vulnerabilities - Group 5: API Security Layer
 
 Features:
-- Per-user rate limiting based on quota settings
 - Redis-backed distributed rate limiting
 - Sliding window rate limiting algorithm
-- Rate limit headers in responses
-- Configurable default limits
+- Per-IP rate limits for anonymous users: 30 req/min global, 10 req/min auth endpoints
+- Per-user rate limits for authenticated users: 100 req/min global, 20 req/min auth endpoints
+- Rate limit headers in all responses
+- HTTP 429 with Retry-After header when limit exceeded
 """
 
 import time
@@ -19,26 +20,36 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import Response, JSONResponse
 import redis
 
-from src.models.user_quota import UserQuota
-from src.config.database import get_db_context
-from src.config.constants import REDIS_HOST, REDIS_PORT
+from src.config.settings import get_settings
 from src.observability import get_logger
 
 logger = get_logger("rate_limit_middleware")
 
+# Get settings
+settings = get_settings()
+
 # Default rate limits (requests per minute)
-DEFAULT_RATE_LIMIT = 30
-UNAUTHENTICATED_RATE_LIMIT = 10
+# Anonymous users
+ANONYMOUS_GLOBAL_LIMIT = 30  # 30 req/min for general endpoints
+ANONYMOUS_AUTH_LIMIT = 10    # 10 req/min for auth endpoints
+
+# Authenticated users
+AUTHENTICATED_GLOBAL_LIMIT = 100  # 100 req/min for general endpoints
+AUTHENTICATED_AUTH_LIMIT = 20     # 20 req/min for auth endpoints
+
+# Redis TTL (2 minutes to be safe)
+REDIS_TTL = 120
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """
     Rate limiting middleware using Redis sliding window algorithm.
 
-    Applies per-user rate limits based on UserQuota settings.
-    Uses Redis for distributed rate limiting across multiple API instances.
+    Applies different rate limits based on:
+    - Authentication status (anonymous vs authenticated)
+    - Endpoint type (general vs auth endpoints)
 
-    Headers added to responses:
+    Headers added to all responses:
     - X-RateLimit-Limit: Maximum requests allowed per minute
     - X-RateLimit-Remaining: Requests remaining in current window
     - X-RateLimit-Reset: Unix timestamp when limit resets
@@ -59,15 +70,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         else:
             try:
                 self.redis = redis.Redis(
-                    host=REDIS_HOST,
-                    port=REDIS_PORT,
+                    host=settings.REDIS_HOST,
+                    port=settings.REDIS_PORT,
+                    password=settings.REDIS_PASSWORD,
                     decode_responses=True,
                     socket_timeout=1,
                     socket_connect_timeout=1
                 )
                 # Test connection
                 self.redis.ping()
-                logger.info(f"Rate limiter connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
+                logger.info(f"Rate limiter connected to Redis at {settings.REDIS_HOST}:{settings.REDIS_PORT}")
             except Exception as e:
                 logger.warning(f"Redis not available for rate limiting: {str(e)}")
                 self.redis = None
@@ -99,6 +111,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 return JSONResponse(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     content={
+                        "code": "RATE_001",
                         "error": "Rate limit exceeded",
                         "message": f"Too many requests. Limit: {rate_limit} requests per minute",
                         "retry_after": reset_time - int(time.time())
@@ -165,22 +178,28 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Try to get user from request state (set by auth middleware)
         user = getattr(request.state, "user", None)
 
+        # Check if this is an auth endpoint
+        is_auth_endpoint = "/auth/" in request.url.path
+
         if user:
-            # Authenticated user - get their quota
-            with get_db_context() as db:
-                quota = db.query(UserQuota).filter(UserQuota.user_id == user.user_id).first()
-
-                if quota and quota.api_calls_per_minute:
-                    rate_limit = quota.api_calls_per_minute
-                else:
-                    rate_limit = DEFAULT_RATE_LIMIT
-
+            # Authenticated user
             user_id = f"user:{user.user_id}"
+
+            # Apply different limits for auth endpoints
+            if is_auth_endpoint:
+                rate_limit = AUTHENTICATED_AUTH_LIMIT
+            else:
+                rate_limit = AUTHENTICATED_GLOBAL_LIMIT
         else:
             # Unauthenticated - use IP address with lower limit
             client_ip = request.client.host if request.client else "unknown"
             user_id = f"ip:{client_ip}"
-            rate_limit = UNAUTHENTICATED_RATE_LIMIT
+
+            # Apply different limits for auth endpoints
+            if is_auth_endpoint:
+                rate_limit = ANONYMOUS_AUTH_LIMIT
+            else:
+                rate_limit = ANONYMOUS_GLOBAL_LIMIT
 
         return user_id, rate_limit
 
@@ -214,7 +233,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 self.redis.zadd(key, {str(now): now})
 
                 # Set expiry on key (2 minutes to be safe)
-                self.redis.expire(key, 120)
+                self.redis.expire(key, REDIS_TTL)
 
                 remaining = rate_limit - request_count - 1
                 reset_time = int(now) + 60
