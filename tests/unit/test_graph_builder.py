@@ -36,7 +36,7 @@ def sample_atoms():
         language="python",
         complexity=1.0,
         status="pending",
-        dependencies=[],
+        
         context_completeness=0.95
     )
 
@@ -52,7 +52,7 @@ def sample_atoms():
         language="python",
         complexity=1.0,
         status="pending",
-        dependencies=[],
+        
         context_completeness=0.95
     )
 
@@ -68,7 +68,7 @@ def sample_atoms():
         language="python",
         complexity=1.0,
         status="pending",
-        dependencies=[],
+        
         context_completeness=0.95
     )
 
@@ -103,7 +103,7 @@ def test_detect_import_dependencies(graph_builder):
             language="python",
             complexity=1.0,
             status="pending",
-            dependencies=[],
+            
             context_completeness=0.95
         ),
         AtomicUnit(
@@ -117,7 +117,7 @@ def test_detect_import_dependencies(graph_builder):
             language="python",
             complexity=1.0,
             status="pending",
-            dependencies=[],
+            
             context_completeness=0.95
         )
     ]
@@ -144,7 +144,7 @@ def test_detect_function_call_dependencies(graph_builder):
             language="python",
             complexity=1.0,
             status="pending",
-            dependencies=[],
+            
             context_completeness=0.95
         ),
         AtomicUnit(
@@ -158,7 +158,7 @@ def test_detect_function_call_dependencies(graph_builder):
             language="python",
             complexity=1.0,
             status="pending",
-            dependencies=[],
+            
             context_completeness=0.95
         )
     ]
@@ -182,7 +182,7 @@ def test_detect_variable_dependencies(graph_builder):
             language="python",
             complexity=1.0,
             status="pending",
-            dependencies=[],
+            
             context_completeness=0.95
         ),
         AtomicUnit(
@@ -196,7 +196,7 @@ def test_detect_variable_dependencies(graph_builder):
             language="python",
             complexity=1.0,
             status="pending",
-            dependencies=[],
+            
             context_completeness=0.95
         )
     ]
@@ -227,7 +227,7 @@ def test_handle_circular_references(graph_builder):
             language="python",
             complexity=1.0,
             status="pending",
-            dependencies=[atom2_id],  # A depends on B
+              # A depends on B
             context_completeness=0.95
         ),
         AtomicUnit(
@@ -241,7 +241,7 @@ def test_handle_circular_references(graph_builder):
             language="python",
             complexity=1.0,
             status="pending",
-            dependencies=[atom1_id],  # B depends on A (circular!)
+              # B depends on A (circular!)
             context_completeness=0.95
         )
     ]
@@ -295,7 +295,7 @@ MY_CONSTANT = 42
             language="python",
             complexity=1.0,
             status="pending",
-            dependencies=[],
+            
             context_completeness=0.95
         )
     ]
@@ -348,7 +348,7 @@ def test_build_graph_single_atom(graph_builder):
             language="python",
             complexity=1.0,
             status="pending",
-            dependencies=[],
+            
             context_completeness=0.95
         )
     ]
