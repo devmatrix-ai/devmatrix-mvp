@@ -10,7 +10,7 @@ Date: 2025-10-24
 import pytest
 import uuid
 import networkx as nx
-from src.dependency.topological_sorter import TopologicalSorter, ExecutionPlan, Wave
+from src.dependency.topological_sorter import TopologicalSorter, ExecutionPlan, ExecutionWave
 from src.models import AtomicUnit
 
 
@@ -32,13 +32,14 @@ def sample_atoms():
             masterplan_id=masterplan_id,
             task_id=task_id,
             atom_number=i + 1,
+            name=f"Atom {i+1}",
             description=f"Atom {i+1}",
             code_to_generate=f"def func_{i}(): pass",
             file_path=f"src/module_{i}.py",
             language="python",
+            loc=5,
             complexity=1.0,
             status="pending",
-            dependencies=[],
             context_completeness=0.95
         ))
 
@@ -86,13 +87,14 @@ def test_cycle_detection(sorter):
             masterplan_id=uuid.uuid4(),
             task_id=uuid.uuid4(),
             atom_number=i,
+            name=f"Atom {i}",
             description=f"Atom {i}",
             code_to_generate="pass",
             file_path="file.py",
             language="python",
+            loc=5,
             complexity=1.0,
             status="pending",
-            dependencies=[],
             context_completeness=0.95
         )
         for i, aid in enumerate(atom_ids)
@@ -129,13 +131,13 @@ def test_level_grouping_correctness(sorter, sample_atoms):
     assert plan.total_waves == 3
 
     # Wave 0 should have 2 atoms (0 and 1 - no deps)
-    assert plan.waves[0].atom_count == 2
+    assert plan.waves[0].total_atoms == 2
 
     # Wave 1 should have 1 atom (2)
-    assert plan.waves[1].atom_count == 1
+    assert plan.waves[1].total_atoms == 1
 
     # Wave 2 should have 2 atoms (3 and 4)
-    assert plan.waves[2].atom_count == 2
+    assert plan.waves[2].total_atoms == 2
 
 
 def test_waves_maximize_parallelization(sorter, sample_atoms):
@@ -149,7 +151,7 @@ def test_waves_maximize_parallelization(sorter, sample_atoms):
 
     # All 5 atoms should be in wave 0 (fully parallel)
     assert plan.total_waves == 1
-    assert plan.waves[0].atom_count == 5
+    assert plan.waves[0].total_atoms == 5
     assert plan.max_parallelism == 5
 
 
@@ -247,13 +249,14 @@ def test_handle_cycles_with_minimum_edges(sorter):
             masterplan_id=uuid.uuid4(),
             task_id=uuid.uuid4(),
             atom_number=i,
+            name=f"Atom {i}",
             description=f"Atom {i}",
             code_to_generate="pass",
             file_path="file.py",
             language="python",
+            loc=5,
             complexity=1.0,
             status="pending",
-            dependencies=[],
             context_completeness=0.95
         )
         for i, aid in enumerate(atom_ids)
@@ -287,13 +290,14 @@ def test_single_node_graph(sorter):
         masterplan_id=uuid.uuid4(),
         task_id=uuid.uuid4(),
         atom_number=1,
+        name="Single",
         description="Single",
         code_to_generate="pass",
         file_path="file.py",
         language="python",
+        loc=5,
         complexity=1.0,
         status="pending",
-        dependencies=[],
         context_completeness=0.95
     )
 
@@ -302,7 +306,7 @@ def test_single_node_graph(sorter):
     plan = sorter.create_execution_plan(graph, [atom])
 
     assert plan.total_waves == 1
-    assert plan.waves[0].atom_count == 1
+    assert plan.waves[0].total_atoms == 1
 
 
 def test_disconnected_components(sorter, sample_atoms):

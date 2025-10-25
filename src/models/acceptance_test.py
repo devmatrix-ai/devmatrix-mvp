@@ -65,7 +65,7 @@ class AcceptanceTest(Base):
     )
 
     # Relationships
-    masterplan = relationship("Masterplan", back_populates="acceptance_tests")
+    masterplan = relationship("MasterPlan", back_populates="acceptance_tests")
     results = relationship(
         "AcceptanceTestResult",
         back_populates="test",

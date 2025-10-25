@@ -170,7 +170,7 @@ class TopologicalSorter:
                         node_to_wave[node] = wave_number
 
             # Create wave
-            atom_ids = [uuid.UUID(node) for node in current_wave_nodes]
+            atom_ids = [node if isinstance(node, uuid.UUID) else uuid.UUID(node) for node in current_wave_nodes]
 
             # Estimate duration (sum of complexities)
             estimated_duration = sum(
@@ -218,7 +218,7 @@ class TopologicalSorter:
 
             # Log first 10 cycles
             for i, cycle in enumerate(cycles[:10]):
-                cycle_str = " → ".join(cycle) + f" → {cycle[0]}"
+                cycle_str = " → ".join(str(node) for node in cycle) + f" → {cycle[0]}"
                 cycle_info.append(f"Cycle {i+1}: {cycle_str}")
                 logger.warning(f"  {cycle_info[-1]}")
 
@@ -246,7 +246,7 @@ class TopologicalSorter:
     def _find_feedback_arc_set(
         self,
         graph: nx.DiGraph,
-        cycles: List[List[str]]
+        cycles: List[List]
     ) -> List[Tuple[str, str]]:
         """
         Find minimum feedback arc set (edges to remove to break cycles)
