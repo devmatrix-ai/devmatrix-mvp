@@ -9,6 +9,12 @@ from dotenv import load_dotenv
 import tempfile
 import shutil
 
+# Set test environment variables BEFORE loading dotenv
+# These ensure Settings validation passes during test collection
+os.environ.setdefault('JWT_SECRET', 'test-secret-key-for-testing-only-minimum-32-characters-required')
+os.environ.setdefault('DATABASE_URL', 'postgresql://test:test@localhost:5432/test')
+os.environ.setdefault('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5173')
+
 # Load test environment
 load_dotenv('.env.test')
 
@@ -322,6 +328,9 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers", "integration: marks integration tests (require services)"
+    )
+    config.addinivalue_line(
+        "markers", "security: marks security penetration tests"
     )
     config.addinivalue_line(
         "markers", "slow: marks tests that take >30 seconds"
