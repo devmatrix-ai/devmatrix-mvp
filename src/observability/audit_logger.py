@@ -84,7 +84,7 @@ class AuditLogger:
                 result=result,
                 ip_address=ip_address,
                 user_agent=user_agent,
-                metadata=metadata or {}
+                event_metadata=metadata or {}
             )
 
             # Insert into database asynchronously

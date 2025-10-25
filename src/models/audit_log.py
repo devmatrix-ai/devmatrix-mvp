@@ -35,7 +35,7 @@ class AuditLog(Base):
         result: Event result ("success" or "denied")
         ip_address: Client IP address
         user_agent: Client user agent string
-        metadata: Additional event metadata (JSONB)
+        event_metadata: Additional event metadata (JSONB, column name 'metadata')
     """
 
     __tablename__ = "audit_logs"
@@ -57,7 +57,7 @@ class AuditLog(Base):
     )
     ip_address = Column(String(50), nullable=True)
     user_agent = Column(Text, nullable=True)
-    metadata = Column(JSONB, nullable=True, default={})
+    event_metadata = Column("metadata", JSONB, nullable=True, default={})
 
     # Indexes for performance
     __table_args__ = (
@@ -85,5 +85,5 @@ class AuditLog(Base):
             "result": self.result,
             "ip_address": self.ip_address,
             "user_agent": self.user_agent,
-            "metadata": self.metadata or {}
+            "metadata": self.event_metadata or {}
         }
