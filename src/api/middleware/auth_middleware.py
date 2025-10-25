@@ -2,6 +2,7 @@
 Authentication Middleware for FastAPI
 
 Provides JWT-based authentication for protected endpoints.
+Updated with Group 3: Token blacklist checking and correlation_id logging.
 """
 
 from typing import Optional
@@ -81,20 +82,27 @@ async def get_current_user(request: Request, token: str = Depends(get_token_from
     """
     Get current authenticated user from JWT token.
 
+    Group 3 Update: Now checks token blacklist before user lookup.
+
     Args:
-        request: FastAPI request (for storing user in state)
+        request: FastAPI request (for storing user in state and correlation_id)
         token: JWT access token
 
     Returns:
         User object
 
     Raises:
-        HTTPException: If token is invalid or user not found
+        HTTPException: If token is invalid, blacklisted, or user not found
     """
-    user = auth_middleware.auth_service.get_current_user(token)
+    correlation_id = getattr(request.state, 'correlation_id', None)
+
+    user = auth_middleware.auth_service.get_current_user(token, correlation_id)
 
     if not user:
-        logger.warning("Invalid or expired token")
+        logger.warning(
+            "Invalid or expired token",
+            extra={"correlation_id": correlation_id}
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
@@ -104,7 +112,10 @@ async def get_current_user(request: Request, token: str = Depends(get_token_from
     # Store user in request state for rate limiting middleware
     request.state.user = user
 
-    logger.debug(f"Authenticated user: {user.user_id} ({user.email})")
+    logger.debug(
+        f"Authenticated user: {user.user_id} ({user.email})",
+        extra={"correlation_id": correlation_id}
+    )
     return user
 
 
@@ -166,6 +177,8 @@ async def get_optional_user(request: Request) -> Optional[User]:
     Returns:
         User object or None
     """
+    correlation_id = getattr(request.state, 'correlation_id', None)
+
     # Try to get authorization header
     authorization = request.headers.get("Authorization")
 
@@ -179,9 +192,12 @@ async def get_optional_user(request: Request) -> Optional[User]:
             return None
 
         # Get user
-        user = auth_middleware.auth_service.get_current_user(token)
+        user = auth_middleware.auth_service.get_current_user(token, correlation_id)
         return user
 
     except Exception as e:
-        logger.debug(f"Optional auth failed: {str(e)}")
+        logger.debug(
+            f"Optional auth failed: {str(e)}",
+            extra={"correlation_id": correlation_id}
+        )
         return None
