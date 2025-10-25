@@ -7,11 +7,15 @@ Creates and configures the FastAPI application with all routes and middleware.
 from contextlib import asynccontextmanager
 from typing import Dict, Any
 from pathlib import Path
+import sys
+import uuid
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
+from sqlalchemy.exc import SQLAlchemyError
 
 from ..observability import StructuredLogger, HealthCheck, MetricsMiddleware, setup_logging
 from ..observability.global_metrics import metrics_collector
@@ -31,6 +35,33 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     # Startup
     logger.info("Starting API application")
+
+    # ========================================
+    # Phase 1 Security: Configuration Validation
+    # ========================================
+    try:
+        from ..config.settings import get_settings
+
+        settings = get_settings()
+
+        # Validate JWT_SECRET (fail-fast if invalid)
+        settings.validate_jwt_secret()
+
+        logger.info("Configuration validation passed")
+        logger.info(f"Environment: {settings.ENVIRONMENT}")
+        logger.info(f"CORS origins configured: {len(settings.get_cors_origins_list())}")
+
+    except ValidationError as e:
+        logger.critical(f"CRITICAL: Configuration validation failed. {e}")
+        logger.critical("Application cannot start without required environment variables.")
+        logger.critical("Please check .env file and ensure JWT_SECRET and DATABASE_URL are set.")
+        sys.exit(1)
+    except ValueError as e:
+        logger.critical(f"CRITICAL: Configuration validation failed. {e}")
+        sys.exit(1)
+    except Exception as e:
+        logger.critical(f"CRITICAL: Unexpected error during startup validation. {e}")
+        sys.exit(1)
 
     # Register health checks
     def system_health():
@@ -66,14 +97,49 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
     )
 
-    # Configure CORS
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],  # Configure appropriately for production
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # ========================================
+    # Phase 1 Security: Correlation ID Middleware
+    # ========================================
+    # This MUST run first to ensure correlation_id is available
+    # in all subsequent middleware and handlers
+    from .middleware.correlation_id_middleware import correlation_id_middleware
+    app.middleware("http")(correlation_id_middleware)
+
+    # ========================================
+    # Phase 1 Security: CORS Configuration
+    # ========================================
+    # Load CORS origins from environment (not wildcard)
+    from ..config.settings import get_settings
+
+    try:
+        settings = get_settings()
+        allowed_origins = settings.get_cors_origins_list()
+
+        # If no origins configured, use empty list (no CORS)
+        # This is safer than wildcard
+        if not allowed_origins:
+            logger.warning("No CORS origins configured. CORS will be restrictive.")
+            allowed_origins = []
+
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=allowed_origins,  # Exact string matching only
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+        logger.info(f"CORS configured with {len(allowed_origins)} allowed origins")
+    except Exception as e:
+        logger.error(f"Failed to configure CORS: {e}")
+        # Continue with empty origins (restrictive CORS)
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=[],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     # Add rate limiting middleware (must be before other middleware)
     # DISABLED FOR E2E TESTING - Re-enable for production
@@ -139,16 +205,100 @@ def create_app() -> FastAPI:
             "ui": "/",
         }
 
-    # Global exception handler
+    # ========================================
+    # Phase 1 Security: Global Exception Handler
+    # ========================================
     @app.exception_handler(Exception)
-    async def global_exception_handler(request, exc: Exception):
-        logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
+    async def global_exception_handler(request: Request, exc: Exception):
+        """
+        Global exception handler that converts all exceptions to ErrorResponse format.
+
+        Exception Handling Strategy:
+        1. HTTPException - Re-raise unchanged (already in correct format)
+        2. SQLAlchemyError - Database errors (500)
+        3. ValidationError - Input validation errors (400)
+        4. Exception - Catch-all for unexpected errors (500)
+
+        All errors include:
+        - Correlation ID for tracing
+        - Proper error codes
+        - Stack traces in logs
+        - X-Correlation-ID header
+        """
+        from .responses.error_response import ErrorResponse
+
+        # Extract correlation_id from request state (set by middleware)
+        correlation_id = getattr(request.state, 'correlation_id', str(uuid.uuid4()))
+
+        # Re-raise HTTPException unchanged (FastAPI handles these correctly)
+        if isinstance(exc, HTTPException):
+            # Log but don't wrap HTTPException
+            logger.warning(
+                f"HTTP exception: {exc.status_code} - {exc.detail}",
+                extra={"correlation_id": correlation_id}
+            )
+            raise exc
+
+        # Database errors
+        if isinstance(exc, SQLAlchemyError):
+            logger.error(
+                f"Database error: {str(exc)}",
+                exc_info=True,
+                extra={"correlation_id": correlation_id}
+            )
+
+            error_response = ErrorResponse(
+                code="DB_001",
+                message="Database error occurred",
+                details={"error_type": type(exc).__name__},
+                correlation_id=correlation_id
+            )
+
+            return JSONResponse(
+                status_code=500,
+                content=error_response.model_dump(),
+                headers={"X-Correlation-ID": correlation_id}
+            )
+
+        # Validation errors
+        if isinstance(exc, (ValidationError, ValueError)):
+            logger.warning(
+                f"Validation error: {str(exc)}",
+                exc_info=True,
+                extra={"correlation_id": correlation_id}
+            )
+
+            error_response = ErrorResponse(
+                code="VAL_001",
+                message="Invalid input",
+                details={"error": str(exc)},
+                correlation_id=correlation_id
+            )
+
+            return JSONResponse(
+                status_code=400,
+                content=error_response.model_dump(),
+                headers={"X-Correlation-ID": correlation_id}
+            )
+
+        # Catch-all for unexpected errors
+        logger.error(
+            f"Unexpected error: {str(exc)}",
+            exc_info=True,
+            extra={"correlation_id": correlation_id}
+        )
+
+        error_response = ErrorResponse(
+            code="SYS_001",
+            message="Internal server error",
+            details={"error_type": type(exc).__name__},
+            correlation_id=correlation_id
+        )
+
         return JSONResponse(
             status_code=500,
-            content={
-                "error": "Internal server error",
-                "message": str(exc),
-            },
+            content=error_response.model_dump(),
+            headers={"X-Correlation-ID": correlation_id}
         )
 
     return app
