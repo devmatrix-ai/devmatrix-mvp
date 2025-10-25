@@ -11,7 +11,11 @@ from alembic import context
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import database configuration and models
-from src.config.database import Base, DATABASE_URL
+from src.config.database import Base
+import os
+
+# Get DATABASE_URL from environment directly (avoid Settings validation for JWT_SECRET)
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://devmatrix:devmatrix@localhost:5432/devmatrix")
 
 # Import ALL models to register them with Base.metadata
 import src.models.user  # noqa - Register User model
@@ -20,6 +24,7 @@ import src.models.user_usage  # noqa - Register UserUsage model
 import src.models.conversation  # noqa - Register Conversation model
 import src.models.message  # noqa - Register Message model
 import src.models.masterplan  # noqa - Register MasterPlan models
+import src.models.audit_log  # noqa - Register AuditLog model
 
 # Alembic Config object
 config = context.config
