@@ -3,15 +3,20 @@ ChromaDB vector store for RAG system.
 
 This module provides a wrapper around ChromaDB for storing and retrieving
 code embeddings. It handles collection management, indexing, and similarity search.
+
+Updated for Phase 1 Critical Security Vulnerabilities - Group 5: API Security Layer
+Added input validation and sanitization for SQL injection prevention.
 """
 
 from typing import List, Dict, Any, Optional, Tuple
 import uuid
+import re
 from datetime import datetime
 
 import chromadb
 from chromadb.config import Settings
 from chromadb.api.types import QueryResult
+from pydantic import BaseModel, Field, field_validator
 
 from src.rag.embeddings import EmbeddingModel
 from src.config import (
@@ -21,6 +26,83 @@ from src.config import (
     CHROMADB_DISTANCE_METRIC,
 )
 from src.observability import get_logger
+
+
+# ========================================
+# Input Validation Schemas
+# Group 5.6: SQL Injection Prevention
+# ========================================
+
+class SearchRequest(BaseModel):
+    """
+    Validated search request schema.
+
+    Prevents SQL injection by validating and sanitizing inputs.
+    """
+    query: str = Field(..., min_length=1, max_length=500, description="Search query text")
+    top_k: int = Field(default=5, ge=1, le=100, description="Number of results (1-100)")
+    filters: Optional[Dict[str, Any]] = Field(default=None, description="Optional metadata filters")
+
+    @field_validator("query")
+    @classmethod
+    def validate_query(cls, v: str) -> str:
+        """
+        Validate and sanitize query string.
+
+        Checks for SQL injection patterns and sanitizes input.
+
+        Args:
+            v: Query string
+
+        Returns:
+            Sanitized query string
+
+        Raises:
+            ValueError: If query contains SQL special characters
+        """
+        # Check for SQL special characters
+        sql_special_chars = ["'", '"', "--", ";", "/*", "*/", "UNION", "DROP", "DELETE", "INSERT", "UPDATE"]
+
+        for char in sql_special_chars:
+            if char in v.upper():
+                raise ValueError(f"Query contains prohibited character or keyword: {char}")
+
+        # Remove any remaining dangerous characters
+        sanitized = re.sub(r'[;\'"\\]', '', v)
+
+        return sanitized
+
+    @field_validator("filters")
+    @classmethod
+    def validate_filters(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """
+        Validate filter dictionary.
+
+        Only allows whitelisted filter keys.
+
+        Args:
+            v: Filter dictionary
+
+        Returns:
+            Validated filters
+
+        Raises:
+            ValueError: If filter contains non-whitelisted keys
+        """
+        if v is None:
+            return None
+
+        # Whitelist of allowed filter keys
+        allowed_keys = {
+            "language", "file_path", "approved", "tags",
+            "indexed_at", "code_length", "author"
+        }
+
+        for key in v.keys():
+            if key not in allowed_keys:
+                raise ValueError(f"Filter key '{key}' is not allowed")
+
+        return v
 
 
 class VectorStore:
@@ -269,6 +351,8 @@ class VectorStore:
         """
         Search for similar code examples.
 
+        SECURITY: Input validation added to prevent SQL injection.
+
         Args:
             query: Query text (code snippet or natural language)
             top_k: Number of results to return (default: 5)
@@ -282,11 +366,21 @@ class VectorStore:
             ValueError: If query is empty or top_k is invalid
             Exception: If search fails
         """
-        if not query or not query.strip():
-            raise ValueError("Cannot search with empty query")
+        # Validate inputs using Pydantic schema
+        try:
+            search_request = SearchRequest(
+                query=query,
+                top_k=top_k,
+                filters=where
+            )
+        except ValueError as e:
+            self.logger.warning(f"Search validation failed: {str(e)}")
+            raise ValueError(f"Invalid search parameters: {str(e)}")
 
-        if top_k < 1:
-            raise ValueError(f"top_k must be >= 1, got {top_k}")
+        # Use validated values
+        query = search_request.query
+        top_k = search_request.top_k
+        where = search_request.filters
 
         try:
             self.logger.debug(
@@ -300,7 +394,8 @@ class VectorStore:
             # Generate query embedding
             query_embedding = self.embedding_model.embed_text(query)
 
-            # Perform search
+            # Perform search using parameterized ChromaDB query
+            # ChromaDB uses safe parameterization internally
             results: QueryResult = self.collection.query(
                 query_embeddings=[query_embedding],
                 n_results=top_k,
@@ -353,7 +448,7 @@ class VectorStore:
             ValueError: If parameters are invalid
             Exception: If search fails
         """
-        # Perform search
+        # Perform search (validation happens in search method)
         results = self.search(query=query, top_k=top_k, where=filters)
 
         # Apply similarity threshold if specified

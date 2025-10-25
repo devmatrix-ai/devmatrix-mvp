@@ -2,6 +2,7 @@
 FastAPI Application Factory
 
 Creates and configures the FastAPI application with all routes and middleware.
+Updated for Phase 1 Critical Security Vulnerabilities - Group 5: API Security Layer
 """
 
 from contextlib import asynccontextmanager
@@ -141,10 +142,13 @@ def create_app() -> FastAPI:
             allow_headers=["*"],
         )
 
-    # Add rate limiting middleware (must be before other middleware)
-    # DISABLED FOR E2E TESTING - Re-enable for production
-    # from ..api.middleware.rate_limit_middleware import RateLimitMiddleware
-    # app.add_middleware(RateLimitMiddleware)
+    # ========================================
+    # Phase 1 Security: Rate Limiting Middleware
+    # Group 5.3: Enable rate limiting with Redis backing
+    # ========================================
+    from .middleware.rate_limit_middleware import RateLimitMiddleware
+    app.add_middleware(RateLimitMiddleware)
+    logger.info("Rate limiting middleware enabled")
 
     # Add metrics middleware
     app.add_middleware(MetricsMiddleware, metrics_collector=metrics_collector)

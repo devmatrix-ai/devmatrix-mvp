@@ -327,8 +327,8 @@ Priority: P0 - Critical
 **Dependencies:** Groups 1-4 (all previous layers)
 **Estimated Time:** 3-4 days
 
-- [ ] 5.0 Complete API security layer
-  - [ ] 5.1 Write 2-8 focused tests for API security
+- [x] 5.0 Complete API security layer
+  - [x] 5.1 Write 2-8 focused tests for API security
     - Test anonymous user hits global rate limit (429)
     - Test anonymous user hits auth endpoint limit (429)
     - Test authenticated user hits global limit (429)
@@ -337,7 +337,7 @@ Priority: P0 - Critical
     - Test disallowed CORS origin rejected (403)
     - Test SQL injection attempts blocked
     - Test parameterized queries safe from injection
-  - [ ] 5.2 Update `/src/api/middleware/rate_limit_middleware.py`
+  - [x] 5.2 Update `/src/api/middleware/rate_limit_middleware.py`
     - Enable middleware (currently disabled)
     - Implement Redis-backed rate limiting
     - Add per-IP rate limits: 30 req/min global, 10 req/min on /auth/*
@@ -352,18 +352,18 @@ Priority: P0 - Critical
     - Add Retry-After header on 429 response
     - Support per-endpoint override decorators
     - Set Redis TTL to 120 seconds
-  - [ ] 5.3 Update `/src/main.py` to enable rate limiting
+  - [x] 5.3 Update `/src/main.py` to enable rate limiting
     - Import rate_limit_middleware
     - Add app.middleware("http")(rate_limit_middleware)
     - Ensure middleware runs after correlation_id middleware
     - Configure Redis connection for rate limiting
-  - [ ] 5.4 Add stricter rate limits to auth endpoints
+  - [x] 5.4 Add stricter rate limits to auth endpoints
     - Update `/src/api/routers/auth.py`
     - Apply @rate_limit decorator to auth endpoints
     - Anonymous: 10 req/min on /auth/*
     - Authenticated: 20 req/min on /auth/*
     - Override global limits for sensitive endpoints
-  - [ ] 5.5 Update `/src/main.py` to configure CORS from environment
+  - [x] 5.5 Update `/src/main.py` to configure CORS from environment
     - Import CORSMiddleware from fastapi.middleware.cors
     - Import Settings
     - Load allowed_origins from settings.CORS_ALLOWED_ORIGINS
@@ -376,7 +376,7 @@ Priority: P0 - Critical
     - Remove any wildcard origin configurations
     - Test preflight OPTIONS requests
     - Validate origin on every request
-  - [ ] 5.6 Update `/src/rag/vector_store.py` for SQL injection prevention
+  - [x] 5.6 Update `/src/rag/vector_store.py` for SQL injection prevention
     - Add input validation with Pydantic schemas
     - Create SearchRequest schema with query and limit fields
     - Add validator for query: max length 500, no SQL special characters
@@ -385,13 +385,13 @@ Priority: P0 - Critical
     - Whitelist allowed filter keys
     - Use parameterized queries for ChromaDB
     - Never use string concatenation for queries
-  - [ ] 5.7 Update all database queries to use parameterized queries
+  - [x] 5.7 Update all database queries to use parameterized queries
     - Search for string concatenation in SQL: f"SELECT", f"INSERT", f"UPDATE", f"DELETE"
     - Replace with SQLAlchemy text() and bindparams
     - Example: text("SELECT * FROM conversations WHERE id = :id").bindparams(id=conv_id)
     - Update queries in: `/src/services/*.py`, `/src/api/routers/*.py`
     - Verify all queries use ORM or parameterized text()
-  - [ ] 5.8 Ensure API security layer tests pass
+  - [x] 5.8 Ensure API security layer tests pass
     - Run ONLY the 2-8 tests written in 5.1
     - Verify rate limiting works
     - Verify CORS configuration works
