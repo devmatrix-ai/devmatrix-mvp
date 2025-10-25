@@ -15,17 +15,20 @@ interface ConversationHistoryProps {
   currentConversationId: string | null
   onSelectConversation: (conversationId: string) => void
   onNewConversation: () => void
+  isOpen: boolean
+  onClose: () => void
 }
 
 export function ConversationHistory({
   currentConversationId,
   onSelectConversation,
   onNewConversation,
+  isOpen,
+  onClose,
 }: ConversationHistoryProps) {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [isOpen, setIsOpen] = useState(false)
 
   useEffect(() => {
     loadConversations()
@@ -91,31 +94,20 @@ export function ConversationHistory({
 
   return (
     <>
-      {/* Toggle button */}
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="fixed left-4 top-4 z-50 bg-gray-800 hover:bg-gray-700 text-white p-2 rounded-lg shadow-lg transition-colors"
-        title="Historial de conversaciones"
-      >
-        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-        </svg>
-      </button>
-
       {/* Sidebar */}
       <div
-        className={`fixed left-0 top-0 h-full w-80 bg-gray-900 text-white shadow-2xl z-40 transform transition-transform duration-300 ease-in-out ${
+        className={`fixed left-0 top-0 h-full w-80 bg-gradient-to-b from-gray-900/40 via-purple-900/30 to-gray-900/40 backdrop-blur-xl text-white shadow-2xl shadow-purple-500/10 z-40 transform transition-transform duration-300 ease-in-out border-r border-purple-500/20 ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
         <div className="flex flex-col h-full">
           {/* Header */}
-          <div className="p-4 border-b border-gray-700">
+          <div className="p-4 border-b border-purple-500/20 bg-gradient-to-r from-purple-500/10 to-blue-500/10 backdrop-blur-sm">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-lg font-semibold">Conversaciones</h2>
+              <h2 className="text-lg font-semibold text-purple-100">Conversaciones</h2>
               <button
-                onClick={() => setIsOpen(false)}
-                className="text-gray-400 hover:text-white transition-colors"
+                onClick={onClose}
+                className="text-purple-300 hover:text-purple-100 transition-colors hover:bg-purple-500/20 p-1 rounded"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -126,9 +118,9 @@ export function ConversationHistory({
             <button
               onClick={() => {
                 onNewConversation()
-                setIsOpen(false)
+                onClose()
               }}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg transition-colors flex items-center justify-center gap-2"
+              className="w-full bg-gradient-to-r from-purple-600/90 to-blue-600/90 backdrop-blur-sm hover:from-purple-700/90 hover:to-blue-700/90 text-white py-2 px-4 rounded-lg transition-colors flex items-center justify-center gap-2 border border-purple-400/30 shadow-lg shadow-purple-500/20"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -140,17 +132,22 @@ export function ConversationHistory({
           {/* Conversations list */}
           <div className="flex-1 overflow-y-auto">
             {loading && (
-              <div className="p-4 text-center text-gray-400">
-                Cargando...
+              <div className="p-4 text-center text-purple-300">
+                <div className="flex items-center justify-center space-x-2">
+                  <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
+                <p className="mt-2">Cargando...</p>
               </div>
             )}
 
             {error && (
-              <div className="p-4 text-center text-red-400">
-                {error}
+              <div className="p-4 text-center">
+                <p className="text-red-400">{error}</p>
                 <button
                   onClick={loadConversations}
-                  className="block mx-auto mt-2 text-blue-400 hover:text-blue-300"
+                  className="mt-2 px-4 py-2 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 rounded-lg transition-colors border border-purple-500/30"
                 >
                   Reintentar
                 </button>
@@ -158,8 +155,11 @@ export function ConversationHistory({
             )}
 
             {!loading && !error && conversations.length === 0 && (
-              <div className="p-4 text-center text-gray-400">
-                No hay conversaciones guardadas
+              <div className="p-4 text-center text-purple-300">
+                <svg className="w-12 h-12 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+                <p>No hay conversaciones guardadas</p>
               </div>
             )}
 
@@ -168,25 +168,27 @@ export function ConversationHistory({
                 key={conv.id}
                 onClick={() => {
                   onSelectConversation(conv.id)
-                  setIsOpen(false)
+                  onClose()
                 }}
-                className={`p-4 border-b border-gray-800 cursor-pointer hover:bg-gray-800 transition-colors ${
-                  conv.id === currentConversationId ? 'bg-gray-800 border-l-4 border-blue-500' : ''
+                className={`p-4 border-b border-purple-500/10 cursor-pointer hover:bg-purple-500/10 backdrop-blur-sm transition-all ${
+                  conv.id === currentConversationId
+                    ? 'bg-gradient-to-r from-purple-500/20 to-blue-500/20 border-l-4 border-purple-400'
+                    : ''
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs text-gray-400">
+                      <span className="text-xs text-purple-300">
                         {formatDate(conv.updated_at)}
                       </span>
-                      <span className="text-xs text-gray-500">
+                      <span className="text-xs text-purple-400 bg-purple-500/20 px-2 py-0.5 rounded-full">
                         {conv.message_count} {conv.message_count === 1 ? 'mensaje' : 'mensajes'}
                       </span>
                     </div>
 
                     {conv.last_message_preview && (
-                      <p className="text-sm text-gray-300 truncate">
+                      <p className="text-sm text-gray-200 truncate">
                         {conv.last_message_preview}
                       </p>
                     )}
@@ -194,7 +196,7 @@ export function ConversationHistory({
 
                   <button
                     onClick={(e) => handleDelete(conv.id, e)}
-                    className="flex-shrink-0 text-gray-500 hover:text-red-400 transition-colors p-1"
+                    className="flex-shrink-0 text-purple-400 hover:text-red-400 transition-colors p-1 hover:bg-red-500/20 rounded"
                     title="Eliminar conversación"
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -211,8 +213,8 @@ export function ConversationHistory({
       {/* Overlay */}
       {isOpen && (
         <div
-          className="fixed inset-0 bg-black bg-opacity-50 z-30"
-          onClick={() => setIsOpen(false)}
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-30"
+          onClick={onClose}
         />
       )}
     </>

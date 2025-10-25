@@ -15,19 +15,19 @@ export const StatusItem: React.FC<StatusItemProps> = ({
     switch (status) {
       case 'pending':
         return {
-          text: 'text-gray-500 dark:text-gray-400',
+          text: 'text-gray-400',
           icon: 'opacity-50',
           animation: ''
         }
       case 'in_progress':
         return {
-          text: 'text-blue-600 dark:text-blue-400 font-medium',
+          text: 'text-blue-400 font-medium',
           icon: 'animate-pulse',
           animation: 'scale-105'
         }
       case 'done':
         return {
-          text: 'text-green-600 dark:text-green-400 font-medium',
+          text: 'text-green-400 font-medium',
           icon: '',
           animation: 'scale-100'
         }
@@ -39,10 +39,10 @@ export const StatusItem: React.FC<StatusItemProps> = ({
   return (
     <div
       className={`
-        flex items-center gap-2 text-sm py-1 px-2 rounded
+        flex items-center gap-2 text-sm py-1 px-2 rounded backdrop-blur-sm
         transition-all duration-300 ease-out transform
-        ${status === 'in_progress' ? 'bg-blue-50 dark:bg-blue-900/20' : ''}
-        ${status === 'done' ? 'bg-green-50 dark:bg-green-900/20' : ''}
+        ${status === 'in_progress' ? 'bg-blue-500/20 border border-blue-400/30' : ''}
+        ${status === 'done' ? 'bg-green-500/20 border border-green-400/30' : ''}
         ${styles.text}
       `}
     >
@@ -71,8 +71,8 @@ export const StatusItem: React.FC<StatusItemProps> = ({
       {/* Checkmark for done */}
       {status === 'done' && (
         <div className="ml-auto">
-          <div className="w-4 h-4 bg-green-600 dark:bg-green-400 rounded-full flex items-center justify-center animate-scale-in">
-            <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <div className="w-4 h-4 bg-green-400 rounded-full flex items-center justify-center animate-scale-in">
+            <svg className="w-3 h-3 text-gray-900" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
             </svg>
           </div>

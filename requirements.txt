@@ -28,6 +28,7 @@ pydantic-settings==2.5.0
 # State Management
 # ========================================
 redis==5.1.0                      # Realtime workflow state
+redis[asyncio]>=5.1.0             # Async Redis client for caching
 psycopg2-binary==2.9.9            # PostgreSQL driver
 sqlalchemy==2.0.35                # ORM for persistent state
 alembic==1.13.2                   # Database migrations
@@ -82,6 +83,7 @@ aiofiles==24.1.0                  # Async file operations
 python-json-logger==2.0.7         # Structured logging
 tenacity==8.5.0                   # Retry logic (compatible with langchain)
 networkx==3.1                     # Graph algorithms for dependency analysis
+numpy>=1.24.0                     # Numerical computing for cosine similarity
 
 # ========================================
 # WebSocket & Real-time Communication

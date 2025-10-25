@@ -16,9 +16,11 @@ from typing import List, Dict, Any, Optional, Callable
 from enum import Enum
 
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import AtomicUnit, DependencyGraph
+from ..models import AtomicUnit, DependencyGraph, ExecutionWave
 from ..observability import StructuredLogger
+from ..testing import AcceptanceTestRunner, AcceptanceTestGate
 
 
 logger = StructuredLogger("wave_executor", output_json=True)
@@ -75,7 +77,8 @@ class WaveExecutor:
         db: Session,
         code_generator: Optional[Callable] = None,
         max_concurrent: int = 100,
-        timeout_seconds: int = 300
+        timeout_seconds: int = 300,
+        run_acceptance_tests: bool = True
     ):
         """
         Initialize WaveExecutor
@@ -85,11 +88,13 @@ class WaveExecutor:
             code_generator: Optional code generation function (atom, attempt) -> code
             max_concurrent: Max concurrent atom executions (default: 100)
             timeout_seconds: Timeout per atom execution (default: 300s)
+            run_acceptance_tests: Run acceptance tests after wave completion (default: True)
         """
         self.db = db
         self.code_generator = code_generator
         self.max_concurrent = max_concurrent
         self.timeout_seconds = timeout_seconds
+        self.run_acceptance_tests = run_acceptance_tests
 
         # Execution state
         self._execution_state: Dict[uuid.UUID, AtomExecutionResult] = {}
@@ -99,7 +104,8 @@ class WaveExecutor:
         self,
         wave_number: int,
         wave_atoms: List[AtomicUnit],
-        masterplan_id: uuid.UUID
+        masterplan_id: uuid.UUID,
+        wave_id: Optional[uuid.UUID] = None
     ) -> WaveExecutionResult:
         """
         Execute all atoms in a wave in parallel
@@ -108,6 +114,7 @@ class WaveExecutor:
             wave_number: Wave number (0-indexed)
             wave_atoms: List of atoms in this wave
             masterplan_id: MasterPlan ID for context
+            wave_id: Optional ExecutionWave ID for acceptance test tracking
 
         Returns:
             WaveExecutionResult with execution summary
@@ -117,7 +124,8 @@ class WaveExecutor:
             extra={
                 "wave_number": wave_number,
                 "atom_count": len(wave_atoms),
-                "masterplan_id": str(masterplan_id)
+                "masterplan_id": str(masterplan_id),
+                "wave_id": str(wave_id) if wave_id else None
             }
         )
 
@@ -179,6 +187,90 @@ class WaveExecutor:
                 "execution_time": execution_time
             }
         )
+
+        # Run acceptance tests after wave completion
+        if self.run_acceptance_tests and wave_id:
+            logger.info(
+                f"Running acceptance tests for wave {wave_number}",
+                extra={
+                    "wave_id": str(wave_id),
+                    "masterplan_id": str(masterplan_id)
+                }
+            )
+
+            try:
+                # Convert Session to AsyncSession for testing components
+                # Note: This requires the DB session to be AsyncSession-compatible
+                if isinstance(self.db, AsyncSession):
+                    test_runner = AcceptanceTestRunner(self.db)
+                    test_results = await test_runner.run_tests_for_wave(wave_id)
+
+                    logger.info(
+                        f"Acceptance tests completed for wave {wave_number}",
+                        extra={
+                            "wave_id": str(wave_id),
+                            "total_tests": test_results['total'],
+                            "passed": test_results['passed'],
+                            "failed": test_results['failed']
+                        }
+                    )
+
+                    # Check Gate S (100% must + ≥95% should)
+                    gate = AcceptanceTestGate(self.db)
+                    gate_result = await gate.check_gate(masterplan_id, wave_id)
+
+                    logger.info(
+                        f"Gate S check for wave {wave_number}: {gate_result['gate_status']}",
+                        extra={
+                            "wave_id": str(wave_id),
+                            "gate_passed": gate_result['gate_passed'],
+                            "can_release": gate_result['can_release'],
+                            "must_pass_rate": gate_result['must_pass_rate'],
+                            "should_pass_rate": gate_result['should_pass_rate']
+                        }
+                    )
+
+                    # Block next wave if gate fails
+                    if not gate_result['gate_passed']:
+                        error_msg = (
+                            f"Gate S FAILED for wave {wave_number}: "
+                            f"must={gate_result['must_pass_rate']:.1%}, "
+                            f"should={gate_result['should_pass_rate']:.1%}. "
+                            f"Failed requirements: {len(gate_result['failed_requirements'])}"
+                        )
+                        logger.error(error_msg)
+                        wave_result.errors.append(error_msg)
+
+                        # Add gate failure details to wave result
+                        for req in gate_result['failed_requirements'][:5]:  # Show first 5
+                            wave_result.errors.append(
+                                f"  [{req['priority'].upper()}] {req['requirement']}: {req['status']}"
+                            )
+
+                        if len(gate_result['failed_requirements']) > 5:
+                            wave_result.errors.append(
+                                f"  ... and {len(gate_result['failed_requirements']) - 5} more failures"
+                            )
+
+                    elif not gate_result['can_release']:
+                        logger.warning(
+                            f"Gate S passed but cannot release: "
+                            f"should requirements below threshold ({gate_result['should_pass_rate']:.1%})"
+                        )
+
+                else:
+                    logger.warning(
+                        "Acceptance tests skipped: DB session is not AsyncSession-compatible"
+                    )
+
+            except Exception as e:
+                error_msg = f"Acceptance test execution failed: {str(e)}"
+                logger.error(
+                    error_msg,
+                    extra={"wave_id": str(wave_id)},
+                    exc_info=True
+                )
+                wave_result.errors.append(error_msg)
 
         return wave_result
 

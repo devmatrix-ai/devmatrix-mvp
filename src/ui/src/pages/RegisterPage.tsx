@@ -62,27 +62,27 @@ export function RegisterPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 dark:bg-gray-900 px-4 py-12">
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-gray-900 via-purple-900/20 to-blue-900/20 px-4 py-12">
       <div className="w-full max-w-md">
         {/* Logo/Brand */}
         <div className="text-center mb-8">
-          <div className="inline-flex h-16 w-16 items-center justify-center rounded-xl bg-gradient-to-br from-primary-600 to-primary-700 text-white font-bold text-2xl mb-4">
-            D
+          <div className="inline-flex h-20 w-20 items-center justify-center rounded-2xl bg-gradient-to-br from-purple-600 to-blue-600 text-white font-bold text-3xl mb-4 shadow-lg shadow-purple-500/20">
+            <img src="/DOCS/img/devmatrix-icon.svg" alt="DevMatrix" className="h-12 w-12" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+          <h1 className="text-3xl font-bold text-purple-100">
             Create your account
           </h1>
-          <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+          <p className="mt-2 text-sm text-purple-300">
             Start building with DevMatrix
           </p>
         </div>
 
         {/* Registration Form */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-8">
+        <div className="bg-gradient-to-br from-gray-900/40 via-purple-900/20 to-blue-900/20 backdrop-blur-xl rounded-lg border border-purple-500/20 p-8 shadow-xl shadow-purple-500/10">
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Error Message */}
             {error && (
-              <div className="flex items-center gap-2 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-red-800 dark:text-red-200 text-sm">
+              <div className="flex items-center gap-2 p-4 bg-red-500/20 backdrop-blur-sm border border-red-400/30 rounded-lg text-red-200 text-sm">
                 <FiAlertCircle className="flex-shrink-0" />
                 <span>{error}</span>
               </div>
@@ -92,12 +92,12 @@ export function RegisterPage() {
             <div>
               <label
                 htmlFor="email"
-                className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                className="block text-sm font-medium text-purple-200 mb-2"
               >
                 Email
               </label>
               <div className="relative">
-                <FiMail className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <FiMail className="absolute left-3 top-1/2 -translate-y-1/2 text-purple-300" />
                 <input
                   id="email"
                   type="email"
@@ -106,7 +106,7 @@ export function RegisterPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, email: e.target.value })
                   }
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-600 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
+                  className="w-full pl-10 pr-4 py-2 border border-purple-500/20 rounded-lg focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500/50 bg-white/5 backdrop-blur-sm text-purple-100 placeholder-purple-400/50"
                   placeholder="you@example.com"
                   autoComplete="email"
                 />
@@ -117,12 +117,12 @@ export function RegisterPage() {
             <div>
               <label
                 htmlFor="username"
-                className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                className="block text-sm font-medium text-purple-200 mb-2"
               >
                 Username
               </label>
               <div className="relative">
-                <FiUser className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <FiUser className="absolute left-3 top-1/2 -translate-y-1/2 text-purple-300" />
                 <input
                   id="username"
                   type="text"
@@ -131,7 +131,7 @@ export function RegisterPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, username: e.target.value })
                   }
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-600 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
+                  className="w-full pl-10 pr-4 py-2 border border-purple-500/20 rounded-lg focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500/50 bg-white/5 backdrop-blur-sm text-purple-100 placeholder-purple-400/50"
                   placeholder="johndoe"
                   autoComplete="username"
                 />
@@ -142,12 +142,12 @@ export function RegisterPage() {
             <div>
               <label
                 htmlFor="password"
-                className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                className="block text-sm font-medium text-purple-200 mb-2"
               >
                 Password
               </label>
               <div className="relative">
-                <FiLock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <FiLock className="absolute left-3 top-1/2 -translate-y-1/2 text-purple-300" />
                 <input
                   id="password"
                   type="password"
@@ -156,7 +156,7 @@ export function RegisterPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, password: e.target.value })
                   }
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-600 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
+                  className="w-full pl-10 pr-4 py-2 border border-purple-500/20 rounded-lg focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500/50 bg-white/5 backdrop-blur-sm text-purple-100 placeholder-purple-400/50"
                   placeholder="••••••••"
                   autoComplete="new-password"
                 />
@@ -164,11 +164,11 @@ export function RegisterPage() {
               {formData.password && (
                 <div className="mt-2 flex items-center gap-2 text-xs">
                   {passwordIsValid ? (
-                    <><FiCheckCircle className="text-green-600" />
-                    <span className="text-green-600">Strong password</span></>
+                    <><FiCheckCircle className="text-green-400" />
+                    <span className="text-green-300">Strong password</span></>
                   ) : (
-                    <><FiAlertCircle className="text-orange-600" />
-                    <span className="text-orange-600">At least 8 characters required</span></>
+                    <><FiAlertCircle className="text-orange-400" />
+                    <span className="text-orange-300">At least 8 characters required</span></>
                   )}
                 </div>
               )}
@@ -178,12 +178,12 @@ export function RegisterPage() {
             <div>
               <label
                 htmlFor="confirmPassword"
-                className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                className="block text-sm font-medium text-purple-200 mb-2"
               >
                 Confirm Password
               </label>
               <div className="relative">
-                <FiLock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <FiLock className="absolute left-3 top-1/2 -translate-y-1/2 text-purple-300" />
                 <input
                   id="confirmPassword"
                   type="password"
@@ -192,7 +192,7 @@ export function RegisterPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, confirmPassword: e.target.value })
                   }
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-600 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
+                  className="w-full pl-10 pr-4 py-2 border border-purple-500/20 rounded-lg focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500/50 bg-white/5 backdrop-blur-sm text-purple-100 placeholder-purple-400/50"
                   placeholder="••••••••"
                   autoComplete="new-password"
                 />
@@ -200,11 +200,11 @@ export function RegisterPage() {
               {formData.confirmPassword && (
                 <div className="mt-2 flex items-center gap-2 text-xs">
                   {passwordsMatch ? (
-                    <><FiCheckCircle className="text-green-600" />
-                    <span className="text-green-600">Passwords match</span></>
+                    <><FiCheckCircle className="text-green-400" />
+                    <span className="text-green-300">Passwords match</span></>
                   ) : (
-                    <><FiAlertCircle className="text-red-600" />
-                    <span className="text-red-600">Passwords do not match</span></>
+                    <><FiAlertCircle className="text-red-400" />
+                    <span className="text-red-300">Passwords do not match</span></>
                   )}
                 </div>
               )}
@@ -214,18 +214,18 @@ export function RegisterPage() {
             <button
               type="submit"
               disabled={isLoading || !canSubmit}
-              className="w-full py-2.5 px-4 bg-primary-600 hover:bg-primary-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 text-white font-medium rounded-lg transition-colors disabled:cursor-not-allowed"
+              className="w-full py-2.5 px-4 bg-gradient-to-r from-purple-600/90 to-blue-600/90 hover:from-purple-700/90 hover:to-blue-700/90 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors backdrop-blur-sm border border-purple-400/30 shadow-lg shadow-purple-500/20"
             >
               {isLoading ? 'Creating account...' : 'Create account'}
             </button>
           </form>
 
           {/* Login Link */}
-          <div className="mt-6 text-center text-sm text-gray-600 dark:text-gray-400">
+          <div className="mt-6 text-center text-sm text-purple-300">
             Already have an account?{' '}
             <Link
               to="/login"
-              className="font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
+              className="font-medium text-purple-400 hover:text-purple-300 transition-colors"
             >
               Sign in
             </Link>

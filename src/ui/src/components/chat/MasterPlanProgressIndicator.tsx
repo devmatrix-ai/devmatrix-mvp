@@ -279,9 +279,9 @@ export const MasterPlanProgressIndicator: React.FC<MasterPlanProgressIndicatorPr
     <div
       className="
         space-y-4 p-5 rounded-xl shadow-lg
-        bg-gradient-to-br from-purple-50 via-blue-50 to-indigo-50
-        dark:from-purple-900/20 dark:via-blue-900/20 dark:to-indigo-900/20
-        border-2 border-purple-300 dark:border-purple-700
+        bg-gradient-to-br from-purple-500/20 via-blue-500/20 to-indigo-500/20
+        backdrop-blur-md
+        border-2 border-purple-400/30
         animate-fade-in
       "
     >
@@ -291,10 +291,10 @@ export const MasterPlanProgressIndicator: React.FC<MasterPlanProgressIndicatorPr
           {state.isComplete ? '✅' : '🤖'}
         </div>
         <div className="flex-1">
-          <h3 className="font-bold text-lg text-purple-900 dark:text-purple-100">
+          <h3 className="font-bold text-lg text-purple-100">
             {state.isComplete ? 'MasterPlan Generado' : 'Generando MasterPlan'}
           </h3>
-          <p className="text-sm text-purple-700 dark:text-purple-300">
+          <p className="text-sm text-purple-300">
             {state.currentPhase}
           </p>
         </div>
@@ -305,18 +305,17 @@ export const MasterPlanProgressIndicator: React.FC<MasterPlanProgressIndicatorPr
 
       {/* Progress Bar */}
       <div className="space-y-2">
-        <div className="flex justify-between text-xs font-medium text-purple-700 dark:text-purple-300">
+        <div className="flex justify-between text-xs font-medium text-purple-300">
           <span>{state.currentPhase}</span>
           <span className="font-bold">{state.percentage}%</span>
         </div>
 
         {/* Main progress bar */}
-        <div className="w-full bg-purple-200 dark:bg-purple-800 rounded-full h-5 overflow-hidden shadow-inner">
+        <div className="w-full bg-white/10 rounded-full h-5 overflow-hidden shadow-inner">
           <div
             className="
               h-full rounded-full transition-all duration-700 ease-out
               bg-gradient-to-r from-purple-500 via-blue-600 to-indigo-600
-              dark:from-purple-400 dark:via-blue-500 dark:to-indigo-500
               flex items-center justify-end pr-2
               shadow-md
             "
@@ -331,7 +330,7 @@ export const MasterPlanProgressIndicator: React.FC<MasterPlanProgressIndicatorPr
         </div>
 
         {/* Token and time info */}
-        <div className="flex justify-between text-xs text-gray-600 dark:text-gray-400">
+        <div className="flex justify-between text-xs text-gray-400">
           <span className="font-mono">
             {state.tokensReceived > 0
               ? `${state.tokensReceived.toLocaleString()} / ${state.estimatedTotalTokens.toLocaleString()} tokens`
@@ -373,7 +372,7 @@ export const MasterPlanProgressIndicator: React.FC<MasterPlanProgressIndicatorPr
       </div>
 
       {/* Status Timeline */}
-      <div className="space-y-1 bg-white dark:bg-gray-800/50 rounded-lg p-3 shadow-inner">
+      <div className="space-y-1 bg-white/5 backdrop-blur-sm rounded-lg p-3 shadow-inner border border-white/10">
         <StatusItem
           icon="✓"
           text="Discovery completado"
@@ -423,8 +422,8 @@ export const MasterPlanProgressIndicator: React.FC<MasterPlanProgressIndicatorPr
 
       {/* Completion message */}
       {state.isComplete && (
-        <div className="bg-green-100 dark:bg-green-900/30 border-2 border-green-400 dark:border-green-600 rounded-lg p-3 animate-fade-in">
-          <div className="flex items-center gap-2 text-green-800 dark:text-green-200">
+        <div className="bg-green-500/20 backdrop-blur-sm border-2 border-green-400/50 rounded-lg p-3 animate-fade-in">
+          <div className="flex items-center gap-2 text-green-200">
             <span className="text-xl">🎉</span>
             <div className="flex-1">
               <p className="font-bold">MasterPlan generado exitosamente</p>

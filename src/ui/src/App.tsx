@@ -61,10 +61,10 @@ function AppContent() {
   }
 
   return (
-    <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
+    <div className="flex h-screen bg-gradient-to-br from-gray-900 via-purple-900/20 to-blue-900/20">
       {/* Sidebar */}
-      <div className="w-16 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col items-center py-4 space-y-4">
-        <div className="w-10 h-10 bg-gradient-to-br from-primary-600 to-primary-700 rounded-lg flex items-center justify-center text-white font-bold text-lg">
+      <div className="w-16 bg-gradient-to-b from-gray-900/40 via-purple-900/20 to-gray-900/40 backdrop-blur-xl border-r border-purple-500/20 flex flex-col items-center py-4 space-y-4">
+        <div className="w-10 h-10 bg-gradient-to-br from-purple-600 to-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-lg">
           D
         </div>
 
@@ -73,8 +73,8 @@ function AppContent() {
             onClick={() => navigate('/')}
             className={`p-3 rounded-lg transition-colors ${
               isActive('/')
-                ? 'bg-primary-100 dark:bg-primary-900 text-primary-600 dark:text-primary-400'
-                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+                ? 'bg-purple-500/20 backdrop-blur-sm text-purple-400 border border-purple-500/30'
+                : 'text-gray-400 hover:bg-white/10 backdrop-blur-sm'
             }`}
             aria-label="Home"
           >
@@ -85,8 +85,8 @@ function AppContent() {
             onClick={() => navigate('/chat')}
             className={`p-3 rounded-lg transition-colors ${
               isActive('/chat')
-                ? 'bg-primary-100 dark:bg-primary-900 text-primary-600 dark:text-primary-400'
-                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+                ? 'bg-purple-500/20 backdrop-blur-sm text-purple-400 border border-purple-500/30'
+                : 'text-gray-400 hover:bg-white/10 backdrop-blur-sm'
             }`}
             aria-label="Chat"
           >
@@ -97,8 +97,8 @@ function AppContent() {
             onClick={() => navigate('/masterplans')}
             className={`p-3 rounded-lg transition-colors ${
               isActive('/masterplans')
-                ? 'bg-primary-100 dark:bg-primary-900 text-primary-600 dark:text-primary-400'
-                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+                ? 'bg-purple-500/20 backdrop-blur-sm text-purple-400 border border-purple-500/30'
+                : 'text-gray-400 hover:bg-white/10 backdrop-blur-sm'
             }`}
             aria-label="Masterplans"
           >
@@ -109,8 +109,8 @@ function AppContent() {
             onClick={() => navigate('/review')}
             className={`p-3 rounded-lg transition-colors ${
               isActive('/review')
-                ? 'bg-primary-100 dark:bg-primary-900 text-primary-600 dark:text-primary-400'
-                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+                ? 'bg-purple-500/20 backdrop-blur-sm text-purple-400 border border-purple-500/30'
+                : 'text-gray-400 hover:bg-white/10 backdrop-blur-sm'
             }`}
             aria-label="Review Queue"
           >
@@ -121,8 +121,8 @@ function AppContent() {
             onClick={() => navigate('/settings')}
             className={`p-3 rounded-lg transition-colors ${
               isActive('/settings')
-                ? 'bg-primary-100 dark:bg-primary-900 text-primary-600 dark:text-primary-400'
-                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+                ? 'bg-purple-500/20 backdrop-blur-sm text-purple-400 border border-purple-500/30'
+                : 'text-gray-400 hover:bg-white/10 backdrop-blur-sm'
             }`}
             aria-label="Settings"
           >
@@ -135,8 +135,8 @@ function AppContent() {
               onClick={() => navigate('/admin')}
               className={`p-3 rounded-lg transition-colors ${
                 isActive('/admin')
-                  ? 'bg-primary-100 dark:bg-primary-900 text-primary-600 dark:text-primary-400'
-                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+                  ? 'bg-purple-500/20 backdrop-blur-sm text-purple-400 border border-purple-500/30'
+                  : 'text-gray-400 hover:bg-white/10 backdrop-blur-sm'
               }`}
               aria-label="Admin"
             >
@@ -150,7 +150,7 @@ function AppContent() {
           <div className="relative">
             <button
               onClick={() => setShowUserMenu(!showUserMenu)}
-              className="p-3 rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              className="p-3 rounded-lg text-gray-400 hover:bg-white/10 backdrop-blur-sm transition-colors"
               aria-label="User menu"
             >
               <FiUser size={24} />
@@ -163,12 +163,12 @@ function AppContent() {
                   className="fixed inset-0 z-10"
                   onClick={() => setShowUserMenu(false)}
                 />
-                <div className="absolute bottom-full left-16 mb-2 w-64 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-xl z-20">
-                  <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-                    <p className="font-medium text-gray-900 dark:text-white">
+                <div className="absolute bottom-full left-16 mb-2 w-64 bg-gray-900/95 backdrop-blur-md rounded-lg border border-white/10 shadow-xl z-20">
+                  <div className="p-4 border-b border-white/10">
+                    <p className="font-medium text-white">
                       {user.username}
                     </p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                    <p className="text-sm text-gray-400">
                       {user.email}
                     </p>
                   </div>
@@ -178,14 +178,14 @@ function AppContent() {
                         navigate('/profile')
                         setShowUserMenu(false)
                       }}
-                      className="w-full flex items-center gap-3 px-4 py-2 text-left text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                      className="w-full flex items-center gap-3 px-4 py-2 text-left text-gray-300 hover:bg-white/10 backdrop-blur-sm rounded-lg transition-colors"
                     >
                       <FiUser size={18} />
                       <span>Profile</span>
                     </button>
                     <button
                       onClick={handleLogout}
-                      className="w-full flex items-center gap-3 px-4 py-2 text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                      className="w-full flex items-center gap-3 px-4 py-2 text-left text-red-400 hover:bg-red-500/20 backdrop-blur-sm rounded-lg transition-colors"
                     >
                       <FiLogOut size={18} />
                       <span>Logout</span>
@@ -205,15 +205,15 @@ function AppContent() {
           <Route path="/" element={
             <div className="flex-1 flex items-center justify-center p-8">
               <div className="text-center">
-                <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-4">
+                <h1 className="text-4xl font-bold text-purple-100 mb-4">
                   Welcome to DevMatrix
                 </h1>
-                <p className="text-lg text-gray-600 dark:text-gray-400 mb-8">
+                <p className="text-lg text-purple-300 mb-8">
                   AI-powered development environment with multi-agent orchestration
                 </p>
                 <button
                   onClick={() => navigate('/chat')}
-                  className="px-6 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-medium"
+                  className="px-6 py-3 bg-gradient-to-r from-purple-600/90 to-blue-600/90 text-white rounded-lg hover:from-purple-700/90 hover:to-blue-700/90 transition-colors font-medium backdrop-blur-sm border border-purple-400/30 shadow-lg shadow-purple-500/20"
                 >
                   Start Chat
                 </button>
@@ -224,7 +224,7 @@ function AppContent() {
           {/* Protected Routes */}
           <Route path="/chat" element={
             <ProtectedRoute>
-              <div className="flex-1 p-8">
+              <div className="flex-1 p-8 bg-transparent">
                 <ChatWindow
                   workspaceId={workspaceId || undefined}
                   isMinimized={isMinimized}
@@ -267,18 +267,18 @@ function AppContent() {
           <Route path="/settings" element={
             <div className="flex-1 p-8 overflow-auto">
               <div className="max-w-2xl mx-auto">
-                <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">
+                <h2 className="text-2xl font-bold text-purple-100 mb-6">
                   Settings
                 </h2>
 
                 {/* Theme Settings */}
-                <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 mb-6">
-                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+                <div className="bg-gradient-to-br from-gray-900/40 via-purple-900/20 to-blue-900/20 backdrop-blur-xl rounded-lg border border-purple-500/20 p-6 mb-6 shadow-xl shadow-purple-500/10">
+                  <h3 className="text-lg font-semibold text-purple-100 mb-4">
                     Appearance
                   </h3>
                   <div className="space-y-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      <label className="block text-sm font-medium text-purple-200 mb-2">
                         Theme
                       </label>
                       <div className="flex gap-2">
@@ -286,38 +286,38 @@ function AppContent() {
                           onClick={() => setTheme('light')}
                           className={`flex-1 p-4 rounded-lg border-2 transition-colors ${
                             theme === 'light'
-                              ? 'border-primary-600 bg-primary-50 dark:bg-primary-900/20'
-                              : 'border-gray-200 dark:border-gray-700'
+                              ? 'border-purple-400 bg-purple-500/20 backdrop-blur-sm'
+                              : 'border-purple-500/20 bg-white/5 backdrop-blur-sm'
                           }`}
                         >
-                          <FiSun className="mx-auto mb-2" size={24} />
-                          <p className="text-sm font-medium">Light</p>
+                          <FiSun className="mx-auto mb-2 text-purple-300" size={24} />
+                          <p className="text-sm font-medium text-purple-200">Light</p>
                         </button>
                         <button
                           onClick={() => setTheme('dark')}
                           className={`flex-1 p-4 rounded-lg border-2 transition-colors ${
                             theme === 'dark'
-                              ? 'border-primary-600 bg-primary-50 dark:bg-primary-900/20'
-                              : 'border-gray-200 dark:border-gray-700'
+                              ? 'border-purple-400 bg-purple-500/20 backdrop-blur-sm'
+                              : 'border-purple-500/20 bg-white/5 backdrop-blur-sm'
                           }`}
                         >
-                          <FiMoon className="mx-auto mb-2" size={24} />
-                          <p className="text-sm font-medium">Dark</p>
+                          <FiMoon className="mx-auto mb-2 text-purple-300" size={24} />
+                          <p className="text-sm font-medium text-purple-200">Dark</p>
                         </button>
                         <button
                           onClick={() => setTheme('system')}
                           className={`flex-1 p-4 rounded-lg border-2 transition-colors ${
                             theme === 'system'
-                              ? 'border-primary-600 bg-primary-50 dark:bg-primary-900/20'
-                              : 'border-gray-200 dark:border-gray-700'
+                              ? 'border-purple-400 bg-purple-500/20 backdrop-blur-sm'
+                              : 'border-purple-500/20 bg-white/5 backdrop-blur-sm'
                           }`}
                         >
-                          <FiMonitor className="mx-auto mb-2" size={24} />
-                          <p className="text-sm font-medium">System</p>
+                          <FiMonitor className="mx-auto mb-2 text-purple-300" size={24} />
+                          <p className="text-sm font-medium text-purple-200">System</p>
                         </button>
                       </div>
                       {theme === 'system' && (
-                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                        <p className="text-xs text-purple-400 mt-2">
                           Currently using: {actualTheme} theme
                         </p>
                       )}

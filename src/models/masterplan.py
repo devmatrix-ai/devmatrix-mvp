@@ -185,6 +185,7 @@ class MasterPlan(Base):
     phases = relationship("MasterPlanPhase", back_populates="masterplan", cascade="all, delete-orphan")
     versions = relationship("MasterPlanVersion", back_populates="masterplan", foreign_keys="MasterPlanVersion.masterplan_id")
     history = relationship("MasterPlanHistory", back_populates="masterplan", cascade="all, delete-orphan")
+    acceptance_tests = relationship("AcceptanceTest", back_populates="masterplan", cascade="all, delete-orphan")
 
     # Indexes
     __table_args__ = (
