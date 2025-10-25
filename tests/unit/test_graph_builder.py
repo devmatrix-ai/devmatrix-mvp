@@ -30,6 +30,8 @@ def sample_atoms():
         masterplan_id=masterplan_id,
         task_id=task_id,
         atom_number=1,
+        name="Define calculate function",
+        loc=5,
         description="Define calculate function",
         code_to_generate="def calculate(x): return x * 2",
         file_path="src/calc.py",
@@ -46,6 +48,8 @@ def sample_atoms():
         masterplan_id=masterplan_id,
         task_id=task_id,
         atom_number=2,
+        name="Use calculate",
+        loc=5,
         description="Use calculate",
         code_to_generate="result = calculate(10)",
         file_path="src/main.py",
@@ -62,6 +66,8 @@ def sample_atoms():
         masterplan_id=masterplan_id,
         task_id=task_id,
         atom_number=3,
+        name="Independent function",
+        loc=5,
         description="Independent function",
         code_to_generate="def greet(name): return f'Hello, {name}'",
         file_path="src/greet.py",
@@ -97,6 +103,8 @@ def test_detect_import_dependencies(graph_builder):
             masterplan_id=uuid.uuid4(),
             task_id=uuid.uuid4(),
             atom_number=1,
+        name="Define module",
+        loc=5,
             description="Define module",
             code_to_generate="class User: pass",
             file_path="src/models.py",
@@ -111,6 +119,8 @@ def test_detect_import_dependencies(graph_builder):
             masterplan_id=uuid.uuid4(),
             task_id=uuid.uuid4(),
             atom_number=2,
+        name="Import module",
+        loc=5,
             description="Import module",
             code_to_generate="from models import User",
             file_path="src/main.py",
@@ -138,6 +148,8 @@ def test_detect_function_call_dependencies(graph_builder):
             masterplan_id=uuid.uuid4(),
             task_id=uuid.uuid4(),
             atom_number=1,
+        name="Define helper",
+        loc=5,
             description="Define helper",
             code_to_generate="def helper(): return 1",
             file_path="src/utils.py",
@@ -152,6 +164,8 @@ def test_detect_function_call_dependencies(graph_builder):
             masterplan_id=uuid.uuid4(),
             task_id=uuid.uuid4(),
             atom_number=2,
+        name="Call helper",
+        loc=5,
             description="Call helper",
             code_to_generate="result = helper()",
             file_path="src/main.py",
@@ -176,6 +190,8 @@ def test_detect_variable_dependencies(graph_builder):
             masterplan_id=uuid.uuid4(),
             task_id=uuid.uuid4(),
             atom_number=1,
+        name="Define constant",
+        loc=5,
             description="Define constant",
             code_to_generate="MAX_SIZE = 100",
             file_path="src/config.py",
@@ -190,6 +206,8 @@ def test_detect_variable_dependencies(graph_builder):
             masterplan_id=uuid.uuid4(),
             task_id=uuid.uuid4(),
             atom_number=2,
+        name="Use constant",
+        loc=5,
             description="Use constant",
             code_to_generate="if size > MAX_SIZE: raise ValueError()",
             file_path="src/validator.py",
@@ -221,6 +239,8 @@ def test_handle_circular_references(graph_builder):
             masterplan_id=uuid.uuid4(),
             task_id=uuid.uuid4(),
             atom_number=1,
+        name="Function A",
+        loc=5,
             description="Function A",
             code_to_generate="def a(): return b()",
             file_path="src/a.py",
@@ -235,6 +255,8 @@ def test_handle_circular_references(graph_builder):
             masterplan_id=uuid.uuid4(),
             task_id=uuid.uuid4(),
             atom_number=2,
+        name="Function B",
+        loc=5,
             description="Function B",
             code_to_generate="def b(): return a()",
             file_path="src/b.py",
@@ -250,7 +272,7 @@ def test_handle_circular_references(graph_builder):
     stats = graph_builder.get_graph_stats(graph)
 
     # Should detect cycle
-    assert stats['has_cycles'] is True
+    assert stats['cycles'] > 0
 
 
 # ============================================================================
@@ -262,11 +284,11 @@ def test_get_graph_stats(graph_builder, sample_atoms):
     graph = graph_builder.build_graph(sample_atoms)
     stats = graph_builder.get_graph_stats(graph)
 
-    assert 'total_nodes' in stats
-    assert 'total_edges' in stats
-    assert 'has_cycles' in stats
-    assert 'max_depth' in stats
-    assert stats['total_nodes'] == 3
+    assert 'nodes' in stats
+    assert 'edges' in stats
+    assert 'cycles' in stats
+    assert 'avg_dependencies' in stats
+    assert stats['nodes'] == 3
 
 
 # ============================================================================
@@ -281,6 +303,8 @@ def test_extract_python_symbols(graph_builder):
             masterplan_id=uuid.uuid4(),
             task_id=uuid.uuid4(),
             atom_number=1,
+        name="Define symbols",
+        loc=5,
             description="Define symbols",
             code_to_generate="""
 class MyClass:
@@ -342,6 +366,8 @@ def test_build_graph_single_atom(graph_builder):
             masterplan_id=uuid.uuid4(),
             task_id=uuid.uuid4(),
             atom_number=1,
+        name="Single",
+        loc=5,
             description="Single",
             code_to_generate="def single(): pass",
             file_path="src/single.py",
