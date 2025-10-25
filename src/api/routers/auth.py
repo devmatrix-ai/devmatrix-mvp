@@ -6,6 +6,7 @@ email verification, and password reset functionality.
 
 Extended with Task Group 2.3: Email Verification & Password Reset endpoints
 Updated with Group 3: Token blacklist and logout functionality
+Updated with Group 4: Audit logging for auth events
 """
 
 from typing import Optional
@@ -20,6 +21,7 @@ from src.models.user import User
 from src.api.middleware.auth_middleware import get_current_user, get_current_active_user, get_token_from_header
 from src.config.constants import EMAIL_VERIFICATION_REQUIRED
 from src.observability import get_logger
+from src.observability.audit_logger import audit_logger
 
 logger = get_logger("auth_router")
 
@@ -175,13 +177,14 @@ class ResetPasswordResponse(BaseModel):
 # ============================================================================
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(request: RegisterRequest):
+async def register(request_obj: RegisterRequest, request: Request):
     """
     Register new user account.
 
     Creates a new user with the provided credentials and returns access/refresh tokens.
 
     Task 2.3.6: Updated to support EMAIL_VERIFICATION_REQUIRED configuration.
+    Task 4.8: Added audit logging for registration events.
 
     **Example**:
     ```bash
@@ -206,9 +209,9 @@ async def register(request: RegisterRequest):
     try:
         # Register user
         user = auth_service.register_user(
-            email=request.email,
-            username=request.username,
-            password=request.password
+            email=request_obj.email,
+            username=request_obj.username,
+            password=request_obj.password
         )
 
         # Task 2.3.6: Check EMAIL_VERIFICATION_REQUIRED config
@@ -225,7 +228,7 @@ async def register(request: RegisterRequest):
             token = email_verification_service.generate_verification_token(user.user_id)
             email_verification_service.send_verification_email(user.email, token, user.username)
 
-            logger.info(f"User registered (verification required): {user.user_id} ({request.email})")
+            logger.info(f"User registered (verification required): {user.user_id} ({request_obj.email})")
 
             # Still generate tokens but notify about verification
             access_token = auth_service.create_access_token(
@@ -248,7 +251,7 @@ async def register(request: RegisterRequest):
             }
         else:
             # Email verification not required, user is automatically verified
-            logger.info(f"User registered (no verification): {user.user_id} ({request.email})")
+            logger.info(f"User registered (no verification): {user.user_id} ({request_obj.email})")
 
             # Generate tokens
             access_token = auth_service.create_access_token(
@@ -272,11 +275,12 @@ async def register(request: RegisterRequest):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(request: LoginRequest):
+async def login(login_request: LoginRequest, request: Request):
     """
     Authenticate user and get tokens.
 
     Validates credentials and returns access/refresh tokens if successful.
+    Task 4.8: Added audit logging for login events.
 
     **Example**:
     ```bash
@@ -299,24 +303,50 @@ async def login(request: LoginRequest):
     """
     try:
         tokens = auth_service.login(
-            email=request.email,
-            password=request.password
+            email=login_request.email,
+            password=login_request.password
         )
 
-        logger.info(f"User logged in via API: {request.email}")
+        # Extract user_id from tokens for audit logging
+        user_id = None
+        if tokens and tokens.get('user'):
+            user_id = UUID(tokens['user']['user_id'])
+
+        # Log successful login
+        await audit_logger.log_auth_event(
+            user_id=user_id,
+            action="auth.login",
+            result="success",
+            ip_address=request.client.host if hasattr(request, 'client') and request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            correlation_id=getattr(request.state, 'correlation_id', None)
+        )
+
+        logger.info(f"User logged in via API: {login_request.email}")
         return tokens
 
     except ValueError as e:
+        # Log failed login
+        await audit_logger.log_auth_event(
+            user_id=None,  # Unknown user
+            action="auth.login_failed",
+            result="denied",
+            ip_address=request.client.host if hasattr(request, 'client') and request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            correlation_id=getattr(request.state, 'correlation_id', None)
+        )
+
         logger.warning(f"Login failed: {str(e)}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh_token(request: RefreshTokenRequest):
+async def refresh_token(refresh_request: RefreshTokenRequest, request: Request):
     """
     Refresh access token.
 
     Generates a new access token from a valid refresh token.
+    Task 4.8: Added audit logging for token refresh events.
 
     **Example**:
     ```bash
@@ -335,7 +365,22 @@ async def refresh_token(request: RefreshTokenRequest):
     - 403: Account is inactive
     """
     try:
-        tokens = auth_service.refresh_access_token(request.refresh_token)
+        tokens = auth_service.refresh_access_token(refresh_request.refresh_token)
+
+        # Extract user_id from tokens for audit logging
+        user_id = None
+        if tokens and tokens.get('user'):
+            user_id = UUID(tokens['user']['user_id'])
+
+        # Log token refresh
+        await audit_logger.log_auth_event(
+            user_id=user_id,
+            action="auth.token_refresh",
+            result="success",
+            ip_address=request.client.host if hasattr(request, 'client') and request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            correlation_id=getattr(request.state, 'correlation_id', None)
+        )
 
         logger.info("Access token refreshed via API")
         return tokens
@@ -387,6 +432,7 @@ async def logout(
     Logout current user and blacklist tokens.
 
     Group 3 Security Update: Now implements token blacklisting.
+    Task 4.8: Added audit logging for logout events.
     - Blacklists the current access token (required)
     - Optionally blacklists refresh token if provided in request body
 
@@ -435,6 +481,16 @@ async def logout(
                 f"Refresh token blacklisted for user: {current_user.user_id}",
                 extra={"correlation_id": correlation_id}
             )
+
+    # Log logout event
+    await audit_logger.log_auth_event(
+        user_id=current_user.user_id,
+        action="auth.logout",
+        result="success",
+        ip_address=request.client.host if hasattr(request, 'client') and request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        correlation_id=correlation_id
+    )
 
     logger.info(
         f"User logged out: {current_user.user_id}",
