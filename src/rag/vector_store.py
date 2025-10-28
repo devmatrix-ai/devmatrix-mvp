@@ -95,7 +95,7 @@ class SearchRequest(BaseModel):
         # Whitelist of allowed filter keys
         allowed_keys = {
             "language", "file_path", "approved", "tags",
-            "indexed_at", "code_length", "author"
+            "indexed_at", "code_length", "author", "task_type"
         }
 
         for key in v.keys():
