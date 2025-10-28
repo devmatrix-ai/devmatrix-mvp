@@ -180,7 +180,7 @@ Important:
         self.progress_callback = progress_callback
         self.graph = self._build_graph()
 
-        # PostgreSQL is optional
+        # PostgreSQL is optional - NOTE: Projects table no longer used
         try:
             self.postgres = PostgresManager()
         except Exception:
@@ -865,39 +865,22 @@ Use these examples as inspiration for task decomposition patterns, but adapt to 
         return result
 
     def _finalize(self, state: OrchestratorState) -> OrchestratorState:
-        """Finalize orchestration and log results."""
+        """
+        Finalize orchestration and log results.
+
+        NOTE: Projects table persistence removed - use masterplans tables exclusively.
+        """
         # success already set by _execute_tasks
         # completed_tasks and failed_tasks already set by _execute_tasks
 
-        # Log to PostgreSQL if available
-        if self.postgres:
-            try:
-                project_id = self.postgres.create_project(
-                    name=f"orchestrated_{state['workspace_id']}",
-                    description=state["user_request"]
-                )
-
-                task_id = self.postgres.create_task(
-                    project_id=project_id,
-                    agent_name="OrchestratorAgent",
-                    task_type="orchestration",
-                    input_data=state["user_request"],
-                    output_data=str({
-                        "project_type": state["project_type"],
-                        "complexity": state["complexity"],
-                        "num_tasks": len(state["tasks"]),
-                        "completed": len(state.get("completed_tasks", [])),
-                        "failed": len(state.get("failed_tasks", []))
-                    }),
-                    status="completed" if state["success"] else "failed"
-                )
-
-            except Exception as e:
-                self.logger.warning("Could not log orchestration to PostgreSQL",
-                    workspace_id=state.get("workspace_id", "unknown"),
-                    error=str(e),
-                    error_type=type(e).__name__
-                )
+        # Log completion
+        self.logger.info("Orchestration finalized",
+            workspace_id=state.get("workspace_id", "unknown"),
+            success=state.get("success", False),
+            total_tasks=len(state.get("tasks", [])),
+            completed_tasks=len(state.get("completed_tasks", [])),
+            failed_tasks=len(state.get("failed_tasks", []))
+        )
 
         return state
 
