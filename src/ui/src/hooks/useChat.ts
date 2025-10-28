@@ -93,24 +93,62 @@ export function useChat(options: UseChatOptions = {}) {
           options.onProgress(progressEvent)
         }
       } else if (data.type === 'error') {
+        // Enhanced error parsing with fallbacks
+        const errorInfo = {
+          // Try multiple possible error message fields
+          message: data.message || data.content || data.error?.message || data.detail || 'Unknown error occurred',
+          code: data.code || data.error?.code || data.status_code || 'ERROR',
+          details: data.details || data.error?.details || {},
+          // Include any additional error info
+          rawError: data.error || data,
+          timestamp: new Date().toISOString()
+        }
+
         console.error('[useChat] Error received from backend:', {
-          error: data.error,
-          message: data.message,
-          details: data.details,
-          fullData: data
+          parsedError: errorInfo,
+          rawData: data
         })
+
+        // Show user-friendly error message in console with context
+        console.error(
+          `❌ [useChat] ${errorInfo.code}: ${errorInfo.message}`,
+          errorInfo.details ? `\nDetails: ${JSON.stringify(errorInfo.details, null, 2)}` : ''
+        )
+
         setIsLoading(false)
         setProgress(null)
+
         if (options.onError) {
-          options.onError(data)
+          options.onError(errorInfo)
         }
       }
     })
 
     const cleanup3 = on('error', (error: any) => {
+      // Enhanced generic error handler
+      const errorInfo = {
+        message: error?.message || error?.error?.message || error?.detail || 'Connection or server error',
+        code: error?.code || error?.status || 'CONNECTION_ERROR',
+        details: error?.details || {},
+        rawError: error,
+        timestamp: new Date().toISOString()
+      }
+
+      console.error('[useChat] WebSocket error received:', {
+        parsedError: errorInfo,
+        rawError: error
+      })
+
+      console.error(
+        `❌ [useChat] ${errorInfo.code}: ${errorInfo.message}`,
+        errorInfo.details ? `\nDetails: ${JSON.stringify(errorInfo.details, null, 2)}` : ''
+      )
+
       setIsLoading(false)
+      setProgress(null)
+
       if (options.onError) {
-        options.onError(error)
+        options.onError(errorInfo)
       }
     })
 
