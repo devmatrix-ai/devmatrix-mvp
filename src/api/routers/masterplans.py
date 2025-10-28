@@ -4,10 +4,11 @@ MasterPlan API Router
 REST endpoints for listing and viewing MasterPlans.
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 from datetime import datetime
+from pydantic import BaseModel
 
 from src.config.database import get_db
 from src.models.masterplan import (
@@ -19,10 +20,55 @@ from src.models.masterplan import (
     PhaseType,
     TaskStatus
 )
+from src.services.masterplan_generator import MasterPlanGenerator
+from src.api.middleware.auth_middleware import get_current_user
 from src.observability import StructuredLogger
 
 router = APIRouter(prefix="/api/v1/masterplans", tags=["masterplans"])
 logger = StructuredLogger("masterplans_router")
+
+
+# Request/Response Models
+class CreateMasterPlanRequest(BaseModel):
+    """Request to create a new masterplan from a discovery document."""
+    discovery_id: str
+    session_id: str
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "discovery_id": "550e8400-e29b-41d4-a716-446655440000",
+                "session_id": "sess_abc123"
+            }
+        }
+
+
+class CreateMasterPlanResponse(BaseModel):
+    """Response after creating a masterplan."""
+    masterplan_id: str
+    status: str
+    message: str
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "masterplan_id": "660e8400-e29b-41d4-a716-446655440000",
+                "status": "pending",
+                "message": "MasterPlan generation started"
+            }
+        }
+
+
+class RejectMasterPlanRequest(BaseModel):
+    """Request to reject a masterplan with optional reason."""
+    rejection_reason: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "rejection_reason": "Tasks are too complex, needs simplification"
+            }
+        }
 
 
 # Response Models
@@ -135,6 +181,83 @@ def serialize_masterplan_detail(masterplan: MasterPlan) -> Dict[str, Any]:
     return summary
 
 
+@router.post("", response_model=CreateMasterPlanResponse)
+async def create_masterplan(
+    request: CreateMasterPlanRequest,
+    current_user = Depends(get_current_user)
+) -> CreateMasterPlanResponse:
+    """
+    Create a new MasterPlan from a Discovery Document.
+
+    This endpoint initiates the generation of a complete MasterPlan from an existing
+    Discovery Document. The generation happens asynchronously, and progress updates
+    are sent via WebSocket.
+
+    Args:
+        request: Contains discovery_id and session_id
+        current_user: Authenticated user from JWT token
+
+    Returns:
+        CreateMasterPlanResponse with the new masterplan_id and status
+
+    Raises:
+        HTTPException 400: If discovery_id is invalid
+        HTTPException 404: If discovery document not found
+        HTTPException 500: If generation fails
+    """
+    try:
+        logger.info(
+            "Creating masterplan",
+            extra={
+                "discovery_id": request.discovery_id,
+                "session_id": request.session_id,
+                "user_id": current_user.user_id
+            }
+        )
+
+        # Validate discovery_id format
+        try:
+            discovery_uuid = UUID(request.discovery_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid discovery_id format")
+
+        # Initialize MasterPlan generator
+        generator = MasterPlanGenerator()
+
+        # Generate masterplan (async)
+        masterplan_id = await generator.generate_masterplan(
+            discovery_id=discovery_uuid,
+            session_id=request.session_id,
+            user_id=str(current_user.user_id)
+        )
+
+        logger.info(
+            "MasterPlan created successfully",
+            extra={
+                "masterplan_id": str(masterplan_id),
+                "discovery_id": request.discovery_id
+            }
+        )
+
+        return CreateMasterPlanResponse(
+            masterplan_id=str(masterplan_id),
+            status="completed",
+            message="MasterPlan generated successfully"
+        )
+
+    except ValueError as e:
+        logger.error(f"Validation error: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        logger.error(f"Generation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error creating masterplan: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("")
 async def list_masterplans(
     limit: int = Query(50, ge=1, le=100, description="Number of masterplans to return"),
@@ -233,4 +356,162 @@ async def get_masterplan(masterplan_id: str) -> Dict[str, Any]:
         raise
     except Exception as e:
         logger.error(f"Error getting masterplan {masterplan_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{masterplan_id}/approve")
+async def approve_masterplan(masterplan_id: str) -> Dict[str, Any]:
+    """
+    Approve a draft MasterPlan.
+
+    Changes the masterplan status from 'draft' to 'approved', allowing it to be executed.
+
+    Args:
+        masterplan_id: UUID of the masterplan to approve
+
+    Returns:
+        Updated masterplan detail with status='approved'
+
+    Raises:
+        HTTPException 400: If masterplan_id format is invalid or status is not 'draft'
+        HTTPException 404: If masterplan not found
+        HTTPException 500: If database update fails
+    """
+    try:
+        logger.info(f"Approving masterplan {masterplan_id}")
+
+        # Validate UUID
+        try:
+            masterplan_uuid = UUID(masterplan_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid masterplan_id format")
+
+        db = next(get_db())
+
+        # Query masterplan
+        masterplan = (
+            db.query(MasterPlan)
+            .filter(MasterPlan.masterplan_id == masterplan_uuid)
+            .first()
+        )
+
+        if not masterplan:
+            raise HTTPException(status_code=404, detail=f"MasterPlan {masterplan_id} not found")
+
+        # Validate status is 'draft'
+        if masterplan.status != MasterPlanStatus.DRAFT:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot approve masterplan with status '{masterplan.status.value}'. Only draft masterplans can be approved."
+            )
+
+        # Update status to approved
+        masterplan.status = MasterPlanStatus.APPROVED
+        masterplan.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(masterplan)
+
+        logger.info(
+            f"Masterplan approved successfully",
+            extra={
+                "masterplan_id": masterplan_id,
+                "project_name": masterplan.project_name
+            }
+        )
+
+        # Return updated masterplan
+        return serialize_masterplan_detail(masterplan)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error approving masterplan {masterplan_id}: {e}", exc_info=True)
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{masterplan_id}/reject")
+async def reject_masterplan(
+    masterplan_id: str,
+    request: Optional[RejectMasterPlanRequest] = None
+) -> Dict[str, Any]:
+    """
+    Reject a draft MasterPlan.
+
+    Changes the masterplan status from 'draft' to 'rejected'. Optionally accepts a rejection reason.
+
+    Args:
+        masterplan_id: UUID of the masterplan to reject
+        request: Optional rejection reason
+
+    Returns:
+        Updated masterplan detail with status='rejected'
+
+    Raises:
+        HTTPException 400: If masterplan_id format is invalid or status is not 'draft'
+        HTTPException 404: If masterplan not found
+        HTTPException 500: If database update fails
+    """
+    try:
+        logger.info(
+            f"Rejecting masterplan {masterplan_id}",
+            extra={"rejection_reason": request.rejection_reason if request else None}
+        )
+
+        # Validate UUID
+        try:
+            masterplan_uuid = UUID(masterplan_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid masterplan_id format")
+
+        db = next(get_db())
+
+        # Query masterplan
+        masterplan = (
+            db.query(MasterPlan)
+            .filter(MasterPlan.masterplan_id == masterplan_uuid)
+            .first()
+        )
+
+        if not masterplan:
+            raise HTTPException(status_code=404, detail=f"MasterPlan {masterplan_id} not found")
+
+        # Validate status is 'draft'
+        if masterplan.status != MasterPlanStatus.DRAFT:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot reject masterplan with status '{masterplan.status.value}'. Only draft masterplans can be rejected."
+            )
+
+        # Update status to rejected
+        masterplan.status = MasterPlanStatus.REJECTED
+        masterplan.updated_at = datetime.utcnow()
+
+        # Store rejection reason if provided (could be added to model in future)
+        # For now, we'll just log it
+        if request and request.rejection_reason:
+            logger.info(
+                f"Rejection reason for masterplan {masterplan_id}",
+                extra={"rejection_reason": request.rejection_reason}
+            )
+
+        db.commit()
+        db.refresh(masterplan)
+
+        logger.info(
+            f"Masterplan rejected successfully",
+            extra={
+                "masterplan_id": masterplan_id,
+                "project_name": masterplan.project_name
+            }
+        )
+
+        # Return updated masterplan
+        return serialize_masterplan_detail(masterplan)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error rejecting masterplan {masterplan_id}: {e}", exc_info=True)
+        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
