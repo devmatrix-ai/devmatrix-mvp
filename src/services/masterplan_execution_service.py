@@ -2,7 +2,7 @@
 MasterPlan Execution Service
 
 Orchestrates masterplan execution with workspace creation, task execution,
-and database persistence.
+database persistence, and WebSocket event broadcasting.
 """
 
 from typing import Optional, Dict, Any, List
@@ -10,6 +10,7 @@ from uuid import UUID
 from datetime import datetime
 from sqlalchemy.orm import Session
 from collections import defaultdict
+import asyncio
 
 from src.models.masterplan import (
     MasterPlan,
@@ -21,6 +22,13 @@ from src.models.masterplan import (
 )
 from src.services.workspace_service import WorkspaceService
 from src.observability import StructuredLogger
+
+# Import Socket.IO server from websocket router
+try:
+    from src.api.routers.websocket import sio
+except ImportError:
+    # Fallback for testing or when websocket is not available
+    sio = None
 
 
 class MasterplanExecutionService:
@@ -171,17 +179,80 @@ class MasterplanExecutionService:
             )
             return False
 
+    def _emit_websocket_event(
+        self,
+        event_name: str,
+        masterplan_id: UUID,
+        data: Dict[str, Any]
+    ):
+        """
+        Emit WebSocket event for real-time monitoring.
+
+        Uses Socket.IO to broadcast events to clients in the masterplan room.
+        Room name format: f"masterplan_{masterplan_id}"
+
+        Args:
+            event_name: Name of the event (e.g., "masterplan_execution_start")
+            masterplan_id: UUID of the masterplan
+            data: Event payload data
+        """
+        if not sio:
+            self.logger.warning(
+                "Socket.IO not available, skipping WebSocket event",
+                event_name=event_name,
+                masterplan_id=str(masterplan_id)
+            )
+            return
+
+        try:
+            room = f"masterplan_{masterplan_id}"
+
+            # Use asyncio to emit event (Socket.IO emit is async)
+            # Create event loop if not exists
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+            # Schedule the emit coroutine
+            if loop.is_running():
+                # If loop is already running, create a task
+                asyncio.create_task(sio.emit(event_name, data, room=room))
+            else:
+                # If loop is not running, run until complete
+                loop.run_until_complete(sio.emit(event_name, data, room=room))
+
+            self.logger.info(
+                "WebSocket event emitted",
+                event_name=event_name,
+                masterplan_id=str(masterplan_id),
+                room=room
+            )
+
+        except Exception as e:
+            # Log error but don't fail execution
+            self.logger.error(
+                "Failed to emit WebSocket event",
+                event_name=event_name,
+                masterplan_id=str(masterplan_id),
+                error=str(e),
+                error_type=type(e).__name__
+            )
+
     def execute(self, masterplan_id: UUID) -> Dict[str, Any]:
         """
         Execute masterplan tasks in dependency order.
 
         This method orchestrates the complete execution flow:
         1. Load masterplan with all phases, milestones, tasks
-        2. Extract target_files from each task
-        3. Build task execution plan with dependency resolution (topological sort)
-        4. Execute tasks in order, handling retries and failures
-        5. Update task and masterplan status in database
-        6. Prepare for WebSocket event emission (Group 4)
+        2. Emit masterplan_execution_start WebSocket event
+        3. Extract target_files from each task
+        4. Build task execution plan with dependency resolution (topological sort)
+        5. Execute tasks in order, handling retries and failures
+        6. Emit task_execution_progress and task_execution_complete events
+        7. Update task and masterplan status in database
+        8. Complete execution
 
         Args:
             masterplan_id: UUID of the masterplan to execute
@@ -221,6 +292,18 @@ class MasterplanExecutionService:
                 total_tasks=total_tasks
             )
 
+            # Emit masterplan_execution_start event
+            self._emit_websocket_event(
+                event_name="masterplan_execution_start",
+                masterplan_id=masterplan_id,
+                data={
+                    "masterplan_id": str(masterplan_id),
+                    "workspace_id": workspace_path.split("/")[-1] if workspace_path else "unknown",
+                    "workspace_path": workspace_path,
+                    "total_tasks": total_tasks
+                }
+            )
+
             # Build dependency graph for topological sort
             dependency_graph = self._build_dependency_graph(all_tasks)
 
@@ -243,7 +326,7 @@ class MasterplanExecutionService:
             skipped_count = 0
 
             for idx, task in enumerate(execution_order):
-                # Update progress callback
+                # Update progress callback - emit task_execution_progress
                 self._progress_callback(
                     masterplan_id=masterplan_id,
                     task=task,
@@ -257,6 +340,19 @@ class MasterplanExecutionService:
 
                 if success:
                     completed_count += 1
+                    # Emit task_execution_complete event
+                    self._emit_websocket_event(
+                        event_name="task_execution_complete",
+                        masterplan_id=masterplan_id,
+                        data={
+                            "masterplan_id": str(masterplan_id),
+                            "task_id": str(task.task_id),
+                            "status": "completed",
+                            "output_files": task.target_files or [],
+                            "completed_tasks": completed_count,
+                            "total_tasks": total_tasks
+                        }
+                    )
                     self._progress_callback(
                         masterplan_id=masterplan_id,
                         task=task,
@@ -279,6 +375,19 @@ class MasterplanExecutionService:
                         success = self._execute_single_task(task, masterplan_id)
                         if success:
                             completed_count += 1
+                            # Emit task_execution_complete event
+                            self._emit_websocket_event(
+                                event_name="task_execution_complete",
+                                masterplan_id=masterplan_id,
+                                data={
+                                    "masterplan_id": str(masterplan_id),
+                                    "task_id": str(task.task_id),
+                                    "status": "completed",
+                                    "output_files": task.target_files or [],
+                                    "completed_tasks": completed_count,
+                                    "total_tasks": total_tasks
+                                }
+                            )
                             self._progress_callback(
                                 masterplan_id=masterplan_id,
                                 task=task,
@@ -288,6 +397,19 @@ class MasterplanExecutionService:
                             )
                         else:
                             failed_count += 1
+                            # Emit task_execution_complete with failed status
+                            self._emit_websocket_event(
+                                event_name="task_execution_complete",
+                                masterplan_id=masterplan_id,
+                                data={
+                                    "masterplan_id": str(masterplan_id),
+                                    "task_id": str(task.task_id),
+                                    "status": "failed",
+                                    "output_files": task.target_files or [],
+                                    "completed_tasks": completed_count,
+                                    "total_tasks": total_tasks
+                                }
+                            )
                             self._progress_callback(
                                 masterplan_id=masterplan_id,
                                 task=task,
@@ -297,6 +419,19 @@ class MasterplanExecutionService:
                             )
                     else:
                         failed_count += 1
+                        # Emit task_execution_complete with failed status
+                        self._emit_websocket_event(
+                            event_name="task_execution_complete",
+                            masterplan_id=masterplan_id,
+                            data={
+                                "masterplan_id": str(masterplan_id),
+                                "task_id": str(task.task_id),
+                                "status": "failed",
+                                "output_files": task.target_files or [],
+                                "completed_tasks": completed_count,
+                                "total_tasks": total_tasks
+                            }
+                        )
                         self._progress_callback(
                             masterplan_id=masterplan_id,
                             task=task,
@@ -438,8 +573,7 @@ class MasterplanExecutionService:
         """
         Progress callback to handle task updates.
 
-        Updates task status in database and prepares for WebSocket event emission.
-        WebSocket events will be implemented in Group 4.
+        Updates task status in database and emits WebSocket events.
 
         Args:
             masterplan_id: UUID of the masterplan
@@ -475,8 +609,20 @@ class MasterplanExecutionService:
                 progress=f"{current_task}/{total_tasks}"
             )
 
-            # Prepare for WebSocket event emission (Group 4)
-            # self._emit_websocket_event(masterplan_id, task, status, current_task, total_tasks)
+            # Emit WebSocket event for task_execution_progress
+            self._emit_websocket_event(
+                event_name="task_execution_progress",
+                masterplan_id=masterplan_id,
+                data={
+                    "masterplan_id": str(masterplan_id),
+                    "task_id": str(task.task_id),
+                    "task_number": task.task_number,
+                    "status": status,
+                    "description": task.description,
+                    "current_task": current_task,
+                    "total_tasks": total_tasks
+                }
+            )
 
         except Exception as e:
             self.db.rollback()

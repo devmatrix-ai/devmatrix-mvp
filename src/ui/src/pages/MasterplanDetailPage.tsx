@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import io, { Socket } from 'socket.io-client'
 
 interface Subtask {
   subtask_id: string
@@ -19,6 +20,8 @@ interface Task {
   complexity: string
   target_files: string[]
   subtasks: Subtask[]
+  retry_count?: number
+  max_retries?: number
 }
 
 interface Milestone {
@@ -71,12 +74,128 @@ export const MasterplanDetailPage: React.FC = () => {
   const [expandedTask, setExpandedTask] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
   const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null)
+  const [currentlyExecutingTask, setCurrentlyExecutingTask] = useState<string | null>(null)
+  const socketRef = useRef<Socket | null>(null)
 
   useEffect(() => {
     if (id) {
       fetchMasterplan(id)
     }
   }, [id])
+
+  // WebSocket connection for real-time updates
+  useEffect(() => {
+    if (!id || !masterplan) return
+
+    // Connect to Socket.IO server
+    const socket = io('/', {
+      path: '/socket.io',
+      transports: ['websocket', 'polling'],
+    })
+
+    socketRef.current = socket
+
+    socket.on('connect', () => {
+      console.log('WebSocket connected:', socket.id)
+      // Join masterplan room
+      socket.emit('join_masterplan', { masterplan_id: id })
+    })
+
+    socket.on('disconnect', () => {
+      console.log('WebSocket disconnected')
+    })
+
+    // Listen to masterplan_execution_start event
+    socket.on('masterplan_execution_start', (data: any) => {
+      console.log('Execution started:', data)
+      setMasterplan(prev => prev ? {
+        ...prev,
+        status: 'in_progress',
+        workspace_path: data.workspace_path
+      } : null)
+    })
+
+    // Listen to task_execution_progress event
+    socket.on('task_execution_progress', (data: any) => {
+      console.log('Task progress:', data)
+
+      // Update task status in real-time
+      setMasterplan(prev => {
+        if (!prev) return null
+
+        const updatedPhases = prev.phases.map(phase => ({
+          ...phase,
+          milestones: phase.milestones.map(milestone => ({
+            ...milestone,
+            tasks: milestone.tasks.map(task => {
+              if (task.task_id === data.task_id) {
+                return {
+                  ...task,
+                  status: data.status
+                }
+              }
+              return task
+            })
+          }))
+        }))
+
+        return {
+          ...prev,
+          phases: updatedPhases
+        }
+      })
+
+      // Highlight currently executing task
+      if (data.status === 'in_progress') {
+        setCurrentlyExecutingTask(data.task_id)
+      } else {
+        setCurrentlyExecutingTask(null)
+      }
+    })
+
+    // Listen to task_execution_complete event
+    socket.on('task_execution_complete', (data: any) => {
+      console.log('Task completed:', data)
+
+      // Update task status and overall progress
+      setMasterplan(prev => {
+        if (!prev) return null
+
+        const updatedPhases = prev.phases.map(phase => ({
+          ...phase,
+          milestones: phase.milestones.map(milestone => ({
+            ...milestone,
+            tasks: milestone.tasks.map(task => {
+              if (task.task_id === data.task_id) {
+                return {
+                  ...task,
+                  status: data.status
+                }
+              }
+              return task
+            })
+          }))
+        }))
+
+        return {
+          ...prev,
+          phases: updatedPhases,
+          completed_tasks: data.completed_tasks,
+          progress_percent: (data.completed_tasks / data.total_tasks) * 100
+        }
+      })
+
+      setCurrentlyExecutingTask(null)
+    })
+
+    // Cleanup on unmount
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.emit('leave_masterplan', { masterplan_id: id })
+        socketRef.current.disconnect()
+      }
+    }
+  }, [id, masterplan?.masterplan_id])
 
   const fetchMasterplan = async (masterplanId: string) => {
     try {
@@ -202,6 +321,37 @@ export const MasterplanDetailPage: React.FC = () => {
     }
   }
 
+  const handleRetryTask = async (taskId: string) => {
+    if (!masterplan) return
+
+    try {
+      const response = await fetch(`/api/v1/masterplans/${masterplan.masterplan_id}/tasks/${taskId}/retry`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.detail || 'Failed to retry task')
+      }
+
+      setNotification({ type: 'success', message: 'Task retry initiated!' })
+      setTimeout(() => setNotification(null), 3000)
+
+      // Refresh masterplan data
+      if (id) fetchMasterplan(id)
+    } catch (error) {
+      console.error('Error retrying task:', error)
+      setNotification({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Failed to retry task'
+      })
+      setTimeout(() => setNotification(null), 5000)
+    }
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900/20 to-blue-900/20 flex items-center justify-center">
@@ -249,8 +399,20 @@ export const MasterplanDetailPage: React.FC = () => {
     return colors[status] || 'text-gray-400'
   }
 
+  const statusIcon = (status: string) => {
+    const icons: Record<string, string> = {
+      pending: '⏳',
+      ready: '🔵',
+      in_progress: '⚡',
+      completed: '✅',
+      failed: '❌',
+    }
+    return icons[status] || '⏳'
+  }
+
   const showApprovalButtons = masterplan.status === 'draft'
   const showExecuteButton = masterplan.status === 'approved'
+  const isExecuting = masterplan.status === 'in_progress'
 
   return (
     <div className="h-screen overflow-auto bg-gradient-to-br from-gray-900 via-purple-900/20 to-blue-900/20 p-8">
@@ -287,7 +449,14 @@ export const MasterplanDetailPage: React.FC = () => {
               <p className="text-gray-400 text-lg">{masterplan.description}</p>
             </div>
             <div className="flex items-center gap-3">
-              <span className="px-4 py-2 rounded-lg bg-purple-600 text-white font-semibold">
+              <span className={`px-4 py-2 rounded-lg font-semibold ${
+                masterplan.status === 'draft' ? 'bg-gray-600 text-white' :
+                masterplan.status === 'approved' ? 'bg-green-600 text-white' :
+                masterplan.status === 'in_progress' ? 'bg-yellow-600 text-white animate-pulse' :
+                masterplan.status === 'completed' ? 'bg-blue-600 text-white' :
+                masterplan.status === 'failed' ? 'bg-red-600 text-white' :
+                'bg-purple-600 text-white'
+              }`}>
                 {masterplan.status.toUpperCase()}
               </span>
             </div>
@@ -346,15 +515,20 @@ export const MasterplanDetailPage: React.FC = () => {
             </div>
           )}
 
-          {/* Progress Bar */}
+          {/* Real-time Progress Bar */}
           <div className="mb-6">
             <div className="flex justify-between text-sm text-gray-400 mb-2">
               <span>Overall Progress</span>
-              <span>{Math.round(masterplan.progress_percent)}%</span>
+              <span>
+                {masterplan.completed_tasks} / {masterplan.total_tasks} tasks
+                ({Math.round(masterplan.progress_percent)}%)
+              </span>
             </div>
             <div className="h-4 bg-gray-800 rounded-full overflow-hidden">
               <div
-                className="h-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-500"
+                className={`h-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-500 ${
+                  isExecuting ? 'animate-pulse' : ''
+                }`}
                 style={{ width: `${masterplan.progress_percent}%` }}
               />
             </div>
@@ -455,97 +629,125 @@ export const MasterplanDetailPage: React.FC = () => {
                         {/* Tasks (Expandable) */}
                         {expandedMilestone === milestone.milestone_id && (
                           <div className="border-t border-white/10 p-6 space-y-3">
-                            {milestone.tasks.map((task) => (
-                              <div
-                                key={task.task_id}
-                                className="bg-white/5 rounded-lg overflow-hidden"
-                              >
-                                <button
-                                  onClick={() => setExpandedTask(expandedTask === task.task_id ? null : task.task_id)}
-                                  className="w-full p-4 hover:bg-white/10 transition-colors text-left"
+                            {milestone.tasks.map((task) => {
+                              const isCurrentTask = currentlyExecutingTask === task.task_id
+                              const canRetry = task.status === 'failed' &&
+                                               (task.retry_count || 0) < (task.max_retries || 3)
+
+                              return (
+                                <div
+                                  key={task.task_id}
+                                  className={`bg-white/5 rounded-lg overflow-hidden ${
+                                    isCurrentTask ? 'ring-2 ring-yellow-500 animate-pulse' : ''
+                                  }`}
                                 >
-                                  <div className="flex items-start gap-3">
-                                    <span className={`text-lg ${statusColor(task.status)}`}>
-                                      {task.status === 'completed' ? '✅' : task.status === 'in_progress' ? '⚡' : '⏳'}
-                                    </span>
-                                    <div className="flex-1">
-                                      <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                        <span className="text-sm font-mono text-gray-500">#{task.task_number}</span>
-                                        <h4 className="font-semibold text-white">{task.name}</h4>
-                                        <span className={`text-xs px-2 py-1 rounded ${
-                                          task.complexity === 'high' ? 'bg-red-500/20 text-red-300' :
-                                          task.complexity === 'medium' ? 'bg-yellow-500/20 text-yellow-300' :
-                                          'bg-green-500/20 text-green-300'
-                                        }`}>
-                                          {task.complexity}
-                                        </span>
-                                        {task.subtasks && task.subtasks.length > 0 && (
-                                          <span className="text-xs px-2 py-1 bg-purple-500/20 text-purple-300 rounded">
-                                            {task.subtasks.filter(s => s.completed).length}/{task.subtasks.length} subtasks
+                                  <button
+                                    onClick={() => setExpandedTask(expandedTask === task.task_id ? null : task.task_id)}
+                                    className="w-full p-4 hover:bg-white/10 transition-colors text-left"
+                                  >
+                                    <div className="flex items-start gap-3">
+                                      <span className={`text-lg ${statusColor(task.status)}`}>
+                                        {statusIcon(task.status)}
+                                      </span>
+                                      <div className="flex-1">
+                                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                          <span className="text-sm font-mono text-gray-500">#{task.task_number}</span>
+                                          <h4 className="font-semibold text-white">{task.name}</h4>
+                                          <span className={`text-xs px-2 py-1 rounded ${
+                                            task.complexity === 'high' ? 'bg-red-500/20 text-red-300' :
+                                            task.complexity === 'medium' ? 'bg-yellow-500/20 text-yellow-300' :
+                                            'bg-green-500/20 text-green-300'
+                                          }`}>
+                                            {task.complexity}
                                           </span>
+                                          <span className={`text-xs px-2 py-1 rounded ${statusColor(task.status)}`}>
+                                            {task.status}
+                                          </span>
+                                          {task.subtasks && task.subtasks.length > 0 && (
+                                            <span className="text-xs px-2 py-1 bg-purple-500/20 text-purple-300 rounded">
+                                              {task.subtasks.filter(s => s.completed).length}/{task.subtasks.length} subtasks
+                                            </span>
+                                          )}
+                                          {isCurrentTask && (
+                                            <span className="text-xs px-2 py-1 bg-yellow-500/30 text-yellow-300 rounded animate-pulse">
+                                              Executing Now
+                                            </span>
+                                          )}
+                                        </div>
+                                        <p className="text-sm text-gray-400">{task.description}</p>
+                                        {task.target_files && task.target_files.length > 0 && (
+                                          <div className="mt-2 flex flex-wrap gap-1">
+                                            {task.target_files.slice(0, 3).map((file, idx) => (
+                                              <span key={idx} className="text-xs px-2 py-1 bg-blue-500/20 text-blue-300 rounded">
+                                                📄 {file}
+                                              </span>
+                                            ))}
+                                            {task.target_files.length > 3 && (
+                                              <span className="text-xs px-2 py-1 bg-purple-500/20 text-purple-400 rounded">
+                                                +{task.target_files.length - 3} more
+                                              </span>
+                                            )}
+                                          </div>
+                                        )}
+                                        {/* Retry button for failed tasks */}
+                                        {canRetry && (
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation()
+                                              handleRetryTask(task.task_id)
+                                            }}
+                                            className="mt-3 px-3 py-1 bg-orange-600 hover:bg-orange-700 text-white text-xs rounded transition-colors"
+                                          >
+                                            🔄 Retry Task ({task.retry_count || 0}/{task.max_retries || 3})
+                                          </button>
                                         )}
                                       </div>
-                                      <p className="text-sm text-gray-400">{task.description}</p>
-                                      {task.target_files && task.target_files.length > 0 && (
-                                        <div className="mt-2 flex flex-wrap gap-1">
-                                          {task.target_files.slice(0, 3).map((file, idx) => (
-                                            <span key={idx} className="text-xs px-2 py-1 bg-blue-500/20 text-blue-300 rounded">
-                                              📄 {file}
-                                            </span>
-                                          ))}
-                                          {task.target_files.length > 3 && (
-                                            <span className="text-xs px-2 py-1 bg-purple-500/20 text-purple-400 rounded">
-                                              +{task.target_files.length - 3} more
-                                            </span>
-                                          )}
-                                        </div>
+                                      {task.subtasks && task.subtasks.length > 0 && (
+                                        <svg
+                                          className={`w-5 h-5 text-gray-400 transition-transform ${
+                                            expandedTask === task.task_id ? 'rotate-180' : ''
+                                          }`}
+                                          fill="none"
+                                          stroke="currentColor"
+                                          viewBox="0 0 24 24"
+                                        >
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                        </svg>
                                       )}
                                     </div>
-                                    {task.subtasks && task.subtasks.length > 0 && (
-                                      <svg
-                                        className={`w-5 h-5 text-gray-400 transition-transform ${
-                                          expandedTask === task.task_id ? 'rotate-180' : ''
-                                        }`}
-                                        fill="none"
-                                        stroke="currentColor"
-                                        viewBox="0 0 24 24"
-                                      >
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                      </svg>
-                                    )}
-                                  </div>
-                                </button>
+                                  </button>
 
-                                {/* Subtasks (Nested Accordion) */}
-                                {expandedTask === task.task_id && task.subtasks && task.subtasks.length > 0 && (
-                                  <div className="border-t border-white/10 bg-white/5 p-4 space-y-2">
-                                    <div className="text-xs font-semibold text-purple-300 mb-3 flex items-center gap-2">
-                                      <span>⚙️</span>
-                                      <span>AUTONOMOUS EXECUTION STEPS</span>
-                                    </div>
-                                    {task.subtasks.map((subtask) => (
-                                      <div
-                                        key={subtask.subtask_id}
-                                        className="flex items-start gap-3 p-3 bg-white/5 rounded-lg hover:bg-white/10 transition-colors"
-                                      >
-                                        <span className="text-sm">
-                                          {subtask.completed ? '✅' : '⭕'}
-                                        </span>
-                                        <div className="flex-1 min-w-0">
-                                          <div className="flex items-center gap-2 mb-1">
-                                            <span className="text-xs font-mono text-gray-500">{subtask.subtask_number}.</span>
-                                            <span className="text-sm font-medium text-white">{subtask.name}</span>
-                                          </div>
-                                          {subtask.description && (
-                                            <p className="text-xs text-gray-400 font-mono">{subtask.description}</p>
-                                          )}
-                                        </div>
+                                  {/* Subtasks (Nested Accordion) */}
+                                  {expandedTask === task.task_id && task.subtasks && task.subtasks.length > 0 && (
+                                    <div className="border-t border-white/10 bg-white/5 p-4 space-y-2">
+                                      <div className="text-xs font-semibold text-purple-300 mb-3 flex items-center gap-2">
+                                        <span>⚙️</span>
+                                        <span>AUTONOMOUS EXECUTION STEPS</span>
                                       </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            ))}
+                                      {task.subtasks.map((subtask) => (
+                                        <div
+                                          key={subtask.subtask_id}
+                                          className="flex items-start gap-3 p-3 bg-white/5 rounded-lg hover:bg-white/10 transition-colors"
+                                        >
+                                          <span className="text-sm">
+                                            {subtask.completed ? '✅' : '⭕'}
+                                          </span>
+                                          <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 mb-1">
+                                              <span className="text-xs font-mono text-gray-500">{subtask.subtask_number}.</span>
+                                              <span className="text-sm font-medium text-white">{subtask.name}</span>
+                                            </div>
+                                            {subtask.description && (
+                                              <p className="text-xs text-gray-400 font-mono">{subtask.description}</p>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
                           </div>
                         )}
                       </div>
