@@ -59,6 +59,7 @@ interface Masterplan {
   estimated_duration_minutes: number
   phases: Phase[]
   created_at: string
+  workspace_path?: string
 }
 
 export const MasterplanDetailPage: React.FC = () => {
@@ -156,6 +157,51 @@ export const MasterplanDetailPage: React.FC = () => {
     }
   }
 
+  const handleExecute = async () => {
+    if (!masterplan) return
+
+    try {
+      setActionLoading(true)
+      const response = await fetch(`/api/v1/masterplans/${masterplan.masterplan_id}/execute`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.detail || 'Failed to execute masterplan')
+      }
+
+      const executionResponse = await response.json()
+
+      // Update masterplan status to in_progress
+      setMasterplan(prev => prev ? { ...prev, status: 'in_progress' } : null)
+
+      setNotification({
+        type: 'success',
+        message: `Execution started! Workspace: ${executionResponse.workspace_path}`
+      })
+
+      // Auto-refresh masterplan data after a short delay
+      setTimeout(() => {
+        if (id) fetchMasterplan(id)
+      }, 2000)
+
+      setTimeout(() => setNotification(null), 5000)
+    } catch (error) {
+      console.error('Error executing masterplan:', error)
+      setNotification({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Failed to execute masterplan'
+      })
+      setTimeout(() => setNotification(null), 5000)
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900/20 to-blue-900/20 flex items-center justify-center">
@@ -204,6 +250,7 @@ export const MasterplanDetailPage: React.FC = () => {
   }
 
   const showApprovalButtons = masterplan.status === 'draft'
+  const showExecuteButton = masterplan.status === 'approved'
 
   return (
     <div className="h-screen overflow-auto bg-gradient-to-br from-gray-900 via-purple-900/20 to-blue-900/20 p-8">
@@ -263,6 +310,39 @@ export const MasterplanDetailPage: React.FC = () => {
               >
                 {actionLoading ? 'Processing...' : '✗ Reject Masterplan'}
               </button>
+            </div>
+          )}
+
+          {/* Execute Button - Show only when status is approved */}
+          {showExecuteButton && (
+            <div className="flex gap-3 mb-6">
+              <button
+                onClick={handleExecute}
+                disabled={actionLoading}
+                className="px-8 py-4 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-bold text-lg rounded-lg shadow-lg shadow-purple-500/50 transition-all focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-3"
+              >
+                {actionLoading ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                    <span>Starting Execution...</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-2xl">🚀</span>
+                    <span>Execute Masterplan</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* Workspace Path - Show when available */}
+          {masterplan.workspace_path && (
+            <div className="mb-6 p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+              <div className="flex items-center gap-2 text-blue-300 text-sm">
+                <span className="font-semibold">📁 Workspace:</span>
+                <code className="font-mono">{masterplan.workspace_path}</code>
+              </div>
             </div>
           )}
 

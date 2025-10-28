@@ -131,14 +131,14 @@ Fixes critical bugs and implements complete workflow from generation through app
 **Dependencies:** Task Groups 1-2
 **Estimated Effort:** 8 hours
 
-- [ ] 3.0 Complete execution engine
-  - [ ] 3.1 Write 2-8 focused tests for execution engine
+- [x] 3.0 Complete execution engine
+  - [x] 3.1 Write 2-8 focused tests for execution engine
     - Limit to 2-8 highly focused tests maximum
     - Test execute endpoint creates workspace and starts execution
     - Test task execution in dependency order
     - Test retry logic for failed tasks
     - Skip exhaustive testing of all scenarios
-  - [ ] 3.2 Create execute endpoint
+  - [x] 3.2 Create execute endpoint
     - File: `src/api/routers/masterplans.py`
     - Add POST /api/v1/masterplans/{masterplan_id}/execute
     - Validate masterplan exists and status='approved'
@@ -146,7 +146,7 @@ Fixes critical bugs and implements complete workflow from generation through app
     - Update status to 'in_progress'
     - Return execution metadata: workspace_id, workspace_path
     - Add error handling: 404 (not found), 400 (invalid status)
-  - [ ] 3.3 Implement MasterplanExecutionService.execute() method
+  - [x] 3.3 Implement MasterplanExecutionService.execute() method
     - File: `src/services/masterplan_execution_service.py`
     - Load masterplan with all phases, milestones, tasks from database
     - Create workspace using create_workspace() method from 1.5
@@ -155,7 +155,7 @@ Fixes critical bugs and implements complete workflow from generation through app
     - Extract target_files from each MasterPlanTask.target_files
     - Build task execution plan with dependency resolution
     - Reference: orchestrator_agent.py _topological_sort method
-  - [ ] 3.4 Integrate OrchestratorAgent with progress callbacks
+  - [x] 3.4 Integrate OrchestratorAgent with progress callbacks
     - File: `src/services/masterplan_execution_service.py`
     - Create _progress_callback method to handle task updates
     - Pass callback to OrchestratorAgent during initialization
@@ -163,14 +163,14 @@ Fixes critical bugs and implements complete workflow from generation through app
     - Update task status in database within callback
     - Prepare for WebSocket event emission (implemented in Group 4)
     - Reference: orchestrator_agent.py _emit_progress method
-  - [ ] 3.5 Update task status in database during execution
+  - [x] 3.5 Update task status in database during execution
     - File: `src/services/masterplan_execution_service.py`
     - In progress callback: update MasterPlanTask.status field
     - Status transitions: pending -> ready -> in_progress -> completed/failed
     - Update MasterPlanTask.retry_count when retrying
     - Persist changes immediately (db.commit())
     - Add error handling for database updates
-  - [ ] 3.6 Handle task dependencies and retry logic
+  - [x] 3.6 Handle task dependencies and retry logic
     - File: `src/services/masterplan_execution_service.py`
     - Use MasterPlanTask.depends_on_tasks for dependency validation
     - Skip tasks with unmet dependencies (depends_on_tasks not completed)
@@ -179,7 +179,7 @@ Fixes critical bugs and implements complete workflow from generation through app
     - If retry exhausted: mark as 'failed', continue with non-dependent tasks
     - Update MasterPlan.status to 'completed' when all executable tasks finish
     - Reference: orchestrator_agent.py _execute_tasks method
-  - [ ] 3.7 Add execute button to MasterplanDetailPage
+  - [x] 3.7 Add execute button to MasterplanDetailPage
     - File: `src/ui/src/pages/MasterplanDetailPage.tsx`
     - Add conditional rendering: show button only when status='approved'
     - Create Execute button using GlassButton component
@@ -188,7 +188,7 @@ Fixes critical bugs and implements complete workflow from generation through app
     - Show loading state during execution start
     - Handle success: update UI to show 'in_progress' status
     - Handle errors: display error toast/notification
-  - [ ] 3.8 Ensure execution engine tests pass
+  - [x] 3.8 Ensure execution engine tests pass
     - Run ONLY the 2-8 tests written in 3.1
     - Verify execute endpoint works correctly
     - Verify task execution and dependency handling
@@ -369,8 +369,8 @@ Fixes critical bugs and implements complete workflow from generation through app
 
 Recommended implementation sequence:
 1. **Database Layer & Bug Fixes** (Task Group 1) - 4 hours - COMPLETED
-2. **Approval Workflow** (Task Group 2) - 6 hours
-3. **Execution Engine** (Task Group 3) - 8 hours
+2. **Approval Workflow** (Task Group 2) - 6 hours - COMPLETED
+3. **Execution Engine** (Task Group 3) - 8 hours - COMPLETED
 4. **Real-Time Monitoring** (Task Group 4) - 6 hours
 5. **Testing and Validation** (Task Group 5) - 4 hours
 
@@ -397,6 +397,7 @@ Recommended implementation sequence:
 
 ### Test Files
 - `tests/unit/test_masterplan_bug_fixes.py` - **CREATED** - Bug fix tests
+- `tests/unit/test_masterplan_execution.py` - **CREATED** - Execution engine tests
 - `tests/unit/test_masterplan_execution_service.py` - **NEW** - Service unit tests
 - `tests/integration/test_masterplan_workflow.py` - **NEW** - End-to-end workflow tests
 - `tests/integration/test_masterplan_execution.py` - **NEW** - Execution integration tests
@@ -411,12 +412,12 @@ Recommended implementation sequence:
 - **Database Persistence Fix**: Removed 'projects' table code from orchestrator_agent.py (_finalize method)
 - **Workspace Creation**: Created MasterplanExecutionService with create_workspace() using WorkspaceService
 
-### Approval Workflow (Group 2)
+### Approval Workflow (Group 2) - COMPLETED
 - **Status Transitions**: draft -> approved/rejected
 - **UI Patterns**: Reuse existing GlassCard, GlassButton components from design system
 - **ReviewQueue Integration**: Add masterplan filter following existing review queue patterns
 
-### Execution Engine (Group 3)
+### Execution Engine (Group 3) - COMPLETED
 - **Dependency Resolution**: Reuse `_topological_sort` method from orchestrator_agent.py
 - **Retry Logic**: Use existing `MasterPlanTask.retry_count` and `max_retries` fields
 - **Status Flow**: approved -> in_progress -> completed
@@ -441,8 +442,8 @@ Recommended implementation sequence:
 ### Functional Requirements Met
 - [x] File overwriting bug fixed (tasks use correct target_files)
 - [x] Database persistence bug fixed (no 'projects' table writes)
-- [ ] Approval workflow implemented (approve/reject endpoints and UI)
-- [ ] Execution engine implemented (execute endpoint, task orchestration)
+- [x] Approval workflow implemented (approve/reject endpoints and UI)
+- [x] Execution engine implemented (execute endpoint, task orchestration)
 - [ ] Real-time monitoring implemented (WebSocket updates, progress tracking)
 - [ ] Error recovery implemented (retry logic, dependency skipping)
 
