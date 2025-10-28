@@ -117,6 +117,7 @@ export function useChat(options: UseChatOptions = {}) {
 
         setIsLoading(false)
         setProgress(null)
+        setMasterPlanProgress(null) // Clear masterplan progress on error
 
         if (options.onError) {
           options.onError(errorInfo)
@@ -146,6 +147,7 @@ export function useChat(options: UseChatOptions = {}) {
 
       setIsLoading(false)
       setProgress(null)
+      setMasterPlanProgress(null) // Clear masterplan progress on error
 
       if (options.onError) {
         options.onError(errorInfo)

@@ -50,10 +50,12 @@ class EmbeddingModel:
 
         try:
             self.logger.info(f"Loading embedding model: {model_name}")
-            self.model = SentenceTransformer(model_name)
+            # Use local_files_only=True to avoid network calls to HuggingFace
+            # Model should be cached from first download
+            self.model = SentenceTransformer(model_name, local_files_only=True)
             self.dimension = self.model.get_sentence_embedding_dimension()
             self.logger.info(
-                f"Embedding model loaded successfully",
+                f"Embedding model loaded successfully (local cache)",
                 model=model_name,
                 dimension=self.dimension
             )
