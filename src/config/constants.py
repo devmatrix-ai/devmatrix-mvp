@@ -19,7 +19,7 @@ STREAMING_MAX_TOKENS = int(os.getenv("STREAMING_MAX_TOKENS", "8192"))
 CHAT_MAX_TOKENS = int(os.getenv("CHAT_MAX_TOKENS", "400"))
 
 # Model selection
-DEFAULT_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+DEFAULT_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
 
 # Temperature settings
 DEFAULT_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.7"))

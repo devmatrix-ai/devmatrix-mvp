@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale'
+import { authService } from '../../services/authService'
 
 interface Conversation {
   id: string
@@ -39,7 +40,9 @@ export function ConversationHistory({
       setLoading(true)
       setError(null)
 
-      const response = await fetch('http://localhost:8000/api/v1/conversations?limit=50')
+      const response = await fetch('http://localhost:8000/api/v1/conversations?limit=50', {
+        headers: authService.getAuthHeaders()
+      })
       if (!response.ok) {
         throw new Error(`Error ${response.status}: ${response.statusText}`)
       }
@@ -72,7 +75,8 @@ export function ConversationHistory({
 
     try {
       const response = await fetch(`http://localhost:8000/api/v1/conversations/${conversationId}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: authService.getAuthHeaders()
       })
 
       if (!response.ok) {
