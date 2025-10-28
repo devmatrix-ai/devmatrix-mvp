@@ -32,6 +32,7 @@ class MasterPlanStatus(str, enum.Enum):
     """MasterPlan execution status"""
     DRAFT = "draft"
     APPROVED = "approved"
+    REJECTED = "rejected"
     IN_PROGRESS = "in_progress"
     PAUSED = "paused"
     COMPLETED = "completed"
@@ -170,6 +171,9 @@ class MasterPlan(Base):
     llm_model = Column(String(100))  # Model used for generation
     generation_cost_usd = Column(Float)  # Cost to generate plan
     generation_tokens = Column(Integer)  # Tokens used
+
+    # Workspace Path - Added for execution tracking
+    workspace_path = Column(String(500), nullable=True)  # Absolute path to workspace directory
 
     # Version Control
     version = Column(Integer, default=1)
