@@ -4,7 +4,7 @@ MasterPlan API Router
 REST endpoints for listing and viewing MasterPlans.
 """
 
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query, Depends, BackgroundTasks
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 from datetime import datetime
@@ -21,6 +21,7 @@ from src.models.masterplan import (
     TaskStatus
 )
 from src.services.masterplan_generator import MasterPlanGenerator
+from src.services.masterplan_execution_service import MasterplanExecutionService
 from src.api.middleware.auth_middleware import get_current_user
 from src.observability import StructuredLogger
 
@@ -67,6 +68,28 @@ class RejectMasterPlanRequest(BaseModel):
         json_schema_extra = {
             "example": {
                 "rejection_reason": "Tasks are too complex, needs simplification"
+            }
+        }
+
+
+class ExecuteMasterPlanResponse(BaseModel):
+    """Response after starting masterplan execution."""
+    masterplan_id: str
+    status: str
+    workspace_id: str
+    workspace_path: str
+    total_tasks: int
+    message: str
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "masterplan_id": "660e8400-e29b-41d4-a716-446655440000",
+                "status": "in_progress",
+                "workspace_id": "masterplan_my_project",
+                "workspace_path": "/absolute/path/to/workspace",
+                "total_tasks": 42,
+                "message": "Execution started successfully"
             }
         }
 
@@ -178,6 +201,7 @@ def serialize_masterplan_detail(masterplan: MasterPlan) -> Dict[str, Any]:
     summary["generation_tokens"] = masterplan.generation_tokens
     summary["version"] = masterplan.version
     summary["updated_at"] = masterplan.updated_at.isoformat() if masterplan.updated_at else None
+    summary["workspace_path"] = masterplan.workspace_path
     return summary
 
 
@@ -513,5 +537,109 @@ async def reject_masterplan(
         raise
     except Exception as e:
         logger.error(f"Error rejecting masterplan {masterplan_id}: {e}", exc_info=True)
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{masterplan_id}/execute", response_model=ExecuteMasterPlanResponse)
+async def execute_masterplan(
+    masterplan_id: str,
+    background_tasks: BackgroundTasks
+) -> ExecuteMasterPlanResponse:
+    """
+    Execute an approved MasterPlan.
+
+    Creates a workspace and starts asynchronous execution of all tasks in the masterplan.
+    Tasks execute in dependency order using topological sort. Updates status to 'in_progress'.
+
+    Args:
+        masterplan_id: UUID of the masterplan to execute
+        background_tasks: FastAPI background tasks for async execution
+
+    Returns:
+        ExecuteMasterPlanResponse with workspace details and total task count
+
+    Raises:
+        HTTPException 400: If masterplan_id format is invalid or status is not 'approved'
+        HTTPException 404: If masterplan not found
+        HTTPException 500: If workspace creation or execution fails
+    """
+    try:
+        logger.info(f"Executing masterplan {masterplan_id}")
+
+        # Validate UUID
+        try:
+            masterplan_uuid = UUID(masterplan_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid masterplan_id format")
+
+        db = next(get_db())
+
+        # Query masterplan with all relationships
+        masterplan = (
+            db.query(MasterPlan)
+            .filter(MasterPlan.masterplan_id == masterplan_uuid)
+            .first()
+        )
+
+        if not masterplan:
+            raise HTTPException(status_code=404, detail=f"MasterPlan {masterplan_id} not found")
+
+        # Validate status is 'approved'
+        if masterplan.status != MasterPlanStatus.APPROVED:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot execute masterplan with status '{masterplan.status.value}'. Only approved masterplans can be executed."
+            )
+
+        # Initialize execution service
+        execution_service = MasterplanExecutionService(db_session=db)
+
+        # Create workspace
+        try:
+            workspace_path = execution_service.create_workspace(masterplan_uuid)
+        except ValueError as e:
+            logger.error(f"Failed to create workspace: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to create workspace: {e}")
+
+        # Update masterplan status to in_progress
+        masterplan.status = MasterPlanStatus.IN_PROGRESS
+        masterplan.started_at = datetime.utcnow()
+        masterplan.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(masterplan)
+
+        # Extract workspace_id from workspace_path (last directory name)
+        workspace_id = workspace_path.split('/')[-1] if '/' in workspace_path else workspace_path
+
+        # Start async execution in background
+        background_tasks.add_task(
+            execution_service.execute,
+            masterplan_uuid
+        )
+
+        logger.info(
+            f"Masterplan execution started successfully",
+            extra={
+                "masterplan_id": masterplan_id,
+                "workspace_path": workspace_path,
+                "workspace_id": workspace_id,
+                "total_tasks": masterplan.total_tasks
+            }
+        )
+
+        return ExecuteMasterPlanResponse(
+            masterplan_id=str(masterplan_uuid),
+            status="in_progress",
+            workspace_id=workspace_id,
+            workspace_path=workspace_path,
+            total_tasks=masterplan.total_tasks,
+            message="Execution started successfully"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error executing masterplan {masterplan_id}: {e}", exc_info=True)
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
