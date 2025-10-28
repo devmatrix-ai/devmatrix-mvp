@@ -68,6 +68,8 @@ export const MasterplanDetailPage: React.FC = () => {
   const [loading, setLoading] = useState(true)
   const [expandedMilestone, setExpandedMilestone] = useState<string | null>(null)
   const [expandedTask, setExpandedTask] = useState<string | null>(null)
+  const [actionLoading, setActionLoading] = useState(false)
+  const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null)
 
   useEffect(() => {
     if (id) {
@@ -85,6 +87,72 @@ export const MasterplanDetailPage: React.FC = () => {
       console.error('Error fetching masterplan:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleApprove = async () => {
+    if (!masterplan) return
+
+    try {
+      setActionLoading(true)
+      const response = await fetch(`/api/v1/masterplans/${masterplan.masterplan_id}/approve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.detail || 'Failed to approve masterplan')
+      }
+
+      const updatedMasterplan = await response.json()
+      setMasterplan(updatedMasterplan)
+      setNotification({ type: 'success', message: 'Masterplan approved successfully!' })
+      setTimeout(() => setNotification(null), 3000)
+    } catch (error) {
+      console.error('Error approving masterplan:', error)
+      setNotification({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Failed to approve masterplan'
+      })
+      setTimeout(() => setNotification(null), 5000)
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleReject = async () => {
+    if (!masterplan) return
+
+    try {
+      setActionLoading(true)
+      const response = await fetch(`/api/v1/masterplans/${masterplan.masterplan_id}/reject`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.detail || 'Failed to reject masterplan')
+      }
+
+      const updatedMasterplan = await response.json()
+      setMasterplan(updatedMasterplan)
+      setNotification({ type: 'success', message: 'Masterplan rejected successfully!' })
+      setTimeout(() => setNotification(null), 3000)
+    } catch (error) {
+      console.error('Error rejecting masterplan:', error)
+      setNotification({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Failed to reject masterplan'
+      })
+      setTimeout(() => setNotification(null), 5000)
+    } finally {
+      setActionLoading(false)
     }
   }
 
@@ -135,9 +203,24 @@ export const MasterplanDetailPage: React.FC = () => {
     return colors[status] || 'text-gray-400'
   }
 
+  const showApprovalButtons = masterplan.status === 'draft'
+
   return (
     <div className="h-screen overflow-auto bg-gradient-to-br from-gray-900 via-purple-900/20 to-blue-900/20 p-8">
       <div className="max-w-7xl mx-auto space-y-8">
+        {/* Notification */}
+        {notification && (
+          <div
+            className={`fixed top-4 right-4 z-50 px-6 py-4 rounded-lg shadow-lg ${
+              notification.type === 'success'
+                ? 'bg-green-500/90 text-white'
+                : 'bg-red-500/90 text-white'
+            }`}
+          >
+            {notification.message}
+          </div>
+        )}
+
         {/* Back Button */}
         <button
           onClick={() => navigate('/masterplans')}
@@ -156,10 +239,32 @@ export const MasterplanDetailPage: React.FC = () => {
               <h1 className="text-4xl font-bold text-white mb-2">{masterplan.project_name}</h1>
               <p className="text-gray-400 text-lg">{masterplan.description}</p>
             </div>
-            <span className="px-4 py-2 rounded-lg bg-purple-600 text-white font-semibold">
-              {masterplan.status.toUpperCase()}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="px-4 py-2 rounded-lg bg-purple-600 text-white font-semibold">
+                {masterplan.status.toUpperCase()}
+              </span>
+            </div>
           </div>
+
+          {/* Approval Buttons - Show only when status is draft */}
+          {showApprovalButtons && (
+            <div className="flex gap-3 mb-6">
+              <button
+                onClick={handleApprove}
+                disabled={actionLoading}
+                className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg shadow-lg shadow-green-500/50 transition-all focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {actionLoading ? 'Processing...' : '✓ Approve Masterplan'}
+              </button>
+              <button
+                onClick={handleReject}
+                disabled={actionLoading}
+                className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg shadow-lg shadow-red-500/50 transition-all focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {actionLoading ? 'Processing...' : '✗ Reject Masterplan'}
+              </button>
+            </div>
+          )}
 
           {/* Progress Bar */}
           <div className="mb-6">
