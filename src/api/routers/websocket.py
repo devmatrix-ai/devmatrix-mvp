@@ -1,7 +1,7 @@
 """
 WebSocket Router
 
-Real-time communication endpoints for chat, executions, and workspace updates.
+Real-time communication endpoints for chat, executions, masterplans, and workspace updates.
 """
 
 import asyncio
@@ -49,6 +49,7 @@ workspace_service = WorkspaceService()
 active_connections: Dict[str, Set[str]] = {
     "chat": set(),
     "executions": set(),
+    "masterplans": set(),
 }
 
 
@@ -67,7 +68,7 @@ async def connect(sid, environ):
         labels={"type": "connect"},
         help_text="Total WebSocket connections"
     )
-    current_active = len(active_connections['chat']) + len(active_connections['executions'])
+    current_active = len(active_connections['chat']) + len(active_connections['executions']) + len(active_connections['masterplans'])
     metrics.set_gauge(
         "websocket_connections_active",
         current_active + 1,
@@ -92,7 +93,7 @@ async def disconnect(sid):
         labels={"type": "disconnect"},
         help_text="Total WebSocket disconnections"
     )
-    current_active = len(active_connections['chat']) + len(active_connections['executions'])
+    current_active = len(active_connections['chat']) + len(active_connections['executions']) + len(active_connections['masterplans'])
     metrics.set_gauge(
         "websocket_connections_active",
         current_active,
@@ -456,6 +457,73 @@ async def leave_execution(sid, data):
 
 
 # ==========================================
+# Masterplan Events
+# ==========================================
+
+@sio.event
+async def join_masterplan(sid, data):
+    """
+    Join masterplan monitoring room for real-time execution updates.
+
+    Expected data:
+        {
+            "masterplan_id": "masterplan-uuid"
+        }
+    """
+    try:
+        masterplan_id = data.get('masterplan_id')
+        if not masterplan_id:
+            await sio.emit('error', {
+                'message': 'masterplan_id is required'
+            }, room=sid)
+            return
+
+        # Join masterplan-specific room
+        room_name = f"masterplan_{masterplan_id}"
+        await sio.enter_room(sid, room_name)
+        active_connections['masterplans'].add(sid)
+
+        await sio.emit('masterplan_joined', {
+            'masterplan_id': masterplan_id,
+            'room': room_name,
+        }, room=sid)
+
+        logger.info(f"Client {sid} joined masterplan {masterplan_id}")
+
+        # Metrics
+        metrics.increment_counter(
+            "websocket_masterplan_connections_total",
+            labels={"action": "join"},
+            help_text="Total masterplan WebSocket connections"
+        )
+
+    except Exception as e:
+        logger.error(f"Error joining masterplan: {e}", exc_info=True)
+        await sio.emit('error', {'message': str(e)}, room=sid)
+
+
+@sio.event
+async def leave_masterplan(sid, data):
+    """Leave masterplan monitoring room."""
+    try:
+        masterplan_id = data.get('masterplan_id')
+        if masterplan_id:
+            room_name = f"masterplan_{masterplan_id}"
+            await sio.leave_room(sid, room_name)
+            active_connections['masterplans'].discard(sid)
+            logger.info(f"Client {sid} left masterplan {masterplan_id}")
+
+            # Metrics
+            metrics.increment_counter(
+                "websocket_masterplan_connections_total",
+                labels={"action": "leave"},
+                help_text="Total masterplan WebSocket disconnections"
+            )
+    except Exception as e:
+        logger.error(f"Error leaving masterplan: {e}")
+
+
+# ==========================================
 # Utility Functions
 # ==========================================
 
@@ -479,6 +547,18 @@ async def broadcast_workspace_update(workspace_id: str, update: dict):
         update: Update data
     """
     await sio.emit('workspace_update', update, room=f"workspace_{workspace_id}")
+
+
+async def broadcast_masterplan_update(masterplan_id: str, event_name: str, update: dict):
+    """
+    Broadcast masterplan execution update to all connected clients.
+
+    Args:
+        masterplan_id: Masterplan ID
+        event_name: Event name (e.g., 'masterplan_execution_start')
+        update: Update data
+    """
+    await sio.emit(event_name, update, room=f"masterplan_{masterplan_id}")
 
 
 # ==========================================

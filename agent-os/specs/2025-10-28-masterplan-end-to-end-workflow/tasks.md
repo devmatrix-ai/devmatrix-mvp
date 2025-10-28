@@ -211,39 +211,39 @@ Fixes critical bugs and implements complete workflow from generation through app
 **Dependencies:** Task Groups 1-3
 **Estimated Effort:** 6 hours
 
-- [ ] 4.0 Complete real-time monitoring
-  - [ ] 4.1 Write 2-8 focused tests for WebSocket monitoring
+- [x] 4.0 Complete real-time monitoring
+  - [x] 4.1 Write 2-8 focused tests for WebSocket monitoring
     - Limit to 2-8 highly focused tests maximum
     - Test WebSocket event emission during execution
     - Test frontend receives and displays updates
     - Test progress bar calculation
     - Skip exhaustive testing of all scenarios
-  - [ ] 4.2 Implement WebSocket event broadcasting
+  - [x] 4.2 Implement WebSocket event broadcasting
     - File: `src/services/masterplan_execution_service.py`
     - Import Socket.IO server from src/api/routers/websocket.py
     - Add _emit_websocket_event method
     - Use sio.emit to broadcast to masterplan-specific room
     - Room name: f"masterplan_{masterplan_id}"
     - Reference: websocket.py patterns (Socket.IO room-based broadcasting)
-  - [ ] 4.3 Emit masterplan_execution_start event
+  - [x] 4.3 Emit masterplan_execution_start event
     - File: `src/services/masterplan_execution_service.py`
     - Emit when execution begins in execute() method
     - Event payload: {"masterplan_id": str, "workspace_id": str, "workspace_path": str, "total_tasks": int}
     - Broadcast to room: f"masterplan_{masterplan_id}"
     - Log event emission for debugging
-  - [ ] 4.4 Emit task_execution_progress event
+  - [x] 4.4 Emit task_execution_progress event
     - File: `src/services/masterplan_execution_service.py`
     - Emit in _progress_callback during task execution
     - Event payload: {"masterplan_id": str, "task_id": str, "task_number": int, "status": str, "description": str, "current_task": int, "total_tasks": int}
     - Broadcast on status changes: ready, in_progress, validating
     - Include phase_id and milestone_id for UI hierarchy
-  - [ ] 4.5 Emit task_execution_complete event
+  - [x] 4.5 Emit task_execution_complete event
     - File: `src/services/masterplan_execution_service.py`
     - Emit when task completes (success or failure)
     - Event payload: {"masterplan_id": str, "task_id": str, "status": str, "output_files": List[str], "completed_tasks": int, "total_tasks": int}
     - Extract output_files from MasterPlanTask.target_files
     - Broadcast to room: f"masterplan_{masterplan_id}"
-  - [ ] 4.6 Add WebSocket listener to MasterplanDetailPage
+  - [x] 4.6 Add WebSocket listener to MasterplanDetailPage
     - File: `src/ui/src/pages/MasterplanDetailPage.tsx`
     - Import socket.io-client
     - Connect to WebSocket on component mount
@@ -251,7 +251,7 @@ Fixes critical bugs and implements complete workflow from generation through app
     - Listen to events: masterplan_execution_start, task_execution_progress, task_execution_complete
     - Disconnect and leave room on component unmount
     - Reference: existing WebSocket patterns in codebase
-  - [ ] 4.7 Update task status UI in real-time
+  - [x] 4.7 Update task status UI in real-time
     - File: `src/ui/src/pages/MasterplanDetailPage.tsx`
     - On task_execution_progress: update task status in state
     - Visual indicators: gray (pending), blue (ready), yellow (in_progress), green (completed), red (failed)
@@ -259,14 +259,14 @@ Fixes critical bugs and implements complete workflow from generation through app
     - Organize display by Phase > Milestone > Tasks hierarchy
     - Use existing serialize_phase(), serialize_milestone(), serialize_task() data structure
     - Implement collapsible sections for phases and milestones
-  - [ ] 4.8 Display progress bar with completion percentage
+  - [x] 4.8 Display progress bar with completion percentage
     - File: `src/ui/src/pages/MasterplanDetailPage.tsx`
     - Calculate: (completed_tasks / total_tasks) * 100
     - Display progress bar in header section
     - Update in real-time from task_execution_progress events
     - Show completed/total task count (e.g., "5 of 42 tasks completed")
     - Style with gradient matching phase colors
-  - [ ] 4.9 Add retry button for failed tasks
+  - [x] 4.9 Add retry button for failed tasks
     - File: `src/ui/src/pages/MasterplanDetailPage.tsx`
     - Show retry button on tasks with status='failed'
     - Only show if retry_count < max_retries
@@ -274,20 +274,20 @@ Fixes critical bugs and implements complete workflow from generation through app
     - Endpoint resets task status to 'pending' and re-executes
     - Display loading state during retry
     - Update UI when retry completes
-  - [ ] 4.10 Ensure monitoring tests pass
+  - [x] 4.10 Ensure monitoring tests pass
     - Run ONLY the 2-8 tests written in 4.1
     - Verify WebSocket events broadcast correctly
     - Verify frontend updates in real-time
     - Do NOT run the entire test suite at this stage
 
 **Acceptance Criteria:**
-- The 2-8 tests written in 4.1 pass
-- WebSocket events broadcast during execution
-- Frontend connects to WebSocket and joins correct room
-- Task status updates display in real-time
-- Progress bar shows accurate completion percentage
-- UI organized by Phase > Milestone > Tasks hierarchy
-- Retry button appears for failed tasks and works correctly
+- [x] The 2-8 tests written in 4.1 pass (7 tests passing)
+- [x] WebSocket events broadcast during execution
+- [x] Frontend connects to WebSocket and joins correct room
+- [x] Task status updates display in real-time
+- [x] Progress bar shows accurate completion percentage
+- [x] UI organized by Phase > Milestone > Tasks hierarchy
+- [x] Retry button appears for failed tasks and works correctly
 
 ---
 
@@ -371,7 +371,7 @@ Recommended implementation sequence:
 1. **Database Layer & Bug Fixes** (Task Group 1) - 4 hours - COMPLETED
 2. **Approval Workflow** (Task Group 2) - 6 hours - COMPLETED
 3. **Execution Engine** (Task Group 3) - 8 hours - COMPLETED
-4. **Real-Time Monitoring** (Task Group 4) - 6 hours
+4. **Real-Time Monitoring** (Task Group 4) - 6 hours - COMPLETED
 5. **Testing and Validation** (Task Group 5) - 4 hours
 
 **Total Estimated Time:** 28 hours
@@ -383,13 +383,13 @@ Recommended implementation sequence:
 ### Backend Files
 - `src/models/masterplan.py` - Database models (MasterPlan, MasterPlanTask with target_files at line 322)
 - `src/api/routers/masterplans.py` - API endpoints, serialization functions
-- `src/services/masterplan_execution_service.py` - **CREATED** - Execution orchestration service
+- `src/services/masterplan_execution_service.py` - **CREATED** - Execution orchestration service with WebSocket events
 - `src/agents/orchestrator_agent.py` - **UPDATED** - Removed projects table persistence code
 - `src/services/workspace_service.py` - Workspace creation (WorkspaceService.create_workspace)
-- `src/api/routers/websocket.py` - WebSocket patterns (Socket.IO room-based broadcasting)
+- `src/api/routers/websocket.py` - **UPDATED** - WebSocket patterns with masterplan room support
 
 ### Frontend Files
-- `src/ui/src/pages/MasterplanDetailPage.tsx` - Detail view with approve/reject/execute buttons, real-time monitoring
+- `src/ui/src/pages/MasterplanDetailPage.tsx` - **UPDATED** - Detail view with approve/reject/execute buttons, real-time monitoring with WebSocket
 - `src/ui/src/pages/review/ReviewQueue.tsx` - Review queue with masterplan filter
 
 ### Database Migration
@@ -398,6 +398,7 @@ Recommended implementation sequence:
 ### Test Files
 - `tests/unit/test_masterplan_bug_fixes.py` - **CREATED** - Bug fix tests
 - `tests/unit/test_masterplan_execution.py` - **CREATED** - Execution engine tests
+- `tests/unit/test_masterplan_websocket.py` - **CREATED** - WebSocket event tests (7 tests passing)
 - `tests/unit/test_masterplan_execution_service.py` - **NEW** - Service unit tests
 - `tests/integration/test_masterplan_workflow.py` - **NEW** - End-to-end workflow tests
 - `tests/integration/test_masterplan_execution.py` - **NEW** - Execution integration tests
@@ -423,11 +424,13 @@ Recommended implementation sequence:
 - **Status Flow**: approved -> in_progress -> completed
 - **Error Recovery**: Skip failed tasks, continue with non-dependent tasks
 
-### Real-Time Monitoring (Group 4)
+### Real-Time Monitoring (Group 4) - COMPLETED
 - **WebSocket Events**: masterplan_execution_start, task_execution_progress, task_execution_complete
 - **Room Naming**: f"masterplan_{masterplan_id}"
 - **UI Hierarchy**: Phase > Milestone > Tasks (reuse serialize_phase, serialize_milestone, serialize_task functions)
 - **Status Colors**: Gray (pending), Blue (ready), Yellow (in_progress), Green (completed), Red (failed)
+- **Real-time Updates**: Progress bar with animate-pulse, task highlighting, status badges
+- **Retry Button**: Shows for failed tasks with retry_count < max_retries
 
 ### Testing Strategy (Group 5)
 - **Limited Testing**: Maximum 2-8 tests per group during development
@@ -444,8 +447,8 @@ Recommended implementation sequence:
 - [x] Database persistence bug fixed (no 'projects' table writes)
 - [x] Approval workflow implemented (approve/reject endpoints and UI)
 - [x] Execution engine implemented (execute endpoint, task orchestration)
-- [ ] Real-time monitoring implemented (WebSocket updates, progress tracking)
-- [ ] Error recovery implemented (retry logic, dependency skipping)
+- [x] Real-time monitoring implemented (WebSocket updates, progress tracking)
+- [x] Error recovery implemented (retry logic, dependency skipping)
 
 ### Performance Targets
 - Execution starts within 2 seconds of execute button click
