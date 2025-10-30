@@ -1,0 +1,105 @@
+{
+  "masterplan": {
+    "title": "Progreso de Generación del MasterPlan",
+    "phase": {
+      "discovery": "Analizando Requisitos DDD",
+      "parsing": "Generando Estructura del Plan",
+      "validation": "Validando Dependencias",
+      "saving": "Guardando en Base de Datos"
+    },
+    "status": {
+      "generating": "Generando MasterPlan",
+      "complete": "MasterPlan Generado Exitosamente",
+      "failed": "Generación Fallida",
+      "retrying": "Reintentando Generación...",
+      "reconnecting": "Reconectando...",
+      "timeRemaining": "~{seconds}s restante",
+      "elapsedTime": "{seconds}s transcurridos",
+      "estimatedTime": "Est. {seconds}s"
+    },
+    "metrics": {
+      "primary": "Métricas Primarias",
+      "secondary": "Estadísticas Detalladas",
+      "tertiary": "Depuración Avanzada",
+      "tokens": "Tokens Utilizados",
+      "tokensProgress": "{used} / {total} tokens",
+      "cost": "Costo de Generación",
+      "costUsd": "${amount} USD",
+      "boundedContexts": "Contextos Acotados",
+      "aggregates": "Agregados",
+      "entities": "Entidades",
+      "phases": "Fases",
+      "milestones": "Hitos",
+      "tasks": "Tareas",
+      "duration": "Duración",
+      "progress": "Progreso",
+      "currentPhase": "Fase Actual",
+      "breakdown": "Desglose Detallado",
+      "rawData": "Datos JSON Crudos"
+    },
+    "timeline": {
+      "title": "Cronología de Generación",
+      "phaseCompleted": "Fase completada en {duration}s",
+      "phaseActive": "Fase en progreso",
+      "phasePending": "Fase pendiente",
+      "phaseFailed": "Fase fallida"
+    },
+    "buttons": {
+      "close": "Cerrar",
+      "viewDetails": "Ver Detalles del MasterPlan",
+      "startExecution": "Iniciar Ejecución",
+      "export": "Exportar",
+      "retry": "Reintentar Generación",
+      "expand": "Expandir",
+      "collapse": "Contraer",
+      "showMore": "Mostrar Más",
+      "showLess": "Mostrar Menos"
+    },
+    "errors": {
+      "title": "Error de Generación",
+      "failed": "Generación Fallida",
+      "message": "Mensaje de Error",
+      "code": "Código de Error",
+      "details": "Detalles del Error",
+      "stackTrace": "Traza de Pila",
+      "retry": "Reintentar Generación",
+      "retryingMessage": "Reintentando generación, por favor espere...",
+      "database": "Error de Conexión a Base de Datos",
+      "llm": "Error de API LLM",
+      "websocket": "Error de Conexión WebSocket",
+      "validation": "Error de Validación",
+      "unknown": "Error Desconocido",
+      "reconnectPrompt": "Conexión perdida. Reconectando..."
+    },
+    "summary": {
+      "title": "¡Generación Completa!",
+      "subtitle": "Tu MasterPlan ha sido generado exitosamente",
+      "totalStats": "Estadísticas Totales",
+      "totalTokens": "Tokens Totales",
+      "totalCost": "Costo Total",
+      "totalDuration": "Duración Total",
+      "entitySummary": "Resumen de Entidades",
+      "detailedBreakdown": "Desglose Detallado",
+      "architectureStyle": "Estilo de Arquitectura",
+      "techStack": "Stack Tecnológico",
+      "phasesList": "Lista de Fases",
+      "phaseWithTasks": "{phaseName} ({taskCount} tareas)"
+    },
+    "accessibility": {
+      "progressBar": "Progreso: {percentage}% completo",
+      "modalLabel": "Modal de Progreso de Generación del MasterPlan",
+      "closeModal": "Cerrar modal de progreso",
+      "phaseIndicator": "Fase {phase} está {status}",
+      "errorPanel": "Error de Generación",
+      "retryButton": "Reintentar generación del MasterPlan",
+      "statusUpdate": "Estado de generación actualizado",
+      "currentPhaseAnnouncement": "Fase actual: {phase}",
+      "completionAnnouncement": "Generación del MasterPlan completada exitosamente"
+    },
+    "loading": {
+      "fetching": "Obteniendo estado de generación...",
+      "resuming": "Reanudando seguimiento de progreso...",
+      "initializing": "Inicializando generación..."
+    }
+  }
+}

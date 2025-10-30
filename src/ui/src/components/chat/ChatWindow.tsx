@@ -4,9 +4,11 @@ import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts'
 import { MessageList } from './MessageList'
 import { ChatInput } from './ChatInput'
 import { ProgressIndicator } from './ProgressIndicator'
-import { MasterPlanProgressIndicator } from './MasterPlanProgressIndicator'
+import InlineProgressHeader from './InlineProgressHeader'
+import MasterPlanProgressModal from './MasterPlanProgressModal'
 import { ConversationHistory } from './ConversationHistory'
 import { FiMessageSquare, FiX, FiMinus, FiPlusCircle, FiDownload, FiMenu } from 'react-icons/fi'
+import '../chat/masterplan/animations.css'
 
 interface ChatWindowProps {
   workspaceId?: string
@@ -36,6 +38,7 @@ export function ChatWindow({
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<{ focus: () => void }>(null)
   const [showHistory, setShowHistory] = useState(false)
+  const [showMasterPlanModal, setShowMasterPlanModal] = useState(false)
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -235,30 +238,26 @@ export function ChatWindow({
 
             <MessageList messages={messages} isLoading={isLoading} />
 
-            {/* MasterPlan Progress Indicator - Show during MasterPlan generation */}
-            {(() => {
-              console.log('🎨 [ChatWindow] Checking masterPlanProgress:', {
-                isTruthy: !!masterPlanProgress,
-                value: masterPlanProgress
-              })
-
-              if (!masterPlanProgress) {
-                console.log('⏸️ [ChatWindow] masterPlanProgress is falsy, not rendering indicator')
-                return null
-              }
-
-              console.log('✅ [ChatWindow] Rendering MasterPlanProgressIndicator with:', masterPlanProgress)
-              return (
+            {/* MasterPlan Progress - Inline Header with Modal */}
+            {masterPlanProgress && (
+              <>
                 <div className="mt-4">
-                  <MasterPlanProgressIndicator
+                  <InlineProgressHeader
                     event={masterPlanProgress}
-                    onComplete={() => {
-                      // Progress will be cleared automatically by the hook after 3s
-                    }}
+                    onClick={() => setShowMasterPlanModal(true)}
                   />
                 </div>
-              )
-            })()}
+              </>
+            )}
+
+            {/* MasterPlan Progress Modal */}
+            {masterPlanProgress && (
+              <MasterPlanProgressModal
+                event={masterPlanProgress}
+                open={showMasterPlanModal}
+                onClose={() => setShowMasterPlanModal(false)}
+              />
+            )}
 
             {/* Progress Indicator - Show when loading or progress events */}
             {(isLoading || progress) && (

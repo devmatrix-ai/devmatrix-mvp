@@ -245,8 +245,10 @@ async def create_masterplan(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid discovery_id format")
 
-        # Initialize MasterPlan generator
-        generator = MasterPlanGenerator()
+        # Initialize MasterPlan generator with WebSocket manager for real-time progress updates
+        # Import here to avoid circular imports
+        from src.api.routers.websocket import ws_manager
+        generator = MasterPlanGenerator(websocket_manager=ws_manager)
 
         # Generate masterplan (async)
         masterplan_id = await generator.generate_masterplan(
