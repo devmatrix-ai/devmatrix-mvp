@@ -851,8 +851,10 @@ Respondé de manera natural, amigable y útil. Si es una pregunta de diseño o p
 
             # Get session_id from conversation metadata (should be socket.io sid)
             session_id = conversation.metadata.get('sid', conversation.conversation_id)
-            # Use demo user UUID as fallback (authentication integration pending)
-            user_id = conversation.metadata.get('user_id', '7b10ae4c-2158-46be-be91-18dec7d02767')
+            # Get user_id from conversation (should be set by authenticated WebSocket connection)
+            user_id = conversation.metadata.get('user_id')
+            if not user_id:
+                raise ValueError("Conversation user_id not set - requires authenticated WebSocket connection")
 
             # Send initial status
             yield {

@@ -26,61 +26,33 @@ depends_on = None
 def upgrade() -> None:
     """Fix conversations and messages schema."""
 
-    # Step 1: Drop foreign key constraint from messages table
-    op.drop_constraint('messages_conversation_id_fkey', 'messages', type_='foreignkey')
+    # Only add columns if they don't already exist
+    # Using raw SQL for better control and idempotency
 
-    # Step 2: Rename columns in conversations table
-    op.alter_column('conversations', 'conversation_id', new_column_name='id')
+    # Add session_id column to conversations if it doesn't exist
+    op.execute("""
+        ALTER TABLE conversations ADD COLUMN IF NOT EXISTS
+        session_id VARCHAR(255) DEFAULT NULL;
+    """)
 
-    # Step 3: Add session_id column to conversations
-    op.add_column('conversations', sa.Column('session_id', sa.String(length=255), nullable=True))
+    # Add metadata column to conversations if it doesn't exist
+    op.execute("""
+        ALTER TABLE conversations ADD COLUMN IF NOT EXISTS
+        metadata JSONB DEFAULT '{}';
+    """)
 
-    # Step 4: Add metadata column to conversations if it doesn't exist
-    # Use try-except pattern with op.f() for proper constraint naming
-    try:
-        op.add_column('conversations', sa.Column('metadata', postgresql.JSONB(), nullable=True, server_default='{}'))
-    except Exception:
-        pass  # Column may already exist
-
-    # Step 5: Rename columns in messages table
-    op.alter_column('messages', 'message_id', new_column_name='id')
-
-    # Step 6: Add metadata column to messages
-    op.add_column('messages', sa.Column('metadata', postgresql.JSONB(), nullable=True, server_default='{}'))
-
-    # Step 7: Recreate foreign key with new column name
-    op.create_foreign_key(
-        'messages_conversation_id_fkey',
-        'messages', 'conversations',
-        ['conversation_id'], ['id'],
-        ondelete='CASCADE'
-    )
-
-    # Step 8: Update indexes if needed
-    # The existing indexes should still work as they reference by name, not column
+    # Add metadata column to messages if it doesn't exist
+    op.execute("""
+        ALTER TABLE messages ADD COLUMN IF NOT EXISTS
+        metadata JSONB DEFAULT '{}';
+    """)
 
 
 def downgrade() -> None:
     """Revert conversations and messages schema changes."""
 
-    # Step 1: Drop foreign key
-    op.drop_constraint('messages_conversation_id_fkey', 'messages', type_='foreignkey')
-
-    # Step 2: Remove metadata columns
-    op.drop_column('messages', 'metadata')
-    op.drop_column('conversations', 'metadata')
-
-    # Step 3: Remove session_id column
-    op.drop_column('conversations', 'session_id')
-
-    # Step 3: Rename columns back
-    op.alter_column('messages', 'id', new_column_name='message_id')
-    op.alter_column('conversations', 'id', new_column_name='conversation_id')
-
-    # Step 4: Recreate original foreign key
-    op.create_foreign_key(
-        'messages_conversation_id_fkey',
-        'messages', 'conversations',
-        ['conversation_id'], ['conversation_id'],
-        ondelete='CASCADE'
-    )
+    # Note: This migration is idempotent - it only adds columns that may not exist
+    # Downgrade removes the columns that were added
+    op.execute("ALTER TABLE conversations DROP COLUMN IF EXISTS session_id;")
+    op.execute("ALTER TABLE conversations DROP COLUMN IF EXISTS metadata;")
+    op.execute("ALTER TABLE messages DROP COLUMN IF EXISTS metadata;")
