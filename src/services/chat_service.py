@@ -61,9 +61,11 @@ class Conversation:
         conversation_id: Optional[str] = None,
         workspace_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ):
         self.conversation_id = conversation_id or str(uuid.uuid4())
         self.workspace_id = workspace_id
+        self.user_id = user_id
         self.messages: List[Message] = []
         self.metadata = metadata or {}
         self.created_at = datetime.now()
@@ -84,6 +86,7 @@ class Conversation:
         return {
             "conversation_id": self.conversation_id,
             "workspace_id": self.workspace_id,
+            "user_id": self.user_id,
             "messages": self.get_history(),
             "metadata": self.metadata,
             "created_at": self.created_at.isoformat(),
@@ -237,6 +240,7 @@ class ChatService:
         conversation = Conversation(
             workspace_id=workspace_id,
             metadata=metadata,
+            user_id=user_id,
         )
         self.conversations[conversation.conversation_id] = conversation
 
@@ -326,11 +330,12 @@ class ChatService:
             if not conv_data:
                 return None
 
-            # Create conversation object
+            # Create conversation object with user_id from database
             conversation = Conversation(
                 conversation_id=conversation_id,
                 workspace_id=conv_data.get('metadata', {}).get('workspace_id'),
-                metadata=conv_data.get('metadata', {})
+                metadata=conv_data.get('metadata', {}),
+                user_id=conv_data.get('user_id')
             )
 
             # Load messages
@@ -850,8 +855,8 @@ Respondé de manera natural, amigable y útil. Si es una pregunta de diseño o p
 
             # Get session_id from conversation metadata (should be socket.io sid)
             session_id = conversation.metadata.get('sid', conversation.conversation_id)
-            # Get user_id from conversation (should be set by authenticated WebSocket connection)
-            user_id = conversation.metadata.get('user_id')
+            # Get user_id from conversation object (set by authenticated WebSocket connection)
+            user_id = conversation.user_id
             if not user_id:
                 raise ValueError("Conversation user_id not set - requires authenticated WebSocket connection")
 
