@@ -1,0 +1,375 @@
+/**
+ * MasterPlan Progress Animations
+ *
+ * Smooth 60fps animations for progress tracking components
+ * with prefers-reduced-motion support for accessibility.
+ *
+ * Duration: 300-500ms per state change as per spec
+ */
+
+/* Progress Bar Slide In Animation */
+@keyframes slideIn {
+  from {
+    width: 0;
+    opacity: 0;
+  }
+  to {
+    width: 100%;
+    opacity: 1;
+  }
+}
+
+.progress-bar-enter {
+  animation: slideIn 0.7s ease-out;
+}
+
+/* Checkmark Bounce Animation (Success) */
+@keyframes checkBounce {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.2);
+  }
+}
+
+.animate-checkBounce {
+  animation: checkBounce 0.6s ease-out;
+}
+
+/* Fade In Scale Animation (Completion Card) */
+@keyframes fadeInScale {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.completion-card {
+  animation: fadeInScale 0.5s ease-out;
+}
+
+/* Phase Entry Animation */
+@keyframes phaseEnter {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.phase-enter {
+  animation: phaseEnter 0.4s ease-out;
+}
+
+/* Phase Exit Animation */
+@keyframes phaseExit {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+}
+
+.phase-exit {
+  animation: phaseExit 0.3s ease-in;
+}
+
+/* Pulse Animation (Active Phase) */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Spin Animation (Loading) */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Ping Animation (Active Indicator) */
+@keyframes ping {
+  75%, 100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+.animate-ping {
+  animation: ping 1s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+/* Fade In Animation */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Fade Out Animation */
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.fade-out {
+  animation: fadeOut 0.3s ease-in;
+}
+
+/* Slide Up Animation (Modal) */
+@keyframes slideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.slide-up {
+  animation: slideUp 0.4s ease-out;
+}
+
+/* Shake Animation (Error) */
+@keyframes shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  10%, 30%, 50%, 70%, 90% {
+    transform: translateX(-5px);
+  }
+  20%, 40%, 60%, 80% {
+    transform: translateX(5px);
+  }
+}
+
+.animate-shake {
+  animation: shake 0.5s ease-in-out;
+}
+
+/* Progress Bar Width Transition */
+.progress-bar {
+  transition: width 0.5s ease-out;
+}
+
+/* Smooth Color Transitions */
+.status-transition {
+  transition: background-color 0.3s ease-in-out, color 0.3s ease-in-out, border-color 0.3s ease-in-out;
+}
+
+/* Modal Backdrop Animation */
+@keyframes backdropFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.backdrop-enter {
+  animation: backdropFadeIn 0.2s ease-out;
+}
+
+/* Card Hover Animation */
+.card-hover {
+  transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
+}
+
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+}
+
+/* Button Press Animation */
+.button-press {
+  transition: transform 0.1s ease-in-out;
+}
+
+.button-press:active {
+  transform: scale(0.95);
+}
+
+/* Collapsible Panel Animation */
+@keyframes expandPanel {
+  from {
+    max-height: 0;
+    opacity: 0;
+  }
+  to {
+    max-height: 1000px;
+    opacity: 1;
+  }
+}
+
+.panel-expand {
+  animation: expandPanel 0.3s ease-out;
+  overflow: hidden;
+}
+
+@keyframes collapsePanel {
+  from {
+    max-height: 1000px;
+    opacity: 1;
+  }
+  to {
+    max-height: 0;
+    opacity: 0;
+  }
+}
+
+.panel-collapse {
+  animation: collapsePanel 0.3s ease-in;
+  overflow: hidden;
+}
+
+/* Gradient Flow Animation (Active Phase) */
+@keyframes gradientFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.gradient-flow {
+  background-size: 200% 200%;
+  animation: gradientFlow 3s ease infinite;
+}
+
+/* Prefers Reduced Motion Support */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  /* Disable specific animations */
+  .animate-pulse,
+  .animate-spin,
+  .animate-ping,
+  .animate-checkBounce,
+  .gradient-flow {
+    animation: none !important;
+  }
+
+  /* Keep essential transitions for usability */
+  .progress-bar,
+  .status-transition,
+  .card-hover,
+  .button-press {
+    transition-duration: 0.1s !important;
+  }
+}
+
+/* Focus Visible Styles (Accessibility) */
+:focus-visible {
+  outline: 2px solid #a855f7; /* purple-500 */
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Custom Scrollbar for Modal Body */
+.modal-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.modal-body::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+}
+
+.modal-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+.modal-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* Dark Mode Support (Future) */
+@media (prefers-color-scheme: dark) {
+  /* Already optimized for dark mode by default */
+}
+
+/* High Contrast Mode Support */
+@media (prefers-contrast: high) {
+  :focus-visible {
+    outline-width: 3px;
+    outline-color: #ffffff;
+  }
+
+  .progress-bar {
+    border: 1px solid currentColor;
+  }
+
+  .status-transition {
+    border-width: 2px;
+  }
+}
+
+/* Performance Optimizations */
+.gpu-accelerated {
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+.gpu-accelerated-opacity {
+  will-change: opacity;
+}
+
+.gpu-accelerated-all {
+  will-change: transform, opacity;
+}
+
+/* Remove will-change after animation completes */
+.animation-complete {
+  will-change: auto;
+}

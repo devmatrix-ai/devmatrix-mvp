@@ -1,0 +1,105 @@
+{
+  "masterplan": {
+    "title": "MasterPlan Generation Progress",
+    "phase": {
+      "discovery": "Analyzing DDD Requirements",
+      "parsing": "Generating Plan Structure",
+      "validation": "Validating Dependencies",
+      "saving": "Saving to Database"
+    },
+    "status": {
+      "generating": "Generating MasterPlan",
+      "complete": "MasterPlan Generated Successfully",
+      "failed": "Generation Failed",
+      "retrying": "Retrying Generation...",
+      "reconnecting": "Reconnecting...",
+      "timeRemaining": "~{seconds}s remaining",
+      "elapsedTime": "{seconds}s elapsed",
+      "estimatedTime": "Est. {seconds}s"
+    },
+    "metrics": {
+      "primary": "Primary Metrics",
+      "secondary": "Detailed Statistics",
+      "tertiary": "Advanced Debugging",
+      "tokens": "Tokens Used",
+      "tokensProgress": "{used} / {total} tokens",
+      "cost": "Generation Cost",
+      "costUsd": "${amount} USD",
+      "boundedContexts": "Bounded Contexts",
+      "aggregates": "Aggregates",
+      "entities": "Entities",
+      "phases": "Phases",
+      "milestones": "Milestones",
+      "tasks": "Tasks",
+      "duration": "Duration",
+      "progress": "Progress",
+      "currentPhase": "Current Phase",
+      "breakdown": "Detailed Breakdown",
+      "rawData": "Raw JSON Data"
+    },
+    "timeline": {
+      "title": "Generation Timeline",
+      "phaseCompleted": "Phase completed in {duration}s",
+      "phaseActive": "Phase in progress",
+      "phasePending": "Phase pending",
+      "phaseFailed": "Phase failed"
+    },
+    "buttons": {
+      "close": "Close",
+      "viewDetails": "View MasterPlan Details",
+      "startExecution": "Start Execution",
+      "export": "Export",
+      "retry": "Retry Generation",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "showMore": "Show More",
+      "showLess": "Show Less"
+    },
+    "errors": {
+      "title": "Generation Error",
+      "failed": "Generation Failed",
+      "message": "Error Message",
+      "code": "Error Code",
+      "details": "Error Details",
+      "stackTrace": "Stack Trace",
+      "retry": "Retry Generation",
+      "retryingMessage": "Retrying generation, please wait...",
+      "database": "Database Connection Error",
+      "llm": "LLM API Error",
+      "websocket": "WebSocket Connection Error",
+      "validation": "Validation Error",
+      "unknown": "Unknown Error",
+      "reconnectPrompt": "Connection lost. Reconnecting..."
+    },
+    "summary": {
+      "title": "Generation Complete!",
+      "subtitle": "Your MasterPlan has been successfully generated",
+      "totalStats": "Total Statistics",
+      "totalTokens": "Total Tokens",
+      "totalCost": "Total Cost",
+      "totalDuration": "Total Duration",
+      "entitySummary": "Entity Summary",
+      "detailedBreakdown": "Detailed Breakdown",
+      "architectureStyle": "Architecture Style",
+      "techStack": "Tech Stack",
+      "phasesList": "Phases List",
+      "phaseWithTasks": "{phaseName} ({taskCount} tasks)"
+    },
+    "accessibility": {
+      "progressBar": "Progress: {percentage}% complete",
+      "modalLabel": "MasterPlan Generation Progress Modal",
+      "closeModal": "Close progress modal",
+      "phaseIndicator": "Phase {phase} is {status}",
+      "errorPanel": "Generation Error",
+      "retryButton": "Retry MasterPlan generation",
+      "statusUpdate": "Generation status updated",
+      "currentPhaseAnnouncement": "Current phase: {phase}",
+      "completionAnnouncement": "MasterPlan generation completed successfully"
+    },
+    "loading": {
+      "fetching": "Fetching generation status...",
+      "resuming": "Resuming progress tracking...",
+      "initializing": "Initializing generation..."
+    }
+  }
+}
