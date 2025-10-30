@@ -3,6 +3,7 @@ Email Service
 
 Handles sending transactional emails via SMTP.
 Task Group 3.1 - Phase 6: Authentication & Multi-tenancy
+Extended for Task Group 10 - Phase 2: Resource Sharing & Collaboration
 
 Features:
 - SMTP email sending in production
@@ -10,6 +11,7 @@ Features:
 - HTML email templates
 - Email verification emails
 - Password reset emails
+- Conversation share notification emails (Task Group 10)
 - Error handling and retries
 """
 
@@ -57,6 +59,16 @@ class EmailService:
             to_email="user@example.com",
             username="john_doe",
             token="550e8400-e29b-41d4-a716-446655440000"
+        )
+
+        # Send conversation share email (Task Group 10)
+        service.send_conversation_share_email(
+            to_email="user@example.com",
+            recipient_username="john_doe",
+            sharer_username="jane_doe",
+            conversation_title="Project Discussion",
+            permission_level="view",
+            conversation_id="550e8400-e29b-41d4-a716-446655440000"
         )
     """
 
@@ -367,4 +379,130 @@ The Devmatrix Team
         """.strip()
 
         logger.info(f"Sending password reset email to {to_email}")
+        return self.send_email(to_email, subject, html_body, text_body)
+
+    def send_conversation_share_email(
+        self,
+        to_email: str,
+        recipient_username: str,
+        sharer_username: str,
+        conversation_title: str,
+        permission_level: str,
+        conversation_id: UUID
+    ) -> bool:
+        """
+        Send conversation share notification email.
+
+        Task Group 10 - Phase 2: Resource Sharing & Collaboration
+
+        Args:
+            to_email: Recipient's email address
+            recipient_username: Recipient's username
+            sharer_username: Username of person sharing
+            conversation_title: Title of shared conversation
+            permission_level: Permission level (view/comment/edit)
+            conversation_id: UUID of conversation
+
+        Returns:
+            True if email sent successfully, False otherwise
+        """
+        conversation_url = f"{self.frontend_url}/conversations/{conversation_id}"
+
+        # Human-readable permission descriptions
+        permission_descriptions = {
+            "view": "view (read-only)",
+            "comment": "comment (read and write messages)",
+            "edit": "edit (full access except delete)"
+        }
+        permission_desc = permission_descriptions.get(permission_level, permission_level)
+
+        subject = f"{sharer_username} shared a conversation with you"
+
+        # Plain text version
+        text_body = f"""
+Hello {recipient_username},
+
+{sharer_username} has shared a conversation with you on Devmatrix!
+
+Conversation: {conversation_title}
+Permission Level: {permission_desc}
+
+You can access this conversation by clicking the link below:
+
+{conversation_url}
+
+Best regards,
+The Devmatrix Team
+        """.strip()
+
+        # HTML version
+        html_body = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conversation Shared</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+        <h1 style="color: white; margin: 0; font-size: 28px;">Devmatrix</h1>
+    </div>
+
+    <div style="background: #ffffff; padding: 40px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
+        <h2 style="color: #333; margin-top: 0;">Conversation Shared With You</h2>
+
+        <p>Hello <strong>{recipient_username}</strong>,</p>
+
+        <p><strong>{sharer_username}</strong> has shared a conversation with you on Devmatrix!</p>
+
+        <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
+            <p style="margin: 0 0 10px 0;"><strong>Conversation:</strong></p>
+            <p style="font-size: 16px; color: #667eea; margin: 0 0 15px 0;">{conversation_title}</p>
+
+            <p style="margin: 0 0 10px 0;"><strong>Your Permission Level:</strong></p>
+            <p style="margin: 0; color: #666;">{permission_desc}</p>
+        </div>
+
+        <div style="text-align: center; margin: 30px 0;">
+            <a href="{conversation_url}"
+               style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                      color: white;
+                      padding: 14px 40px;
+                      text-decoration: none;
+                      border-radius: 5px;
+                      font-weight: bold;
+                      display: inline-block;">
+                View Conversation
+            </a>
+        </div>
+
+        <p style="color: #666; font-size: 14px;">
+            Or copy and paste this link into your browser:<br>
+            <a href="{conversation_url}" style="color: #667eea; word-break: break-all;">{conversation_url}</a>
+        </p>
+
+        <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+            <p style="color: #999; font-size: 13px; margin: 0 0 10px 0;">
+                <strong>Permission Levels Explained:</strong>
+            </p>
+            <ul style="color: #999; font-size: 13px; margin: 0; padding-left: 20px;">
+                <li><strong>View:</strong> Read-only access to the conversation</li>
+                <li><strong>Comment:</strong> Read and write messages in the conversation</li>
+                <li><strong>Edit:</strong> Full access except delete or re-share</li>
+            </ul>
+        </div>
+    </div>
+
+    <div style="text-align: center; margin-top: 20px; color: #999; font-size: 12px;">
+        <p>© 2024 Devmatrix. All rights reserved.</p>
+    </div>
+</body>
+</html>
+        """.strip()
+
+        logger.info(
+            f"Sending conversation share email to {to_email} "
+            f"(conversation: {conversation_id}, permission: {permission_level})"
+        )
         return self.send_email(to_email, subject, html_body, text_body)

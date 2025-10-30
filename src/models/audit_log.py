@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from typing import Optional, Dict, Any
 from sqlalchemy import Column, String, DateTime, ForeignKey, Index, Text, CheckConstraint
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID, JSON
 
 from src.config.database import Base
 
@@ -22,20 +22,21 @@ class AuditLog(Base):
     - Authentication events (login, logout, login_failed, token_refresh)
     - Authorization failures (access denied to resources)
     - Modification events (create, update, delete operations)
-
-    Phase 1 Exclusion: Successful read operations are NOT logged (deferred to Phase 2+)
+    - Read operations (conversation.read, message.read, user.read) - Phase 2
 
     Fields:
         id: UUID primary key
         timestamp: Event timestamp (UTC)
         user_id: UUID foreign key to users table (nullable for anonymous events)
-        action: Event action (e.g., "auth.login", "conversation.update_denied")
+        action: Event action (e.g., "auth.login", "conversation.read", "conversation.update_denied")
         resource_type: Type of resource accessed (e.g., "conversation", "message")
         resource_id: UUID of the resource accessed
         result: Event result ("success" or "denied")
         ip_address: Client IP address
         user_agent: Client user agent string
-        event_metadata: Additional event metadata (JSONB, column name 'metadata')
+        event_metadata: Additional event metadata (JSON, column name 'metadata')
+            Note: Uses JSON (not JSONB) for SQLite test compatibility
+                  PostgreSQL migrations still use JSONB for optimal performance
     """
 
     __tablename__ = "audit_logs"
@@ -57,7 +58,9 @@ class AuditLog(Base):
     )
     ip_address = Column(String(50), nullable=True)
     user_agent = Column(Text, nullable=True)
-    event_metadata = Column("metadata", JSONB, nullable=True, default={})
+    # Use JSON (not JSONB) for SQLite test compatibility
+    # PostgreSQL migrations still use JSONB for optimal performance
+    event_metadata = Column("metadata", JSON, nullable=True, default={})
 
     # Indexes for performance
     __table_args__ = (

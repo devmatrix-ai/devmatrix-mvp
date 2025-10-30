@@ -3,6 +3,7 @@ Audit Logger Service
 
 Asynchronous service for logging security events to audit_logs table.
 Group 4: Authorization & Access Control Layer
+Task Group 12: Enhanced Audit Logging (Read Operations)
 """
 
 import uuid
@@ -24,8 +25,7 @@ class AuditLogger:
     - Authentication events (login, logout, failures, token refresh)
     - Authorization failures (access denied)
     - Modification events (create, update, delete)
-
-    Phase 1 Exclusion: Successful read operations NOT logged (deferred to Phase 2+)
+    - Read operations (conversation.read, message.read, user.read) - Phase 2
 
     Features:
     - Asynchronous logging (doesn't block requests)
@@ -223,6 +223,61 @@ class AuditLogger:
         return await AuditLogger.log_event(
             user_id=user_id,
             action=full_action,
+            result="success",
+            resource_type=resource_type,
+            resource_id=resource_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            metadata=metadata,
+            correlation_id=correlation_id
+        )
+
+    @staticmethod
+    async def log_read_operation(
+        user_id: Optional[uuid.UUID],
+        resource_type: str,
+        resource_id: Optional[uuid.UUID] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        correlation_id: Optional[str] = None
+    ) -> bool:
+        """
+        Log read operation (Phase 2 - Task Group 12).
+
+        Logs successful read operations for:
+        - conversation.read
+        - message.read
+        - user.read
+
+        Args:
+            user_id: UUID of the user performing the read (None for anonymous)
+            resource_type: Type of resource ("conversation", "message", "user")
+            resource_id: UUID of the resource being read (optional for list operations)
+            ip_address: Client IP address
+            user_agent: Client user agent string
+            metadata: Additional metadata (endpoint, query params, etc.)
+            correlation_id: Request correlation ID for tracing
+
+        Returns:
+            bool: True if logged successfully, False otherwise
+
+        Example:
+            await AuditLogger.log_read_operation(
+                user_id=user.user_id,
+                resource_type="conversation",
+                resource_id=conversation_id,
+                ip_address="192.168.1.1",
+                user_agent="Mozilla/5.0...",
+                metadata={"endpoint": "/api/v1/conversations/123"},
+                correlation_id=request.state.correlation_id
+            )
+        """
+        action = f"{resource_type}.read"
+
+        return await AuditLogger.log_event(
+            user_id=user_id,
+            action=action,
             result="success",
             resource_type=resource_type,
             resource_id=resource_id,

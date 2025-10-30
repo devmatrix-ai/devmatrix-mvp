@@ -1,0 +1,245 @@
+================================================================================
+  DEVMATRIX MVP - COMPLETE ARCHITECTURE & DATA FLOW
+================================================================================
+
+TIER 1: USER INTERFACE LAYER
+┌────────────────────────────────────────────────────────────────────────────┐
+│  Chat Router (WORKING)                                                      │
+│  - GET  /api/v1/conversations                                              │
+│  - POST /api/v1/conversations/{id}/messages                               │
+│  - GET  /api/v1/conversations/{id}                                        │
+│                                                                             │
+│  MasterPlan Router (PARTIAL - NO CREATE)                                   │
+│  - GET  /api/v1/masterplans (List with pagination)                        │
+│  - GET  /api/v1/masterplans/{id} (Full details)                           │
+│  ✗ MISSING: POST /api/v1/masterplans (Create)                            │
+└────────────────────────────────────────────────────────────────────────────┘
+                                ↓
+TIER 2: SERVICES LAYER
+┌────────────────────────────────────────────────────────────────────────────┐
+│  ChatService (PARTIAL)                                                      │
+│  - Message persistence (PostgreSQL)                                        │
+│  - Command parsing (/masterplan, /orchestrate)                            │
+│  ✗ NO HANDLER for /masterplan command                                     │
+│                                                                             │
+│  MasterPlanGenerator (EXISTS, NOT WIRED)                                   │
+│  async generate_masterplan(user_request, tech_stack, session_id, user_id)│
+│  - Create DiscoveryDocument (needs LLM)                                   │
+│  - Generate 50 tasks (Sonnet 4.5, single call)                           │
+│  - Save MasterPlan + Phases + Milestones + Tasks                        │
+│  - Return masterplan_id                                                    │
+│  Cost: ~$0.32/plan (with prompt caching)                                 │
+└────────────────────────────────────────────────────────────────────────────┘
+                                ↓
+TIER 3: MGE V2 PIPELINE (5 PHASES)
+┌────────────────────────────────────────────────────────────────────────────┐
+│  PHASE 1: DATABASE & MODELS (✓ WORKING)                                   │
+│  Models:                                                                    │
+│  - MasterPlan (main document, 50 tasks)                                   │
+│  - AtomicUnit (10 LOC execution units)                                    │
+│  - DependencyGraph, ExecutionWave                                         │
+│  Status: All schemas defined, migrations ready                            │
+│                                                                             │
+│  ↓                                                                          │
+│                                                                             │
+│  PHASE 2: ATOMIZATION (✗ BROKEN - PARSER FAILS)                          │
+│  AtomService.decompose_task(task_id)                                      │
+│  ├─ MultiLanguageParser.parse()  ✗ FAILS: returns success=False          │
+│  ├─ RecursiveDecomposer.decompose()  (blocked by parser)                 │
+│  ├─ ContextInjector.inject()  (blocked by parser)                        │
+│  └─ AtomicityValidator.validate()  (works but unreachable)               │
+│  Output: 150-200 atoms (~10 LOC each, complexity <3.0)                   │
+│  Test failures: 3 in test_mge_v2_simple.py                              │
+│                                                                             │
+│  ↓                                                                          │
+│                                                                             │
+│  PHASE 3: DEPENDENCY GRAPH (✓ WORKING)                                    │
+│  DependencyService.build_graph(atoms)                                      │
+│  ├─ GraphBuilder.build()  ✓ Working                                       │
+│  └─ TopologicalSorter.sort() → 5-10 execution waves  ✓ Working           │
+│  Output: ExecutionWaves with parallel execution plan                       │
+│                                                                             │
+│  ↓                                                                          │
+│                                                                             │
+│  PHASE 4: VALIDATION (✓ WORKING)                                          │
+│  ValidationService.validate_atoms(atoms)                                   │
+│  ├─ AtomicValidator.validate()  ✓ Working                                │
+│  └─ Checks: LOC, complexity, context_completeness                        │
+│                                                                             │
+│  ↓                                                                          │
+│                                                                             │
+│  PHASE 5: EXECUTION (✓ WORKING)                                           │
+│  ExecutionService.execute(waves)                                           │
+│  ├─ Wave 1: Execute atoms 1-20 in parallel                               │
+│  ├─ Wave 2: Execute atoms 21-50 in parallel                              │
+│  ├─ Wave N: Execute remaining atoms                                      │
+│  ├─ Retry: 3 attempts with temperature escalation                        │
+│  │  - Attempt 1: temperature=0 (deterministic)                           │
+│  │  - Attempt 2: temperature=0.3 (slight variation)                      │
+│  │  - Attempt 3: temperature=0.7 (more creative)                         │
+│  └─ Monitor: Real-time progress, metrics, results                        │
+│  Output: Generated code files + metrics                                   │
+└────────────────────────────────────────────────────────────────────────────┘
+
+TIER 4: API ENDPOINTS (V2 - MGE System)
+┌────────────────────────────────────────────────────────────────────────────┐
+│  POST   /api/v2/atomization/decompose (blocked by Phase 2 parser)        │
+│  GET    /api/v2/atoms/{id}                                               │
+│  POST   /api/v2/dependency/build (✓ working)                            │
+│  POST   /api/v2/validation/masterplan/{id} (✓ working)                  │
+│  POST   /api/v2/execution/start (✓ working)                             │
+│  GET    /api/v2/execution/{id}                                           │
+│  GET    /api/v2/execution/{id}/progress                                  │
+│  GET    /api/v2/execution/{id}/metrics                                   │
+└────────────────────────────────────────────────────────────────────────────┘
+
+TIER 5: SECURITY & INFRASTRUCTURE
+┌────────────────────────────────────────────────────────────────────────────┐
+│  Authentication: JWT (RS256)                                               │
+│  Authorization: RBAC with role-based permissions                           │
+│  Audit Logging: All operations tracked (Phase 1 P0 complete)             │
+│  Rate Limiting: Redis-backed rate limiter                                │
+│  Session Management: Timeout enforcement + 2FA (TOTP)                    │
+│  Data Protection: SQL injection prevention, CORS restrictive              │
+│  Test Coverage: 95.6% (Phase 1 security complete)                        │
+└────────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+EXPECTED COMPLETE DATA FLOW
+================================================================================
+
+1. USER REQUEST
+   ↓
+2. Chat Message: "/masterplan Build a TODO app"
+   ↓
+3. [MISSING] ChatService handler for /masterplan
+   
+   OR (Alternative broken path)
+   
+   POST /api/v1/masterplans [MISSING ENDPOINT]
+   {
+     "user_request": "Build a TODO app",
+     "tech_stack": {"backend": "python", "frontend": "react"},
+     "session_id": "abc123",
+     "user_id": "user123"
+   }
+   ↓
+4. MasterPlanGenerator.generate()
+   - Call LLM to create 50 tasks
+   - Save MasterPlan, Phases, Milestones, Tasks
+   - Return masterplan_id
+   ↓
+5. POST /api/v2/atomization/decompose
+   {
+     "masterplan_id": "uuid"
+   }
+   ↓
+6. AtomService.decompose_all_tasks()
+   - Load all 50 tasks
+   - For each task:
+     - Parser.parse(code) ← [BROKEN HERE]
+     - Decomposer.decompose()
+     - ContextInjector.inject()
+     - AtomicityValidator.validate()
+   - Save ~150-200 atoms to database
+   ↓
+7. POST /api/v2/dependency/build
+   {
+     "masterplan_id": "uuid"
+   }
+   ↓
+8. DependencyService.build_graph()
+   - Build DAG from atom dependencies
+   - Topological sort into waves
+   - Save ExecutionWaves to database
+   ↓
+9. POST /api/v2/execution/start
+   {
+     "masterplan_id": "uuid"
+   }
+   ↓
+10. ExecutionService.execute()
+    - Wave 1: Execute atoms [1-20] in parallel
+    - Wave 2: Execute atoms [21-50] in parallel
+    - Retry failures (up to 3 times per atom)
+    - Aggregate results
+    - Write generated code to files
+    ↓
+11. Generated Code + Metrics
+    - Python files written to disk
+    - Execution metrics logged
+    - Success/failure report returned
+
+================================================================================
+CRITICAL BLOCKERS
+================================================================================
+
+🔴 BLOCKER 1: Parser.parse() Failure
+   File: /src/atomization/parser.py
+   Issue: tree-sitter integration fails silently
+   Status: test_mge_v2_simple.py::test_parser_python FAILED
+   Impact: BLOCKS entire Phase 2 and downstream
+   Fix Time: 2-4 hours
+
+🔴 BLOCKER 2: Missing POST /api/v1/masterplans
+   File: src/api/routers/masterplans.py
+   Issue: Only GET endpoints, no CREATE
+   Status: No endpoint exists
+   Impact: BLOCKS entry point for generation
+   Fix Time: 1-2 hours
+
+🔴 BLOCKER 3: Missing /masterplan Command Handler
+   File: src/services/chat_service.py
+   Issue: Command registered but handler not implemented
+   Status: ChatCommand.COMMANDS includes it, but no processing
+   Impact: BLOCKS chat-based generation
+   Fix Time: 30 minutes
+
+🟡 ISSUE 4: Missing system_validator Module
+   File: tests/e2e/test_mge_v2_pipeline.py line 36
+   Issue: ImportError - module doesn't exist
+   Status: test_mge_v2_pipeline.py fails to load
+   Impact: BLOCKS full e2e testing
+   Fix Time: 1-2 hours
+
+================================================================================
+TEST STATUS SUMMARY
+================================================================================
+
+Total Tests: 1,798
+Phase 1 (Security): ✓ 95.6% passing (complete)
+Phase 3 (Dependencies): ✓ Passing (working)
+Phase 4 (Validation): ✓ Passing (working)
+Phase 5 (Execution): ✓ Passing (working)
+Phase 2 (Atomization): ✗ 3 failures (blocked by parser)
+
+Failed Tests:
+  FAILED tests/e2e/test_mge_v2_simple.py::TestPhase2Atomization::test_parser_python
+  FAILED tests/e2e/test_mge_v2_simple.py::TestPhase2Atomization::test_decomposer
+  FAILED tests/e2e/test_mge_v2_simple.py::TestFullPipelineSimplified::test_complete_pipeline
+
+Import Error:
+  ERROR tests/e2e/test_mge_v2_pipeline.py - ModuleNotFoundError: system_validator
+
+================================================================================
+EFFORT TO WORKING E2E DEMO
+================================================================================
+
+Component              Status    Effort   Impact       Dependencies
+─────────────────────────────────────────────────────────────────
+1. Fix Parser          BROKEN    2-4 hrs  CRITICAL     None
+2. POST /masterplans   MISSING   1-2 hrs  CRITICAL     Parser fix
+3. Wire Generator      EXISTS    1 hr     CRITICAL     POST endpoint
+4. /masterplan cmd     MISSING   30 min   MEDIUM       Parser fix
+5. Atomization wire    EXISTS    30 min   CRITICAL     Parser fix
+6. Dependency build    WORKING   0 hrs    -            -
+7. Execution start     WORKING   0 hrs    -            -
+8. E2E Integration     MISSING   2-3 hrs  CRITICAL     All above
+
+TOTAL: 7-13 hours to working demo
+
+Fast path (skip chat command):
+1. Fix Parser (2-4 hrs) → 2. POST endpoint (1-2 hrs) → 
+3. Wire generator (1 hr) → 4. E2E test (2-3 hrs) = 6-10 hours
+
+================================================================================

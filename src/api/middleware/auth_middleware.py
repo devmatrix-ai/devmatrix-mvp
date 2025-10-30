@@ -3,25 +3,55 @@ Authentication Middleware for FastAPI
 
 Provides JWT-based authentication for protected endpoints.
 Updated with Group 3: Token blacklist checking and correlation_id logging.
+Updated with Phase 2 Task Group 4: Session timeout management (idle + absolute).
 """
 
 from typing import Optional
+from datetime import datetime
 from fastapi import Request, HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+import jwt
 
 from src.services.auth_service import AuthService
+from src.services.session_service import SessionService
 from src.models.user import User
+from src.config.settings import get_settings
 from src.observability import get_logger
 
 logger = get_logger("auth_middleware")
+settings = get_settings()
 
 # HTTP Bearer security scheme
 security = HTTPBearer()
+
+# Global session service instance
+_session_service: Optional[SessionService] = None
+
+
+def get_session_service() -> SessionService:
+    """
+    Get global SessionService instance (singleton).
+
+    Returns:
+        SessionService instance
+    """
+    global _session_service
+
+    if _session_service is None:
+        _session_service = SessionService()
+
+    return _session_service
 
 
 class AuthMiddleware:
     """
     Authentication middleware for FastAPI dependency injection.
+
+    Updated with Phase 2 Task Group 4:
+    - Checks idle timeout (30 minutes via Redis session metadata)
+    - Checks absolute timeout (12 hours from iat claim)
+    - Updates session activity on every request
+    - Returns 401 with clear message on timeout
 
     Usage in route:
         from fastapi import Depends
@@ -38,6 +68,7 @@ class AuthMiddleware:
 
     def __init__(self):
         self.auth_service = AuthService()
+        self.session_service = get_session_service()
 
 
 # Global auth middleware instance
@@ -83,6 +114,14 @@ async def get_current_user(request: Request, token: str = Depends(get_token_from
     Get current authenticated user from JWT token.
 
     Group 3 Update: Now checks token blacklist before user lookup.
+    Phase 2 Task Group 4 Update: Checks session timeout (idle + absolute).
+
+    Session Timeout Checks:
+    1. Verify JWT is valid (standard JWT validation)
+    2. Check token is not blacklisted
+    3. Check Redis session metadata exists (idle timeout)
+    4. Check absolute timeout from iat claim (12 hours)
+    5. Update last activity and reset idle timer
 
     Args:
         request: FastAPI request (for storing user in state and correlation_id)
@@ -92,10 +131,93 @@ async def get_current_user(request: Request, token: str = Depends(get_token_from
         User object
 
     Raises:
-        HTTPException: If token is invalid, blacklisted, or user not found
+        HTTPException: If token is invalid, blacklisted, or session expired
     """
     correlation_id = getattr(request.state, 'correlation_id', None)
 
+    # Phase 2 Task Group 4: Decode token to get session info
+    try:
+        # Decode token (standard validation)
+        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        logger.warning(
+            "Expired JWT token",
+            extra={"correlation_id": correlation_id}
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    except jwt.InvalidTokenError as e:
+        logger.warning(
+            f"Invalid JWT token: {str(e)}",
+            extra={"correlation_id": correlation_id}
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    # Extract session info
+    user_id = payload.get("sub")
+    jti = payload.get("jti")
+    iat = payload.get("iat")
+
+    if not jti:
+        logger.warning(
+            "Token missing jti claim",
+            extra={"correlation_id": correlation_id}
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token format",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    if not iat:
+        logger.warning(
+            "Token missing iat claim",
+            extra={"correlation_id": correlation_id}
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token format",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    # Phase 2 Task Group 4: Check absolute timeout (12 hours from issuance)
+    issued_at = datetime.utcfromtimestamp(iat)
+    session_service = get_session_service()
+
+    if session_service.check_absolute_timeout(issued_at):
+        logger.warning(
+            f"Session exceeded absolute timeout for user {user_id}",
+            extra={"correlation_id": correlation_id}
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    # Phase 2 Task Group 4: Check idle timeout (Redis session metadata exists)
+    from uuid import UUID
+    session_metadata = session_service.get_session(UUID(user_id), jti)
+
+    if not session_metadata:
+        logger.warning(
+            f"Session not found or expired (idle timeout) for user {user_id}",
+            extra={"correlation_id": correlation_id}
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    # Get user (includes blacklist check)
     user = auth_middleware.auth_service.get_current_user(token, correlation_id)
 
     if not user:
@@ -108,6 +230,9 @@ async def get_current_user(request: Request, token: str = Depends(get_token_from
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"}
         )
+
+    # Phase 2 Task Group 4: Update session activity (reset idle timer)
+    session_service.update_activity(user.user_id, jti)
 
     # Store user in request state for rate limiting middleware
     request.state.user = user

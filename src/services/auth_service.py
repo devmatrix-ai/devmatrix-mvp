@@ -9,6 +9,7 @@ Changes:
 - Implemented token blacklist functionality using Redis
 - Added check_token_blacklist function
 - Added blacklist_token function for logout
+- Phase 2 Task Group 3: Integrated account lockout protection
 """
 
 import bcrypt
@@ -182,6 +183,39 @@ class AuthService:
 
         except Exception as e:
             logger.error(f"Refresh token creation failed: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Token generation failed")
+
+    @staticmethod
+    def create_temp_2fa_token(user_id: UUID, email: str) -> str:
+        """
+        Create temporary JWT token for 2FA completion (valid 5 minutes).
+
+        Phase 2 Task Group 9: 2FA/MFA Foundation.
+
+        Args:
+            user_id: User UUID
+            email: User email
+
+        Returns:
+            JWT temporary 2FA token string (valid 5 minutes)
+        """
+        try:
+            expire = datetime.utcnow() + timedelta(minutes=5)  # 5-minute expiry
+
+            payload = {
+                "user_id": str(user_id),  # Use user_id instead of sub for temp token
+                "email": email,
+                "type": "2fa_temp",  # Special token type for 2FA flow
+                "exp": expire,
+                "iat": datetime.utcnow()
+            }
+
+            token = jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+            logger.debug(f"Created temp 2FA token for user {user_id}")
+            return token
+
+        except Exception as e:
+            logger.error(f"Temp 2FA token creation failed: {str(e)}", exc_info=True)
             raise HTTPException(status_code=500, detail="Token generation failed")
 
     @staticmethod
@@ -525,13 +559,16 @@ class AuthService:
             )
             raise HTTPException(status_code=500, detail="Internal server error")
 
-    def login(self, email: str, password: str, correlation_id: Optional[str] = None) -> Dict[str, str]:
+    def login(self, email: str, password: str, ip_address: Optional[str] = None, correlation_id: Optional[str] = None) -> Dict[str, str]:
         """
         Authenticate user and generate tokens.
+
+        Phase 2 Task Group 3: Integrated account lockout protection.
 
         Args:
             email: User email
             password: Plain text password
+            ip_address: Client IP address (for lockout tracking)
             correlation_id: Optional correlation ID for request tracing
 
         Returns:
@@ -539,7 +576,7 @@ class AuthService:
 
         Raises:
             ValueError: If authentication fails
-            HTTPException: On database errors
+            HTTPException: On database errors or account lockout (403)
         """
         try:
             with get_db_context() as db:
@@ -553,12 +590,47 @@ class AuthService:
                     )
                     raise ValueError("Invalid email or password")
 
+                # Phase 2 Task Group 3: Check if account is locked BEFORE password verification
+                if user.is_locked():
+                    remaining_time = user.lockout_remaining_time()
+                    minutes_remaining = int(remaining_time.total_seconds() / 60) if remaining_time else 0
+
+                    logger.warning(
+                        f"Login failed: Account locked ({email}), {minutes_remaining} minutes remaining",
+                        extra={"correlation_id": correlation_id}
+                    )
+
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"Account locked. Try again in {minutes_remaining} minutes."
+                    )
+
                 # Verify password
                 if not self.verify_password(password, user.password_hash):
                     logger.warning(
                         f"Login failed: Invalid password for {email}",
                         extra={"correlation_id": correlation_id}
                     )
+
+                    # Phase 2 Task Group 3: Record failed attempt
+                    from src.services.account_lockout_service import AccountLockoutService
+                    lockout_service = AccountLockoutService()
+                    lockout_result = lockout_service.record_failed_attempt(
+                        user.user_id,
+                        ip_address or "unknown"
+                    )
+
+                    if lockout_result["locked"]:
+                        logger.warning(
+                            f"Account locked after failed attempt: {email}, "
+                            f"duration={lockout_result.get('lockout_duration_minutes')}min"
+                        )
+                        raise HTTPException(
+                            status_code=403,
+                            detail=f"Account locked due to too many failed attempts. "
+                                   f"Try again in {lockout_result.get('lockout_duration_minutes')} minutes."
+                        )
+
                     raise ValueError("Invalid email or password")
 
                 # Check if account is active
@@ -568,6 +640,11 @@ class AuthService:
                         extra={"correlation_id": correlation_id}
                     )
                     raise ValueError("Account is inactive")
+
+                # Phase 2 Task Group 3: Reset failed attempts after successful login
+                from src.services.account_lockout_service import AccountLockoutService
+                lockout_service = AccountLockoutService()
+                lockout_service.reset_attempts(user.user_id)
 
                 # Update last login
                 user.last_login_at = datetime.utcnow()
@@ -597,6 +674,9 @@ class AuthService:
         except ValueError:
             # Re-raise validation errors
             raise
+        except HTTPException:
+            # Re-raise HTTPException (lockout errors)
+            raise
         except SQLAlchemyError as e:
             logger.error(
                 f"Database error during login: {str(e)}",
@@ -604,9 +684,6 @@ class AuthService:
                 extra={"correlation_id": correlation_id}
             )
             raise HTTPException(status_code=500, detail="Database error occurred")
-        except HTTPException:
-            # Re-raise HTTPException unchanged
-            raise
         except Exception as e:
             logger.error(
                 f"Unexpected error during login: {str(e)}",
