@@ -542,8 +542,8 @@ class PostgresManager:
         self,
         conversation_id: str,
         session_id: str,
-        metadata: dict = None,
-        user_id: str = None,
+        metadata: Optional[dict] = None,
+        user_id: Optional[str] = None,
     ) -> str:
         """
         Create a new conversation.
