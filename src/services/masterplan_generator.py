@@ -573,8 +573,15 @@ class MasterPlanGenerator:
             Dict with MasterPlan JSON and metadata
         """
         import time
+        from uuid import UUID
 
         start_time = time.time()
+
+        # Helper to convert non-serializable types
+        def json_serializable(obj):
+            if isinstance(obj, UUID):
+                return str(obj)
+            raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
         # Build discovery context
         discovery_context = {
@@ -606,7 +613,7 @@ class MasterPlanGenerator:
 {discovery.user_request}
 
 ## Full Discovery Details:
-{json.dumps(discovery_context, indent=2)}
+{json.dumps(discovery_context, indent=2, default=json_serializable)}
 
 Generate a complete, executable MasterPlan with exactly 120 tasks organized in 3 phases covering ALL features needed for a production SaaS.
 """
