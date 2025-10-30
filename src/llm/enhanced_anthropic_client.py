@@ -12,6 +12,8 @@ This is the primary client for MasterPlan MVP implementation.
 
 import logging
 import time
+import json
+from uuid import UUID
 from typing import Dict, Any, List, Optional
 from anthropic import Anthropic, APIError
 
@@ -24,6 +26,13 @@ from src.observability.metrics_collector import MetricsCollector
 from src.mge.v2.caching import LLMPromptCache, RequestBatcher
 
 logger = logging.getLogger(__name__)
+
+
+def json_serializable(obj):
+    """Helper to serialize non-JSON types like UUID."""
+    if isinstance(obj, UUID):
+        return str(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
 class EnhancedAnthropicClient:
@@ -636,19 +645,19 @@ class EnhancedAnthropicClient:
 
         # Discovery doc
         if "discovery_doc" in cacheable_context:
-            parts.append(f"DISCOVERY:\n{json.dumps(cacheable_context['discovery_doc'], sort_keys=True)}")
+            parts.append(f"DISCOVERY:\n{json.dumps(cacheable_context['discovery_doc'], sort_keys=True, default=json_serializable)}")
 
         # RAG examples
         if "rag_examples" in cacheable_context:
-            parts.append(f"RAG:\n{json.dumps(cacheable_context['rag_examples'], sort_keys=True)}")
+            parts.append(f"RAG:\n{json.dumps(cacheable_context['rag_examples'], sort_keys=True, default=json_serializable)}")
 
         # DB schema
         if "db_schema" in cacheable_context:
-            parts.append(f"SCHEMA:\n{json.dumps(cacheable_context['db_schema'], sort_keys=True)}")
+            parts.append(f"SCHEMA:\n{json.dumps(cacheable_context['db_schema'], sort_keys=True, default=json_serializable)}")
 
         # Project structure
         if "project_structure" in cacheable_context:
-            parts.append(f"PROJECT:\n{json.dumps(cacheable_context['project_structure'], sort_keys=True)}")
+            parts.append(f"PROJECT:\n{json.dumps(cacheable_context['project_structure'], sort_keys=True, default=json_serializable)}")
 
         # Variable prompt
         parts.append(f"PROMPT:\n{variable_prompt}")

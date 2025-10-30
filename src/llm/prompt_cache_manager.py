@@ -18,8 +18,16 @@ import hashlib
 import json
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
+from uuid import UUID
 
 logger = logging.getLogger(__name__)
+
+
+def json_serializable(obj):
+    """Helper to serialize non-JSON types like UUID."""
+    if isinstance(obj, UUID):
+        return str(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
 @dataclass
@@ -110,7 +118,7 @@ class PromptCacheManager:
 
         # 2. Discovery document
         if discovery_doc:
-            discovery_str = json.dumps(discovery_doc, indent=2)
+            discovery_str = json.dumps(discovery_doc, indent=2, default=json_serializable)
             cacheable_sections.append(CacheableContext(
                 key=f"discovery_{self._hash_content(discovery_str)}",
                 content=discovery_str,
@@ -120,7 +128,7 @@ class PromptCacheManager:
 
         # 3. RAG examples (highly cacheable - same for similar tasks)
         if rag_examples:
-            rag_str = json.dumps(rag_examples, indent=2)
+            rag_str = json.dumps(rag_examples, indent=2, default=json_serializable)
             cacheable_sections.append(CacheableContext(
                 key=f"rag_{self._hash_content(rag_str)}",
                 content=rag_str,
@@ -130,7 +138,7 @@ class PromptCacheManager:
 
         # 4. Database schema
         if db_schema:
-            schema_str = json.dumps(db_schema, indent=2)
+            schema_str = json.dumps(db_schema, indent=2, default=json_serializable)
             cacheable_sections.append(CacheableContext(
                 key=f"schema_{self._hash_content(schema_str)}",
                 content=schema_str,
@@ -140,7 +148,7 @@ class PromptCacheManager:
 
         # 5. Project structure
         if project_structure:
-            structure_str = json.dumps(project_structure, indent=2)
+            structure_str = json.dumps(project_structure, indent=2, default=json_serializable)
             cacheable_sections.append(CacheableContext(
                 key=f"structure_{self._hash_content(structure_str)}",
                 content=structure_str,
@@ -347,7 +355,7 @@ if __name__ == "__main__":
     )
 
     print("System blocks with cache markers:")
-    print(json.dumps(system, indent=2))
+    print(json.dumps(system, indent=2, default=json_serializable))
 
     print("\nEstimated cacheable tokens:")
     print(sum(s.estimated_tokens for s in cacheable))
