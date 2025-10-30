@@ -13,10 +13,18 @@ from datetime import datetime
 from dataclasses import dataclass, field, asdict
 from contextvars import ContextVar
 from enum import Enum
+from uuid import UUID
 
 
 # Context variable for request/workflow tracking
 _log_context: ContextVar[Optional["LogContext"]] = ContextVar("log_context", default=None)
+
+
+def json_serializable(obj):
+    """Helper to serialize non-JSON types like UUID."""
+    if isinstance(obj, UUID):
+        return str(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
 class LogLevel(Enum):
@@ -153,7 +161,7 @@ class StructuredLogger:
             if kwargs:
                 log_entry.update(kwargs)
 
-            return json.dumps(log_entry)
+            return json.dumps(log_entry, default=json_serializable)
         else:
             # Text format
             parts = [
