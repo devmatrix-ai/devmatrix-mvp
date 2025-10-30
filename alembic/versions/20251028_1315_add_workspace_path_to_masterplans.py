@@ -17,8 +17,11 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Add workspace_path column to masterplans table
-    op.add_column('masterplans', sa.Column('workspace_path', sa.String(length=500), nullable=True))
+    # Add workspace_path column to masterplans table (if it exists)
+    op.execute("""
+        ALTER TABLE IF EXISTS masterplans ADD COLUMN IF NOT EXISTS
+        workspace_path VARCHAR(500) DEFAULT NULL;
+    """)
 
 
 def downgrade() -> None:

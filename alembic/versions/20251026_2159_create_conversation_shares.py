@@ -31,7 +31,7 @@ def upgrade():
     op.create_table(
         'conversation_shares',
         sa.Column('share_id', postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column('conversation_id', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('conversation_id', sa.String(255), nullable=False),
         sa.Column('shared_by', postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column('shared_with', postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column('permission_level', sa.String(20), nullable=False),
@@ -42,7 +42,7 @@ def upgrade():
             name='ck_conversation_shares_permission_level'
         ),
         sa.UniqueConstraint('conversation_id', 'shared_with', name='uq_conversation_shares_conversation_user'),
-        sa.ForeignKeyConstraint(['conversation_id'], ['conversations.conversation_id'], ondelete='CASCADE'),
+        sa.ForeignKeyConstraint(['conversation_id'], ['conversations.id'], ondelete='CASCADE'),
         sa.ForeignKeyConstraint(['shared_by'], ['users.user_id'], ondelete='SET NULL'),
         sa.ForeignKeyConstraint(['shared_with'], ['users.user_id'], ondelete='CASCADE')
     )

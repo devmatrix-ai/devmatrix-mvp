@@ -19,7 +19,10 @@ depends_on = None
 
 def upgrade() -> None:
     """Add session_id column to conversations."""
-    op.add_column('conversations', sa.Column('session_id', sa.String(length=255), nullable=True))
+    op.execute("""
+        ALTER TABLE conversations ADD COLUMN IF NOT EXISTS
+        session_id VARCHAR(255) DEFAULT NULL;
+    """)
 
 
 def downgrade() -> None:

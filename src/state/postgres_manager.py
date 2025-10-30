@@ -569,10 +569,11 @@ class PostgresManager:
 
             See: agent-os/specs/2025-10-26-phase-2-high-priority-security-reliability/
         """
-        # TEMPORARY: Use demo user as fallback for unauthenticated WebSocket connections
-        # This allows testing masterplan generation without implementing full WebSocket auth
+        # Require authenticated user_id from WebSocket connection
         if user_id is None:
-            user_id = "7b10ae4c-2158-46be-be91-18dec7d02767"  # demo@devmatrix.com
+            raise ValueError(
+                "user_id is required. WebSocket connection must be authenticated with JWT token."
+            )
 
         query = """
             INSERT INTO conversations (id, user_id, session_id, metadata)

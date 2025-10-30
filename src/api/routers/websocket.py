@@ -5,21 +5,57 @@ Real-time communication endpoints for chat, executions, masterplans, and workspa
 """
 
 import asyncio
-from typing import Dict, Set
+from typing import Dict, Set, Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 import socketio
+import jwt
 
 from src.services.chat_service import ChatService
 from src.services.workspace_service import WorkspaceService
 from src.observability import StructuredLogger
 from src.observability.global_metrics import metrics_collector
 from src.websocket import WebSocketManager
+from src.config.settings import get_settings
 
 
 router = APIRouter()
 logger = StructuredLogger("websocket")
 # Use global metrics collector
 metrics = metrics_collector
+settings = get_settings()
+
+
+# ==========================================
+# JWT Validation for WebSocket
+# ==========================================
+
+def validate_jwt_token(token: str) -> Optional[Dict]:
+    """
+    Validate JWT token and extract user info.
+
+    Args:
+        token: JWT access token (can include 'Bearer ' prefix)
+
+    Returns:
+        Dict with user_id and other claims, or None if invalid
+    """
+    try:
+        # Remove 'Bearer ' prefix if present
+        if token.startswith('Bearer '):
+            token = token[7:]
+
+        # Decode token
+        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+        return payload
+    except jwt.ExpiredSignatureError:
+        logger.warning("Token expired")
+        return None
+    except jwt.InvalidTokenError as e:
+        logger.warning(f"Invalid token: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error validating token: {e}")
+        return None
 
 # Socket.IO server with robust timeout configuration
 # These settings prevent disconnections during long-running operations (e.g., masterplan generation)
@@ -113,10 +149,32 @@ async def join_chat(sid, data):
     Expected data:
         {
             "conversation_id": "optional-existing-conversation-id",
-            "workspace_id": "optional-workspace-id"
+            "workspace_id": "optional-workspace-id",
+            "token": "JWT access token"  # Required for authentication
         }
     """
     try:
+        # Extract authentication token
+        token = data.get('token')
+        if not token:
+            await sio.emit('error', {'message': 'Authentication token required'}, room=sid)
+            logger.warning(f"Client {sid} joined without token")
+            return
+
+        # Validate JWT token and extract user info
+        payload = validate_jwt_token(token)
+        if not payload:
+            await sio.emit('error', {'message': 'Invalid or expired token'}, room=sid)
+            logger.warning(f"Client {sid} joined with invalid token")
+            return
+
+        # Extract user_id from JWT payload
+        user_id = payload.get('sub')  # 'sub' contains user_id in our JWT
+        if not user_id:
+            await sio.emit('error', {'message': 'Invalid token format'}, room=sid)
+            logger.warning(f"Client {sid} token missing user_id")
+            return
+
         conversation_id = data.get('conversation_id')
         workspace_id = data.get('workspace_id')
 
@@ -130,7 +188,8 @@ async def join_chat(sid, data):
                 conversation_id = chat_service.create_conversation(
                     workspace_id=workspace_id,
                     metadata={'sid': sid, 'recreated': True},
-                    session_id=sid
+                    session_id=sid,
+                    user_id=user_id  # Use authenticated user_id
                 )
                 conversation = chat_service.get_conversation(conversation_id)
             else:
@@ -142,7 +201,8 @@ async def join_chat(sid, data):
             conversation_id = chat_service.create_conversation(
                 workspace_id=workspace_id,
                 metadata={'sid': sid},
-                session_id=sid
+                session_id=sid,
+                user_id=user_id  # Use authenticated user_id
             )
             conversation = chat_service.get_conversation(conversation_id)
 
@@ -158,9 +218,10 @@ async def join_chat(sid, data):
             'workspace_id': conversation.workspace_id,
             'message_count': len(history),
             'history': history,
+            'user_id': user_id,
         }, room=sid)
 
-        logger.info(f"Client {sid} joined chat {conversation_id}")
+        logger.info(f"Client {sid} (user {user_id}) joined chat {conversation_id}")
 
     except Exception as e:
         logger.error(f"Error joining chat: {e}", exc_info=True)

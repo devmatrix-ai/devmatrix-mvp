@@ -126,7 +126,8 @@ export class WebSocketService {
       // Auto-rejoin the last room if we were in one
       if (this.currentRoom && this.socket) {
         console.log(`🔄 Auto-rejoining room: ${this.currentRoom}`)
-        this.socket.emit('join_chat', { conversation_id: this.currentRoom })
+        const token = localStorage.getItem('access_token')
+        this.socket.emit('join_chat', { conversation_id: this.currentRoom, token })
       }
 
       this.emit('connected', { sid: this.socket?.id, reconnected: true })
@@ -176,10 +177,20 @@ export class WebSocketService {
 
   /**
    * Join a chat room and track it for auto-rejoin after reconnection
+   * Sends JWT token from localStorage for authentication
    */
   joinChat(conversationId: string, workspaceId?: string): void {
     this.currentRoom = conversationId
-    this.send('join_chat', { conversation_id: conversationId, workspace_id: workspaceId })
+    const token = localStorage.getItem('access_token')
+    if (!token) {
+      console.warn('⚠️ [WebSocketService] No JWT token found in localStorage, cannot join chat')
+      return
+    }
+    this.send('join_chat', {
+      conversation_id: conversationId,
+      workspace_id: workspaceId,
+      token
+    })
   }
 
   /**
