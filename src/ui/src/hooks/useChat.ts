@@ -43,7 +43,11 @@ export function useChat(options: UseChatOptions = {}) {
 
   // Register event listeners (only once when connected)
   useEffect(() => {
-    if (!isConnected) return
+    if (!isConnected) {
+      console.warn('⚠️ [useChat] isConnected is false, skipping listener registration')
+      return
+    }
+    console.log('✅ [useChat] isConnected is true, registering listeners...')
 
     const cleanup1 = on('chat_joined', (data: any) => {
       console.log('✅ [useChat] chat_joined event received:', data)
@@ -224,6 +228,8 @@ export function useChat(options: UseChatOptions = {}) {
       // Hide progress after 3 seconds
       setTimeout(() => setMasterPlanProgress(null), 3000)
     })
+
+    console.log('✅ [useChat] All 16 event listeners registered successfully!')
 
     return () => {
       cleanup1()
