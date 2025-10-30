@@ -543,6 +543,7 @@ class PostgresManager:
         conversation_id: str,
         session_id: str,
         metadata: dict = None,
+        user_id: str = None,
     ) -> str:
         """
         Create a new conversation.
@@ -551,20 +552,38 @@ class PostgresManager:
             conversation_id: Unique conversation identifier
             session_id: WebSocket session ID
             metadata: Additional conversation metadata
+            user_id: User ID (optional). If not provided, uses demo user.
 
         Returns:
             Conversation ID
+
+        Note:
+            TEMPORARY: This method uses a fallback demo user (demo@devmatrix.com)
+            when user_id is not provided. This is for development/demo purposes only.
+
+            TODO (Phase 2 - WebSocket Authentication):
+            - Implement JWT authentication for WebSocket connections
+            - Extract user_id from authenticated WebSocket session
+            - Remove demo user fallback
+            - Enforce user_id requirement
+
+            See: agent-os/specs/2025-10-26-phase-2-high-priority-security-reliability/
         """
+        # TEMPORARY: Use demo user as fallback for unauthenticated WebSocket connections
+        # This allows testing masterplan generation without implementing full WebSocket auth
+        if user_id is None:
+            user_id = "7b10ae4c-2158-46be-be91-18dec7d02767"  # demo@devmatrix.com
+
         query = """
-            INSERT INTO conversations (id, session_id, metadata)
-            VALUES (%s, %s, %s)
+            INSERT INTO conversations (id, user_id, session_id, metadata)
+            VALUES (%s, %s, %s, %s)
             ON CONFLICT (id) DO NOTHING
             RETURNING id
         """
 
         result = self._execute(
             query,
-            (conversation_id, session_id, Json(metadata or {})),
+            (conversation_id, user_id, session_id, Json(metadata or {})),
             fetch=True,
             operation=f"create_conversation:{conversation_id}"
         )

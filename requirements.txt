@@ -45,10 +45,10 @@ click==8.1.7                      # Command-line utilities
 # ========================================
 # Code Manipulation
 # ========================================
-tree-sitter==0.21.3               # AST parsing (future multi-language)
-tree-sitter-python==0.21.0        # Python language bindings for tree-sitter
-tree-sitter-typescript==0.21.0    # TypeScript language bindings for tree-sitter
-tree-sitter-javascript==0.21.0    # JavaScript language bindings for tree-sitter
+tree-sitter==0.25.2               # AST parsing (multi-language support)
+tree-sitter-python==0.25.0        # Python language bindings for tree-sitter
+tree-sitter-typescript==0.23.2    # TypeScript language bindings for tree-sitter
+tree-sitter-javascript==0.25.0    # JavaScript language bindings for tree-sitter
 black==24.8.0                     # Python code formatting
 ruff==0.6.8                       # Python linting
 mypy==1.11.0                      # Type checking
@@ -106,9 +106,27 @@ python-jose[cryptography]==3.3.0  # JWT handling
 PyJWT==2.9.0                      # JWT encoding/decoding
 bcrypt==4.2.0                     # Password hashing
 python-multipart==0.0.9           # Form data parsing
+zxcvbn==4.4.28                    # Password strength estimation (Phase 2)
+pyotp==2.9.0                      # TOTP (Time-based One-Time Password) for 2FA (Phase 2)
+qrcode[pil]==7.4.2                # QR code generation for 2FA enrollment (Phase 2)
 
 # ========================================
 # RAG (Retrieval-Augmented Generation)
 # ========================================
 chromadb>=0.4.22                  # Vector database for code embeddings
 sentence-transformers>=2.2.2      # Semantic embeddings for code similarity
+
+# ========================================
+# Background Jobs & Scheduling
+# ========================================
+APScheduler==3.10.4               # Background job scheduling (Phase 2)
+
+# ========================================
+# Cloud Storage (Phase 2 - Task Group 15)
+# ========================================
+boto3==1.35.0                     # AWS SDK for S3 log archival
+
+# ========================================
+# Testing Utilities
+# ========================================
+freezegun==1.5.1                  # Time mocking for tests

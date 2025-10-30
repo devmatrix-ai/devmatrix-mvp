@@ -2,7 +2,13 @@
 Ownership Middleware for Resource Access Control
 
 Provides decorator to validate that users can only access their own resources.
-Superusers can access all resources.
+Integrates with PermissionService for granular permission checking.
+
+Phase 2 - Task Group 8: Granular Permission System
+- Ownership-based access (users can access own resources)
+- Shared resource access (users can access shared conversations)
+- Role-based bypass (admin/superadmin can access all resources)
+- Permission level enforcement (view/comment/edit)
 
 Group 4: Authorization & Access Control Layer
 """
@@ -15,6 +21,7 @@ from fastapi import HTTPException, status, Request
 from src.models.conversation import Conversation
 from src.models.user import User
 from src.config.database import get_db_context
+from src.services.permission_service import PermissionService
 from src.observability import get_logger
 from src.observability.audit_logger import audit_logger
 
@@ -23,12 +30,20 @@ logger = get_logger("ownership_middleware")
 
 def require_resource_ownership(resource_type: str) -> Callable:
     """
-    Decorator to validate resource ownership before accessing endpoints.
+    Decorator to validate resource ownership and permissions before accessing endpoints.
 
-    Security behavior:
+    Security behavior (Phase 2 enhanced):
     - Returns 404 if resource doesn't exist (don't reveal existence)
-    - Returns 403 if user doesn't own resource (and is not superuser)
-    - Allows access if user owns resource OR is superuser
+    - Returns 403 if user doesn't have permission (not owner, not shared, not admin)
+    - Allows access if:
+        * User owns resource (full access)
+        * Resource is shared with user (based on permission level)
+        * User has admin/superadmin role (full access)
+
+    Permission levels (for shared resources):
+    - view: Read-only access
+    - comment: Read + write messages
+    - edit: Read + write (no delete/re-share)
 
     Args:
         resource_type: Type of resource ("conversation", "message", etc.)
@@ -39,7 +54,7 @@ def require_resource_ownership(resource_type: str) -> Callable:
     Usage:
         @require_resource_ownership("conversation")
         async def get_conversation(conversation_id: str, current_user: User):
-            # Ownership validated before this runs
+            # Permission validated before this runs
             ...
 
     Example in chat.py:
@@ -55,7 +70,7 @@ def require_resource_ownership(resource_type: str) -> Callable:
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
-            # Extract request object (for audit logging)
+            # Extract request object (for audit logging and HTTP method)
             request = kwargs.get('request')
 
             # Extract conversation_id from kwargs
@@ -86,7 +101,20 @@ def require_resource_ownership(resource_type: str) -> Callable:
                     detail=f"{resource_type.capitalize()} not found"
                 )
 
-            # Load conversation from database
+            # Determine action from HTTP method
+            method_to_action = {
+                "GET": "read",
+                "PUT": "write",
+                "PATCH": "write",
+                "DELETE": "delete",
+                "POST": "write"
+            }
+            action = method_to_action.get(
+                request.method if request and hasattr(request, 'method') else "GET",
+                "read"
+            )
+
+            # Load conversation from database (ensure it exists)
             with get_db_context() as db:
                 conversation = db.query(Conversation).filter(
                     Conversation.conversation_id == conversation_id
@@ -107,64 +135,67 @@ def require_resource_ownership(resource_type: str) -> Callable:
                         detail=f"{resource_type.capitalize()} not found"
                     )
 
-                # Check ownership: conversation.user_id == current_user.user_id
-                if conversation.user_id != current_user.user_id:
-                    # If superuser, allow access
-                    if current_user.is_superuser:
-                        logger.info(
-                            f"Superuser access granted: {current_user.user_id} accessing {conversation_id}",
-                            extra={
-                                "user_id": str(current_user.user_id),
-                                "conversation_id": str(conversation_id),
-                                "conversation_owner_id": str(conversation.user_id),
-                                "resource_type": resource_type,
-                                "is_superuser": True
-                            }
-                        )
-                    else:
-                        # Not owner and not superuser - deny access
-                        logger.warning(
-                            f"Access denied: User {current_user.user_id} attempted to access conversation {conversation_id} owned by {conversation.user_id}",
-                            extra={
-                                "user_id": str(current_user.user_id),
-                                "conversation_id": str(conversation_id),
-                                "conversation_owner_id": str(conversation.user_id),
-                                "resource_type": resource_type,
-                                "is_superuser": False
-                            }
-                        )
+            # Check permissions using PermissionService
+            permission_service = PermissionService()
+            has_permission = permission_service.user_can_access_conversation(
+                current_user.user_id,
+                conversation_id,
+                action
+            )
 
-                        # Log authorization denial to audit logs
-                        if request:
-                            # Determine action from HTTP method
-                            method_to_action = {
-                                "GET": "read",
-                                "PUT": "update",
-                                "PATCH": "update",
-                                "DELETE": "delete",
-                                "POST": "create"
-                            }
-                            action_attempted = method_to_action.get(
-                                request.method if hasattr(request, 'method') else "unknown",
-                                "access"
-                            )
+            if not has_permission:
+                # Access denied - user doesn't own, isn't admin, and doesn't have share
+                logger.warning(
+                    f"Access denied: User {current_user.user_id} attempted to {action} "
+                    f"conversation {conversation_id} owned by {conversation.user_id}",
+                    extra={
+                        "user_id": str(current_user.user_id),
+                        "conversation_id": str(conversation_id),
+                        "conversation_owner_id": str(conversation.user_id),
+                        "resource_type": resource_type,
+                        "action": action,
+                        "is_superuser": current_user.is_superuser
+                    }
+                )
 
-                            await audit_logger.log_authorization_denied(
-                                user_id=current_user.user_id,
-                                resource_type=resource_type,
-                                resource_id=conversation_id,
-                                action_attempted=action_attempted,
-                                ip_address=request.client.host if hasattr(request, 'client') and request.client else None,
-                                user_agent=request.headers.get("user-agent") if hasattr(request, 'headers') else None,
-                                correlation_id=getattr(request.state, 'correlation_id', None) if hasattr(request, 'state') else None
-                            )
+                # Log authorization denial to audit logs
+                if request:
+                    await audit_logger.log_authorization_denied(
+                        user_id=current_user.user_id,
+                        resource_type=resource_type,
+                        resource_id=conversation_id,
+                        action_attempted=action,
+                        ip_address=request.client.host if hasattr(request, 'client') and request.client else None,
+                        user_agent=request.headers.get("user-agent") if hasattr(request, 'headers') else None,
+                        correlation_id=getattr(request.state, 'correlation_id', None) if hasattr(request, 'state') else None
+                    )
 
-                        raise HTTPException(
-                            status_code=status.HTTP_403_FORBIDDEN,
-                            detail=f"Access denied: You do not own this {resource_type}"
-                        )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Access denied: Insufficient permissions to {action} this {resource_type}"
+                )
 
-            # Ownership validated - proceed to endpoint
+            # Permission validated - log successful access for audit
+            # Determine access reason for logging
+            is_owner = permission_service.is_conversation_owner(current_user.user_id, conversation_id)
+            is_shared = permission_service.is_conversation_shared_with(current_user.user_id, conversation_id)
+
+            access_reason = "owner" if is_owner else ("shared" if is_shared else "admin")
+
+            logger.info(
+                f"Access granted: User {current_user.user_id} can {action} "
+                f"conversation {conversation_id} (reason: {access_reason})",
+                extra={
+                    "user_id": str(current_user.user_id),
+                    "conversation_id": str(conversation_id),
+                    "conversation_owner_id": str(conversation.user_id),
+                    "resource_type": resource_type,
+                    "action": action,
+                    "access_reason": access_reason
+                }
+            )
+
+            # Proceed to endpoint
             return await func(*args, **kwargs)
 
         return wrapper

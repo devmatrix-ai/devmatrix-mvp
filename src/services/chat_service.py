@@ -239,12 +239,16 @@ class ChatService:
         self.conversations[conversation.conversation_id] = conversation
 
         # Persist to database
+        # TODO (Phase 2 - WebSocket Authentication): Extract user_id from authenticated
+        # WebSocket session and pass it here. Currently uses demo user fallback in
+        # postgres_manager.create_conversation()
         if self.db and session_id:
             try:
                 self.db.create_conversation(
                     conversation_id=conversation.conversation_id,
                     session_id=session_id,
-                    metadata=metadata or {}
+                    metadata=metadata or {},
+                    # user_id=None  # TEMPORARY: Uses demo user fallback
                 )
                 self.logger.info(f"Conversation {conversation.conversation_id} persisted to database")
             except Exception as e:
@@ -847,7 +851,8 @@ Respondé de manera natural, amigable y útil. Si es una pregunta de diseño o p
 
             # Get session_id from conversation metadata (should be socket.io sid)
             session_id = conversation.metadata.get('sid', conversation.conversation_id)
-            user_id = conversation.metadata.get('user_id', 'default_user')
+            # Use demo user UUID as fallback (authentication integration pending)
+            user_id = conversation.metadata.get('user_id', '7b10ae4c-2158-46be-be91-18dec7d02767')
 
             # Send initial status
             yield {

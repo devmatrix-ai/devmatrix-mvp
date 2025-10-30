@@ -1,7 +1,7 @@
 """
 MasterPlan Generator - Monolithic Approach
 
-Generates complete MasterPlan (50 tasks) from Discovery Document in a single LLM call.
+Generates complete MasterPlan (120 tasks) from Discovery Document in a single LLM call.
 
 Flow:
 1. Load DiscoveryDocument from database
@@ -49,16 +49,16 @@ Your task is to generate a complete, executable MasterPlan for implementing a so
 
 ## MasterPlan Structure:
 
-The MasterPlan consists of **3 Phases** with **50 ULTRA-ATOMIC tasks** (optimized for response size):
+The MasterPlan consists of **3 Phases** with **120 ULTRA-ATOMIC tasks** (complete production-ready implementation):
 
-### Phase 1: Setup (15-20 tasks)
+### Phase 1: Setup (35-40 tasks)
 - Infrastructure setup (database, Redis, Docker) - Critical config files only
 - Project structure & core configuration
 - Essential models and schemas - Group related models
 - Basic API foundation
 - Authentication/authorization - Core implementation
 
-### Phase 2: Core (20-25 tasks)
+### Phase 2: Core (50-60 tasks)
 - Implement key aggregates and entities - Focus on main business logic
 - Core business logic and domain services
 - Essential CRUD operations
@@ -66,7 +66,7 @@ The MasterPlan consists of **3 Phases** with **50 ULTRA-ATOMIC tasks** (optimize
 - Key integrations between bounded contexts
 - Main API endpoints
 
-### Phase 3: Polish (10-15 tasks)
+### Phase 3: Polish (20-30 tasks)
 - Testing (focus on critical paths)
 - Error handling and validation
 - Performance optimization (key areas)
@@ -206,7 +206,8 @@ Each subtask is a SPECIFIC action:
 
 **IMPORTANT**:
 - Return ONLY valid JSON, no markdown, no explanations outside the JSON
-- Generate EXACTLY 50 tasks total (optimized for response size and execution)
+- Generate EXACTLY 120 tasks total (complete production-ready implementation)
+- Cover ALL aspects: Auth, RBAC, Users, Organizations, Projects, Boards, Issues, Sprints, Comments, Attachments, Notifications, Search, Reporting, Real-time, API/Webhooks
 - All task_numbers must be sequential starting from 1
 - Dependencies must reference valid task_numbers
 - EVERY task MUST include a "subtasks" array with 3-5 items (concise)
@@ -216,7 +217,7 @@ Each subtask is a SPECIFIC action:
 
 class MasterPlanGenerator:
     """
-    MasterPlan Generator for creating complete 50-task plans.
+    MasterPlan Generator for creating complete 120-task production-ready plans.
 
     Usage:
         generator = MasterPlanGenerator()
@@ -338,7 +339,7 @@ class MasterPlanGenerator:
             if self.ws_manager:
                 phases = masterplan_data.get("phases", [])
                 total_milestones = sum(len(p.get("milestones", [])) for p in phases)
-                total_tasks = masterplan_data.get("total_tasks", 50)
+                total_tasks = masterplan_data.get("total_tasks", 120)
 
                 await self.ws_manager.emit_masterplan_parsing_complete(
                     session_id=session_id,
@@ -357,7 +358,7 @@ class MasterPlanGenerator:
             if self.ws_manager:
                 phases = masterplan_data.get("phases", [])
                 total_milestones = sum(len(p.get("milestones", [])) for p in phases)
-                total_tasks = masterplan_data.get("total_tasks", 50)
+                total_tasks = masterplan_data.get("total_tasks", 120)
                 total_entities = len(phases) + total_milestones + total_tasks
 
                 await self.ws_manager.emit_masterplan_saving_start(
@@ -593,7 +594,7 @@ class MasterPlanGenerator:
         } if rag_examples else None
 
         # Build variable prompt
-        variable_prompt = f"""Generate a complete MasterPlan (50 tasks) for the following project:
+        variable_prompt = f"""Generate a complete MasterPlan (120 tasks) for the following project:
 
 ## Discovery Summary:
 **Domain**: {discovery.domain}
@@ -607,7 +608,7 @@ class MasterPlanGenerator:
 ## Full Discovery Details:
 {json.dumps(discovery_context, indent=2)}
 
-Generate a complete, executable MasterPlan with exactly 50 tasks organized in 3 phases.
+Generate a complete, executable MasterPlan with exactly 120 tasks organized in 3 phases covering ALL features needed for a production SaaS.
 """
 
         # Generate with caching
@@ -622,7 +623,7 @@ Generate a complete, executable MasterPlan with exactly 50 tasks organized in 3 
                 "rag_examples": rag_context
             },
             variable_prompt=variable_prompt,
-            max_tokens=16000,  # Reduced to prevent truncation (safe under 20K limit)
+            max_tokens=64000,  # Maximum for 120 tasks (Sonnet 4.5 supports up to 64K)
             temperature=0.7
         )
 
@@ -701,8 +702,8 @@ Generate a complete, executable MasterPlan with exactly 50 tasks organized in 3 
 
         # Check total tasks
         total_tasks = masterplan_data.get("total_tasks", 0)
-        if total_tasks != 50:
-            logger.warning(f"MasterPlan has {total_tasks} tasks (expected 50)")
+        if total_tasks < 100 or total_tasks > 150:
+            logger.warning(f"MasterPlan has {total_tasks} tasks (expected 100-150 for production SaaS)")
 
         # Check phases
         phases = masterplan_data.get("phases", [])
@@ -789,6 +790,10 @@ Generate a complete, executable MasterPlan with exactly 50 tasks organized in 3 
                 for phase in masterplan_data["phases"]
             )
 
+            # Calculate correct estimated cost based on actual task complexity
+            estimated_cost = self._calculate_estimated_cost(masterplan_data)
+            masterplan.estimated_cost_usd = estimated_cost
+
             db.commit()
             db.refresh(masterplan)
 
@@ -832,6 +837,9 @@ Generate a complete, executable MasterPlan with exactly 50 tasks organized in 3 
         for milestone_data in phase_data.get("milestones", []):
             milestone = self._create_milestone(db, phase, milestone_data, task_number_to_uuid)
             db.add(milestone)
+            # Count phase tasks
+            phase.total_tasks = (phase.total_tasks or 0) + (milestone.total_tasks or 0)
+            phase.total_milestones = (phase.total_milestones or 0) + 1
 
         return phase
 
@@ -908,6 +916,50 @@ Generate a complete, executable MasterPlan with exactly 50 tasks organized in 3 
             db.add(subtask)
 
         return task
+
+    def _calculate_estimated_cost(self, masterplan_data: Dict) -> float:
+        """Calculate estimated cost based on task complexity AND subtasks.
+
+        Cost per subtask (based on parent task complexity):
+        - Low task: $0.02 per subtask (avg 5 subtasks = $0.10)
+        - Medium task: $0.05 per subtask (avg 5 subtasks = $0.25)
+        - High task: $0.10 per subtask (avg 5 subtasks = $0.50)
+
+        This reflects that the REAL work is in the subtasks, not the task wrapper.
+        """
+        subtask_cost_map = {
+            "low": 0.02,      # Small operations: imports, simple assignments
+            "medium": 0.05,   # Business logic, validation, service calls
+            "high": 0.10,     # Complex integrations, auth flows, migrations
+            "critical": 0.15  # Payment, security, data transformations
+        }
+
+        total_cost = 0.0
+        task_count = 0
+        subtask_count = 0
+
+        for phase_data in masterplan_data.get("phases", []):
+            for milestone_data in phase_data.get("milestones", []):
+                for task_data in milestone_data.get("tasks", []):
+                    complexity = task_data.get("complexity", "medium").lower()
+                    subtasks = task_data.get("subtasks", [])
+                    num_subtasks = len(subtasks)
+
+                    # If no subtasks, use minimum 3 as fallback
+                    if num_subtasks == 0:
+                        num_subtasks = 3
+
+                    cost_per_subtask = subtask_cost_map.get(complexity, 0.05)
+                    task_cost = num_subtasks * cost_per_subtask
+                    total_cost += task_cost
+
+                    task_count += 1
+                    subtask_count += num_subtasks
+
+        logger.info(
+            f"Estimated cost calculation: {task_count} tasks, {subtask_count} subtasks, ${total_cost:.2f}"
+        )
+        return round(total_cost, 2)
 
     def _update_task_dependencies(
         self,

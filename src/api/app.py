@@ -3,6 +3,8 @@ FastAPI Application Factory
 
 Creates and configures the FastAPI application with all routes and middleware.
 Updated for Phase 1 Critical Security Vulnerabilities - Group 5: API Security Layer
+Updated for Phase 2 Task Group 10: Resource Sharing & Collaboration
+Updated for Phase 2 Task Group 12: Enhanced Audit Logging (Read Operations)
 """
 
 from contextlib import asynccontextmanager
@@ -20,7 +22,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from ..observability import StructuredLogger, HealthCheck, MetricsMiddleware, setup_logging
 from ..observability.global_metrics import metrics_collector
-from .routers import workflows, executions, metrics, health, websocket, rag, chat, masterplans, auth, usage, admin, validation, execution_v2, atomization, dependency, review, testing
+from .routers import workflows, executions, metrics, health, websocket, rag, chat, masterplans, auth, usage, admin, validation, execution_v2, atomization, dependency, review, testing, conversations
 
 
 # Initialize logging system
@@ -150,6 +152,15 @@ def create_app() -> FastAPI:
     app.add_middleware(RateLimitMiddleware)
     logger.info("Rate limiting middleware enabled")
 
+    # ========================================
+    # Phase 2 Task Group 12: Enhanced Audit Logging Middleware
+    # ========================================
+    # This MUST run AFTER auth middleware (to get user_id)
+    # but BEFORE request processing
+    from .middleware.audit_middleware import AuditMiddleware
+    app.add_middleware(AuditMiddleware)
+    logger.info("Enhanced audit logging middleware enabled (read operations)")
+
     # Add metrics middleware
     app.add_middleware(MetricsMiddleware, metrics_collector=metrics_collector)
 
@@ -157,6 +168,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)  # Authentication (includes /api/v1 prefix)
     app.include_router(usage.router)  # Usage & Quotas (includes /api/v1 prefix)
     app.include_router(admin.router)  # Admin (includes /api/v1 prefix)
+    app.include_router(conversations.router, prefix="/api/v1/conversations", tags=["conversations"])  # Phase 2: Sharing
     app.include_router(workflows.router, prefix="/api/v1")
     app.include_router(executions.router, prefix="/api/v1")
     app.include_router(metrics.router, prefix="/api/v1")

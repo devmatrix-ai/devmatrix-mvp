@@ -186,8 +186,8 @@ class EnhancedAnthropicClient:
                 estimated_input_tokens = cached_response.prompt_tokens
                 estimated_output_tokens = cached_response.completion_tokens
                 full_cost = (
-                    (estimated_input_tokens / 1_000_000) * model_pricing["input_mtok"] +
-                    (estimated_output_tokens / 1_000_000) * model_pricing["output_mtok"]
+                    (estimated_input_tokens / 1_000_000) * model_pricing["input"] +
+                    (estimated_output_tokens / 1_000_000) * model_pricing["output"]
                 )
 
                 # Emit cost savings metric
@@ -196,7 +196,7 @@ class EnhancedAnthropicClient:
 
                 # Return cached response in same format as API response
                 return {
-                    "content": cached_response.response_text,
+                    "content": cached_response.text,
                     "model": cached_response.model,
                     "usage": {
                         "input_tokens": cached_response.prompt_tokens,

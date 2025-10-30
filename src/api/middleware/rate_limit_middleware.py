@@ -29,13 +29,24 @@ logger = get_logger("rate_limit_middleware")
 settings = get_settings()
 
 # Default rate limits (requests per minute)
-# Anonymous users
-ANONYMOUS_GLOBAL_LIMIT = 30  # 30 req/min for general endpoints
-ANONYMOUS_AUTH_LIMIT = 10    # 10 req/min for auth endpoints
+# Development mode: More lenient limits
+if settings.ENVIRONMENT == "development":
+    # Anonymous users
+    ANONYMOUS_GLOBAL_LIMIT = 300  # 300 req/min for general endpoints (development)
+    ANONYMOUS_AUTH_LIMIT = 100    # 100 req/min for auth endpoints (development)
 
-# Authenticated users
-AUTHENTICATED_GLOBAL_LIMIT = 100  # 100 req/min for general endpoints
-AUTHENTICATED_AUTH_LIMIT = 20     # 20 req/min for auth endpoints
+    # Authenticated users
+    AUTHENTICATED_GLOBAL_LIMIT = 1000  # 1000 req/min for general endpoints (development)
+    AUTHENTICATED_AUTH_LIMIT = 200     # 200 req/min for auth endpoints (development)
+else:
+    # Production mode: Stricter limits
+    # Anonymous users
+    ANONYMOUS_GLOBAL_LIMIT = 30  # 30 req/min for general endpoints
+    ANONYMOUS_AUTH_LIMIT = 10    # 10 req/min for auth endpoints
+
+    # Authenticated users
+    AUTHENTICATED_GLOBAL_LIMIT = 100  # 100 req/min for general endpoints
+    AUTHENTICATED_AUTH_LIMIT = 20     # 20 req/min for auth endpoints
 
 # Redis TTL (2 minutes to be safe)
 REDIS_TTL = 120
