@@ -220,6 +220,7 @@ class ChatService:
         workspace_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> str:
         """
         Create new conversation.
@@ -228,6 +229,7 @@ class ChatService:
             workspace_id: Associated workspace ID
             metadata: Additional conversation metadata
             session_id: WebSocket session ID for persistence
+            user_id: Authenticated user ID from JWT token
 
         Returns:
             Conversation ID
@@ -238,19 +240,16 @@ class ChatService:
         )
         self.conversations[conversation.conversation_id] = conversation
 
-        # Persist to database
-        # TODO (Phase 2 - WebSocket Authentication): Extract user_id from authenticated
-        # WebSocket session and pass it here. Currently uses demo user fallback in
-        # postgres_manager.create_conversation()
+        # Persist to database with authenticated user_id
         if self.db and session_id:
             try:
                 self.db.create_conversation(
                     conversation_id=conversation.conversation_id,
                     session_id=session_id,
                     metadata=metadata or {},
-                    # user_id=None  # TEMPORARY: Uses demo user fallback
+                    user_id=user_id
                 )
-                self.logger.info(f"Conversation {conversation.conversation_id} persisted to database")
+                self.logger.info(f"Conversation {conversation.conversation_id} persisted to database with user {user_id}")
             except Exception as e:
                 self.logger.error(f"Failed to persist conversation: {e}")
 

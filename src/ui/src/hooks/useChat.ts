@@ -28,7 +28,7 @@ const getConversationKey = (workspaceId?: string) => {
 }
 
 export function useChat(options: UseChatOptions = {}) {
-  const { isConnected, send, on } = useWebSocket()
+  const { isConnected, send, joinChat, on } = useWebSocket()
 
   // Try to restore conversation_id from localStorage
   const savedConversationId = options.conversationId ||
@@ -262,15 +262,12 @@ export function useChat(options: UseChatOptions = {}) {
 
     console.log('📡 [useChat] Joining chat room...', conversationId || 'new')
 
-    // Use saved conversation_id if available
-    send('join_chat', {
-      conversation_id: conversationId,
-      workspace_id: options.workspaceId,
-    })
+    // Use joinChat method which includes JWT token from localStorage
+    joinChat(conversationId || '', options.workspaceId)
 
     // No cleanup needed - server handles disconnections automatically
     // Cleanup would cause issues with React StrictMode in development
-  }, [isConnected, isJoined, conversationId, options.workspaceId, send])
+  }, [isConnected, isJoined, conversationId, options.workspaceId, joinChat])
 
   // Reset join status when connection is lost
   useEffect(() => {
