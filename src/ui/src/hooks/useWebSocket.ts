@@ -43,9 +43,13 @@ export function useWebSocket(url?: string) {
     wsService.send(event, data)
   }, [])
 
+  const joinChat = useCallback((conversationId: string, workspaceId?: string) => {
+    wsService.joinChat(conversationId, workspaceId)
+  }, [])
+
   const on = useCallback((event: string, callback: Function) => {
     return wsService.on(event, callback)
   }, [])
 
-  return { isConnected, send, on }
+  return { isConnected, send, joinChat, on }
 }
