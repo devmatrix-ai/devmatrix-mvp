@@ -54,8 +54,8 @@ export class WebSocketService {
       reconnectionDelay: 1000,  // Start with 1s delay
       reconnectionDelayMax: 10000,  // Max 10s delay between attempts
       reconnectionAttempts: Infinity,  // Keep trying forever
-      // Timeout settings - match backend configuration
-      timeout: 30000,  // Connection timeout: 30s
+      // Timeout settings - match backend configuration (server: pingInterval=60s, pingTimeout=120s)
+      timeout: 150000,  // Connection timeout: 150s (allows 90s+ LLM operations + buffer)
       // Note: pingTimeout and pingInterval are handled server-side
       // Performance settings
       upgrade: true,  // Allow transport upgrades
