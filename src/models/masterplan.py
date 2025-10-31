@@ -301,6 +301,8 @@ class MasterPlanTask(Base):
     task_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
     # Foreign Keys
+    masterplan_id = Column(UUID(as_uuid=True), ForeignKey("masterplans.masterplan_id"), nullable=False, index=True)
+    phase_id = Column(UUID(as_uuid=True), ForeignKey("masterplan_phases.phase_id"), nullable=True, index=True)
     milestone_id = Column(UUID(as_uuid=True), ForeignKey("masterplan_milestones.milestone_id"), nullable=False)
 
     # Task Info

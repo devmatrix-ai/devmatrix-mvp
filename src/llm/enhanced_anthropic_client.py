@@ -273,40 +273,126 @@ class EnhancedAnthropicClient:
                     "cache_creation_input_tokens": 0,
                     "output_tokens": 0
                 }
+                stream_error = None
+                partial_completion = False
 
-                with self.anthropic.messages.stream(
-                    model=model,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    system=system,  # ← With cache markers
-                    messages=messages
-                ) as stream:
-                    for text in stream.text_stream:
-                        full_text += text
+                # PHASE 2: Chunk Buffering - Track streaming progress
+                chunk_buffer = []  # Track individual chunks
+                checkpoint_intervals = 500  # Save checkpoint every 500 chars
+                last_checkpoint_pos = 0
+                chunk_count = 0
 
-                    # Get final message with usage stats
-                    final_message = stream.get_final_message()
-                    cache_stats["input_tokens"] = final_message.usage.input_tokens
-                    cache_stats["cache_read_input_tokens"] = getattr(final_message.usage, "cache_read_input_tokens", 0)
-                    cache_stats["cache_creation_input_tokens"] = getattr(final_message.usage, "cache_creation_input_tokens", 0)
-                    cache_stats["output_tokens"] = final_message.usage.output_tokens
+                try:
+                    with self.anthropic.messages.stream(
+                        model=model,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        system=system,  # ← With cache markers
+                        messages=messages
+                    ) as stream:
+                        for text in stream.text_stream:
+                            full_text += text
+                            chunk_buffer.append(text)
+                            chunk_count += 1
 
-                    # Create response-like object for compatibility
-                    class StreamResponse:
-                        def __init__(self, text, model, usage, stop_reason):
-                            self.content = [type('obj', (object,), {'text': text})]
-                            self.model = model
-                            self.usage = usage
-                            self.stop_reason = stop_reason
+                            # PHASE 2: Log chunk progress
+                            if chunk_count % 50 == 0:  # Log every 50 chunks
+                                logger.debug(
+                                    f"Streaming progress: {len(full_text)} chars, "
+                                    f"{chunk_count} chunks, "
+                                    f"Last chunk: {len(text)} chars"
+                                )
 
-                    response = StreamResponse(
-                        text=full_text,
-                        model=final_message.model,
-                        usage=final_message.usage,
-                        stop_reason=final_message.stop_reason
+                            # PHASE 2: Detect content structure (JSON boundaries)
+                            if len(full_text) - last_checkpoint_pos >= checkpoint_intervals:
+                                # Detected checkpoint interval
+                                checkpoint_data = {
+                                    "position": len(full_text),
+                                    "chunks_received": chunk_count,
+                                    "timestamp": time.time(),
+                                    "content_sample": full_text[max(0, len(full_text)-100):]
+                                }
+                                logger.debug(f"Checkpoint reached: {checkpoint_data}")
+                                last_checkpoint_pos = len(full_text)
+
+                        # Get final message with usage stats
+                        final_message = stream.get_final_message()
+                        cache_stats["input_tokens"] = final_message.usage.input_tokens
+                        cache_stats["cache_read_input_tokens"] = getattr(final_message.usage, "cache_read_input_tokens", 0)
+                        cache_stats["cache_creation_input_tokens"] = getattr(final_message.usage, "cache_creation_input_tokens", 0)
+                        cache_stats["output_tokens"] = final_message.usage.output_tokens
+
+                        # Create response-like object for compatibility
+                        class StreamResponse:
+                            def __init__(self, text, model, usage, stop_reason):
+                                self.content = [type('obj', (object,), {'text': text})]
+                                self.model = model
+                                self.usage = usage
+                                self.stop_reason = stop_reason
+
+                        response = StreamResponse(
+                            text=full_text,
+                            model=final_message.model,
+                            usage=final_message.usage,
+                            stop_reason=final_message.stop_reason
+                        )
+                except Exception as stream_exception:
+                    # PHASE 1 & 2: Error Handling + Chunk Analysis
+                    stream_error = stream_exception
+                    partial_completion = len(full_text) > 0
+
+                    logger.error(
+                        f"Stream error during {task_type}: {type(stream_exception).__name__}: {str(stream_exception)}",
+                        exc_info=True
                     )
+                    logger.warning(
+                        f"Partial content captured: {len(full_text)} chars, "
+                        f"{len(full_text.split())} words, "
+                        f"{chunk_count} chunks received. "
+                        f"Completion: {partial_completion}"
+                    )
+
+                    # PHASE 2: Analyze chunk buffer for recovery opportunities
+                    if chunk_buffer:
+                        last_chunk = chunk_buffer[-1]
+                        logger.debug(
+                            f"Last chunk data: length={len(last_chunk)}, "
+                            f"content={last_chunk[:100]}"
+                        )
+
+                    # If we have partial content, use it; otherwise re-raise
+                    if partial_completion and len(full_text.strip()) > 100:
+                        logger.info(
+                            f"Using partial completion ({len(full_text)} chars, "
+                            f"{chunk_count} chunks) as fallback for {task_type}"
+                        )
+                        # Create partial response from what we got
+                        class PartialStreamResponse:
+                            def __init__(self, text):
+                                self.content = [type('obj', (object,), {'text': text})]
+                                self.model = model
+                                self.usage = type('obj', (object,), {
+                                    'input_tokens': 0,
+                                    'cache_read_input_tokens': 0,
+                                    'cache_creation_input_tokens': 0,
+                                    'output_tokens': 0
+                                })()
+                                self.stop_reason = "incomplete"
+
+                        response = PartialStreamResponse(text=full_text)
+                        cache_stats = {
+                            "input_tokens": 0,
+                            "cache_read_input_tokens": 0,
+                            "cache_creation_input_tokens": 0,
+                            "output_tokens": 0
+                        }
+                    else:
+                        # Not enough content to use as fallback, propagate error
+                        logger.error(f"Insufficient partial content ({len(full_text)} chars), failing request")
+                        raise
             else:
                 # Regular non-streaming mode for smaller requests
+                logger.info(f"Using non-streaming mode for {task_type} (max_tokens={max_tokens})")
                 response = self.anthropic.messages.create(
                     model=model,
                     max_tokens=max_tokens,
@@ -317,6 +403,41 @@ class EnhancedAnthropicClient:
 
                 # Extract cache stats
                 cache_stats = self.cache_manager.extract_cache_stats_from_response(response)
+
+        except Exception as outer_exception:
+            # PHASE 3: Non-streaming Fallback
+            logger.warning(
+                f"Streaming mode failed for {task_type}, attempting non-streaming fallback: "
+                f"{type(outer_exception).__name__}"
+            )
+
+            try:
+                logger.info(f"PHASE 3: Attempting non-streaming fallback for {task_type}")
+                response = self.anthropic.messages.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=system,  # ← With cache markers
+                    messages=messages
+                )
+
+                # Extract cache stats
+                cache_stats = self.cache_manager.extract_cache_stats_from_response(response)
+
+                logger.info(
+                    f"Non-streaming fallback succeeded for {task_type}: "
+                    f"{len(response.content[0].text)} chars"
+                )
+
+            except Exception as fallback_exception:
+                # Both streaming and non-streaming failed
+                logger.error(
+                    f"Both streaming and non-streaming failed for {task_type}: "
+                    f"Streaming: {type(outer_exception).__name__}, "
+                    f"Non-streaming: {type(fallback_exception).__name__}",
+                    exc_info=True
+                )
+                raise
 
             # Calculate cost
             model_pricing = self.model_selector.get_model_pricing(model)

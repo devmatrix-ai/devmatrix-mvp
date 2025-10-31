@@ -842,7 +842,7 @@ Generate a complete, executable MasterPlan with exactly 120 tasks organized in 3
 
         # Create Milestones
         for milestone_data in phase_data.get("milestones", []):
-            milestone = self._create_milestone(db, phase, milestone_data, task_number_to_uuid)
+            milestone = self._create_milestone(db, masterplan, phase, milestone_data, task_number_to_uuid)
             db.add(milestone)
             # Count phase tasks
             phase.total_tasks = (phase.total_tasks or 0) + (milestone.total_tasks or 0)
@@ -853,6 +853,7 @@ Generate a complete, executable MasterPlan with exactly 120 tasks organized in 3
     def _create_milestone(
         self,
         db,
+        masterplan: MasterPlan,
         phase: MasterPlanPhase,
         milestone_data: Dict,
         task_number_to_uuid: Dict[int, UUID]
@@ -871,7 +872,7 @@ Generate a complete, executable MasterPlan with exactly 120 tasks organized in 3
 
         # Create Tasks
         for task_data in milestone_data.get("tasks", []):
-            task = self._create_task(db, milestone, task_data)  # Already adds to db and flushes
+            task = self._create_task(db, masterplan, phase, milestone, task_data)  # Already adds to db and flushes
 
             # Map task_number → task_id
             task_number_to_uuid[task_data["task_number"]] = task.task_id
@@ -884,6 +885,8 @@ Generate a complete, executable MasterPlan with exactly 120 tasks organized in 3
     def _create_task(
         self,
         db,
+        masterplan: MasterPlan,
+        phase: MasterPlanPhase,
         milestone: MasterPlanMilestone,
         task_data: Dict
     ) -> MasterPlanTask:
@@ -897,6 +900,8 @@ Generate a complete, executable MasterPlan with exactly 120 tasks organized in 3
         }
 
         task = MasterPlanTask(
+            masterplan_id=masterplan.masterplan_id,
+            phase_id=phase.phase_id,
             milestone_id=milestone.milestone_id,
             task_number=task_data["task_number"],
             name=task_data["name"],
