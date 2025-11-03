@@ -159,55 +159,209 @@ EXTRACTION_CONFIG = {
 # MOCK EXTRACTION FUNCTIONS (Placeholder for actual GitHub API)
 # ============================================================
 
-def extract_patterns_from_code(code: str, repo_name: str) -> List[Tuple[str, Dict[str, Any]]]:
+def extract_patterns_from_code(code: str, repo_name: str, file_path: str) -> List[Tuple[str, Dict[str, Any]]]:
     """
     Extract code patterns from file content.
 
-    This is a placeholder that would be replaced with actual GitHub API calls
-    or local repository cloning and parsing.
+    Identifies functions, classes, and meaningful code blocks.
 
     Args:
         code: Source code content
         repo_name: Repository name for metadata
+        file_path: Path to the file in repository
 
     Returns:
         List of (code, metadata) tuples
     """
+    import re
+
     examples: List[Tuple[str, Dict[str, Any]]] = []
 
-    # This function would:
-    # 1. Parse the code into logical sections
-    # 2. Extract function/class definitions
-    # 3. Identify patterns and purpose
-    # 4. Rate quality
-    # 5. Generate metadata
+    # Determine language
+    if file_path.endswith('.ts') or file_path.endswith('.tsx'):
+        language = 'typescript'
+    else:
+        language = 'javascript'
 
-    # Placeholder: Return empty list
-    # In production, this would use AST parsing or regex patterns
+    # Extract functions/classes/exports
+    # Pattern for function/class declarations
+    patterns = [
+        # Function declarations
+        (r'(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\([^)]*\)\s*(?::\s*\w+)?\s*{', 'function'),
+        # Arrow functions
+        (r'(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\([^)]*\)\s*(?::\s*\w+)?\s*=>', 'arrow_function'),
+        # Classes
+        (r'(?:export\s+)?class\s+(\w+)', 'class'),
+        # Interfaces/Types
+        (r'(?:export\s+)?(?:interface|type)\s+(\w+)', 'type_definition'),
+    ]
+
+    # Find pattern matches
+    found_patterns = set()
+    for pattern, pattern_type in patterns:
+        matches = re.finditer(pattern, code)
+        for match in matches:
+            found_patterns.add(pattern_type)
+
+    if not found_patterns:
+        # No clear patterns found, skip this file
+        return []
+
+    # Split code into logical chunks (functions/classes)
+    chunks = []
+
+    # Simple splitting by function/class boundaries
+    lines = code.split('\n')
+    current_chunk = []
+    indent_level = 0
+
+    for line in lines:
+        current_chunk.append(line)
+
+        # Track braces to find complete blocks
+        indent_level += line.count('{') - line.count('}')
+
+        # When we close a block, save the chunk
+        if indent_level == 0 and '{' in ''.join(current_chunk) and current_chunk:
+            chunk_code = '\n'.join(current_chunk).strip()
+            if len(chunk_code.split('\n')) >= 5:  # At least 5 lines
+                chunks.append(chunk_code)
+                current_chunk = []
+
+    # If we have remaining code, add it
+    if current_chunk:
+        chunk_code = '\n'.join(current_chunk).strip()
+        if len(chunk_code.split('\n')) >= 5:
+            chunks.append(chunk_code)
+
+    # Create examples from chunks
+    for i, chunk in enumerate(chunks):
+        # Skip very long chunks
+        if len(chunk.split('\n')) > 200:
+            continue
+
+        # Infer pattern name from content
+        pattern_name = 'github_extracted'
+        if 'export' in chunk:
+            pattern_name += '_export'
+        if 'async' in chunk:
+            pattern_name += '_async'
+        if 'class' in chunk:
+            pattern_name += '_class'
+        if 'interface' in chunk:
+            pattern_name += '_interface'
+
+        # Determine task type
+        task_type = 'github_pattern'
+        if 'test' in file_path.lower():
+            task_type = 'testing'
+        elif 'component' in file_path.lower():
+            task_type = 'component'
+        elif 'hook' in file_path.lower():
+            task_type = 'component'
+        elif 'middleware' in file_path.lower():
+            task_type = 'middleware'
+
+        metadata = {
+            'language': language,
+            'source': 'github',
+            'framework': 'github_extracted',
+            'docs_section': f'GitHub - {file_path}',
+            'pattern': f'{pattern_name}_{i}',
+            'task_type': task_type,
+            'complexity': 'medium',
+            'quality': 'github_example',
+            'tags': f'github,{repo_name.split("/")[1]},{language}',
+            'approved': True,
+        }
+
+        examples.append((chunk, metadata))
+
     return examples
 
 
-def get_repository_files(repo_name: str, file_patterns: List[str]) -> List[str]:
+def get_repository_files(repo_name: str, file_patterns: List[str]) -> List[Tuple[str, str]]:
     """
     Get list of files matching patterns from a GitHub repository.
 
-    Placeholder for GitHub API integration.
+    Uses GitHub API (requires GITHUB_TOKEN environment variable).
 
     Args:
         repo_name: Repository name (owner/repo)
         file_patterns: List of file glob patterns to match
 
     Returns:
-        List of file paths
+        List of (file_path, file_content) tuples
     """
-    # In production, this would:
-    # 1. Connect to GitHub API
-    # 2. Use GraphQL to query repository
-    # 3. Filter files by patterns
-    # 4. Handle pagination
+    import os
+    import fnmatch
+    from github import Github, GithubException
 
-    logger.info(f"Extracting from {repo_name}")
-    return []
+    # Get GitHub token from environment
+    github_token = os.getenv('GITHUB_TOKEN')
+    if not github_token:
+        logger.warning("GITHUB_TOKEN not set. Set it to enable GitHub extraction.")
+        return []
+
+    try:
+        # Connect to GitHub
+        g = Github(github_token)
+        repo = g.get_repo(repo_name)
+
+        logger.info(f"Extracting from {repo_name} (Stars: {repo.stargazers_count})")
+
+        files = []
+
+        # Get all files from repository
+        try:
+            contents = repo.get_contents("")
+            queue = [contents]
+
+            while queue:
+                current = queue.pop(0)
+
+                for item in current:
+                    # Skip non-Python/JS/TS files
+                    if not any(item.name.endswith(ext) for ext in ['.ts', '.tsx', '.js', '.jsx']):
+                        continue
+
+                    # Check if matches pattern
+                    matches_pattern = False
+                    for pattern in file_patterns:
+                        # Simple pattern matching
+                        if fnmatch.fnmatch(item.path, pattern):
+                            matches_pattern = True
+                            break
+
+                    if item.type == 'dir':
+                        # Add directory to queue
+                        queue.append(repo.get_contents(item.path))
+                    elif item.type == 'file' and matches_pattern:
+                        # Extract file content
+                        try:
+                            content = item.decoded_content.decode('utf-8')
+                            files.append((item.path, content))
+                            logger.debug(f"Extracted: {item.path}")
+
+                            # Limit files per repo to avoid rate limits
+                            if len(files) >= 50:
+                                logger.info(f"Reached file limit (50) for {repo_name}")
+                                return files
+
+                        except Exception as e:
+                            logger.debug(f"Failed to decode {item.path}: {str(e)}")
+                            continue
+
+        except GithubException as e:
+            logger.error(f"GitHub API error for {repo_name}: {str(e)}")
+            return files
+
+        logger.info(f"Extracted {len(files)} files from {repo_name}")
+        return files
+
+    except Exception as e:
+        logger.error(f"Failed to extract from {repo_name}", error=str(e))
+        return []
 
 
 def estimate_quality_score(code: str, repo_stars: int) -> int:
@@ -282,15 +436,34 @@ class GitHubExtractor:
         framework = repo_info.get('framework', 'general')
         patterns = FILE_PATTERNS.get(framework, FILE_PATTERNS.get('typescript'))
 
-        # Get files from repository
+        # Get files from repository (now with real GitHub API)
         files = get_repository_files(repo_name, patterns)
         logger.debug(f"Found {len(files)} matching files")
 
         extracted_count = 0
-        for file_path in files:
-            # In production: read file from GitHub API
-            # For now: placeholder
-            pass
+        repo_stars = repo_info.get('stars', 0)
+
+        for file_path, file_content in files:
+            # Extract patterns from file
+            patterns_found = extract_patterns_from_code(file_content, repo_name, file_path)
+
+            for code, metadata in patterns_found:
+                # Calculate quality score
+                quality_score = estimate_quality_score(code, repo_stars)
+
+                # Skip low-quality examples
+                if quality_score < self.config['min_quality_score']:
+                    logger.debug(f"Skipped {metadata['pattern']}: quality {quality_score} < {self.config['min_quality_score']}")
+                    continue
+
+                # Add quality score to metadata
+                metadata['quality_score'] = quality_score
+
+                # Add to examples
+                self.examples.append((code, metadata))
+                extracted_count += 1
+
+                logger.debug(f"Extracted: {metadata['pattern']} (quality: {quality_score})")
 
         self.total_extracted += extracted_count
         return extracted_count
@@ -302,17 +475,35 @@ class GitHubExtractor:
         Returns:
             Total number of examples extracted
         """
+        import os
+        from github import Github, GithubException
+
         logger.info("Starting GitHub repository extraction...")
         logger.info(f"Target repositories: {len(POPULAR_REPOS)}")
 
+        # Get GitHub token for API calls
+        github_token = os.getenv('GITHUB_TOKEN')
+
         for repo_name, repo_info in POPULAR_REPOS.items():
             try:
+                # Get real star count from GitHub if token available
+                if github_token:
+                    try:
+                        g = Github(github_token)
+                        repo = g.get_repo(repo_name)
+                        repo_info['stars'] = repo.stargazers_count
+                        logger.info(f"{repo_name}: {repo.stargazers_count} stars")
+                    except GithubException as e:
+                        logger.warning(f"Could not fetch star count for {repo_name}: {str(e)}")
+
                 self.extract_from_repo(repo_name, repo_info)
+
             except Exception as e:
                 logger.error(f"Failed to extract from {repo_name}", error=str(e))
                 continue
 
         logger.info(f"Extraction complete: {self.total_extracted} examples extracted")
+        logger.info(f"Total examples in memory: {len(self.examples)}")
         return self.total_extracted
 
     def save_examples(self, vector_store) -> int:
