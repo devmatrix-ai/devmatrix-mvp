@@ -35,7 +35,7 @@ logger = get_logger(__name__)
 
 POPULAR_REPOS: Dict[str, Dict[str, Any]] = {
     # Express.js ecosystem
-    "express-js/express": {
+    "expressjs/express": {
         "framework": "express",
         "language": "javascript",
         "category": "web_framework",
@@ -285,16 +285,16 @@ def get_repository_files(repo_name: str, file_patterns: List[str]) -> List[Tuple
     Get list of files matching patterns from a GitHub repository.
 
     Uses GitHub API (requires GITHUB_TOKEN environment variable).
+    Simplified approach: Extract all .ts/.tsx/.js/.jsx files recursively.
 
     Args:
         repo_name: Repository name (owner/repo)
-        file_patterns: List of file glob patterns to match
+        file_patterns: List of file glob patterns to match (unused in simplified version)
 
     Returns:
         List of (file_path, file_content) tuples
     """
     import os
-    import fnmatch
     from github import Github, GithubException
 
     # Get GitHub token from environment
@@ -304,63 +304,72 @@ def get_repository_files(repo_name: str, file_patterns: List[str]) -> List[Tuple
         return []
 
     try:
-        # Connect to GitHub
-        g = Github(github_token)
+        # Connect to GitHub with proper auth
+        from github import Auth
+        auth = Auth.Token(github_token)
+        g = Github(auth=auth)
         repo = g.get_repo(repo_name)
 
         logger.info(f"Extracting from {repo_name} (Stars: {repo.stargazers_count})")
 
         files = []
+        file_count = 0
+        max_files = 50
 
-        # Get all files from repository
-        try:
-            contents = repo.get_contents("")
-            queue = [contents]
+        # Get files recursively from repository
+        def extract_files_recursive(path: str = ""):
+            """Recursively extract TypeScript/JavaScript files."""
+            nonlocal file_count
 
-            while queue:
-                current = queue.pop(0)
+            if file_count >= max_files:
+                return
 
-                for item in current:
-                    # Skip non-Python/JS/TS files
-                    if not any(item.name.endswith(ext) for ext in ['.ts', '.tsx', '.js', '.jsx']):
-                        continue
+            try:
+                contents = repo.get_contents(path if path else "")
 
-                    # Check if matches pattern
-                    matches_pattern = False
-                    for pattern in file_patterns:
-                        # Simple pattern matching
-                        if fnmatch.fnmatch(item.path, pattern):
-                            matches_pattern = True
-                            break
+                for item in contents:
+                    if file_count >= max_files:
+                        break
 
-                    if item.type == 'dir':
-                        # Add directory to queue
-                        queue.append(repo.get_contents(item.path))
-                    elif item.type == 'file' and matches_pattern:
-                        # Extract file content
+                    # Check if file matches language extension
+                    if item.type == "file" and any(
+                        item.name.endswith(ext)
+                        for ext in ['.ts', '.tsx', '.js', '.jsx']
+                    ):
                         try:
                             content = item.decoded_content.decode('utf-8')
-                            files.append((item.path, content))
-                            logger.debug(f"Extracted: {item.path}")
-
-                            # Limit files per repo to avoid rate limits
-                            if len(files) >= 50:
-                                logger.info(f"Reached file limit (50) for {repo_name}")
-                                return files
-
+                            # Only include reasonably sized files
+                            if 50 < len(content) < 50000:
+                                files.append((item.path, content))
+                                file_count += 1
+                                logger.debug(f"Extracted: {item.path}")
                         except Exception as e:
-                            logger.debug(f"Failed to decode {item.path}: {str(e)}")
+                            logger.debug(f"Failed to read {item.path}: {str(e)}")
                             continue
 
-        except GithubException as e:
-            logger.error(f"GitHub API error for {repo_name}: {str(e)}")
-            return files
+                    # Recurse into directories (but avoid common large dirs)
+                    elif item.type == "dir" and file_count < max_files:
+                        skip_dirs = {'.git', 'node_modules', 'dist', 'build', '.next', 'coverage', '__pycache__'}
+                        if item.name not in skip_dirs:
+                            try:
+                                extract_files_recursive(item.path)
+                            except GithubException as e:
+                                if "API rate limit" in str(e):
+                                    logger.warning(f"Rate limit hit for {repo_name}")
+                                    return
+                                continue
 
+            except GithubException as e:
+                logger.warning(f"GitHub API error at {path}: {str(e)}")
+                return
+
+        # Start extraction from root
+        extract_files_recursive()
         logger.info(f"Extracted {len(files)} files from {repo_name}")
         return files
 
     except Exception as e:
-        logger.error(f"Failed to extract from {repo_name}", error=str(e))
+        logger.error(f"Failed to extract from {repo_name}: {str(e)}")
         return []
 
 
