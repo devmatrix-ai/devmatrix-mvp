@@ -413,10 +413,11 @@ class CodeMigrator:
             # Add framework detection
             frameworks = self._detect_frameworks(snippet.imports)
             if frameworks:
-                metadata["frameworks"] = frameworks
+                # Convert frameworks list to comma-separated string
+                metadata["frameworks"] = ",".join(frameworks)
 
-            # Add common imports
-            metadata["imports"] = snippet.imports[:10]  # First 10 imports
+            # Add common imports (convert list to comma-separated string)
+            metadata["imports"] = ",".join(snippet.imports[:10])  # First 10 imports
 
         return metadata
 
