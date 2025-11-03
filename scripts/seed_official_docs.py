@@ -87,17 +87,49 @@ async def websocket_endpoint(ws: WebSocket):
         }
     ),
     (
-        """from fastapi import FastAPI, BackgroundTasks
+        """import logging
+from logging.handlers import RotatingFileHandler
+from fastapi import FastAPI, BackgroundTasks
+from pathlib import Path
 
+# Setup logger with rotating file handler
+def setup_logger():
+    logger = logging.getLogger("notifications")
+    if logger.handlers:
+        return logger
+
+    # Create logs directory
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+
+    # Rotating file handler: 10MB max, keep 5 backups
+    handler = RotatingFileHandler(
+        log_dir / "notifications.log",
+        maxBytes=10_000_000,
+        backupCount=5
+    )
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    return logger
+
+logger = setup_logger()
 app = FastAPI()
 
-def write_log(message: str):
-    with open("log.txt", "a") as f:
-        f.write(message + "\n")
+async def log_notification_safe(email: str):
+    try:
+        # Sanitize email: remove newlines
+        sanitized_email = email.replace("\n", "").replace("\r", "")
+        logger.info(f"Notification sent to: {sanitized_email}")
+    except Exception as e:
+        logger.error(f"Failed to log notification", exc_info=True)
 
 @app.post("/notify")
 async def send_notification(bg: BackgroundTasks, email: str):
-    bg.add_task(write_log, f"Notify: {email}")
+    bg.add_task(log_notification_safe, email)
     return {"status": "scheduled"}""",
         {
             "language": "python",
@@ -106,9 +138,9 @@ async def send_notification(bg: BackgroundTasks, email: str):
             "docs_section": "Background Tasks",
             "pattern": "fastapi_background_tasks",
             "task_type": "background_jobs",
-            "complexity": "low",
+            "complexity": "medium",
             "quality": "official_example",
-            "tags": "fastapi,background,io",
+            "tags": "fastapi,background,logging,io",
             "approved": True,
         }
     ),
@@ -337,31 +369,54 @@ async def upload_multiple_images(images: list[Image]):
     (
         """from typing import Optional
 from fastapi import FastAPI, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, validator
 
 class Item(BaseModel):
     name: str
     description: Optional[str] = None
-    price: float
-    tax: float = 10.5
+    price: float = Field(..., gt=0)
+    tax: float = Field(default=0.0, ge=0, le=100)
     tags: list[str] = []
+
+    @validator("price", "tax", pre=True)
+    def ensure_float(cls, v):
+        if v is None:
+            return 0.0
+        return float(v)
+
+class ItemWithTax(Item):
+    price_with_tax: float
+    tax_amount: float
 
 app = FastAPI()
 
-@app.post("/items/", response_model=Item, status_code=status.HTTP_201_CREATED)
+@app.post("/items/", response_model=ItemWithTax, status_code=status.HTTP_201_CREATED)
 async def create_item(item: Item):
-    item_dict = item.dict()
-    if item.tax:
-        price_with_tax = item.price + item.tax
-        item_dict.update({"price_with_tax": price_with_tax})
-    return item_dict
+    # Always calculate tax, even when tax=0
+    tax_amount = item.price * (item.tax / 100) if item.tax > 0 else 0.0
+    price_with_tax = item.price + tax_amount
 
-@app.get("/items/", response_model=list[Item])
+    item_dict = item.dict()
+    item_dict.update({
+        "tax_amount": tax_amount,
+        "price_with_tax": price_with_tax
+    })
+    return ItemWithTax(**item_dict)
+
+@app.get("/items/", response_model=list[ItemWithTax])
 async def read_items():
+    items = [
+        Item(name="Foo", price=50),
+        Item(name="Bar", description="The bartenders", price=62, tax=20),
+        Item(name="Baz", price=50.2, tax=10, tags=["tag1"]),
+    ]
     return [
-        {"name": "Foo", "price": 50},
-        {"name": "Bar", "description": "The bartenders", "price": 62, "tax": 20.2},
-        {"name": "Baz", "price": 50.2, "tax": 10.5, "tags": ["tag1"]},
+        ItemWithTax(
+            **item.dict(),
+            tax_amount=item.price * (item.tax / 100),
+            price_with_tax=item.price * (1 + item.tax / 100)
+        )
+        for item in items
     ]""",
         {
             "language": "python",
@@ -372,7 +427,7 @@ async def read_items():
             "task_type": "api_development",
             "complexity": "medium",
             "quality": "official_example",
-            "tags": "fastapi,response-model,status,http",
+            "tags": "fastapi,response-model,status,validation,http",
             "approved": True,
         }
     ),
