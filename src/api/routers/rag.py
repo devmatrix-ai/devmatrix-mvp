@@ -16,6 +16,7 @@ from src.rag import (
     RetrievalStrategy,
 )
 from src.rag.metrics import get_rag_metrics_tracker
+from src.rag.feedback_service import FeedbackType
 from src.observability import get_logger
 
 logger = get_logger("api.rag")
@@ -84,6 +85,15 @@ class FeedbackRequest(BaseModel):
     feedback_type: str
     task_description: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+
+
+class WebhookFeedbackRequest(BaseModel):
+    """Webhook feedback request model for external systems."""
+    code: str
+    description: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    user_id: Optional[str] = None
+    approved: bool = True
 
 
 # Endpoints
@@ -449,6 +459,93 @@ async def get_feedback_metrics() -> Dict[str, Any]:
     except Exception as e:
         logger.error("Failed to get feedback metrics", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/feedback/webhook")
+async def feedback_webhook(request: WebhookFeedbackRequest) -> Dict[str, Any]:
+    """
+    Webhook endpoint for external systems to submit code approvals.
+    
+    This allows external tools and services to contribute approved code
+    examples to the RAG system for continuous learning.
+    
+    Args:
+        request: Webhook feedback request with code and metadata
+        
+    Returns:
+        Status with feedback ID
+        
+    Example:
+        POST /rag/feedback/webhook
+        {
+            "code": "def process_data(data):\\n    return data.strip()",
+            "description": "Data processing utility",
+            "metadata": {
+                "source": "external_tool",
+                "framework": "fastapi",
+                "pattern": "data_processing"
+            },
+            "user_id": "external_system_1",
+            "approved": true
+        }
+    """
+    try:
+        _, _, feedback_service, metrics = get_instances()
+        
+        # Validate code is not empty
+        if not request.code or not request.code.strip():
+            raise HTTPException(status_code=400, detail="Code cannot be empty")
+        
+        if request.approved:
+            # Record as approved and auto-index
+            feedback_id = feedback_service.record_approval(
+                code=request.code,
+                metadata=request.metadata or {"source": "webhook"},
+                task_description=request.description or "External webhook submission",
+                user_id=request.user_id
+            )
+            
+            logger.info(
+                "External webhook feedback received and indexed",
+                feedback_id=feedback_id,
+                source=request.user_id or "unknown"
+            )
+            
+            return {
+                "status": "success",
+                "action": "approved",
+                "feedback_id": feedback_id,
+                "auto_indexed": True,
+                "message": "Code approved and indexed to RAG"
+            }
+        else:
+            # Record as rejection
+            feedback_id = feedback_service.record_feedback(
+                code=request.code,
+                feedback_type=FeedbackType.REJECTED,
+                metadata=request.metadata or {"source": "webhook"},
+                user_id=request.user_id
+            )
+            
+            logger.info(
+                "External webhook feedback rejected",
+                feedback_id=feedback_id,
+                source=request.user_id or "unknown"
+            )
+            
+            return {
+                "status": "success",
+                "action": "rejected",
+                "feedback_id": feedback_id,
+                "auto_indexed": False,
+                "message": "Code rejected and not indexed"
+            }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Webhook feedback submission failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Webhook processing failed: {str(e)}")
 
 
 @router.delete("/cache")

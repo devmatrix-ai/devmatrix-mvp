@@ -117,6 +117,11 @@ qrcode[pil]==7.4.2                # QR code generation for 2FA enrollment (Phase
 chromadb>=0.4.22                  # Vector database for code embeddings
 sentence-transformers>=2.2.2      # Semantic embeddings for code similarity
 
+# RAG Data Collection
+beautifulsoup4==4.12.3            # HTML parsing for docs scraping
+requests==2.31.0                  # HTTP client for API/docs fetching
+lxml==5.1.0                       # XML/HTML parser (faster than default)
+
 # ========================================
 # Background Jobs & Scheduling
 # ========================================

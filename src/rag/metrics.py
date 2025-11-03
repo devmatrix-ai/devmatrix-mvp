@@ -311,6 +311,71 @@ class RAGMetrics:
                     help_text=f"Feedback metric: {key}"
                 )
 
+    def record_auto_indexing(
+        self,
+        source: str,
+        success: bool = True,
+        code_length: int = 0,
+        duration: float = 0.0,
+    ):
+        """
+        Record auto-indexing event metrics.
+
+        Args:
+            source: Source of auto-indexing (task_approval, human_review, webhook)
+            success: Whether indexing was successful
+            code_length: Length of code indexed in characters
+            duration: Time taken to index in seconds
+        """
+        labels = {"source": source, "success": str(success).lower()}
+        
+        # Count auto-indexing events
+        self.metrics.increment_counter(
+            "rag_auto_indexing_events_total",
+            labels=labels,
+            help_text="Total auto-indexing events by source"
+        )
+        
+        # Track code length
+        if code_length > 0:
+            self.metrics.observe_histogram(
+                "rag_auto_indexed_code_length_bytes",
+                code_length,
+                labels={"source": source},
+                help_text="Length of auto-indexed code"
+            )
+        
+        # Track indexing duration
+        if duration > 0:
+            self.metrics.observe_histogram(
+                "rag_auto_indexing_duration_seconds",
+                duration,
+                labels={"source": source},
+                help_text="Time to auto-index code"
+            )
+        
+        # Count successes and failures separately
+        if success:
+            self.metrics.increment_counter(
+                "rag_auto_indexing_success_total",
+                labels={"source": source},
+                help_text="Successful auto-indexing events"
+            )
+        else:
+            self.metrics.increment_counter(
+                "rag_auto_indexing_failures_total",
+                labels={"source": source},
+                help_text="Failed auto-indexing events"
+            )
+        
+        self.logger.info(
+            "Auto-indexing event recorded",
+            source=source,
+            success=success,
+            code_length=code_length,
+            duration=duration
+        )
+
     # === Quality Metrics ===
 
     def record_similarity_score(self, score: float, strategy: str):

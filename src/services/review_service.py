@@ -19,6 +19,9 @@ from ..models import HumanReviewQueue, AtomicUnit, AtomRetryHistory
 from ..review.confidence_scorer import ConfidenceScorer, ConfidenceScore
 from ..review.queue_manager import ReviewQueueManager
 from ..review.ai_assistant import AIAssistant
+from src.observability import get_logger
+
+logger = get_logger("review_service")
 
 
 class ReviewService:
@@ -38,6 +41,18 @@ class ReviewService:
         self.scorer = ConfidenceScorer(db)
         self.queue_manager = ReviewQueueManager(db)
         self.ai_assistant = AIAssistant()
+        
+        # Initialize RAG feedback service for auto-indexing approved atoms
+        try:
+            from src.rag import create_embedding_model, create_vector_store, create_feedback_service
+            embedding_model = create_embedding_model()
+            self.vector_store = create_vector_store(embedding_model)
+            self.feedback_service = create_feedback_service(self.vector_store)
+            logger.info("RAG feedback service initialized in ReviewService")
+        except Exception as e:
+            logger.warning(f"Failed to initialize RAG feedback service: {e}")
+            self.vector_store = None
+            self.feedback_service = None
 
     def create_review(
         self,
@@ -197,6 +212,27 @@ class ReviewService:
         review.updated_at = datetime.utcnow()
 
         self.db.commit()
+        
+        # Auto-index approved atom code to RAG
+        if atom and self.feedback_service:
+            try:
+                self.feedback_service.record_approval(
+                    code=atom.code_to_generate,
+                    metadata={
+                        "atom_id": str(atom.atom_id),
+                        "atom_type": atom.type,
+                        "atom_description": atom.description,
+                        "atom_language": atom.language,
+                        "reviewer_id": reviewer_id,
+                        "file_path": atom.file_path,
+                        "source": "human_reviewed"
+                    },
+                    task_description=atom.description,
+                    user_id=reviewer_id
+                )
+                logger.info(f"Approved atom {atom.atom_id} successfully indexed to RAG.")
+            except Exception as e:
+                logger.warning(f"Failed to index approved atom to RAG: {e}")
 
         return {
             "success": True,
