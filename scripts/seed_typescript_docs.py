@@ -44,7 +44,36 @@ logger = get_logger(__name__)
 # ============================================================
 
 NODEJS_EXPRESS_EXAMPLES: List[Tuple[str, Dict[str, Any]]] = [
-    # Basic Express server
+    # Basic Express server (JavaScript)
+    (
+        """const express = require('express');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(express.json());
+
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+});
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});""",
+        {
+            "language": "javascript",
+            "source": "official_docs",
+            "framework": "express",
+            "docs_section": "Getting Started",
+            "pattern": "express_basic_server_js",
+            "task_type": "backend_setup",
+            "complexity": "low",
+            "quality": "official_example",
+            "tags": "nodejs,express,javascript,rest-api",
+            "approved": True,
+        }
+    ),
+    # Basic Express server (TypeScript)
     (
         """import express from 'express';
 import type { Request, Response } from 'express';
