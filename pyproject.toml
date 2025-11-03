@@ -96,6 +96,9 @@ markers = [
     "real_services: Tests requiring real PostgreSQL/Redis/ChromaDB",
     "slow: Tests that take >30 seconds",
     "smoke: Quick smoke tests",
+    "chaos: Chaos tests for failure scenarios and resilience",
+    "contract: Contract tests for API schema validation",
+    "security: Security and penetration tests",
 ]
 
 [tool.coverage.run]
