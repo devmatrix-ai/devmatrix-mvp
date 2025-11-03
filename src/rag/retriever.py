@@ -80,6 +80,9 @@ class RetrievalConfig:
         min_similarity: Minimum similarity threshold
         strategy: Retrieval strategy (similarity, mmr, hybrid)
         mmr_lambda: MMR diversity parameter (0=max diversity, 1=max similarity)
+                   FIX #3: Adjusted from 0.5 to 0.35 for better diversity
+                   Higher diversity prevents same examples from being returned
+                   across different queries
         filters: Metadata filters
         rerank: Whether to apply re-ranking
         cache_enabled: Whether to use caching
@@ -87,7 +90,7 @@ class RetrievalConfig:
     top_k: int = RAG_TOP_K
     min_similarity: float = RAG_SIMILARITY_THRESHOLD
     strategy: RetrievalStrategy = RetrievalStrategy.SIMILARITY
-    mmr_lambda: float = 0.5  # Balance similarity vs diversity
+    mmr_lambda: float = 0.35  # FIX #3: Increased diversity bias (65% diversity, 35% similarity)
     filters: Optional[Dict[str, Any]] = None
     rerank: bool = True
     cache_enabled: bool = RAG_CACHE_ENABLED
