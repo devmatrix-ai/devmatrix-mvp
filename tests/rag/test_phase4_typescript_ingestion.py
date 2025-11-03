@@ -205,7 +205,7 @@ class TestGitHubExtractorConfiguration:
 
         # Verify key repositories are present
         repo_names = set(POPULAR_REPOS.keys())
-        assert 'express-js/express' in repo_names
+        assert 'expressjs/express' in repo_names
         assert 'facebook/react' in repo_names
         assert 'microsoft/typescript' in repo_names
 
