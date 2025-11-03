@@ -34,6 +34,7 @@ class Phase(str, Enum):
     ENHANCED_PATTERNS = "enhanced_patterns"
     PROJECT_STANDARDS = "project_standards"
     OFFICIAL_DOCS = "official_docs"
+    GITHUB_REPOS = "github_repos"
     VERIFICATION = "verification"
 
 
@@ -257,7 +258,19 @@ class RAGPopulationOrchestrator:
         self.results.append(result)
         
         # ============================================================
-        # Phase 5: Verification
+        # Phase 5: GitHub repositories (optional but recommended)
+        # ============================================================
+        github_args: List[str] = []
+        result = self.run_phase(
+            Phase.GITHUB_REPOS,
+            "seed_github_repos.py",
+            args=github_args,
+            required=False
+        )
+        self.results.append(result)
+        
+        # ============================================================
+        # Phase 6: Verification
         # ============================================================
         if not self.skip_verification:
             verification_args = ["--detailed", "--top-k", "3", "--min-similarity", "0.7"]

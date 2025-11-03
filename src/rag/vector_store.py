@@ -95,7 +95,9 @@ class SearchRequest(BaseModel):
         # Whitelist of allowed filter keys
         allowed_keys = {
             "language", "file_path", "approved", "tags",
-            "indexed_at", "code_length", "author", "task_type"
+            "indexed_at", "code_length", "author", "task_type",
+            # Provenance and routing keys for better retrieval control
+            "source", "framework", "collection", "source_collection"
         }
 
         for key in v.keys():
@@ -394,12 +396,20 @@ class VectorStore:
             # Generate query embedding
             query_embedding = self.embedding_model.embed_text(query)
 
+            # Translate simple equality filters into Chroma's where syntax
+            where_chroma = None
+            if where:
+                clauses = []
+                for k, v in where.items():
+                    clauses.append({k: {"$eq": v}})
+                where_chroma = {"$and": clauses} if len(clauses) > 1 else clauses[0]
+
             # Perform search using parameterized ChromaDB query
             # ChromaDB uses safe parameterization internally
             results: QueryResult = self.collection.query(
                 query_embeddings=[query_embedding],
                 n_results=top_k,
-                where=where,
+                where=where_chroma,
                 where_document=where_document,
                 include=["documents", "metadatas", "distances"]
             )
