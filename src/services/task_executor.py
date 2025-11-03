@@ -31,7 +31,7 @@ from src.models.masterplan import (
     TaskComplexity
 )
 from src.config.database import get_db_context
-from src.rag import create_retriever, create_vector_store, create_embedding_model
+from src.rag import create_retriever, create_vector_store, create_embedding_model, create_feedback_service
 from src.observability import get_logger
 from src.observability.metrics_collector import MetricsCollector
 
@@ -109,15 +109,20 @@ class TaskExecutor:
         if self.use_rag:
             try:
                 embedding_model = create_embedding_model()
-                vector_store = create_vector_store(embedding_model)
-                self.retriever = create_retriever(vector_store)
-                logger.info("RAG retriever initialized for Task Execution")
+                self.vector_store = create_vector_store(embedding_model)
+                self.retriever = create_retriever(self.vector_store)
+                self.feedback_service = create_feedback_service(self.vector_store)
+                logger.info("RAG retriever and feedback service initialized for Task Execution")
             except Exception as e:
                 logger.warning(f"Failed to initialize RAG: {e}. Continuing without RAG.")
                 self.use_rag = False
                 self.retriever = None
+                self.vector_store = None
+                self.feedback_service = None
         else:
             self.retriever = None
+            self.vector_store = None
+            self.feedback_service = None
 
         logger.info("TaskExecutor initialized", workspace_dir=str(self.workspace_dir), use_rag=self.use_rag)
 
@@ -197,6 +202,9 @@ class TaskExecutor:
             task.modified_files = saved_files
 
             self._update_task_status(task)
+
+            # Auto-index approved task code to RAG for continuous learning
+            self._index_task_code_to_rag(task, code_result["content"])
 
             # Record success
             self.metrics.increment_counter(
@@ -503,6 +511,25 @@ Generate complete, production-ready code for this task.
             files[current_file] = '\n'.join(current_code).strip()
 
         return files
+
+    def _index_task_code_to_rag(self, task: MasterPlanTask, code: str):
+        """Index the generated code into the RAG vector store."""
+        if self.feedback_service and self.use_rag:
+            try:
+                self.feedback_service.record_approval(
+                    task_id=str(task.task_id),
+                    code=code,
+                    metadata={
+                        "task_name": task.name,
+                        "task_description": task.description,
+                        "task_complexity": task.complexity.value,
+                        "task_target_files": task.target_files,
+                        "task_dependencies": task.depends_on_tasks
+                    }
+                )
+                logger.info(f"Task code for {task.task_number} successfully indexed to RAG.")
+            except Exception as e:
+                logger.warning(f"Failed to index task code to RAG: {e}")
 
     def get_task_status(self, task_id: UUID) -> Optional[Dict[str, Any]]:
         """Get task execution status."""
