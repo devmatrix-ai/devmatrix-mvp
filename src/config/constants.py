@@ -92,11 +92,15 @@ CHROMADB_PORT = int(os.getenv("CHROMADB_PORT", "8001"))
 # Embedding Model Configuration
 # Default: all-MiniLM-L6-v2 (384 dimensions, balanced performance)
 # Alternative: all-mpnet-base-v2 (768 dimensions, higher quality)
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "jinaai/jina-embeddings-v2-base-code")
+
+# Device for embedding model (cuda for GPU, cpu for fallback)
+EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "cuda")
 
 # Retrieval Parameters
 RAG_TOP_K = int(os.getenv("RAG_TOP_K", "5"))  # Number of examples to retrieve
-RAG_SIMILARITY_THRESHOLD = float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.7"))  # Min similarity (0.0-1.0)
+# RAG Retrieval Threshold - minimum similarity score for results to be included
+RAG_SIMILARITY_THRESHOLD = float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.7"))
 RAG_ENABLE_FEEDBACK = os.getenv("RAG_ENABLE_FEEDBACK", "true").lower() == "true"  # Feedback loop enabled
 
 # ChromaDB Collection Configuration
@@ -371,3 +375,11 @@ def validate_config() -> tuple[bool, list[str]]:
         errors.append(f"Invalid EMAIL_VERIFICATION_TOKEN_EXPIRY_HOURS: {EMAIL_VERIFICATION_TOKEN_EXPIRY_HOURS} (must be 1-168)")
 
     return len(errors) == 0, errors
+
+# Adaptive thresholds per collection (used for multi-collection retrieval)
+# Curated examples: stricter threshold (high quality) 
+RAG_SIMILARITY_THRESHOLD_CURATED = float(os.getenv("RAG_SIMILARITY_THRESHOLD_CURATED", "0.65"))
+# Project code: lenient threshold (more recall needed)
+RAG_SIMILARITY_THRESHOLD_PROJECT = float(os.getenv("RAG_SIMILARITY_THRESHOLD_PROJECT", "0.55"))
+# Standards: moderate threshold
+RAG_SIMILARITY_THRESHOLD_STANDARDS = float(os.getenv("RAG_SIMILARITY_THRESHOLD_STANDARDS", "0.60"))

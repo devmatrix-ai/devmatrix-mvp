@@ -11,6 +11,7 @@ import time
 from sentence_transformers import SentenceTransformer
 
 from src.observability import get_logger
+from src.config import EMBEDDING_DEVICE, EMBEDDING_MODEL
 from .persistent_cache import get_cache, PersistentEmbeddingCache
 
 
@@ -52,10 +53,11 @@ class EmbeddingModel:
             self.logger.info(f"Loading embedding model: {model_name}")
             # Use local_files_only=True to avoid network calls to HuggingFace
             # Model should be cached from first download
-            self.model = SentenceTransformer(model_name, local_files_only=True)
+            device = EMBEDDING_DEVICE
+            self.model = SentenceTransformer(model_name, device=device, local_files_only=False)
             self.dimension = self.model.get_sentence_embedding_dimension()
             self.logger.info(
-                f"Embedding model loaded successfully (local cache)",
+                f"Embedding model loaded successfully on {device}",
                 model=model_name,
                 dimension=self.dimension
             )
@@ -308,7 +310,7 @@ class EmbeddingModel:
 
 
 def create_embedding_model(
-    model_name: str = "all-MiniLM-L6-v2",
+    model_name: str = EMBEDDING_MODEL,
     enable_cache: bool = True,
     cache_dir: str = ".cache/rag",
 ) -> EmbeddingModel:

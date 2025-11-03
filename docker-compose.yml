@@ -119,12 +119,18 @@ services:
       # RAG Configuration
       CHROMADB_HOST: chromadb
       CHROMADB_PORT: 8000
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-jinaai/jina-embeddings-v2-base-code}
       RAG_TOP_K: ${RAG_TOP_K:-5}
       RAG_SIMILARITY_THRESHOLD: ${RAG_SIMILARITY_THRESHOLD:-0.7}
       RAG_ENABLE_FEEDBACK: ${RAG_ENABLE_FEEDBACK:-true}
+      # Enable GPU for embeddings
+      EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cuda}
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
     ports:
       - "${APP_PORT:-8000}:8000"
+    # Request all GPUs (Docker 19.03+ with nvidia-container-toolkit)
+    gpus: ${GPU_REQUEST:-all}
     volumes:
       - ./src:/app/src:ro
       - ./tests:/app/tests:ro

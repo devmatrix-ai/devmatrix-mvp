@@ -63,6 +63,138 @@ async def read_item(item_id: int, q: str = None):
         }
     ),
     (
+        """from fastapi import FastAPI, WebSocket
+
+app = FastAPI()
+
+@app.websocket("/ws")
+async def websocket_endpoint(ws: WebSocket):
+    await ws.accept()
+    data = await ws.receive_text()
+    await ws.send_text(f"Echo: {data}")
+    await ws.close()""",
+        {
+            "language": "python",
+            "source": "official_docs",
+            "framework": "fastapi",
+            "docs_section": "WebSockets",
+            "pattern": "fastapi_websocket_echo",
+            "task_type": "realtime",
+            "complexity": "medium",
+            "quality": "official_example",
+            "tags": "fastapi,websocket,real-time",
+            "approved": True,
+        }
+    ),
+    (
+        """from fastapi import FastAPI, BackgroundTasks
+
+app = FastAPI()
+
+def write_log(message: str):
+    with open("log.txt", "a") as f:
+        f.write(message + "\n")
+
+@app.post("/notify")
+async def send_notification(bg: BackgroundTasks, email: str):
+    bg.add_task(write_log, f"Notify: {email}")
+    return {"status": "scheduled"}""",
+        {
+            "language": "python",
+            "source": "official_docs",
+            "framework": "fastapi",
+            "docs_section": "Background Tasks",
+            "pattern": "fastapi_background_tasks",
+            "task_type": "background_jobs",
+            "complexity": "low",
+            "quality": "official_example",
+            "tags": "fastapi,background,io",
+            "approved": True,
+        }
+    ),
+    (
+        """from fastapi import FastAPI, Depends
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # startup
+    yield
+    # shutdown
+
+app = FastAPI(lifespan=lifespan)
+
+def get_token_header(x_token: str):
+    if x_token != "secret":
+        raise RuntimeError("invalid token")
+
+@app.get("/secure", dependencies=[Depends(get_token_header)])
+async def secure():
+    return {"ok": True}""",
+        {
+            "language": "python",
+            "source": "official_docs",
+            "framework": "fastapi",
+            "docs_section": "Lifespan & Dependencies",
+            "pattern": "fastapi_lifespan_dep",
+            "task_type": "api_security",
+            "complexity": "medium",
+            "quality": "official_example",
+            "tags": "fastapi,dependencies,lifespan,security",
+            "approved": True,
+        }
+    ),
+    (
+        """from fastapi import FastAPI, Request
+
+app = FastAPI()
+
+@app.middleware("http")
+async def add_process_time_header(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-App"] = "Demo"
+    return response""",
+        {
+            "language": "python",
+            "source": "official_docs",
+            "framework": "fastapi",
+            "docs_section": "Middleware",
+            "pattern": "fastapi_custom_middleware",
+            "task_type": "api_infrastructure",
+            "complexity": "low",
+            "quality": "official_example",
+            "tags": "fastapi,middleware,headers",
+            "approved": True,
+        }
+    ),
+    (
+        """from fastapi import FastAPI, Depends
+from typing import Annotated
+
+app = FastAPI()
+
+async def common_params(q: str | None = None, page: int = 1):
+    return {"q": q, "page": page}
+
+Common = Annotated[dict, Depends(common_params)]
+
+@app.get("/items/")
+async def read_items(commons: Common):
+    return commons""",
+        {
+            "language": "python",
+            "source": "official_docs",
+            "framework": "fastapi",
+            "docs_section": "Annotated Dependencies",
+            "pattern": "fastapi_annotated_dep",
+            "task_type": "api_development",
+            "complexity": "low",
+            "quality": "official_example",
+            "tags": "fastapi,dependencies,annotated",
+            "approved": True,
+        }
+    ),
+    (
         """from fastapi import Depends, FastAPI, HTTPException
 
 app = FastAPI()
@@ -285,6 +417,52 @@ session.commit()""",
         }
     ),
     (
+        """from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy import text
+
+engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+Session = async_sessionmaker(engine, expire_on_commit=False)
+
+async def get_users():
+    async with Session() as s:
+        res = await s.execute(text("SELECT 1"))
+        return res.scalar()""",
+        {
+            "language": "python",
+            "source": "official_docs",
+            "framework": "sqlalchemy",
+            "docs_section": "Async ORM",
+            "pattern": "sqlalchemy_async_basics",
+            "task_type": "database_patterns",
+            "complexity": "medium",
+            "quality": "official_example",
+            "tags": "sqlalchemy,async,aiosqlite",
+            "approved": True,
+        }
+    ),
+    (
+        """from sqlalchemy.orm import declarative_mixin, declared_attr
+
+@declarative_mixin
+class TimestampMixin:
+    @declared_attr
+    def created_at(cls):
+        return Column(DateTime)
+""",
+        {
+            "language": "python",
+            "source": "official_docs",
+            "framework": "sqlalchemy",
+            "docs_section": "ORM Mixins",
+            "pattern": "sqlalchemy_mixin",
+            "task_type": "database_patterns",
+            "complexity": "low",
+            "quality": "official_example",
+            "tags": "sqlalchemy,orm,mixins",
+            "approved": True,
+        }
+    ),
+    (
         """from sqlalchemy import select, Column, Integer, String, ForeignKey
 from sqlalchemy.orm import relationship, sessionmaker
 
@@ -391,6 +569,53 @@ except ValidationError as e:
             "complexity": "low",
             "quality": "official_example",
             "tags": "pydantic,models,validation,types",
+            "approved": True,
+        }
+    ),
+    (
+        """from pydantic import BaseModel, RootModel
+
+class Tags(RootModel[list[str]]):
+    pass
+
+class Item(BaseModel):
+    name: str
+    tags: Tags = Tags([])
+""",
+        {
+            "language": "python",
+            "source": "official_docs",
+            "framework": "pydantic",
+            "docs_section": "RootModel",
+            "pattern": "pydantic_root_model",
+            "task_type": "data_validation",
+            "complexity": "low",
+            "quality": "official_example",
+            "tags": "pydantic,rootmodel,typing",
+            "approved": True,
+        }
+    ),
+    (
+        """from pydantic import BaseModel, field_serializer
+
+class User(BaseModel):
+    name: str
+    age: int
+
+    @field_serializer('age')
+    def as_str(self, v: int):
+        return str(v)
+""",
+        {
+            "language": "python",
+            "source": "official_docs",
+            "framework": "pydantic",
+            "docs_section": "Serializers",
+            "pattern": "pydantic_field_serializer",
+            "task_type": "data_validation",
+            "complexity": "low",
+            "quality": "official_example",
+            "tags": "pydantic,serializer",
             "approved": True,
         }
     ),
@@ -508,6 +733,48 @@ def test_something():
             "complexity": "low",
             "quality": "official_example",
             "tags": "pytest,testing,assertions,fixtures",
+            "approved": True,
+        }
+    ),
+    (
+        """import pytest
+
+@pytest.fixture(scope="session")
+def global_db():
+    yield {"url": "sqlite://"}
+
+def test_db_available(global_db):
+    assert "url" in global_db
+""",
+        {
+            "language": "python",
+            "source": "official_docs",
+            "framework": "pytest",
+            "docs_section": "Fixture Scopes",
+            "pattern": "pytest_fixture_scope",
+            "task_type": "testing",
+            "complexity": "low",
+            "quality": "official_example",
+            "tags": "pytest,fixtures,scope",
+            "approved": True,
+        }
+    ),
+    (
+        """def test_tmp_path(tmp_path):
+    p = tmp_path / "data.txt"
+    p.write_text("hello")
+    assert p.read_text() == "hello"
+""",
+        {
+            "language": "python",
+            "source": "official_docs",
+            "framework": "pytest",
+            "docs_section": "tmp_path",
+            "pattern": "pytest_tmp_path",
+            "task_type": "testing",
+            "complexity": "low",
+            "quality": "official_example",
+            "tags": "pytest,tmp_path,fs",
             "approved": True,
         }
     ),

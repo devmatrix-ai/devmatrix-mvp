@@ -1,0 +1,19 @@
+server:
+  name: context7-mcp
+  port: 7070
+sources:
+  - type: github
+    repos:
+      - org/repo-fastapi
+      - org/repo-pytest
+    include: ["**/*.py","**/*.md"]
+    exclude: ["**/tests/**"]
+  - type: docs
+    urls:
+      - https://fastapi.tiangolo.com/
+      - https://docs.pytest.org/
+schedule:
+  cron: "0 */6 * * *"
+output:
+  format: jsonl
+  dir: ./data/context7/raw

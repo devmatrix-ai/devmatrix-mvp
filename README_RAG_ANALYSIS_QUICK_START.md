@@ -32,13 +32,13 @@
 - Timeline: 7-8 hours
 
 ### For Architects (System Design)
-**Start here:** `ANALISIS_RAG_PROFUNDO.md`
+**Start here:** `DOCS/rag/ANALISIS_RAG_PROFUNDO.md`
 - Full architecture analysis
 - Strategic recommendations
 - Root cause analysis
 
 ### For Project Managers
-**Start here:** `RESUMEN_FASE_ANALISIS_RAG_COMPLETA.md`
+**Start here:** `DOCS/rag/RESUMEN_FASE_ANALISIS_RAG_COMPLETA.md`
 - Timeline and resource allocation
 - Expected business impact
 - Risk assessment

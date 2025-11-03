@@ -300,7 +300,22 @@ def verify_rag_quality(
                 if passed:
                     passed_queries += 1
                 
-                # Store result
+                # Convert examples to serializable form if detailed
+                serializable_examples = []
+                if detailed and examples:
+                    for e in examples:
+                        if hasattr(e, "to_dict"):
+                            serializable_examples.append(e.to_dict())
+                        else:
+                            serializable_examples.append({
+                                "id": getattr(e, "id", None),
+                                "code": getattr(e, "code", None),
+                                "metadata": getattr(e, "metadata", {}),
+                                "similarity": getattr(e, "similarity", None),
+                                "rank": getattr(e, "rank", None),
+                                "relevance_score": getattr(e, "relevance_score", None),
+                            })
+
                 result = {
                     "query": tq.query,
                     "category": tq.category,
@@ -308,7 +323,7 @@ def verify_rag_quality(
                     "expected": tq.min_results_expected,
                     "avg_similarity": avg_sim,
                     "passed": passed,
-                    "examples": examples if detailed else []
+                    "examples": serializable_examples if detailed else []
                 }
                 results.append(result)
                 
@@ -401,6 +416,7 @@ def export_results(results: Dict[str, Any], output_file: str):
     import json
     from datetime import datetime
     
+    # Ensure nested results are JSON-serializable (examples already converted)
     output_data = {
         "timestamp": datetime.now().isoformat(),
         "summary": {
