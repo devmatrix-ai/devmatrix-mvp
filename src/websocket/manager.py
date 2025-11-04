@@ -72,8 +72,11 @@ class WebSocketManager:
             data: Event data
         """
         if not self.sio:
-            logger.warning(f"Socket.IO server not set, cannot emit event: {event}")
-            return
+            raise RuntimeError(
+                f"Socket.IO server not initialized - cannot emit critical event: {event}. "
+                f"This indicates a configuration error or initialization failure. "
+                f"WebSocket events are essential for real-time progress updates."
+            )
 
         try:
             await self.sio.emit(event, data, room=session_id)
@@ -107,8 +110,11 @@ class WebSocketManager:
             data: Event data
         """
         if not self.sio:
-            logger.warning(f"Socket.IO server not set, cannot emit event: {event}")
-            return
+            raise RuntimeError(
+                f"Socket.IO server not initialized - cannot emit critical event: {event}. "
+                f"This indicates a configuration error or initialization failure. "
+                f"WebSocket events are essential for real-time progress updates."
+            )
 
         try:
             room = f"chat_{conversation_id}"
@@ -142,8 +148,11 @@ class WebSocketManager:
             data: Event data
         """
         if not self.sio:
-            logger.warning(f"Socket.IO server not set, cannot emit event: {event}")
-            return
+            raise RuntimeError(
+                f"Socket.IO server not initialized - cannot emit critical event: {event}. "
+                f"This indicates a configuration error or initialization failure. "
+                f"WebSocket events are essential for real-time progress updates."
+            )
 
         try:
             room = f"execution_{execution_id}"
