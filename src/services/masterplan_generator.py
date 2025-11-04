@@ -39,6 +39,7 @@ from src.observability import get_logger
 from src.observability.metrics_collector import MetricsCollector
 from src.websocket import WebSocketManager
 from src.services.masterplan_calculator import MasterPlanCalculator
+from src.utils.retry_decorator import retry, create_retryable_config
 
 logger = get_logger("masterplan_generator")
 
@@ -587,6 +588,14 @@ class MasterPlanGenerator:
         result = await generation_task
         return result
 
+    @retry(
+        max_retries=3,
+        initial_delay=2.0,
+        max_delay=30.0,
+        backoff_factor=2.0,
+        jitter=True,
+        retryable_exceptions={TimeoutError, ConnectionError, IOError}
+    )
     async def _generate_masterplan_llm(
         self,
         discovery: DiscoveryDocument,
