@@ -49,7 +49,11 @@ class SearchRequest(BaseModel):
         """
         Validate and sanitize query string.
 
-        Checks for SQL injection patterns and sanitizes input.
+        Allows legitimate code terminology while preventing SQL injection.
+
+        Distinguishes between:
+        - Code-related natural language queries (allowed): "union types", "select elements"
+        - SQL injection attempts (blocked): quote escaping, SQL comments, statement chaining
 
         Args:
             v: Query string
@@ -58,19 +62,27 @@ class SearchRequest(BaseModel):
             Sanitized query string
 
         Raises:
-            ValueError: If query contains SQL special characters
+            ValueError: If query contains SQL injection patterns
         """
-        # Check for SQL special characters
-        sql_special_chars = ["'", '"', "--", ";", "/*", "*/", "UNION", "DROP", "DELETE", "INSERT", "UPDATE"]
+        # Only block quote characters (actual injection risk) and SQL comments
+        # Allow legitimate code keywords: UNION (types), UPDATE (patterns), INSERT/SELECT (elements)
+        sql_injection_patterns = [
+            ("'", "single quote"),
+            ('"', "double quote"),
+            ("--", "SQL comment"),
+            (";", "statement terminator"),
+            ("/*", "block comment start"),
+            ("*/", "block comment end"),
+            ("\\", "escape character"),
+        ]
 
-        for char in sql_special_chars:
-            if char in v.upper():
-                raise ValueError(f"Query contains prohibited character or keyword: {char}")
+        for pattern, description in sql_injection_patterns:
+            if pattern in v:
+                raise ValueError(f"Query contains prohibited SQL injection pattern: {description}")
 
-        # Remove any remaining dangerous characters
-        sanitized = re.sub(r'[;\'"\\]', '', v)
-
-        return sanitized
+        # Don't need regex removal since we're only blocking actual dangerous patterns
+        # Not general keywords which are legitimate in code queries
+        return v.strip()
 
     @field_validator("filters")
     @classmethod
