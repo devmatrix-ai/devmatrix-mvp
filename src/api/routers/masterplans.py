@@ -94,6 +94,34 @@ class ExecuteMasterPlanResponse(BaseModel):
         }
 
 
+class MasterPlanStatusResponse(BaseModel):
+    """Response for MasterPlan status check."""
+    masterplan_id: str
+    status: str
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+    total_tasks: Optional[int] = None
+    recovery_options: List[str] = []
+    can_retry: bool = False
+    can_execute: bool = False
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "masterplan_id": "660e8400-e29b-41d4-a716-446655440000",
+                "status": "in_progress",
+                "created_at": "2025-11-04T10:30:00",
+                "updated_at": "2025-11-04T10:45:00",
+                "error_message": None,
+                "total_tasks": 42,
+                "recovery_options": ["view_details", "cancel"],
+                "can_retry": False,
+                "can_execute": False
+            }
+        }
+
+
 # Response Models
 def serialize_subtask(subtask) -> Dict[str, Any]:
     """Serialize a MasterPlanSubtask to dict."""
@@ -644,4 +672,99 @@ async def execute_masterplan(
     except Exception as e:
         logger.error(f"Error executing masterplan {masterplan_id}: {e}", exc_info=True)
         db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{masterplan_id}/status", response_model=MasterPlanStatusResponse)
+async def get_masterplan_status(
+    masterplan_id: str,
+) -> MasterPlanStatusResponse:
+    """
+    Get current status and recovery information for a MasterPlan.
+
+    Provides detailed status information including:
+    - Current generation/execution status
+    - Creation and last update timestamps
+    - Error details if generation failed
+    - Available recovery/retry options
+    - Flags indicating possible next actions
+
+    Args:
+        masterplan_id: UUID of the masterplan
+
+    Returns:
+        MasterPlanStatusResponse with current status and recovery options
+
+    Raises:
+        HTTPException 400: If masterplan_id format is invalid
+        HTTPException 404: If masterplan not found
+        HTTPException 500: If database query fails
+    """
+    try:
+        logger.info(f"Checking status for masterplan {masterplan_id}")
+
+        # Validate UUID
+        try:
+            masterplan_uuid = UUID(masterplan_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid masterplan_id format")
+
+        db = next(get_db())
+
+        # Query masterplan
+        masterplan = (
+            db.query(MasterPlan)
+            .filter(MasterPlan.masterplan_id == masterplan_uuid)
+            .first()
+        )
+
+        if not masterplan:
+            raise HTTPException(status_code=404, detail=f"MasterPlan {masterplan_id} not found")
+
+        # Determine recovery options based on status
+        recovery_options = []
+        can_retry = False
+        can_execute = False
+
+        if masterplan.status == MasterPlanStatus.DRAFT:
+            recovery_options = ["approve", "reject"]
+        elif masterplan.status == MasterPlanStatus.APPROVED:
+            recovery_options = ["execute", "reject"]
+            can_execute = True
+        elif masterplan.status == MasterPlanStatus.IN_PROGRESS:
+            recovery_options = ["view_details", "cancel"]
+        elif masterplan.status == MasterPlanStatus.FAILED:
+            recovery_options = ["retry", "view_details", "reject"]
+            can_retry = True
+        elif masterplan.status == MasterPlanStatus.COMPLETED:
+            recovery_options = ["view_details", "export"]
+        elif masterplan.status == MasterPlanStatus.PAUSED:
+            recovery_options = ["resume", "cancel"]
+        elif masterplan.status == MasterPlanStatus.CANCELLED:
+            recovery_options = ["view_details"]
+        elif masterplan.status == MasterPlanStatus.REJECTED:
+            recovery_options = ["view_details"]
+
+        logger.info(
+            f"Status retrieved for masterplan {masterplan_id}",
+            status=masterplan.status.value,
+            recovery_options=recovery_options,
+        )
+
+        return MasterPlanStatusResponse(
+            masterplan_id=str(masterplan_uuid),
+            status=masterplan.status.value,
+            created_at=masterplan.created_at,
+            updated_at=masterplan.updated_at,
+            error_message=getattr(masterplan, "error_message", None),
+            total_tasks=masterplan.total_tasks,
+            recovery_options=recovery_options,
+            can_retry=can_retry,
+            can_execute=can_execute,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error checking status for masterplan {masterplan_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
