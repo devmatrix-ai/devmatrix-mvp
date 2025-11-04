@@ -125,7 +125,8 @@ class MultiCollectionManager:
             # Phase 3: Optionally search standards for context
             if len(results) < top_k * 0.7:
                 logger.info("Supplementing with standards...")
-                standards_results = self.standards.search(query, top_k=top_k // 3)
+                standards_top_k = max(1, top_k // 3)  # Ensure top_k >= 1
+                standards_results = self.standards.search(query, top_k=standards_top_k)
                 
                 for result in standards_results:
                     sim = result.get('similarity', 0)
