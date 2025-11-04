@@ -439,6 +439,8 @@ class EnhancedAnthropicClient:
                 )
                 raise
 
+        # Process response and return (executed for BOTH successful try path and successful fallback)
+        try:
             # Calculate cost
             model_pricing = self.model_selector.get_model_pricing(model)
             cost_analysis = self.cache_manager.calculate_savings(
