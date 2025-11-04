@@ -171,7 +171,7 @@ class OrphanCleanupWorker:
         """
         cutoff_time = datetime.utcnow() - timedelta(minutes=self.timeout_minutes)
 
-        async with get_db_context() as db:
+        with get_db_context() as db:
             # Query for orphan MasterPlans
             query = select(MasterPlan).where(
                 and_(

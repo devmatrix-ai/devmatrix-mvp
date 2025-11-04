@@ -200,24 +200,83 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('subtask_id')
     )
     op.create_index('idx_subtask_task', 'masterplan_subtasks', ['task_id'], unique=False)
-    op.drop_index('idx_cost_created_at', table_name='cost_tracking')
-    op.drop_index('idx_cost_model', table_name='cost_tracking')
-    op.drop_index('idx_cost_task_id', table_name='cost_tracking')
-    op.drop_table('cost_tracking')
-    op.drop_index('idx_decisions_approved', table_name='agent_decisions')
-    op.drop_index('idx_decisions_task_id', table_name='agent_decisions')
-    op.drop_table('agent_decisions')
-    op.drop_index('idx_commits_hash', table_name='git_commits')
-    op.drop_index('idx_commits_task_id', table_name='git_commits')
-    op.drop_table('git_commits')
-    op.drop_index('idx_tasks_agent_name', table_name='tasks')
-    op.drop_index('idx_tasks_created_at', table_name='tasks')
-    op.drop_index('idx_tasks_project_id', table_name='tasks')
-    op.drop_index('idx_tasks_status', table_name='tasks')
-    op.drop_table('tasks')
-    op.drop_index('idx_projects_created_at', table_name='projects')
-    op.drop_index('idx_projects_status', table_name='projects')
-    op.drop_table('projects')
+
+    # Drop old tables if they exist (with if_exists for idempotency)
+    try:
+        op.drop_index('idx_cost_created_at', table_name='cost_tracking')
+    except:
+        pass
+    try:
+        op.drop_index('idx_cost_model', table_name='cost_tracking')
+    except:
+        pass
+    try:
+        op.drop_index('idx_cost_task_id', table_name='cost_tracking')
+    except:
+        pass
+    try:
+        op.drop_table('cost_tracking')
+    except:
+        pass
+
+    try:
+        op.drop_index('idx_decisions_approved', table_name='agent_decisions')
+    except:
+        pass
+    try:
+        op.drop_index('idx_decisions_task_id', table_name='agent_decisions')
+    except:
+        pass
+    try:
+        op.drop_table('agent_decisions')
+    except:
+        pass
+
+    try:
+        op.drop_index('idx_commits_hash', table_name='git_commits')
+    except:
+        pass
+    try:
+        op.drop_index('idx_commits_task_id', table_name='git_commits')
+    except:
+        pass
+    try:
+        op.drop_table('git_commits')
+    except:
+        pass
+
+    try:
+        op.drop_index('idx_tasks_agent_name', table_name='tasks')
+    except:
+        pass
+    try:
+        op.drop_index('idx_tasks_created_at', table_name='tasks')
+    except:
+        pass
+    try:
+        op.drop_index('idx_tasks_project_id', table_name='tasks')
+    except:
+        pass
+    try:
+        op.drop_index('idx_tasks_status', table_name='tasks')
+    except:
+        pass
+    try:
+        op.drop_table('tasks')
+    except:
+        pass
+    try:
+        op.drop_index('idx_projects_created_at', table_name='projects')
+    except:
+        pass
+    try:
+        op.drop_index('idx_projects_status', table_name='projects')
+    except:
+        pass
+    try:
+        op.drop_table('projects')
+    except:
+        pass
     # ### end Alembic commands ###
 
 
