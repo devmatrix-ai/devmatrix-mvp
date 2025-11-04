@@ -155,6 +155,13 @@ class MasterPlan(Base):
     total_tasks = Column(Integer, default=0)
     total_subtasks = Column(Integer, default=0)
 
+    # Intelligent Task Calculation (from MasterPlanCalculator)
+    calculated_task_count = Column(Integer)  # Exact count calculated from discovery
+    complexity_metrics = Column(JSON)  # {bounded_contexts, aggregates, services, events, value_objects}
+    task_breakdown = Column(JSON)  # {setup, modeling, persistence, implementation, integration, testing, deployment, optimization}
+    parallelization_level = Column(Integer)  # Max concurrent tasks possible
+    calculation_rationale = Column(Text)  # Human-readable explanation of calculation
+
     # Progress Tracking
     completed_tasks = Column(Integer, default=0)
     failed_tasks = Column(Integer, default=0)

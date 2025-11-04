@@ -38,6 +38,7 @@ from src.rag import create_retriever, create_vector_store, create_embedding_mode
 from src.observability import get_logger
 from src.observability.metrics_collector import MetricsCollector
 from src.websocket import WebSocketManager
+from src.services.masterplan_calculator import MasterPlanCalculator
 
 logger = get_logger("masterplan_generator")
 
@@ -322,6 +323,24 @@ class MasterPlanGenerator:
             else:
                 logger.warning("⚠️  WebSocket manager not available, skipping progress events")
 
+            # INTELLIGENT TASK CALCULATION: Analyze discovery and calculate exact task count
+            logger.info("🧮 Calculating intelligent task count from discovery...")
+            calculator = MasterPlanCalculator()
+            calculation_result = calculator.analyze_discovery(discovery)
+
+            calculated_task_count = calculation_result["calculated_task_count"]
+            complexity_metrics = calculation_result["complexity_metrics"]
+            task_breakdown = calculation_result["task_breakdown"]
+            parallelization_level = calculation_result["parallelization_level"]
+            calculation_rationale = calculation_result["rationale"]
+
+            logger.info(
+                f"✅ Task calculation complete",
+                calculated_count=calculated_task_count,
+                complexity_metrics=complexity_metrics,
+                parallelization=parallelization_level
+            )
+
             # Retrieve similar examples from RAG
             rag_examples = await self._retrieve_rag_examples(discovery)
 
@@ -329,7 +348,9 @@ class MasterPlanGenerator:
             masterplan_json = await self._generate_masterplan_llm_with_progress(
                 discovery=discovery,
                 rag_examples=rag_examples,
-                session_id=session_id
+                session_id=session_id,
+                calculated_task_count=calculated_task_count,
+                calculation_rationale=calculation_rationale
             )
 
             # Parse MasterPlan
@@ -372,7 +393,12 @@ class MasterPlanGenerator:
                 user_id=user_id,
                 masterplan_data=masterplan_data,
                 llm_model=masterplan_json.get("model"),
-                llm_cost=masterplan_json.get("cost_usd")
+                llm_cost=masterplan_json.get("cost_usd"),
+                calculated_task_count=calculated_task_count,
+                complexity_metrics=complexity_metrics,
+                task_breakdown=task_breakdown,
+                parallelization_level=parallelization_level,
+                calculation_rationale=calculation_rationale
             )
 
             # Calculate total duration
@@ -483,7 +509,9 @@ class MasterPlanGenerator:
         self,
         discovery: DiscoveryDocument,
         rag_examples: List[Dict],
-        session_id: str
+        session_id: str,
+        calculated_task_count: int,
+        calculation_rationale: str
     ) -> Dict[str, Any]:
         """
         Generate MasterPlan with simulated progress updates.
@@ -492,6 +520,8 @@ class MasterPlanGenerator:
             discovery: DiscoveryDocument
             rag_examples: Similar examples from RAG
             session_id: Session ID for WebSocket events
+            calculated_task_count: Exact count calculated from complexity metrics
+            calculation_rationale: Human-readable explanation of calculation
 
         Returns:
             Dict with MasterPlan JSON and metadata
@@ -500,7 +530,7 @@ class MasterPlanGenerator:
 
         # Start generation in background
         generation_task = asyncio.create_task(
-            self._generate_masterplan_llm(discovery, rag_examples)
+            self._generate_masterplan_llm(discovery, rag_examples, calculated_task_count, calculation_rationale)
         )
 
         # Simulate progress updates while waiting
@@ -560,7 +590,9 @@ class MasterPlanGenerator:
     async def _generate_masterplan_llm(
         self,
         discovery: DiscoveryDocument,
-        rag_examples: List[Dict]
+        rag_examples: List[Dict],
+        calculated_task_count: int = None,
+        calculation_rationale: str = None
     ) -> Dict[str, Any]:
         """
         Generate MasterPlan using LLM.
@@ -568,6 +600,8 @@ class MasterPlanGenerator:
         Args:
             discovery: DiscoveryDocument
             rag_examples: Similar examples from RAG
+            calculated_task_count: Intelligently calculated task count from complexity
+            calculation_rationale: Human-readable explanation of calculation
 
         Returns:
             Dict with MasterPlan JSON and metadata
@@ -600,14 +634,22 @@ class MasterPlanGenerator:
             "examples": rag_examples[:3]  # Limit to top 3 for token efficiency
         } if rag_examples else None
 
-        # Build variable prompt
-        variable_prompt = f"""Generate a complete MasterPlan (120 tasks) for the following project:
+        # Build variable prompt with intelligent task count
+        task_count = calculated_task_count or 120  # Fallback to 120 if not calculated
+        rationale = calculation_rationale or "Default 120 tasks (legacy calculation)"
+
+        variable_prompt = f"""Generate a complete MasterPlan ({task_count} atomic tasks) for the following project:
+
+## Task Calculation:
+**Calculated Task Count**: {task_count} tasks
+**Calculation Rationale**: {rationale}
 
 ## Discovery Summary:
 **Domain**: {discovery.domain}
 **Bounded Contexts**: {len(discovery.bounded_contexts)} contexts
 **Aggregates**: {len(discovery.aggregates)} aggregates
 **Domain Events**: {len(discovery.domain_events)} events
+**Services**: {len(discovery.services)} services
 
 ## User Request:
 {discovery.user_request}
@@ -615,7 +657,14 @@ class MasterPlanGenerator:
 ## Full Discovery Details:
 {json.dumps(discovery_context, indent=2, default=json_serializable)}
 
-Generate a complete, executable MasterPlan with exactly 120 tasks organized in 3 phases covering ALL features needed for a production SaaS.
+Generate a complete, executable MasterPlan with exactly {task_count} atomic tasks.
+
+IMPORTANT:
+- Each task must be independently executable and verifiable
+- Each task should be 200-800 tokens in scope
+- Organize tasks to maximize parallelization
+- Focus on the {task_count} most critical tasks for this project
+- Do NOT artificially inflate task count - quality over quantity
 """
 
         # Generate with caching
@@ -743,7 +792,12 @@ Generate a complete, executable MasterPlan with exactly 120 tasks organized in 3
         user_id: str,
         masterplan_data: Dict[str, Any],
         llm_model: str,
-        llm_cost: float
+        llm_cost: float,
+        calculated_task_count: int = None,
+        complexity_metrics: Dict[str, int] = None,
+        task_breakdown: Dict[str, int] = None,
+        parallelization_level: int = None,
+        calculation_rationale: str = None
     ) -> UUID:
         """
         Save MasterPlan to database.
@@ -774,7 +828,13 @@ Generate a complete, executable MasterPlan with exactly 120 tasks organized in 3
                 llm_model=llm_model,
                 generation_cost_usd=llm_cost,
                 estimated_cost_usd=masterplan_data.get("estimated_cost_usd"),
-                estimated_duration_minutes=masterplan_data.get("estimated_duration_minutes")
+                estimated_duration_minutes=masterplan_data.get("estimated_duration_minutes"),
+                # Intelligent task calculation metadata
+                calculated_task_count=calculated_task_count,
+                complexity_metrics=complexity_metrics,
+                task_breakdown=task_breakdown,
+                parallelization_level=parallelization_level,
+                calculation_rationale=calculation_rationale
             )
 
             db.add(masterplan)
