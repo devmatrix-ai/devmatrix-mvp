@@ -1,0 +1,77 @@
+{
+  "phase": "PHASE 1: OpenAI Baseline",
+  "timestamp": "2025-11-04 11:16:28",
+  "embedding_model": "OpenAI text-embedding-3-large",
+  "metrics": {
+    "success_rate_percent": 62.5,
+    "successes": 5,
+    "total_queries": 8,
+    "elapsed_seconds": 2.201333522796631,
+    "documents_indexed": 91
+  },
+  "results": [
+    {
+      "query": "Express.js server setup",
+      "expected": "express",
+      "retrieved": "express",
+      "match": true,
+      "similarity": 0.5590833399999999,
+      "code_preview": "const express = require('express');\n\nconst app = express();\n..."
+    },
+    {
+      "query": "React hooks and functional components",
+      "expected": "react",
+      "retrieved": "react",
+      "match": true,
+      "similarity": 0.4632446,
+      "code_preview": "import React, { useReducer } from 'react';\n\ninterface State ..."
+    },
+    {
+      "query": "TypeScript type definitions and interfaces",
+      "expected": "typescript",
+      "retrieved": "typescript",
+      "match": true,
+      "similarity": 0.43298994999999996,
+      "code_preview": "// Generic function with constraints\nfunction createArray<T>..."
+    },
+    {
+      "query": "JavaScript async await functions",
+      "expected": "javascript",
+      "retrieved": "express",
+      "match": false,
+      "similarity": 0.494274,
+      "code_preview": "import express, { Request, Response, NextFunction } from 'ex..."
+    },
+    {
+      "query": "REST API error handling patterns",
+      "expected": "express",
+      "retrieved": "NO_RESULTS",
+      "match": false,
+      "similarity": 0.0
+    },
+    {
+      "query": "React state management with useState",
+      "expected": "react",
+      "retrieved": "react",
+      "match": true,
+      "similarity": 0.51652092,
+      "code_preview": "import React, { useReducer } from 'react';\n\ninterface State ..."
+    },
+    {
+      "query": "Node.js middleware functions",
+      "expected": "node",
+      "retrieved": "express",
+      "match": false,
+      "similarity": 0.5276058299999999,
+      "code_preview": "import express, { NextFunction, Request, Response } from 'ex..."
+    },
+    {
+      "query": "Async middleware in Express",
+      "expected": "express",
+      "retrieved": "express",
+      "match": true,
+      "similarity": 0.50933105,
+      "code_preview": "import express, { Request, Response, NextFunction } from 'ex..."
+    }
+  ]
+}

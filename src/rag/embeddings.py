@@ -1,13 +1,14 @@
 """
 Embedding model for RAG system.
 
-This module provides semantic embeddings for code and text using sentence-transformers.
+This module provides semantic embeddings for code and text using sentence-transformers or OpenAI.
 Embeddings are used to convert code snippets into vector representations for similarity search.
 """
 
 from typing import List, Union, Optional
 import numpy as np
 import time
+import os
 from sentence_transformers import SentenceTransformer
 
 from src.observability import get_logger
@@ -309,24 +310,160 @@ class EmbeddingModel:
         return 0
 
 
+class OpenAIEmbeddingModel:
+    """
+    OpenAI embedding model using text-embedding-3-large.
+
+    Superior to local models for code:
+    - 3072 dimensions (vs 768 for Jina)
+    - Better code discrimination
+    - Production-grade quality
+
+    Cost: ~$0.02 per 1M tokens (negligible for small batches)
+    """
+
+    def __init__(self, enable_cache: bool = True, cache_dir: str = ".cache/rag"):
+        """Initialize OpenAI embedding model."""
+        self.logger = get_logger("rag.embeddings")
+        self.model_name = "text-embedding-3-large"
+        self.dimension = 3072
+        self.cache: Optional[PersistentEmbeddingCache] = None
+
+        try:
+            from openai import OpenAI
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                raise ValueError("OPENAI_API_KEY not found in environment")
+
+            self.client = OpenAI(api_key=api_key)
+            self.logger.info(
+                f"OpenAI embedding model initialized",
+                model=self.model_name,
+                dimension=self.dimension
+            )
+
+            # Initialize cache if enabled
+            if enable_cache:
+                try:
+                    self.cache = get_cache(cache_dir=cache_dir)
+                    self.logger.info("Persistent cache enabled")
+                except Exception as e:
+                    self.logger.warning(
+                        "Failed to initialize cache, continuing without cache",
+                        error=str(e)
+                    )
+
+        except Exception as e:
+            self.logger.error(
+                f"Failed to initialize OpenAI embedding model",
+                error=str(e)
+            )
+            raise
+
+    def embed_text(self, text: str) -> List[float]:
+        """Generate embedding for a single text using OpenAI API."""
+        if not text or not text.strip():
+            raise ValueError("Text cannot be empty")
+
+        # Check cache first
+        if self.cache:
+            cached = self.cache.get(text, self.model_name)
+            if cached:
+                return cached
+
+        try:
+            response = self.client.embeddings.create(
+                model=self.model_name,
+                input=text
+            )
+            embedding = response.data[0].embedding
+
+            # Cache the result using put() method
+            if self.cache:
+                self.cache.put(
+                    text,
+                    embedding,
+                    model=self.model_name,
+                    embedding_time_ms=0
+                )
+
+            return embedding
+        except Exception as e:
+            self.logger.error(f"Failed to generate embedding", error=str(e))
+            raise
+
+    def embed_batch(self, texts: List[str], batch_size: int = 32, show_progress: bool = False) -> List[List[float]]:
+        """Generate embeddings for multiple texts."""
+        embeddings = []
+
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i+batch_size]
+            batch_embeddings = []
+
+            for text in batch:
+                try:
+                    embedding = self.embed_text(text)
+                    batch_embeddings.append(embedding)
+                except Exception as e:
+                    self.logger.error(f"Failed to embed text in batch", error=str(e))
+                    raise
+
+            embeddings.extend(batch_embeddings)
+
+        return embeddings
+
+    def get_dimension(self) -> int:
+        """Get embedding dimension."""
+        return self.dimension
+
+    def compute_similarity(self, emb1: List[float], emb2: List[float]) -> float:
+        """Compute cosine similarity between two embeddings."""
+        emb1 = np.array(emb1)
+        emb2 = np.array(emb2)
+        return float(np.dot(emb1, emb2) / (np.linalg.norm(emb1) * np.linalg.norm(emb2)))
+
+
 def create_embedding_model(
     model_name: str = EMBEDDING_MODEL,
     enable_cache: bool = True,
     cache_dir: str = ".cache/rag",
-) -> EmbeddingModel:
+    use_openai: Optional[bool] = None,
+) -> Union[EmbeddingModel, OpenAIEmbeddingModel]:
     """
     Factory function to create an embedding model instance.
+
+    Automatically uses OpenAI if API key is available, falls back to sentence-transformers.
 
     Args:
         model_name: Name of the sentence-transformers model
         enable_cache: Enable persistent caching of embeddings
         cache_dir: Directory for cache storage
+        use_openai: Force OpenAI (True) or SentenceTransformers (False), auto-detect (None)
 
     Returns:
-        Initialized EmbeddingModel instance
+        Initialized EmbeddingModel or OpenAIEmbeddingModel instance
     """
-    return EmbeddingModel(
-        model_name=model_name,
-        enable_cache=enable_cache,
-        cache_dir=cache_dir,
-    )
+    logger = get_logger("rag.embeddings")
+
+    # Auto-detect OpenAI availability if not specified
+    if use_openai is None:
+        use_openai = bool(os.getenv("OPENAI_API_KEY"))
+
+    if use_openai:
+        try:
+            logger.info("Using OpenAI embeddings (text-embedding-3-large)")
+            return OpenAIEmbeddingModel(enable_cache=enable_cache, cache_dir=cache_dir)
+        except Exception as e:
+            logger.warning(f"Failed to use OpenAI, falling back to SentenceTransformers: {e}")
+            return EmbeddingModel(
+                model_name=model_name,
+                enable_cache=enable_cache,
+                cache_dir=cache_dir,
+            )
+    else:
+        logger.info(f"Using SentenceTransformers ({model_name})")
+        return EmbeddingModel(
+            model_name=model_name,
+            enable_cache=enable_cache,
+            cache_dir=cache_dir,
+        )

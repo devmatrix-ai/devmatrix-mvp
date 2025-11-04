@@ -30,6 +30,10 @@ import sys
 from typing import List, Tuple, Dict, Any
 from pathlib import Path
 
+# Load .env file
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent.parent / ".env")
+
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
