@@ -11,14 +11,14 @@ Calculates exact number of atomic tasks needed based on:
 No arbitrary numbers - everything calculated from discovery structure.
 """
 
-import logging
 from typing import Dict, List, Any, Optional
 from uuid import UUID
 
 from src.models.masterplan import DiscoveryDocument
 from src.config.database import get_db_context
+from src.observability import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger("masterplan_calculator")
 
 
 class ComplexityMetrics:
