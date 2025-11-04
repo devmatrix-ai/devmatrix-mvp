@@ -90,8 +90,8 @@ CHROMADB_HOST = os.getenv("CHROMADB_HOST", "localhost")
 CHROMADB_PORT = int(os.getenv("CHROMADB_PORT", "8001"))
 
 # Embedding Model Configuration
-# Default: all-MiniLM-L6-v2 (384 dimensions, balanced performance)
-# Alternative: all-mpnet-base-v2 (768 dimensions, higher quality)
+# Jina Code: jinaai/jina-embeddings-v2-base-code (specifically for code search)
+# Alternative: sentence-transformers/all-mpnet-base-v2
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "jinaai/jina-embeddings-v2-base-code")
 
 # Device for embedding model (cuda for GPU, cpu for fallback)
