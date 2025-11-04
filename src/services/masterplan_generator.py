@@ -373,7 +373,7 @@ class MasterPlanGenerator:
             if self.ws_manager:
                 await self.ws_manager.emit_masterplan_validation_start(session_id)
 
-            self._validate_masterplan(masterplan_data)
+            self._validate_masterplan(masterplan_data, calculated_task_count)
 
             # Save to database
             if self.ws_manager:
@@ -740,12 +740,13 @@ IMPORTANT:
 
         return masterplan_data
 
-    def _validate_masterplan(self, masterplan_data: Dict[str, Any]):
+    def _validate_masterplan(self, masterplan_data: Dict[str, Any], calculated_task_count: int = None):
         """
         Validate MasterPlan structure.
 
         Args:
             masterplan_data: Parsed MasterPlan
+            calculated_task_count: Expected task count from intelligent calculator
 
         Raises:
             ValueError: If validation fails
@@ -758,8 +759,23 @@ IMPORTANT:
 
         # Check total tasks
         total_tasks = masterplan_data.get("total_tasks", 0)
-        if total_tasks < 100 or total_tasks > 150:
-            logger.warning(f"MasterPlan has {total_tasks} tasks (expected 100-150 for production SaaS)")
+
+        # ENFORCE CALCULATED TASK COUNT (±15% tolerance)
+        if calculated_task_count is not None:
+            deviation = abs(total_tasks - calculated_task_count) / calculated_task_count
+            if deviation > 0.15:  # 15% tolerance
+                raise ValueError(
+                    f"Task count validation failed: calculated={calculated_task_count}, "
+                    f"actual={total_tasks}, deviation={deviation:.1%}. "
+                    f"Expected within ±15% tolerance. "
+                    f"LLM may have ignored task count constraint in prompt."
+                )
+            logger.info(
+                f"✅ Task count enforced",
+                calculated=calculated_task_count,
+                actual=total_tasks,
+                deviation=f"{deviation:.1%}"
+            )
 
         # Check phases
         phases = masterplan_data.get("phases", [])
