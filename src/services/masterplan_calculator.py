@@ -88,7 +88,7 @@ class MasterPlanCalculator:
     """
 
     def __init__(self):
-        self.logger = logging.getLogger(__name__)
+        pass
 
     def analyze_discovery(self, discovery: DiscoveryDocument) -> Dict[str, Any]:
         """
@@ -105,7 +105,7 @@ class MasterPlanCalculator:
             - parallelization_level: max concurrent tasks
             - task_sequencing: which tasks depend on others
         """
-        self.logger.info(
+        logger.info(
             f"Analyzing discovery for task calculation",
             discovery_id=str(discovery.discovery_id),
             domain=discovery.domain
@@ -114,7 +114,7 @@ class MasterPlanCalculator:
         # Extract metrics
         metrics = self._extract_metrics(discovery)
 
-        self.logger.info(
+        logger.info(
             f"Extracted complexity metrics",
             bounded_contexts=metrics.bounded_contexts,
             aggregates=metrics.aggregates,
@@ -148,7 +148,7 @@ class MasterPlanCalculator:
             "rationale": self._generate_rationale(metrics, breakdown)
         }
 
-        self.logger.info(
+        logger.info(
             f"Task calculation complete",
             calculated_count=breakdown.total_tasks,
             parallelization=parallelization,
