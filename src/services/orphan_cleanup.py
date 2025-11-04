@@ -180,7 +180,7 @@ class OrphanCleanupWorker:
                 )
             )
 
-            result = await db.execute(query)
+            result = db.execute(query)
             orphans = result.scalars().all()
 
             return list(orphans)
