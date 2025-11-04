@@ -1,50 +1,35 @@
 /**
- * useMasterPlanProgress - Custom hook for MasterPlan progress state management
+ * useMasterPlanProgress Hook - State Machine for Progress Tracking
  *
- * Manages progress state from WebSocket events with:
- * - Event processing and state updates
- * - Elapsed time calculation with timer
- * - Phase tracking and status management
- * - sessionStorage persistence for page refresh recovery
- * - Error handling and retry mechanism
+ * Transforms WebSocket events into progress tracking through:
+ * - ProgressState management (tokens, percentage, phase tracking)
+ * - Phase timeline progression (discovery, parsing, validation, saving)
+ * - Real-time metrics from WebSocket events
+ * - Error state and retry functionality
  *
- * @example
- * ```tsx
- * function MyComponent() {
- *   const { state, phases, handleRetry, isLoading } = useMasterPlanProgress(event);
- *
- *   return (
- *     <div>
- *       <p>Progress: {state.percentage}%</p>
- *       <p>Phase: {state.currentPhase}</p>
- *     </div>
- *   );
- * }
- * ```
+ * @since Nov 4, 2025
+ * @version 1.0
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react'
+import { useWebSocket } from './useWebSocket'
+import { useMasterPlanStore } from '../stores/masterplanStore'
 import type {
-  MasterPlanProgressEvent,
   ProgressState,
   PhaseStatus,
+  PhaseName,
+  PhaseStatusType,
   UseMasterPlanProgressResult,
-} from '../types/masterplan';
-import {
-  storeMasterPlanSession,
-  getMasterPlanSession,
-  clearMasterPlanSession,
-} from '../utils/masterplanStorage';
-import { fetchMasterPlanStatus } from '../api/masterplanClient';
+} from '../types/masterplan'
 
 /**
  * Initial progress state
  */
-const initialState: ProgressState = {
+const initialProgressState: ProgressState = {
   tokensReceived: 0,
   estimatedTotalTokens: 0,
   percentage: 0,
-  currentPhase: '',
+  currentPhase: 'idle',
   phasesFound: 0,
   milestonesFound: 0,
   tasksFound: 0,
@@ -59,352 +44,334 @@ const initialState: ProgressState = {
   boundedContexts: 0,
   aggregates: 0,
   entities: 0,
-};
-
-/**
- * useMasterPlanProgress hook
- */
-export function useMasterPlanProgress(
-  event: MasterPlanProgressEvent | null
-): UseMasterPlanProgressResult {
-  const [state, setState] = useState<ProgressState>(initialState);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-
-  /**
-   * Initialize from sessionStorage on mount
-   */
-  useEffect(() => {
-    const initializeFromStorage = async () => {
-      const stored = getMasterPlanSession();
-      if (stored) {
-        setSessionId(stored.masterplan_id);
-        setIsLoading(true);
-
-        try {
-          // Fetch latest status from API
-          const status = await fetchMasterPlanStatus(stored.masterplan_id);
-
-          // Resume progress state
-          setState((prev) => ({
-            ...prev,
-            tokensReceived: status.stats.tokens_used,
-            estimatedTotalTokens: status.stats.estimated_tokens,
-            percentage: status.progress_percentage,
-            currentPhase: status.current_phase,
-            boundedContexts: status.stats.entities.bounded_contexts,
-            aggregates: status.stats.entities.aggregates,
-            entities: status.stats.entities.entities,
-            phasesFound: status.stats.entities.phases,
-            milestonesFound: status.stats.entities.milestones,
-            tasksFound: status.stats.entities.tasks,
-            cost: status.stats.cost,
-            elapsedSeconds: status.stats.duration_seconds,
-            isComplete: status.is_complete,
-            startTime: new Date(stored.started_at),
-          }));
-        } catch (error) {
-          console.error('Failed to recover MasterPlan status:', error);
-          // Clear stale sessionStorage on error
-          clearMasterPlanSession();
-          setSessionId(null);
-        } finally {
-          setIsLoading(false);
-        }
-      }
-    };
-
-    initializeFromStorage();
-  }, []);
-
-  /**
-   * Process incoming WebSocket events
-   */
-  useEffect(() => {
-    if (!event) return;
-
-    const eventType = event.event;
-    const data = event.data;
-
-    switch (eventType) {
-      case 'discovery_generation_start':
-        setState((prev) => ({
-          ...prev,
-          startTime: new Date(),
-          currentPhase: 'discovery',
-          estimatedTotalTokens: data.estimated_tokens || 0,
-          estimatedDurationSeconds: data.estimated_duration_seconds || 0,
-        }));
-        break;
-
-      case 'discovery_tokens_progress':
-        setState((prev) => ({
-          ...prev,
-          tokensReceived: data.tokens_received || 0,
-          estimatedTotalTokens: data.estimated_total || prev.estimatedTotalTokens,
-          percentage: Math.min(48, data.percentage || 0), // Cap discovery at 48%
-          currentPhase: data.current_phase || 'discovery',
-        }));
-        break;
-
-      case 'discovery_entity_discovered':
-        setState((prev) => ({
-          ...prev,
-          boundedContexts: data.bounded_contexts || prev.boundedContexts,
-          aggregates: data.aggregates || prev.aggregates,
-          entities: data.entities || prev.entities,
-        }));
-        break;
-
-      case 'discovery_parsing_complete':
-        setState((prev) => ({
-          ...prev,
-          isParsing: false,
-          percentage: 48,
-          boundedContexts: data.total_bounded_contexts || prev.boundedContexts,
-          aggregates: data.total_aggregates || prev.aggregates,
-          entities: data.total_entities || prev.entities,
-        }));
-        break;
-
-      case 'discovery_saving_start':
-        setState((prev) => ({
-          ...prev,
-          isSaving: true,
-        }));
-        break;
-
-      case 'discovery_generation_complete':
-        setState((prev) => ({
-          ...prev,
-          isSaving: false,
-          percentage: 50,
-          cost: (prev.cost || 0) + (data.cost || 0),
-        }));
-        break;
-
-      case 'masterplan_generation_start':
-        setState((prev) => ({
-          ...prev,
-          currentPhase: 'parsing',
-          percentage: 50,
-          estimatedTotalTokens: (prev.estimatedTotalTokens || 0) + (data.estimated_tokens || 0),
-          estimatedDurationSeconds:
-            (prev.estimatedDurationSeconds || 0) + (data.estimated_duration_seconds || 0),
-        }));
-
-        // Store session for persistence
-        if (data.masterplan_id) {
-          setSessionId(data.masterplan_id);
-          storeMasterPlanSession({
-            masterplan_id: data.masterplan_id,
-            started_at: state.startTime?.toISOString() || new Date().toISOString(),
-            current_phase: 'parsing',
-            progress_percentage: 50,
-          });
-        }
-        break;
-
-      case 'masterplan_tokens_progress':
-        // Map 0-100% to 50-92.5% range
-        const mappedPercentage = 50 + ((data.percentage || 0) / 100) * 42.5;
-        setState((prev) => ({
-          ...prev,
-          tokensReceived: (prev.tokensReceived || 0) + (data.tokens_received || 0),
-          percentage: Math.min(92.5, Math.round(mappedPercentage)),
-          currentPhase: data.current_phase || 'parsing',
-        }));
-        break;
-
-      case 'masterplan_entity_discovered':
-        setState((prev) => {
-          const updates: Partial<ProgressState> = {};
-          const entityType = data.type;
-
-          if (entityType === 'phase') {
-            updates.phasesFound = (prev.phasesFound || 0) + (data.count || 1);
-          } else if (entityType === 'milestone') {
-            updates.milestonesFound = (prev.milestonesFound || 0) + (data.count || 1);
-          } else if (entityType === 'task') {
-            updates.tasksFound = (prev.tasksFound || 0) + (data.count || 1);
-          }
-
-          return { ...prev, ...updates };
-        });
-        break;
-
-      case 'masterplan_parsing_complete':
-        setState((prev) => ({
-          ...prev,
-          isParsing: false,
-          percentage: 93,
-          phasesFound: data.total_phases || prev.phasesFound,
-          milestonesFound: data.total_milestones || prev.milestonesFound,
-          tasksFound: data.total_tasks || prev.tasksFound,
-        }));
-        break;
-
-      case 'masterplan_validation_start':
-        setState((prev) => ({
-          ...prev,
-          isValidating: true,
-          currentPhase: 'validation',
-          percentage: 95,
-        }));
-        break;
-
-      case 'masterplan_saving_start':
-        setState((prev) => ({
-          ...prev,
-          isValidating: false,
-          isSaving: true,
-          currentPhase: 'saving',
-          percentage: 97,
-        }));
-        break;
-
-      case 'masterplan_generation_complete':
-        setState((prev) => ({
-          ...prev,
-          isSaving: false,
-          isComplete: true,
-          percentage: 100,
-          currentPhase: 'complete',
-          cost: data.total_cost || prev.cost,
-          phasesFound: data.total_phases || prev.phasesFound,
-          milestonesFound: data.total_milestones || prev.milestonesFound,
-          tasksFound: data.total_tasks || prev.tasksFound,
-        }));
-
-        // Clear sessionStorage on completion
-        clearMasterPlanSession();
-        setSessionId(null);
-        break;
-
-      case 'generation_error':
-        setState((prev) => ({
-          ...prev,
-          error: {
-            message: data.message || 'Unknown error',
-            code: data.code || 'UNKNOWN',
-            details: data.details,
-            stackTrace: data.stackTrace,
-            timestamp: new Date(),
-            source: data.source || 'unknown',
-          },
-        }));
-
-        // Clear sessionStorage on error
-        clearMasterPlanSession();
-        setSessionId(null);
-        break;
-
-      default:
-        break;
-    }
-  }, [event, state.startTime]);
-
-  /**
-   * Timer for elapsed time calculation
-   */
-  useEffect(() => {
-    if (!state.startTime || state.isComplete) return;
-
-    const timer = setInterval(() => {
-      setState((prev) => ({
-        ...prev,
-        elapsedSeconds: Math.floor((Date.now() - prev.startTime!.getTime()) / 1000),
-      }));
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [state.startTime, state.isComplete]);
-
-  /**
-   * Generate phase statuses from current state
-   */
-  const phases: PhaseStatus[] = useMemo(() => {
-    const getPhaseStatus = (phaseName: string): PhaseStatus['status'] => {
-      if (state.currentPhase === phaseName) {
-        return 'in_progress';
-      }
-
-      const phaseOrder = ['discovery', 'parsing', 'validation', 'saving'];
-      const currentIndex = phaseOrder.indexOf(state.currentPhase);
-      const targetIndex = phaseOrder.indexOf(phaseName);
-
-      if (currentIndex > targetIndex) {
-        return 'completed';
-      }
-
-      return 'pending';
-    };
-
-    return [
-      {
-        name: 'discovery',
-        status: getPhaseStatus('discovery'),
-        icon: '🔍',
-        label: 'Analyzing DDD Requirements',
-      },
-      {
-        name: 'parsing',
-        status: getPhaseStatus('parsing'),
-        icon: '⚙️',
-        label: 'Generating Plan Structure',
-      },
-      {
-        name: 'validation',
-        status: getPhaseStatus('validation'),
-        icon: '✅',
-        label: 'Validating Dependencies',
-      },
-      {
-        name: 'saving',
-        status: getPhaseStatus('saving'),
-        icon: '💾',
-        label: 'Saving to Database',
-      },
-    ];
-  }, [state.currentPhase]);
-
-  /**
-   * Clear error state
-   */
-  const clearError = useCallback(() => {
-    setState((prev) => ({
-      ...prev,
-      error: undefined,
-    }));
-  }, []);
-
-  /**
-   * Handle retry generation
-   */
-  const handleRetry = useCallback(async () => {
-    // Clear error state
-    clearError();
-
-    // Reset state to initial
-    setState(initialState);
-
-    // Clear sessionStorage
-    clearMasterPlanSession();
-    setSessionId(null);
-
-    // Note: Re-triggering /masterplan command should be handled by parent component
-    // This hook only manages state, not WebSocket communication
-    console.log('Retry triggered - parent component should re-send /masterplan command');
-  }, [clearError]);
-
-  return {
-    state,
-    sessionId,
-    phases,
-    handleRetry,
-    clearError,
-    isLoading,
-  };
 }
 
-export default useMasterPlanProgress;
+/**
+ * Phase definitions for MasterPlan generation
+ */
+const PHASES_DEFINITION: PhaseStatus[] = [
+  {
+    name: 'discovery',
+    status: 'pending',
+    icon: '📡',
+    label: 'Discovery phase',
+  },
+  {
+    name: 'parsing',
+    status: 'pending',
+    icon: '📝',
+    label: 'Parsing phase',
+  },
+  {
+    name: 'validation',
+    status: 'pending',
+    icon: '✓',
+    label: 'Validation phase',
+  },
+  {
+    name: 'saving',
+    status: 'pending',
+    icon: '💾',
+    label: 'Saving phase',
+  },
+]
+
+/**
+ * Hook for tracking MasterPlan generation progress through WebSocket events
+ *
+ * Manages state machine transitions based on WebSocket events and
+ * persists progress to Zustand store for centralized state management.
+ *
+ * @param sessionId - Optional session ID to track specific generation
+ * @returns Progress state, phases, and control functions
+ */
+export function useMasterPlanProgress(
+  sessionId?: string
+): UseMasterPlanProgressResult {
+  // WebSocket hook for event subscription
+  const { latestEvent } = useWebSocket()
+
+  // Store access for persistence
+  const {
+    currentMasterPlanId,
+    updateProgress,
+    setPhases,
+    updateMetrics,
+    clearError: clearStoreError,
+  } = useMasterPlanStore()
+
+  // Local state for progress tracking
+  const [progressState, setProgressState] = useState<ProgressState>(initialProgressState)
+  const [phases, setLocalPhases] = useState<PhaseStatus[]>(PHASES_DEFINITION)
+
+  // Refs for tracking timing without re-renders
+  const phaseTimesRef = useRef<Record<PhaseName, { start: number; end?: number }>>({
+    discovery: { start: 0 },
+    parsing: { start: 0 },
+    validation: { start: 0 },
+    saving: { start: 0 },
+  })
+  const startTimeRef = useRef<number | null>(null)
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  /**
+   * Update single phase status and timing
+   */
+  const updatePhaseStatus = useCallback(
+    (phaseName: PhaseName, status: PhaseStatusType, startTime?: number, endTime?: number) => {
+      setLocalPhases((prevPhases) =>
+        prevPhases.map((phase) =>
+          phase.name === phaseName
+            ? {
+                ...phase,
+                status,
+                startTime: startTime ? new Date(startTime) : phase.startTime,
+                endTime: endTime ? new Date(endTime) : phase.endTime,
+                duration:
+                  startTime && endTime ? Math.round((endTime - startTime) / 1000) : phase.duration,
+              }
+            : phase
+        )
+      )
+    },
+    []
+  )
+
+  /**
+   * Calculate elapsed seconds since generation start
+   */
+  const calculateElapsedSeconds = useCallback(() => {
+    if (!startTimeRef.current) return 0
+    return Math.round((Date.now() - startTimeRef.current) / 1000)
+  }, [])
+
+  /**
+   * Handle WebSocket events and update progress state machine
+   */
+  useEffect(() => {
+    if (!latestEvent) return
+
+    const event = latestEvent
+    const eventData = event.data || {}
+
+    // Debounce metrics updates to prevent excessive renders
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+    }
+
+    debounceTimerRef.current = setTimeout(() => {
+      // Handle different event types
+      switch (event.type) {
+        case 'masterplan_generation_start': {
+          startTimeRef.current = Date.now()
+          updatePhaseStatus('discovery', 'in_progress', startTimeRef.current)
+
+          setProgressState((prev) => ({
+            ...prev,
+            currentPhase: 'Generating',
+            percentage: 5,
+            startTime: new Date(),
+            cost: eventData.estimated_cost || 0,
+            estimatedDurationSeconds: eventData.estimated_duration || 600,
+          }))
+          break
+        }
+
+        case 'masterplan_tokens_progress': {
+          const tokensReceived = eventData.tokens_received || 0
+          const estimatedTotal = eventData.estimated_total || 1
+          const percentage = Math.min((tokensReceived / estimatedTotal) * 100, 95)
+
+          setProgressState((prev) => ({
+            ...prev,
+            tokensReceived,
+            estimatedTotalTokens: estimatedTotal,
+            percentage,
+            elapsedSeconds: calculateElapsedSeconds(),
+          }))
+          break
+        }
+
+        case 'masterplan_entity_discovered': {
+          const entityType = eventData.entity_type?.toLowerCase() || 'task'
+
+          setProgressState((prev) => {
+            if (entityType === 'phase') {
+              return { ...prev, phasesFound: prev.phasesFound + 1 }
+            } else if (entityType === 'milestone') {
+              return { ...prev, milestonesFound: prev.milestonesFound + 1 }
+            } else {
+              return { ...prev, tasksFound: prev.tasksFound + 1 }
+            }
+          })
+          break
+        }
+
+        case 'masterplan_parsing_complete': {
+          const now = Date.now()
+          if (phaseTimesRef.current['discovery'].start === 0) {
+            phaseTimesRef.current['discovery'].start = startTimeRef.current || now - 5000
+          }
+          phaseTimesRef.current['discovery'].end = now
+          phaseTimesRef.current['parsing'].start = now
+
+          updatePhaseStatus('discovery', 'completed', undefined, now)
+          updatePhaseStatus('parsing', 'in_progress', now)
+
+          setProgressState((prev) => ({
+            ...prev,
+            currentPhase: 'Parsing',
+            isParsing: true,
+            percentage: Math.min(prev.percentage + 15, 95),
+          }))
+          break
+        }
+
+        case 'masterplan_validation_start': {
+          const now = Date.now()
+          phaseTimesRef.current['parsing'].end = now
+          phaseTimesRef.current['validation'].start = now
+
+          updatePhaseStatus('parsing', 'completed', undefined, now)
+          updatePhaseStatus('validation', 'in_progress', now)
+
+          setProgressState((prev) => ({
+            ...prev,
+            currentPhase: 'Validating',
+            isParsing: false,
+            isValidating: true,
+            percentage: Math.min(prev.percentage + 20, 95),
+          }))
+          break
+        }
+
+        case 'masterplan_saving_start': {
+          const now = Date.now()
+          phaseTimesRef.current['validation'].end = now
+          phaseTimesRef.current['saving'].start = now
+
+          updatePhaseStatus('validation', 'completed', undefined, now)
+          updatePhaseStatus('saving', 'in_progress', now)
+
+          setProgressState((prev) => ({
+            ...prev,
+            currentPhase: 'Saving',
+            isValidating: false,
+            isSaving: true,
+            percentage: Math.min(prev.percentage + 15, 95),
+          }))
+          break
+        }
+
+        case 'masterplan_generation_complete': {
+          const now = Date.now()
+          phaseTimesRef.current['saving'].end = now
+
+          updatePhaseStatus('saving', 'completed', undefined, now)
+
+          setProgressState((prev) => ({
+            ...prev,
+            currentPhase: 'Complete',
+            percentage: 100,
+            isSaving: false,
+            isComplete: true,
+            elapsedSeconds: calculateElapsedSeconds(),
+          }))
+          break
+        }
+
+        case 'discovery_generation_start': {
+          if (!startTimeRef.current) {
+            startTimeRef.current = Date.now()
+          }
+          updatePhaseStatus('discovery', 'in_progress', startTimeRef.current)
+          setProgressState((prev) => ({
+            ...prev,
+            currentPhase: 'Generating',
+            startTime: new Date(),
+          }))
+          break
+        }
+
+        case 'discovery_tokens_progress': {
+          const tokensReceived = eventData.tokens_received || 0
+          const estimatedTotal = eventData.estimated_total || 1
+          const percentage = Math.min((tokensReceived / estimatedTotal) * 100, 95)
+
+          setProgressState((prev) => ({
+            ...prev,
+            tokensReceived,
+            estimatedTotalTokens: estimatedTotal,
+            percentage,
+            elapsedSeconds: calculateElapsedSeconds(),
+          }))
+          break
+        }
+
+        case 'discovery_generation_complete': {
+          updatePhaseStatus('discovery', 'completed', undefined, Date.now())
+          setProgressState((prev) => ({
+            ...prev,
+            currentPhase: 'Complete',
+            percentage: 100,
+            isComplete: true,
+          }))
+          break
+        }
+
+        default:
+          // Other events are handled implicitly
+          break
+      }
+    }, 100) // Debounce by 100ms
+
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current)
+      }
+    }
+  }, [latestEvent, updatePhaseStatus, calculateElapsedSeconds])
+
+  /**
+   * Sync local state to Zustand store
+   */
+  useEffect(() => {
+    updateProgress(progressState)
+    setPhases(phases)
+    updateMetrics({
+      tokensReceived: progressState.tokensReceived,
+      estimatedTotal: progressState.estimatedTotalTokens,
+      percentage: progressState.percentage,
+      costUsd: progressState.cost,
+      durationSeconds: progressState.elapsedSeconds,
+      currentPhase: progressState.currentPhase,
+    })
+  }, [progressState, phases, updateProgress, setPhases, updateMetrics])
+
+  /**
+   * Handle retry after error
+   */
+  const handleRetry = useCallback(async () => {
+    clearStoreError()
+    setProgressState(initialProgressState)
+    setLocalPhases(PHASES_DEFINITION)
+    startTimeRef.current = null
+    phaseTimesRef.current = {
+      discovery: { start: 0 },
+      parsing: { start: 0 },
+      validation: { start: 0 },
+      saving: { start: 0 },
+    }
+
+    // TODO: Call ChatService.retryMasterplanGeneration(currentMasterPlanId)
+  }, [clearStoreError, currentMasterPlanId])
+
+  return {
+    state: progressState,
+    sessionId: sessionId || currentMasterPlanId,
+    phases,
+    handleRetry,
+    clearError: clearStoreError,
+    isLoading: !progressState.isComplete && progressState.startTime !== null,
+  }
+}
