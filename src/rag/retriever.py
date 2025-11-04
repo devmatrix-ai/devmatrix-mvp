@@ -1014,6 +1014,7 @@ def create_retriever(
     top_k: int = RAG_TOP_K,
     min_similarity: float = RAG_SIMILARITY_THRESHOLD,
     use_multi_collection: bool = True,
+    enable_v2_caching: bool = True,
 ) -> Retriever:
     """
     Factory function to create a retriever instance.
@@ -1023,6 +1024,8 @@ def create_retriever(
         strategy: Retrieval strategy
         top_k: Number of results
         min_similarity: Minimum similarity threshold
+        use_multi_collection: Enable multi-collection manager
+        enable_v2_caching: Enable V2 RAG query caching (default: True)
 
     Returns:
         Initialized Retriever instance
@@ -1038,4 +1041,5 @@ def create_retriever(
         vector_store=vector_store,
         config=config,
         multi_collection_manager=mcm,
+        enable_v2_caching=enable_v2_caching,
     )
