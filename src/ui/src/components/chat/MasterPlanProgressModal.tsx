@@ -20,6 +20,8 @@ import React, { useEffect, useCallback } from 'react';
 import { FiX } from 'react-icons/fi';
 import { GlassCard, GlassButton } from '../design-system';
 import { useTranslation } from '../../i18n';
+import { useMasterPlanProgress } from '../../hooks/useMasterPlanProgress';
+import { useMasterPlanError } from '../../stores/masterplanStore';
 import type { MasterPlanProgressModalProps } from '../../types/masterplan';
 
 // Placeholder imports for components to be created
@@ -33,16 +35,27 @@ const FinalSummary = React.lazy(() => import('./FinalSummary'));
  * MasterPlanProgressModal component
  */
 const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
-  event,
   open,
   onClose,
-  // masterplanId,
+  masterplanId,
 }) => {
   const { t } = useTranslation();
 
-  // Extract state from event (will be improved when hook is created)
-  const isComplete = event?.event === 'masterplan_generation_complete';
-  const isError = event?.event === 'generation_error';
+  // Get real-time progress from hook
+  const {
+    state: progressState,
+    phases,
+    handleRetry,
+    clearError,
+    isLoading,
+  } = useMasterPlanProgress(masterplanId);
+
+  // Get error from store
+  const storeError = useMasterPlanError();
+
+  // Determine modal state from progress state
+  const isComplete = progressState.isComplete;
+  const isError = storeError !== null;
 
   // Handle escape key
   const handleEscapeKey = useCallback(
@@ -75,11 +88,11 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
     }
   };
 
-  // Handle retry (placeholder - will be implemented with hook)
-  const handleRetry = useCallback(async () => {
-    console.log('Retry generation triggered');
-    // TODO: Implement retry logic in Task Group 5
-  }, []);
+  // Handle retry using hook's retry function
+  const onRetry = useCallback(async () => {
+    await handleRetry();
+    clearError();
+  }, [handleRetry, clearError]);
 
   // Handle view details (placeholder)
   const handleViewDetails = useCallback(() => {
@@ -93,8 +106,8 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
     // TODO: Navigate to execution flow
   }, []);
 
-  // Don't render if not open or no event
-  if (!open || !event) {
+  // Don't render if not open
+  if (!open) {
     return null;
   }
 
@@ -144,17 +157,16 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
           style={{ maxHeight: 'calc(100vh - 300px)' }}
         >
           {/* Error state */}
-          {isError && (
+          {isError && storeError && (
             <React.Suspense fallback={<div className="animate-pulse">Loading...</div>}>
               <ErrorPanel
                 error={{
-                  message: event.data?.message || 'Unknown error',
-                  code: event.data?.code || 'UNKNOWN',
-                  details: event.data?.details,
-                  stackTrace: event.data?.stackTrace,
+                  message: storeError,
+                  code: 'GENERATION_ERROR',
+                  details: { error: storeError },
                 }}
-                onRetry={handleRetry}
-                isRetrying={false}
+                onRetry={onRetry}
+                isRetrying={isLoading}
               />
             </React.Suspense>
           )}
@@ -164,22 +176,20 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
             <React.Suspense fallback={<div className="animate-pulse">Loading...</div>}>
               <FinalSummary
                 stats={{
-                  totalTokens: event.data?.total_tokens || 0,
-                  totalCost: event.data?.total_cost || 0,
-                  totalDuration: event.data?.total_duration || 0,
+                  totalTokens: progressState.tokensReceived,
+                  totalCost: progressState.cost,
+                  totalDuration: progressState.elapsedSeconds,
                   entities: {
-                    boundedContexts: event.data?.bounded_contexts || 0,
-                    aggregates: event.data?.aggregates || 0,
-                    entities: event.data?.entities || 0,
+                    boundedContexts: progressState.boundedContexts,
+                    aggregates: progressState.aggregates,
+                    entities: progressState.entities,
                   },
                   phases: {
-                    phases: event.data?.total_phases || 0,
-                    milestones: event.data?.total_milestones || 0,
-                    tasks: event.data?.total_tasks || 0,
+                    phases: progressState.phasesFound,
+                    milestones: progressState.milestonesFound,
+                    tasks: progressState.tasksFound,
                   },
                 }}
-                architectureStyle={event.data?.architecture_style}
-                techStack={event.data?.tech_stack}
                 onViewDetails={handleViewDetails}
                 onStartExecution={handleStartExecution}
               />
@@ -192,33 +202,8 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
               {/* Progress Timeline */}
               <React.Suspense fallback={<div className="animate-pulse">Loading timeline...</div>}>
                 <ProgressTimeline
-                  phases={[
-                    {
-                      name: 'discovery',
-                      status: 'completed',
-                      icon: '✓',
-                      label: t('masterplan.phase.discovery'),
-                    },
-                    {
-                      name: 'parsing',
-                      status: 'in_progress',
-                      icon: '⚙️',
-                      label: t('masterplan.phase.parsing'),
-                    },
-                    {
-                      name: 'validation',
-                      status: 'pending',
-                      icon: '⏳',
-                      label: t('masterplan.phase.validation'),
-                    },
-                    {
-                      name: 'saving',
-                      status: 'pending',
-                      icon: '⏳',
-                      label: t('masterplan.phase.saving'),
-                    },
-                  ]}
-                  currentPhase="parsing"
+                  phases={phases}
+                  currentPhase={progressState.currentPhase}
                   animateActive={true}
                 />
               </React.Suspense>
@@ -226,18 +211,18 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
               {/* Progress Metrics */}
               <React.Suspense fallback={<div className="animate-pulse">Loading metrics...</div>}>
                 <ProgressMetrics
-                  tokensUsed={event.data?.tokens_received || 0}
-                  estimatedTokens={event.data?.estimated_total || 0}
-                  cost={event.data?.cost || 0}
-                  duration={event.data?.elapsed_seconds || 0}
-                  estimatedDuration={event.data?.estimated_duration || 0}
+                  tokensUsed={progressState.tokensReceived}
+                  estimatedTokens={progressState.estimatedTotalTokens}
+                  cost={progressState.cost}
+                  duration={progressState.elapsedSeconds}
+                  estimatedDuration={progressState.estimatedDurationSeconds}
                   entities={{
-                    boundedContexts: event.data?.bounded_contexts || 0,
-                    aggregates: event.data?.aggregates || 0,
-                    entities: event.data?.entities || 0,
-                    phases: event.data?.phases || 0,
-                    milestones: event.data?.milestones || 0,
-                    tasks: event.data?.tasks || 0,
+                    boundedContexts: progressState.boundedContexts,
+                    aggregates: progressState.aggregates,
+                    entities: progressState.entities,
+                    phases: progressState.phasesFound,
+                    milestones: progressState.milestonesFound,
+                    tasks: progressState.tasksFound,
                   }}
                   isComplete={false}
                 />
