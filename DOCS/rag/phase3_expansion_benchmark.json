@@ -1,0 +1,176 @@
+{
+  "phase": "PHASE 3: Query Expansion",
+  "timestamp": "2025-11-04T11:32:27.651867",
+  "embedding_model": "OpenAI text-embedding-3-large",
+  "expansion_enabled": true,
+  "metrics": {
+    "with_expansion_rate_percent": 62.5,
+    "with_expansion_successes": 5,
+    "baseline_rate_percent": 62.5,
+    "baseline_successes": 5,
+    "improvement_points": 0.0,
+    "total_queries": 8
+  },
+  "queries": [
+    {
+      "query": "Express.js server setup with routing",
+      "expected": "express",
+      "with_expansion": {
+        "query": "Express.js server setup with routing",
+        "expected": "express",
+        "retrieved": "express",
+        "match": true,
+        "similarity": 0.5291379,
+        "results_count": 5
+      },
+      "without_expansion": {
+        "query": "Express.js server setup with routing",
+        "expected": "express",
+        "retrieved": "express",
+        "match": true,
+        "similarity": 0.5291379,
+        "results_count": 5
+      }
+    },
+    {
+      "query": "React hooks and functional components",
+      "expected": "react",
+      "with_expansion": {
+        "query": "React hooks and functional components",
+        "expected": "react",
+        "retrieved": "react",
+        "match": true,
+        "similarity": 0.47100484,
+        "results_count": 5
+      },
+      "without_expansion": {
+        "query": "React hooks and functional components",
+        "expected": "react",
+        "retrieved": "react",
+        "match": true,
+        "similarity": 0.46324770000000004,
+        "results_count": 5
+      }
+    },
+    {
+      "query": "TypeScript type definitions and interfaces",
+      "expected": "typescript",
+      "with_expansion": {
+        "query": "TypeScript type definitions and interfaces",
+        "expected": "typescript",
+        "retrieved": "typescript",
+        "match": true,
+        "similarity": 0.43293655,
+        "results_count": 2
+      },
+      "without_expansion": {
+        "query": "TypeScript type definitions and interfaces",
+        "expected": "typescript",
+        "retrieved": "typescript",
+        "match": true,
+        "similarity": 0.43293655,
+        "results_count": 2
+      }
+    },
+    {
+      "query": "JavaScript async/await patterns",
+      "expected": "javascript",
+      "with_expansion": {
+        "query": "JavaScript async/await patterns",
+        "expected": "javascript",
+        "retrieved": "express",
+        "match": false,
+        "similarity": 0.5317080000000001,
+        "results_count": 3
+      },
+      "without_expansion": {
+        "query": "JavaScript async/await patterns",
+        "expected": "javascript",
+        "retrieved": "express",
+        "match": false,
+        "similarity": 0.50816482,
+        "results_count": 2
+      }
+    },
+    {
+      "query": "REST API error handling",
+      "expected": "express",
+      "with_expansion": {
+        "query": "REST API error handling",
+        "expected": "express",
+        "retrieved": "fastapi",
+        "match": false,
+        "similarity": 0.41139775999999995,
+        "results_count": 1
+      },
+      "without_expansion": {
+        "query": "REST API error handling",
+        "expected": "express",
+        "retrieved": "none",
+        "match": false,
+        "similarity": 0.0,
+        "results_count": 0
+      }
+    },
+    {
+      "query": "React state management with hooks",
+      "expected": "react",
+      "with_expansion": {
+        "query": "React state management with hooks",
+        "expected": "react",
+        "retrieved": "react",
+        "match": true,
+        "similarity": 0.5399643199999999,
+        "results_count": 5
+      },
+      "without_expansion": {
+        "query": "React state management with hooks",
+        "expected": "react",
+        "retrieved": "react",
+        "match": true,
+        "similarity": 0.53089404,
+        "results_count": 5
+      }
+    },
+    {
+      "query": "Node.js middleware implementation",
+      "expected": "node",
+      "with_expansion": {
+        "query": "Node.js middleware implementation",
+        "expected": "node",
+        "retrieved": "express",
+        "match": false,
+        "similarity": 0.49372506000000005,
+        "results_count": 3
+      },
+      "without_expansion": {
+        "query": "Node.js middleware implementation",
+        "expected": "node",
+        "retrieved": "express",
+        "match": false,
+        "similarity": 0.49372506000000005,
+        "results_count": 3
+      }
+    },
+    {
+      "query": "Async Express middleware patterns",
+      "expected": "express",
+      "with_expansion": {
+        "query": "Async Express middleware patterns",
+        "expected": "express",
+        "retrieved": "express",
+        "match": true,
+        "similarity": 0.5265022500000001,
+        "results_count": 5
+      },
+      "without_expansion": {
+        "query": "Async Express middleware patterns",
+        "expected": "express",
+        "retrieved": "express",
+        "match": true,
+        "similarity": 0.5265022500000001,
+        "results_count": 5
+      }
+    }
+  ]
+}

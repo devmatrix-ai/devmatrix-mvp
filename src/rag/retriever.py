@@ -24,6 +24,8 @@ from src.config import (
 )
 from src.observability import get_logger
 from src.rag.reranker import Reranker
+from src.rag.query_expander import QueryExpander
+from src.rag.cross_encoder_reranker import CrossEncoderReranker
 
 # Import MGE V2 RAG caching
 from src.mge.v2.caching import RAGQueryCache
@@ -149,6 +151,8 @@ class Retriever:
         enable_v2_caching: bool = True,
         redis_url: str = "redis://localhost:6379",
         multi_collection_manager: Optional[Any] = None,
+        enable_query_expansion: bool = True,
+        enable_cross_encoder_reranking: bool = True,
     ):
         """
         Initialize retriever.
@@ -158,6 +162,8 @@ class Retriever:
             config: Optional retrieval configuration
             enable_v2_caching: Enable MGE V2 RAG query caching (default: True)
             redis_url: Redis connection URL for V2 caching
+            enable_query_expansion: Enable query expansion for better coverage (default: True)
+            enable_cross_encoder_reranking: Enable cross-encoder semantic re-ranking (default: True)
         """
         self.logger = get_logger("rag.retriever")
         self.vector_store = vector_store
@@ -166,6 +172,10 @@ class Retriever:
         self.config = config or RetrievalConfig()
         self.cache: Dict[str, List[RetrievalResult]] = {}  # Legacy in-memory cache
         self._reranker = Reranker()
+        self._query_expander = QueryExpander() if enable_query_expansion else None
+        self.enable_query_expansion = enable_query_expansion
+        self._cross_encoder = CrossEncoderReranker() if enable_cross_encoder_reranking else None
+        self.enable_cross_encoder_reranking = enable_cross_encoder_reranking
 
         # NEW: Initialize MGE V2 RAG query cache
         self.enable_v2_caching = enable_v2_caching
@@ -180,7 +190,9 @@ class Retriever:
             strategy=self.config.strategy.value,
             top_k=self.config.top_k,
             min_similarity=self.config.min_similarity,
-            v2_caching=enable_v2_caching
+            v2_caching=enable_v2_caching,
+            query_expansion=enable_query_expansion,
+            cross_encoder_reranking=enable_cross_encoder_reranking
         )
 
     async def _check_v2_cache_async(
@@ -322,6 +334,122 @@ class Retriever:
                 error=str(e)
             )
 
+    def retrieve_with_expansion(
+        self,
+        query: str,
+        top_k: Optional[int] = None,
+        min_similarity: Optional[float] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        strategy: Optional[RetrievalStrategy] = None,
+    ) -> List[RetrievalResult]:
+        """
+        Retrieve with query expansion for better coverage.
+
+        Expands query into variants and retrieves results for each,
+        then deduplicates and combines results intelligently.
+
+        Args:
+            query: Query text (code or natural language)
+            top_k: Number of results (overrides config)
+            min_similarity: Minimum similarity (overrides config)
+            filters: Metadata filters (overrides config)
+            strategy: Retrieval strategy (overrides config)
+
+        Returns:
+            List of RetrievalResult objects, ranked by relevance
+        """
+        if not self.enable_query_expansion or not self._query_expander:
+            # Fallback to regular retrieval if expansion disabled
+            return self.retrieve(query, top_k, min_similarity, filters, strategy)
+
+        effective_top_k = top_k or self.config.top_k
+
+        try:
+            # Expand query into variants
+            query_variants = self._query_expander.expand_query(
+                query,
+                max_variants=5  # Use up to 5 variants
+            )
+
+            self.logger.info(
+                "Query expansion",
+                original_query=query,
+                variant_count=len(query_variants)
+            )
+
+            # Retrieve results for each variant
+            results_by_query: Dict[str, List[RetrievalResult]] = {}
+            all_results: List[RetrievalResult] = []
+
+            for variant in query_variants:
+                try:
+                    variant_results = self.retrieve(
+                        query=variant,
+                        top_k=effective_top_k * 2,  # Get more to handle deduplication
+                        min_similarity=min_similarity,
+                        filters=filters,
+                        strategy=strategy
+                    )
+                    results_by_query[variant] = variant_results
+                    all_results.extend(variant_results)
+
+                    self.logger.debug(
+                        f"Variant retrieval: '{variant}' → {len(variant_results)} results"
+                    )
+
+                except Exception as e:
+                    self.logger.warning(
+                        f"Failed to retrieve for variant '{variant}'",
+                        error=str(e)
+                    )
+                    continue
+
+            if not all_results:
+                self.logger.info("No results found for any query variant")
+                return []
+
+            # Deduplicate by ID and combine
+            seen_ids: Dict[str, RetrievalResult] = {}
+            for result in all_results:
+                if result.id not in seen_ids:
+                    seen_ids[result.id] = result
+                else:
+                    # Keep result with higher similarity
+                    if result.similarity > seen_ids[result.id].similarity:
+                        seen_ids[result.id] = result
+
+            # Convert to list and sort by similarity
+            combined_results = list(seen_ids.values())
+            combined_results.sort(key=lambda x: x.similarity, reverse=True)
+
+            # Return top_k results
+            final_results = combined_results[:effective_top_k]
+
+            # Assign final ranks
+            for i, result in enumerate(final_results, 1):
+                result.rank = i
+
+            self.logger.info(
+                "Expanded retrieval completed",
+                original_query=query,
+                variant_count=len(query_variants),
+                combined_results=len(seen_ids),
+                final_results=len(final_results),
+                top_k=effective_top_k
+            )
+
+            return final_results
+
+        except Exception as e:
+            self.logger.error(
+                "Expanded retrieval failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                query_length=len(query)
+            )
+            # Fallback to regular retrieval
+            return self.retrieve(query, top_k, min_similarity, filters, strategy)
+
     def retrieve(
         self,
         query: str,
@@ -398,6 +526,16 @@ class Retriever:
             # Apply re-ranking if enabled
             if self.config.rerank and results:
                 results = self._reranker.rerank(query, results)
+
+            # Apply cross-encoder re-ranking if enabled (more semantic understanding)
+            if self.enable_cross_encoder_reranking and self._cross_encoder and results:
+                try:
+                    results = self._cross_encoder.rerank(query, results)
+                except Exception as e:
+                    self.logger.warning(
+                        "Cross-encoder re-ranking failed, continuing with heuristic ranking",
+                        error=str(e)
+                    )
 
             # Assign final ranks
             for i, result in enumerate(results, 1):
@@ -1015,6 +1153,8 @@ def create_retriever(
     min_similarity: float = RAG_SIMILARITY_THRESHOLD,
     use_multi_collection: bool = True,
     enable_v2_caching: bool = True,
+    enable_query_expansion: bool = True,
+    enable_cross_encoder_reranking: bool = True,
 ) -> Retriever:
     """
     Factory function to create a retriever instance.
@@ -1026,6 +1166,8 @@ def create_retriever(
         min_similarity: Minimum similarity threshold
         use_multi_collection: Enable multi-collection manager
         enable_v2_caching: Enable V2 RAG query caching (default: True)
+        enable_query_expansion: Enable query expansion (default: True)
+        enable_cross_encoder_reranking: Enable cross-encoder semantic re-ranking (default: True)
 
     Returns:
         Initialized Retriever instance
@@ -1042,4 +1184,6 @@ def create_retriever(
         config=config,
         multi_collection_manager=mcm,
         enable_v2_caching=enable_v2_caching,
+        enable_query_expansion=enable_query_expansion,
+        enable_cross_encoder_reranking=enable_cross_encoder_reranking,
     )
