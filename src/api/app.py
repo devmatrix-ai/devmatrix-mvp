@@ -23,6 +23,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from ..observability import StructuredLogger, HealthCheck, MetricsMiddleware, setup_logging
 from ..observability.global_metrics import metrics_collector
 from .routers import workflows, executions, metrics, health, websocket, rag, chat, masterplans, auth, usage, admin, validation, execution_v2, atomization, dependency, review, testing, conversations
+from ..services.orphan_cleanup import OrphanCleanupWorker
 
 
 # Initialize logging system
@@ -31,11 +32,14 @@ setup_logging()
 # Global instances
 logger = StructuredLogger("api", output_json=True)
 health_check = HealthCheck()
+orphan_cleanup_worker: OrphanCleanupWorker = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
+    global orphan_cleanup_worker
+
     # Startup
     logger.info("Starting API application")
 
@@ -77,10 +81,31 @@ async def lifespan(app: FastAPI):
 
     health_check.register("system", system_health)
 
+    # ========================================
+    # Initialize Background Workers
+    # ========================================
+    try:
+        orphan_cleanup_worker = OrphanCleanupWorker(
+            timeout_minutes=120,  # Mark as orphan after 2 hours
+            check_interval_minutes=15,  # Run cleanup every 15 minutes
+        )
+        await orphan_cleanup_worker.start()
+        logger.info("Orphan cleanup worker started", timeout_minutes=120, check_interval_minutes=15)
+    except Exception as e:
+        logger.warning(f"Failed to start orphan cleanup worker: {e}")
+
     yield
 
     # Shutdown
     logger.info("Shutting down API application")
+
+    # Stop background workers
+    if orphan_cleanup_worker:
+        try:
+            await orphan_cleanup_worker.stop()
+            logger.info("Orphan cleanup worker stopped")
+        except Exception as e:
+            logger.warning(f"Error stopping orphan cleanup worker: {e}")
 
 
 def create_app() -> FastAPI:
