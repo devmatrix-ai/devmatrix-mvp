@@ -139,17 +139,28 @@ class OrphanCleanupWorker:
         )
 
         # Process each orphan
+        cleaned_count = 0
         for masterplan in orphans:
-            await self._cleanup_masterplan(masterplan)
+            try:
+                await self._cleanup_masterplan(masterplan)
+                cleaned_count += 1
+            except Exception as e:
+                logger.error(
+                    "Error cleaning up individual masterplan",
+                    masterplan_id=str(masterplan.id) if hasattr(masterplan, "id") else "unknown",
+                    error=str(e),
+                    exc_info=True,
+                )
+                # Continue with next orphan even if one fails
 
         # Record metrics
         self.metrics.increment_counter(
             "orphan_masterplans_cleaned_total",
-            value=len(orphans),
+            value=cleaned_count,
             help_text="Total orphan MasterPlans cleaned up",
         )
 
-        logger.info("Orphan cleanup cycle complete", cleaned_count=len(orphans))
+        logger.info("Orphan cleanup cycle complete", cleaned_count=cleaned_count)
 
     async def _find_orphan_masterplans(self) -> List[MasterPlan]:
         """
