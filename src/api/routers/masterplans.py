@@ -285,17 +285,24 @@ async def create_masterplan(
             user_id=str(current_user.user_id)
         )
 
+        # Fetch the created MasterPlan to get its actual status
+        db = next(get_db())
+        masterplan = db.query(MasterPlan).filter(
+            MasterPlan.masterplan_id == masterplan_id
+        ).first()
+
         logger.info(
             "MasterPlan created successfully",
             extra={
                 "masterplan_id": str(masterplan_id),
-                "discovery_id": request.discovery_id
+                "discovery_id": request.discovery_id,
+                "status": masterplan.status if masterplan else "unknown"
             }
         )
 
         return CreateMasterPlanResponse(
             masterplan_id=str(masterplan_id),
-            status="completed",
+            status=masterplan.status if masterplan else "draft",
             message="MasterPlan generated successfully"
         )
 
