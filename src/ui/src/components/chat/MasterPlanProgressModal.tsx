@@ -22,6 +22,7 @@ import { GlassCard, GlassButton } from '../design-system';
 import { useTranslation } from '../../i18n';
 import { useMasterPlanProgress } from '../../hooks/useMasterPlanProgress';
 import { useMasterPlanError } from '../../stores/masterplanStore';
+import { wsService } from '../../services/websocket';
 import type { MasterPlanProgressModalProps } from '../../types/masterplan';
 
 // Placeholder imports for components to be created
@@ -80,6 +81,20 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
       document.body.style.overflow = 'unset';
     };
   }, [open, handleEscapeKey]);
+
+  // Join masterplan room to receive real-time events
+  useEffect(() => {
+    if (open && masterplanId) {
+      console.log('[MasterPlanProgressModal] Joining masterplan room:', masterplanId);
+      wsService.send('join_masterplan', { masterplan_id: masterplanId });
+
+      // Return cleanup function to leave room when modal closes
+      return () => {
+        console.log('[MasterPlanProgressModal] Leaving masterplan room:', masterplanId);
+        wsService.send('leave_masterplan', { masterplan_id: masterplanId });
+      };
+    }
+  }, [open, masterplanId]);
 
   // Handle backdrop click
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {

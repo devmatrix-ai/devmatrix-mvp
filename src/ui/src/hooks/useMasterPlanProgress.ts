@@ -89,7 +89,7 @@ export function useMasterPlanProgress(
   sessionId?: string
 ): UseMasterPlanProgressResult {
   // WebSocket hook for event subscription
-  const { latestEvent } = useWebSocket()
+  const { events, latestEvent } = useWebSocket()
 
   // Store access for persistence
   const {
@@ -113,6 +113,7 @@ export function useMasterPlanProgress(
   })
   const startTimeRef = useRef<number | null>(null)
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastProcessedEventRef = useRef<string>('')
 
   /**
    * Update single phase status and timing
@@ -149,9 +150,41 @@ export function useMasterPlanProgress(
    * Handle WebSocket events and update progress state machine
    */
   useEffect(() => {
-    if (!latestEvent) return
+    // Filter events for this session if sessionId is provided
+    // If sessionId is not provided, use all events (useful during generation before masterplanId exists)
+    let eventToProcess = latestEvent
 
-    const event = latestEvent
+    if (sessionId && events.length > 0) {
+      // Find the latest event that matches this session
+      const sessionEvents = events.filter(
+        (e) => e.sessionId === sessionId || e.data?.session_id === sessionId
+      )
+      eventToProcess = sessionEvents[sessionEvents.length - 1] || null
+
+      console.log('[useMasterPlanProgress] Filtering events for session:', {
+        sessionId,
+        totalEvents: events.length,
+        filteredEvents: sessionEvents.length,
+        latestEvent: eventToProcess?.type,
+      })
+    } else if (events.length > 0) {
+      // No sessionId provided - use latest event from any session (during generation)
+      console.log('[useMasterPlanProgress] No sessionId filter, using latest event:', {
+        latestEventType: latestEvent?.type,
+        eventBufferSize: events.length,
+      })
+    }
+
+    if (!eventToProcess) return
+
+    // Create unique key for this event to avoid duplicate processing
+    const eventKey = `${eventToProcess.type}:${eventToProcess.timestamp}`
+    if (eventKey === lastProcessedEventRef.current) {
+      return
+    }
+    lastProcessedEventRef.current = eventKey
+
+    const event = eventToProcess
     const eventData = event.data || {}
 
     // Debounce metrics updates to prevent excessive renders
@@ -357,7 +390,7 @@ export function useMasterPlanProgress(
         clearTimeout(debounceTimerRef.current)
       }
     }
-  }, [latestEvent, updatePhaseStatus, calculateElapsedSeconds])
+  }, [events, sessionId, latestEvent, updatePhaseStatus, calculateElapsedSeconds])
 
   /**
    * Sync local state to Zustand store

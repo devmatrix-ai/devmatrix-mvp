@@ -171,6 +171,44 @@ class WebSocketManager:
                 error=str(e)
             )
 
+    async def emit_to_masterplan(
+        self,
+        masterplan_id: str,
+        event: str,
+        data: Dict[str, Any]
+    ):
+        """
+        Emit event to masterplan room.
+
+        Args:
+            masterplan_id: MasterPlan ID
+            event: Event name
+            data: Event data
+        """
+        if not self.sio:
+            raise RuntimeError(
+                f"Socket.IO server not initialized - cannot emit critical event: {event}. "
+                f"This indicates a configuration error or initialization failure. "
+                f"WebSocket events are essential for real-time progress updates."
+            )
+
+        try:
+            room = f"masterplan_{masterplan_id}"
+            await self.sio.emit(event, data, room=room)
+            logger.debug(
+                f"Emitted event to masterplan",
+                event=event,
+                masterplan_id=masterplan_id,
+                data_keys=list(data.keys())
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to emit event to masterplan",
+                event=event,
+                masterplan_id=masterplan_id,
+                error=str(e)
+            )
+
     # =========================================================================
     # MasterPlan Generation Progress Events
     # =========================================================================
