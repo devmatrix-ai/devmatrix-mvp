@@ -76,7 +76,7 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
     if (open) {
       console.log('[MasterPlanProgressModal] Modal opened with progress state:', {
         isOpen: open,
-        masterplanId,
+        sessionId,
         currentPhase: progressState.currentPhase,
         percentage: progressState.percentage,
         tokensReceived: progressState.tokensReceived,
@@ -84,7 +84,7 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
         isLoading,
       });
     }
-  }, [open, progressState, masterplanId, isLoading]);
+  }, [open, progressState, sessionId, isLoading]);
 
   // Get error from store
   const storeError = useMasterPlanError();
