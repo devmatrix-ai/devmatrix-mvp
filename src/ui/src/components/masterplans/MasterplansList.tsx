@@ -63,7 +63,9 @@ export const MasterplansList: React.FC<MasterplansListProps> = ({ statusFilter }
       }
 
       const data = await response.json()
-      setMasterplans(data.masterplans || [])
+      // Filter out rejected masterplans
+      const filtered = (data.masterplans || []).filter((mp: Masterplan) => mp.status !== 'rejected')
+      setMasterplans(filtered)
     } catch (error) {
       console.error('Error fetching masterplans:', error)
       setError(error instanceof Error ? error.message : 'Failed to load masterplans')
