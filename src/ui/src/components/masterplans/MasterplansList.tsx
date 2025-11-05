@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useContext } from 'react'
+import React, { useState, useEffect } from 'react'
 import { MasterplanCard } from './MasterplanCard'
-import { AuthContext } from '@/contexts/AuthContext'
+import { authService } from '@/services/authService'
 
 interface Masterplan {
   masterplan_id: string
@@ -35,16 +35,21 @@ export const MasterplansList: React.FC<MasterplansListProps> = ({ statusFilter }
   const [error, setError] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedStatus, setSelectedStatus] = useState<string>(statusFilter || 'all')
-  const { token } = useContext(AuthContext)
 
   useEffect(() => {
     fetchMasterplans()
-  }, [selectedStatus, token])
+  }, [selectedStatus])
 
   const fetchMasterplans = async () => {
     try {
       setLoading(true)
       setError(null)
+      const token = authService.getAccessToken()
+
+      if (!token) {
+        throw new Error('Not authenticated. Please log in.')
+      }
+
       const statusParam = selectedStatus !== 'all' ? `?status=${selectedStatus}` : ''
       const response = await fetch(`/api/v1/masterplans${statusParam}`, {
         headers: {
