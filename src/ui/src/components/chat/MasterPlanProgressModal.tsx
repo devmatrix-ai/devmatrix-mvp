@@ -46,18 +46,20 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
   // Extract session ID from event to track generation
   // During Discovery phase: use session_id from discovery_generation_start
   // During MasterPlan phase: use masterplan_id if available, fall back to session_id
+  const eventData = event?.data || {}
   const sessionId = propMasterplanId ||
-                    event?.data?.masterplan_id ||
-                    event?.data?.discovery_id ||
-                    event?.data?.session_id;
+                    eventData.masterplan_id ||
+                    eventData.discovery_id ||
+                    eventData.session_id;
 
   console.log('[MasterPlanProgressModal] Extracted session/masterplan ID:', {
     propMasterplanId,
-    eventMasterplanId: event?.data?.masterplan_id,
-    eventDiscoveryId: event?.data?.discovery_id,
-    eventSessionId: event?.data?.session_id,
+    eventMasterplanId: eventData.masterplan_id,
+    eventDiscoveryId: eventData.discovery_id,
+    eventSessionId: eventData.session_id,
     finalSessionId: sessionId,
     eventType: event?.event,
+    fullEventData: JSON.stringify(eventData),
   });
 
   // Get real-time progress from hook
