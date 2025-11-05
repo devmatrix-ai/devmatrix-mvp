@@ -41,7 +41,8 @@ export function ProfilePage() {
 
   const loadUsageData = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/v1/usage/status', {
+      const apiBaseUrl = import.meta.env.VITE_API_URL || '/api/v1'
+      const response = await fetch(`${apiBaseUrl}/usage/status`, {
         headers: authService.getAuthHeaders(),
       })
       if (response.ok) {
