@@ -52,6 +52,14 @@ export function ChatWindow({
     }
   }, [isLoading, isConnected])
 
+  // Auto-open MasterPlan progress modal when generation starts
+  useEffect(() => {
+    if (masterPlanProgress) {
+      console.log('[ChatWindow] MasterPlan progress detected, opening modal')
+      setShowMasterPlanModal(true)
+    }
+  }, [masterPlanProgress])
+
   const handleSendMessage = (content: string) => {
     sendMessage(content)
   }

@@ -43,7 +43,9 @@ export class WebSocketService {
     }
 
     // Use environment variable or default to backend URL
-    const socketUrl = url || import.meta.env.VITE_WS_URL || 'http://localhost:8000'
+    // In Docker: use devmatrix-api service name
+    // In development: use window.location.origin for proxy through Vite
+    const socketUrl = url || import.meta.env.VITE_WS_URL || window.location.origin
     console.log('🔌 [WebSocketService] Creating NEW socket, connecting to:', socketUrl)
 
     this.socket = io(socketUrl, {
