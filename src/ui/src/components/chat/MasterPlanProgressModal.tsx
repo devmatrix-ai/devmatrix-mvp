@@ -52,6 +52,11 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
                     eventData.discovery_id ||
                     eventData.session_id;
 
+  console.log('[MasterPlanProgressModal] Event received:', {
+    eventType: event?.event,
+    eventData: eventData,
+  });
+
   console.log('[MasterPlanProgressModal] Extracted session/masterplan ID:', {
     propMasterplanId,
     eventMasterplanId: eventData.masterplan_id,

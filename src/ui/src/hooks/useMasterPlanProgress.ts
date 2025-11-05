@@ -155,6 +155,17 @@ export function useMasterPlanProgress(
 
     if (sessionId && events.length > 0) {
       // Find the latest event that matches this session
+      console.log('[useMasterPlanProgress] DEBUG - Filtering events:', {
+        sessionIdToMatch: sessionId,
+        totalEvents: events.length,
+        eventSummary: events.map(e => ({
+          type: e.type,
+          sessionId: e.sessionId,
+          session_id: e.data?.session_id,
+          timestamp: new Date(e.timestamp).toISOString(),
+        }))
+      })
+
       const sessionEvents = events.filter(
         (e) => e.sessionId === sessionId || e.data?.session_id === sessionId
       )
@@ -165,10 +176,12 @@ export function useMasterPlanProgress(
         totalEvents: events.length,
         filteredEvents: sessionEvents.length,
         latestEvent: eventToProcess?.type,
+        matchedEvents: sessionEvents.map(e => e.type),
       })
     } else if (events.length > 0) {
       // No sessionId provided - use latest event from any session (during generation)
       console.log('[useMasterPlanProgress] No sessionId filter, using latest event:', {
+        sessionIdProvided: !!sessionId,
         latestEventType: latestEvent?.type,
         eventBufferSize: events.length,
         latestEventData: latestEvent?.data,
