@@ -40,7 +40,8 @@ export function ConversationHistory({
       setLoading(true)
       setError(null)
 
-      const response = await fetch('http://localhost:8000/api/v1/conversations?limit=50', {
+      const apiBaseUrl = import.meta.env.VITE_API_URL || '/api/v1'
+      const response = await fetch(`${apiBaseUrl}/conversations?limit=50`, {
         headers: authService.getAuthHeaders()
       })
       if (!response.ok) {
@@ -74,7 +75,8 @@ export function ConversationHistory({
     }
 
     try {
-      const response = await fetch(`http://localhost:8000/api/v1/conversations/${conversationId}`, {
+      const apiBaseUrl = import.meta.env.VITE_API_URL || '/api/v1'
+      const response = await fetch(`${apiBaseUrl}/conversations/${conversationId}`, {
         method: 'DELETE',
         headers: authService.getAuthHeaders()
       })

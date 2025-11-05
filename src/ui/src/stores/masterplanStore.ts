@@ -224,7 +224,7 @@ export const useMasterPlanStore = create<MasterPlanStoreState>(
 
   reset: () => {
     set(initialState)
-  },
+  }
     }),
     {
       name: 'masterplan-store',
@@ -233,7 +233,7 @@ export const useMasterPlanStore = create<MasterPlanStoreState>(
         isGenerating: state.isGenerating,
         currentSessionId: state.currentSessionId,
       }),
-    }
+    },
   )
 )
 
