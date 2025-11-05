@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useContext } from 'react'
 import { MasterplanCard } from './MasterplanCard'
+import { AuthContext } from '@/contexts/AuthContext'
 
 interface Masterplan {
   masterplan_id: string
@@ -31,22 +32,36 @@ interface MasterplansListProps {
 export const MasterplansList: React.FC<MasterplansListProps> = ({ statusFilter }) => {
   const [masterplans, setMasterplans] = useState<Masterplan[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedStatus, setSelectedStatus] = useState<string>(statusFilter || 'all')
+  const { token } = useContext(AuthContext)
 
   useEffect(() => {
     fetchMasterplans()
-  }, [selectedStatus])
+  }, [selectedStatus, token])
 
   const fetchMasterplans = async () => {
     try {
       setLoading(true)
+      setError(null)
       const statusParam = selectedStatus !== 'all' ? `?status=${selectedStatus}` : ''
-      const response = await fetch(`/api/v1/masterplans${statusParam}`)
+      const response = await fetch(`/api/v1/masterplans${statusParam}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      })
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch masterplans: ${response.statusText}`)
+      }
+
       const data = await response.json()
       setMasterplans(data.masterplans || [])
     } catch (error) {
       console.error('Error fetching masterplans:', error)
+      setError(error instanceof Error ? error.message : 'Failed to load masterplans')
     } finally {
       setLoading(false)
     }
