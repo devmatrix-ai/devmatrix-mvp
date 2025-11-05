@@ -150,8 +150,17 @@ export class WebSocketService {
 
   emit(event: string, data?: any): void {
     const eventListeners = this.listeners.get(event)
+    console.log('[wsService] emit() called:', {
+      event,
+      hasListeners: !!eventListeners,
+      listenerCount: eventListeners?.size || 0,
+      allRegisteredEvents: Array.from(this.listeners.keys())
+    })
     if (eventListeners) {
+      console.log(`[wsService] 🔔 Emitting ${event} to ${eventListeners.size} listeners`)
       eventListeners.forEach(callback => callback(data))
+    } else {
+      console.warn(`[wsService] ⚠️ No listeners registered for event: ${event}`)
     }
   }
 
