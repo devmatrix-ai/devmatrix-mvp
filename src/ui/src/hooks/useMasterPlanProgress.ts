@@ -172,10 +172,14 @@ export function useMasterPlanProgress(
       console.log('[useMasterPlanProgress] No sessionId filter, using latest event:', {
         latestEventType: latestEvent?.type,
         eventBufferSize: events.length,
+        latestEventData: latestEvent?.data,
       })
     }
 
-    if (!eventToProcess) return
+    if (!eventToProcess) {
+      console.log('[useMasterPlanProgress] No event to process, skipping update')
+      return
+    }
 
     // Create unique key for this event to avoid duplicate processing
     const eventKey = `${eventToProcess.type}:${eventToProcess.timestamp}`
@@ -193,6 +197,12 @@ export function useMasterPlanProgress(
     }
 
     debounceTimerRef.current = setTimeout(() => {
+      console.log('[useMasterPlanProgress] Processing event:', {
+        eventType: event.type,
+        eventData: event.data,
+        timestamp: new Date(event.timestamp).toISOString(),
+      })
+
       // Handle different event types
       switch (event.type) {
         case 'masterplan_generation_start': {
@@ -381,8 +391,11 @@ export function useMasterPlanProgress(
 
         default:
           // Other events are handled implicitly
+          console.log('[useMasterPlanProgress] Unknown event type, skipping:', event.type)
           break
       }
+
+      console.log('[useMasterPlanProgress] After processing, progress state updated')
     }, 100) // Debounce by 100ms
 
     return () => {
