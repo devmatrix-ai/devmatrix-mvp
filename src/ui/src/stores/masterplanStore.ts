@@ -110,7 +110,7 @@ const initialState = {
  * const currentPhase = useMasterPlanStore((state) => state.currentPhase);
  * ```
  */
-export const useMasterPlanStore = create<MasterPlanStoreState>(
+export const useMasterPlanStore = create<MasterPlanStoreState, [["zustand/persist", { isGenerating: boolean; currentSessionId: string | null }]]>(
   persist(
     (set) => ({
       ...initialState,

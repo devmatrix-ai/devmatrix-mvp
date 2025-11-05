@@ -42,13 +42,10 @@ export function useChat(options: UseChatOptions = {}) {
   const [progress, setProgress] = useState<ProgressEvent | null>(null)
   const [masterPlanProgress, setMasterPlanProgress] = useState<ProgressEvent | null>(null)
 
-  // Register event listeners (only once when connected)
+  // Register event listeners (always, regardless of connection state)
   useEffect(() => {
-    if (!isConnected) {
-      console.warn('⚠️ [useChat] isConnected is false, skipping listener registration')
-      return
-    }
-    console.log('✅ [useChat] isConnected is true, registering listeners...')
+    console.log('✅ [useChat] Registering 16 masterplan listeners... (isConnected=' + isConnected + ')')
+    console.log('[useChat] Current masterPlanProgress state:', masterPlanProgress)
 
     const cleanup1 = on('chat_joined', (data: any) => {
       console.log('✅ [useChat] chat_joined event received:', data)
@@ -161,14 +158,14 @@ export function useChat(options: UseChatOptions = {}) {
 
     // Discovery Progress Events (lines 118-146)
     const cleanup4 = on('discovery_generation_start', (data: any) => {
-      console.log('🔍 [WebSocket] discovery_generation_start received:', data)
-      console.log('🔍 [WebSocket] Setting masterPlanProgress state...')
+      console.log('🔍 [useChat::discovery_generation_start] LISTENER FIRED!', data)
+      console.log('🔍 [useChat] Setting masterPlanProgress state...')
       setMasterPlanProgress({ event: 'discovery_generation_start', data })
 
       // Track generation start in store
       useMasterPlanStore.getState().startGeneration()
       useMasterPlanStore.getState().setCurrentSession(data.session_id)
-      console.log('🔍 [WebSocket] masterPlanProgress state set complete')
+      console.log('🔍 [useChat] masterPlanProgress state set complete')
     })
 
     const cleanup5 = on('discovery_tokens_progress', (data: any) => {
@@ -258,8 +255,8 @@ export function useChat(options: UseChatOptions = {}) {
       cleanup15()
       cleanup16()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, on])
+    // Register listeners only once on mount, don't re-register if isConnected changes
+  }, [])
 
   // Join chat room when connection is established
   useEffect(() => {
