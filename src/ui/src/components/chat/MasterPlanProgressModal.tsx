@@ -36,11 +36,22 @@ const FinalSummary = React.lazy(() => import('./FinalSummary'));
  * MasterPlanProgressModal component
  */
 const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
+  event,
   open,
   onClose,
-  masterplanId,
+  masterplanId: propMasterplanId,
 }) => {
   const { t } = useTranslation();
+
+  // Extract masterplan ID from event data or use prop fallback
+  const masterplanId = propMasterplanId || event?.data?.masterplan_id || event?.data?.discovery_id;
+
+  console.log('[MasterPlanProgressModal] Extracted IDs:', {
+    propMasterplanId,
+    eventMasterplanId: event?.data?.masterplan_id,
+    eventDiscoveryId: event?.data?.discovery_id,
+    finalMasterplanId: masterplanId,
+  });
 
   // Get real-time progress from hook
   const {
