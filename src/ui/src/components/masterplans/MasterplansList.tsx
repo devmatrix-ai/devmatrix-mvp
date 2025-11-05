@@ -151,6 +151,14 @@ export const MasterplansList: React.FC<MasterplansListProps> = ({ statusFilter }
         </div>
       </div>
 
+      {/* Error State */}
+      {error && (
+        <div className="bg-red-900/20 border border-red-500/50 rounded-lg p-4 text-red-400">
+          <p className="font-semibold">Error loading masterplans</p>
+          <p className="text-sm mt-1">{error}</p>
+        </div>
+      )}
+
       {/* Loading State */}
       {loading && (
         <div className="flex items-center justify-center py-20">
