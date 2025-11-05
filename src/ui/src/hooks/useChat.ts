@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useWebSocketContext } from '../providers/WebSocketProvider'
+import { useMasterPlanStore } from '../stores/masterplanStore'
 
 export interface ChatMessage {
   message_id?: string
@@ -163,6 +164,10 @@ export function useChat(options: UseChatOptions = {}) {
       console.log('🔍 [WebSocket] discovery_generation_start received:', data)
       console.log('🔍 [WebSocket] Setting masterPlanProgress state...')
       setMasterPlanProgress({ event: 'discovery_generation_start', data })
+
+      // Track generation start in store
+      useMasterPlanStore.getState().startGeneration()
+      useMasterPlanStore.getState().setCurrentSession(data.session_id)
       console.log('🔍 [WebSocket] masterPlanProgress state set complete')
     })
 
@@ -225,6 +230,10 @@ export function useChat(options: UseChatOptions = {}) {
     const cleanup16 = on('masterplan_generation_complete', (data: any) => {
       console.log('🎉 [WebSocket] masterplan_generation_complete received:', data)
       setMasterPlanProgress({ event: 'masterplan_generation_complete', data })
+
+      // Mark generation as complete in store
+      useMasterPlanStore.getState().endGeneration()
+
       // Hide progress after 3 seconds
       setTimeout(() => setMasterPlanProgress(null), 3000)
     })

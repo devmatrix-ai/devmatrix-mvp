@@ -16,6 +16,7 @@
  */
 
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import type { ProgressState, PhaseStatus, PhaseStatusType, MasterPlanProgressEvent } from '../types/masterplan'
 
 /**
@@ -24,7 +25,9 @@ import type { ProgressState, PhaseStatus, PhaseStatusType, MasterPlanProgressEve
 export interface MasterPlanStoreState {
   // Current generation state
   currentMasterPlanId: string | null
+  currentSessionId: string | null
   generationProgress: ProgressState | null
+  isGenerating: boolean
 
   // Tracked phases/milestones
   phases: PhaseStatus[]
@@ -53,6 +56,9 @@ export interface MasterPlanStoreState {
 
   // State actions
   setCurrentMasterPlan: (id: string) => void
+  setCurrentSession: (sessionId: string) => void
+  startGeneration: () => void
+  endGeneration: () => void
   updateProgress: (progress: Partial<ProgressState>) => void
   setPhases: (phases: PhaseStatus[]) => void
   updatePhaseStatus: (phaseName: string, status: PhaseStatusType) => void
@@ -69,7 +75,9 @@ export interface MasterPlanStoreState {
  */
 const initialState = {
   currentMasterPlanId: null,
+  currentSessionId: null,
   generationProgress: null,
+  isGenerating: false,
   phases: [],
   currentPhase: null,
   metrics: {
@@ -102,13 +110,37 @@ const initialState = {
  * const currentPhase = useMasterPlanStore((state) => state.currentPhase);
  * ```
  */
-export const useMasterPlanStore = create<MasterPlanStoreState>((set) => ({
-  ...initialState,
+export const useMasterPlanStore = create<MasterPlanStoreState>(
+  persist(
+    (set) => ({
+      ...initialState,
 
   setCurrentMasterPlan: (id: string) => {
     set({
       currentMasterPlanId: id,
       sessionStartTime: Date.now(),
+      lastUpdateTime: Date.now(),
+    })
+  },
+
+  setCurrentSession: (sessionId: string) => {
+    set({
+      currentSessionId: sessionId,
+      lastUpdateTime: Date.now(),
+    })
+  },
+
+  startGeneration: () => {
+    set({
+      isGenerating: true,
+      sessionStartTime: Date.now(),
+      lastUpdateTime: Date.now(),
+    })
+  },
+
+  endGeneration: () => {
+    set({
+      isGenerating: false,
       lastUpdateTime: Date.now(),
     })
   },
@@ -193,7 +225,17 @@ export const useMasterPlanStore = create<MasterPlanStoreState>((set) => ({
   reset: () => {
     set(initialState)
   },
-}))
+    }),
+    {
+      name: 'masterplan-store',
+      // Only persist generation state across page reloads
+      partialize: (state) => ({
+        isGenerating: state.isGenerating,
+        currentSessionId: state.currentSessionId,
+      }),
+    }
+  )
+)
 
 /**
  * Utility selector hooks for optimized re-rendering

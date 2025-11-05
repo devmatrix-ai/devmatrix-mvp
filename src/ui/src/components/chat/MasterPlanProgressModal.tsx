@@ -43,14 +43,21 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
 }) => {
   const { t } = useTranslation();
 
-  // Extract masterplan ID from event data or use prop fallback
-  const masterplanId = propMasterplanId || event?.data?.masterplan_id || event?.data?.discovery_id;
+  // Extract session ID from event to track generation
+  // During Discovery phase: use session_id from discovery_generation_start
+  // During MasterPlan phase: use masterplan_id if available, fall back to session_id
+  const sessionId = propMasterplanId ||
+                    event?.data?.masterplan_id ||
+                    event?.data?.discovery_id ||
+                    event?.data?.session_id;
 
-  console.log('[MasterPlanProgressModal] Extracted IDs:', {
+  console.log('[MasterPlanProgressModal] Extracted session/masterplan ID:', {
     propMasterplanId,
     eventMasterplanId: event?.data?.masterplan_id,
     eventDiscoveryId: event?.data?.discovery_id,
-    finalMasterplanId: masterplanId,
+    eventSessionId: event?.data?.session_id,
+    finalSessionId: sessionId,
+    eventType: event?.event,
   });
 
   // Get real-time progress from hook
@@ -60,7 +67,7 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
     handleRetry,
     clearError,
     isLoading,
-  } = useMasterPlanProgress(masterplanId);
+  } = useMasterPlanProgress(sessionId);
 
   // Debug logging
   React.useEffect(() => {

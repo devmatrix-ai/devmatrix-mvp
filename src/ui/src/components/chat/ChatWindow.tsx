@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState } from 'react'
 import { useChat } from '../../hooks/useChat'
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts'
+import { useMasterPlanStore } from '../../stores/masterplanStore'
 import { MessageList } from './MessageList'
 import { ChatInput } from './ChatInput'
 import { ProgressIndicator } from './ProgressIndicator'
@@ -40,6 +41,21 @@ export function ChatWindow({
   const [showHistory, setShowHistory] = useState(false)
   const [showMasterPlanModal, setShowMasterPlanModal] = useState(false)
 
+  // Check if generation is in progress on page load
+  const isGenerating = useMasterPlanStore((state) => state.isGenerating)
+  const currentSessionId = useMasterPlanStore((state) => state.currentSessionId)
+
+  // Auto-open modal if generation was in progress before page reload
+  useEffect(() => {
+    if (isGenerating && currentSessionId) {
+      console.log('[ChatWindow] Generation in progress detected on page load, opening modal', {
+        isGenerating,
+        currentSessionId,
+      })
+      setShowMasterPlanModal(true)
+    }
+  }, [isGenerating, currentSessionId])
+
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -55,7 +71,11 @@ export function ChatWindow({
   // Auto-open MasterPlan progress modal when generation starts
   useEffect(() => {
     if (masterPlanProgress) {
-      console.log('[ChatWindow] MasterPlan progress detected, opening modal')
+      console.log('[ChatWindow] MasterPlan progress detected, opening modal', {
+        event: masterPlanProgress.event,
+        dataKeys: Object.keys(masterPlanProgress.data || {}),
+        fullData: JSON.stringify(masterPlanProgress.data),
+      })
       setShowMasterPlanModal(true)
     }
   }, [masterPlanProgress])
