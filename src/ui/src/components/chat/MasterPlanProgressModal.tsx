@@ -119,17 +119,17 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
 
   // Join masterplan room to receive real-time events
   useEffect(() => {
-    if (open && masterplanId) {
-      console.log('[MasterPlanProgressModal] Joining masterplan room:', masterplanId);
-      wsService.send('join_masterplan', { masterplan_id: masterplanId });
+    if (open && sessionId) {
+      console.log('[MasterPlanProgressModal] Joining masterplan room:', sessionId);
+      wsService.send('join_masterplan', { masterplan_id: sessionId });
 
       // Return cleanup function to leave room when modal closes
       return () => {
-        console.log('[MasterPlanProgressModal] Leaving masterplan room:', masterplanId);
-        wsService.send('leave_masterplan', { masterplan_id: masterplanId });
+        console.log('[MasterPlanProgressModal] Leaving masterplan room:', sessionId);
+        wsService.send('leave_masterplan', { masterplan_id: sessionId });
       };
     }
-  }, [open, masterplanId]);
+  }, [open, sessionId]);
 
   // Handle backdrop click
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
