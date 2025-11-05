@@ -163,16 +163,15 @@ export function useMasterPlanProgress(
       // Handle different event types
       switch (event.type) {
         case 'masterplan_generation_start': {
-          startTimeRef.current = Date.now()
-          updatePhaseStatus('discovery', 'in_progress', startTimeRef.current)
-
+          // Continue progress from discovery phase, don't reset
           setProgressState((prev) => ({
             ...prev,
-            currentPhase: 'Generating',
-            percentage: 5,
-            startTime: new Date(),
-            cost: eventData.estimated_cost || 0,
-            estimatedDurationSeconds: eventData.estimated_duration || 600,
+            currentPhase: 'MasterPlan Generation',
+            percentage: Math.max(prev.percentage, 30), // Continue from at least 30%
+            cost: eventData.estimated_cost || prev.cost,
+            estimatedDurationSeconds: eventData.estimated_duration_seconds || 600,
+            estimatedTotalTokens: eventData.estimated_tokens || prev.estimatedTotalTokens,
+            elapsedSeconds: calculateElapsedSeconds(),
           }))
           break
         }
@@ -308,13 +307,41 @@ export function useMasterPlanProgress(
           break
         }
 
-        case 'discovery_generation_complete': {
-          updatePhaseStatus('discovery', 'completed', undefined, Date.now())
+        case 'discovery_parsing_complete': {
           setProgressState((prev) => ({
             ...prev,
-            currentPhase: 'Complete',
-            percentage: 100,
-            isComplete: true,
+            currentPhase: 'Parsing Discovery',
+            percentage: 15,
+            boundedContexts: eventData.total_bounded_contexts || 0,
+            aggregates: eventData.total_aggregates || 0,
+            entities: eventData.total_entities || 0,
+            elapsedSeconds: calculateElapsedSeconds(),
+          }))
+          break
+        }
+
+        case 'discovery_saving_start': {
+          setProgressState((prev) => ({
+            ...prev,
+            currentPhase: 'Saving Discovery',
+            percentage: 20,
+            entities: eventData.total_entities || prev.entities,
+            elapsedSeconds: calculateElapsedSeconds(),
+          }))
+          break
+        }
+
+        case 'discovery_generation_complete': {
+          updatePhaseStatus('discovery', 'completed', undefined, Date.now())
+          // Don't mark as complete yet - MasterPlan generation still pending
+          setProgressState((prev) => ({
+            ...prev,
+            currentPhase: 'Discovery Complete',
+            percentage: 25, // Discovery is ~25% of total progress
+            boundedContexts: eventData.total_bounded_contexts || 0,
+            aggregates: eventData.total_aggregates || 0,
+            entities: eventData.total_entities || 0,
+            elapsedSeconds: calculateElapsedSeconds(),
           }))
           break
         }
