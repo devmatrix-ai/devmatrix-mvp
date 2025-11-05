@@ -112,7 +112,6 @@ export function useMasterPlanProgress(
     saving: { start: 0 },
   })
   const startTimeRef = useRef<number | null>(null)
-  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastProcessedEventRef = useRef<string>('')
 
   /**
@@ -191,20 +190,15 @@ export function useMasterPlanProgress(
     const event = eventToProcess
     const eventData = event.data || {}
 
-    // Debounce metrics updates to prevent excessive renders
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current)
-    }
+    // Process event immediately without debounce to avoid race conditions
+    console.log('[useMasterPlanProgress] Processing event:', {
+      eventType: event.type,
+      eventData: event.data,
+      timestamp: new Date(event.timestamp).toISOString(),
+    })
 
-    debounceTimerRef.current = setTimeout(() => {
-      console.log('[useMasterPlanProgress] Processing event:', {
-        eventType: event.type,
-        eventData: event.data,
-        timestamp: new Date(event.timestamp).toISOString(),
-      })
-
-      // Handle different event types
-      switch (event.type) {
+    // Handle different event types
+    switch (event.type) {
         case 'masterplan_generation_start': {
           // Continue progress from discovery phase, don't reset
           setProgressState((prev) => ({
@@ -395,14 +389,7 @@ export function useMasterPlanProgress(
           break
       }
 
-      console.log('[useMasterPlanProgress] After processing, progress state updated')
-    }, 100) // Debounce by 100ms
-
-    return () => {
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current)
-      }
-    }
+      console.log('[useMasterPlanProgress] Event processing complete')
   }, [events, sessionId, latestEvent, updatePhaseStatus, calculateElapsedSeconds])
 
   /**
