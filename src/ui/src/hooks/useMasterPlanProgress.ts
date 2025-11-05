@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useCallback, useRef, useState } from 'react'
-import { useWebSocket } from './useWebSocket'
+import { useWebSocketContext } from '../providers/WebSocketProvider'
 import { useMasterPlanStore } from '../stores/masterplanStore'
 import type {
   ProgressState,
@@ -88,8 +88,8 @@ const PHASES_DEFINITION: PhaseStatus[] = [
 export function useMasterPlanProgress(
   sessionId?: string
 ): UseMasterPlanProgressResult {
-  // WebSocket hook for event subscription
-  const { events, latestEvent } = useWebSocket()
+  // WebSocket hook for event subscription (singleton from provider)
+  const { events, latestEvent } = useWebSocketContext()
 
   // Store access for persistence
   const {

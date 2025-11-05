@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useWebSocket } from './useWebSocket'
+import { useWebSocketContext } from '../providers/WebSocketProvider'
 
 export interface ChatMessage {
   message_id?: string
@@ -28,7 +28,7 @@ const getConversationKey = (workspaceId?: string) => {
 }
 
 export function useChat(options: UseChatOptions = {}) {
-  const { isConnected, send, joinChat, on } = useWebSocket()
+  const { isConnected, send, joinChat, on } = useWebSocketContext()
 
   // Try to restore conversation_id from localStorage
   const savedConversationId = options.conversationId ||
