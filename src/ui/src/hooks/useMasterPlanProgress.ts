@@ -167,8 +167,10 @@ export function useMasterPlanProgress(
         }))
       })
 
+      // Filter events by session_id - sessionId is always the discovery session_id
+      // All events (both discovery and masterplan) have session_id field
       const sessionEvents = events.filter(
-        (e) => e.sessionId === sessionId || e.data?.session_id === sessionId || e.data?.masterplan_id === sessionId
+        (e) => e.sessionId === sessionId || e.data?.session_id === sessionId
       )
       eventToProcess = sessionEvents[sessionEvents.length - 1] || null
 
