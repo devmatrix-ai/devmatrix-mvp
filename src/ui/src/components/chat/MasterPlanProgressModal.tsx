@@ -47,26 +47,21 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
   // Priority: propMasterplanId > masterplan_id > session_id > discovery_id
   const eventData = event?.data || {}
 
-  // Use state to allow sessionId to update when masterplan_id arrives
+  // Use state to initialize sessionId from discovery session_id or prop
+  // CRITICAL: sessionId must NEVER change to masterplan_id - it must remain constant
+  // throughout both discovery and masterplan phases for event filtering to work correctly
   const [sessionId, setSessionId] = useState<string | undefined>(propMasterplanId)
 
-  // Update sessionId when a better identifier arrives
+  // Initialize sessionId from discovery_session_id if not already set
   useEffect(() => {
-    const newSessionId = propMasterplanId ||
-                         eventData?.masterplan_id ||
-                         eventData?.session_id ||
-                         eventData?.discovery_id
-
-    // Only update if we have a new value that's different
-    if (newSessionId && newSessionId !== sessionId) {
-      console.log('[MasterPlanProgressModal] Updating sessionId:', {
-        from: sessionId,
-        to: newSessionId,
-        reason: newSessionId === eventData?.masterplan_id ? 'masterplan_id_arrived' : 'other'
+    // Only set sessionId if we don't have one yet (first initialization only)
+    if (!sessionId && eventData?.session_id) {
+      console.log('[MasterPlanProgressModal] Initializing sessionId from discovery event:', {
+        sessionId: eventData.session_id
       })
-      setSessionId(newSessionId)
+      setSessionId(eventData.session_id)
     }
-  }, [propMasterplanId, eventData?.masterplan_id, eventData?.session_id, eventData?.discovery_id, sessionId])
+  }, [eventData?.session_id, sessionId])
 
   console.log('[MasterPlanProgressModal] Current sessionId:', {
     sessionId,
