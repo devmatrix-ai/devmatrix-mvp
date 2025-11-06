@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useWebSocketContext } from '../providers/WebSocketProvider'
 import { useMasterPlanStore } from '../stores/masterplanStore'
+import { wsService } from '../services/websocket'
 
 export interface ChatMessage {
   message_id?: string
@@ -159,6 +160,15 @@ export function useChat(options: UseChatOptions = {}) {
     // Discovery Progress Events (lines 118-146)
     const cleanup4 = on('discovery_generation_start', (data: any) => {
       console.log('🔍 [useChat::discovery_generation_start] LISTENER FIRED!', data)
+
+      // 🚀 CRITICAL: Join discovery room IMMEDIATELY before anything else
+      // This must happen before the modal renders to ensure we receive all progress events
+      const sessionId = data.session_id
+      if (sessionId) {
+        console.log('🔍 [useChat] Joining discovery room immediately:', sessionId)
+        wsService.send('join_discovery', { session_id: sessionId })
+      }
+
       console.log('🔍 [useChat] Setting masterPlanProgress state...')
       setMasterPlanProgress({ event: 'discovery_generation_start', data })
 
@@ -231,8 +241,8 @@ export function useChat(options: UseChatOptions = {}) {
       // Mark generation as complete in store
       useMasterPlanStore.getState().endGeneration()
 
-      // Hide progress after 3 seconds
-      setTimeout(() => setMasterPlanProgress(null), 3000)
+      // Don't auto-close modal - let user close manually by clicking X or Escape
+      // This allows user to review all MasterPlan generation details before closing
     })
 
     console.log('✅ [useChat] All 16 event listeners registered successfully!')
@@ -282,10 +292,13 @@ export function useChat(options: UseChatOptions = {}) {
   }, [isConnected, isJoined, conversationId, options.workspaceId, joinChat])
 
   // Reset join status when connection is lost
+  // NOTE: Do NOT clear masterPlanProgress here - the generation continues on the backend
+  // and the modal should remain visible to show progress updates
   useEffect(() => {
     if (!isConnected && isJoined) {
       console.log('⚠️ Connection lost - will rejoin when reconnected')
       setIsJoined(false)
+      // Don't clear masterPlanProgress - generation continues in backend
     }
   }, [isConnected, isJoined])
 
