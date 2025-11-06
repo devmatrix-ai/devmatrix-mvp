@@ -162,12 +162,13 @@ export function useMasterPlanProgress(
           type: e.type,
           sessionId: e.sessionId,
           session_id: e.data?.session_id,
+          masterplan_id: e.data?.masterplan_id,
           timestamp: new Date(e.timestamp).toISOString(),
         }))
       })
 
       const sessionEvents = events.filter(
-        (e) => e.sessionId === sessionId || e.data?.session_id === sessionId
+        (e) => e.sessionId === sessionId || e.data?.session_id === sessionId || e.data?.masterplan_id === sessionId
       )
       eventToProcess = sessionEvents[sessionEvents.length - 1] || null
 
