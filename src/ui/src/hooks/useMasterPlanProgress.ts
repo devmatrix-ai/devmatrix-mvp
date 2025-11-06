@@ -214,11 +214,12 @@ export function useMasterPlanProgress(
     switch (event.type) {
         case 'masterplan_generation_start': {
           // Continue progress from discovery phase, don't reset
+          console.log('[useMasterPlanProgress] masterplan_generation_start eventData:', eventData)
           setProgressState((prev) => ({
             ...prev,
             currentPhase: 'MasterPlan Generation',
             percentage: Math.max(prev.percentage, 30), // Continue from at least 30%
-            cost: eventData.estimated_cost || prev.cost,
+            cost: eventData.estimated_cost_usd || eventData.estimated_cost || prev.cost,
             estimatedDurationSeconds: eventData.estimated_duration_seconds || 600,
             estimatedTotalTokens: eventData.estimated_tokens || prev.estimatedTotalTokens,
             elapsedSeconds: calculateElapsedSeconds(),
@@ -242,15 +243,23 @@ export function useMasterPlanProgress(
         }
 
         case 'masterplan_entity_discovered': {
-          const entityType = eventData.entity_type?.toLowerCase() || 'task'
+          const entityType = (eventData.entity_type || eventData.type)
+            ?.toLowerCase()
+            ?.replace(/([a-z])([A-Z])/g, '$1_$2')
+            ?.toLowerCase() || 'task'
+          console.log('[useMasterPlanProgress] masterplan_entity_discovered:', {
+            rawData: eventData,
+            entityType,
+            count: eventData.count,
+          })
 
           setProgressState((prev) => {
             if (entityType === 'phase') {
-              return { ...prev, phasesFound: prev.phasesFound + 1 }
+              return { ...prev, phasesFound: eventData.count || prev.phasesFound + 1 }
             } else if (entityType === 'milestone') {
-              return { ...prev, milestonesFound: prev.milestonesFound + 1 }
+              return { ...prev, milestonesFound: eventData.count || prev.milestonesFound + 1 }
             } else {
-              return { ...prev, tasksFound: prev.tasksFound + 1 }
+              return { ...prev, tasksFound: eventData.count || prev.tasksFound + 1 }
             }
           })
           break
@@ -325,6 +334,9 @@ export function useMasterPlanProgress(
             isSaving: false,
             isComplete: true,
             elapsedSeconds: calculateElapsedSeconds(),
+            phasesFound: eventData.total_phases || prev.phasesFound,
+            milestonesFound: eventData.total_milestones || prev.milestonesFound,
+            tasksFound: eventData.total_tasks || prev.tasksFound,
           }))
           break
         }
@@ -334,10 +346,14 @@ export function useMasterPlanProgress(
             startTimeRef.current = Date.now()
           }
           updatePhaseStatus('discovery', 'in_progress', startTimeRef.current)
+          console.log('[useMasterPlanProgress] discovery_generation_start eventData:', eventData)
           setProgressState((prev) => ({
             ...prev,
             currentPhase: 'Generating',
             startTime: new Date(),
+            estimatedTotalTokens: eventData.estimated_tokens || 8000,
+            estimatedDurationSeconds: eventData.estimated_duration_seconds || 30,
+            cost: eventData.estimated_cost_usd || 0.09,
           }))
           break
         }
@@ -354,6 +370,34 @@ export function useMasterPlanProgress(
             percentage,
             elapsedSeconds: calculateElapsedSeconds(),
           }))
+          break
+        }
+
+        case 'discovery_entity_discovered': {
+          const entityType = (eventData.entity_type || eventData.type)
+            ?.toLowerCase()
+            ?.replace(/([a-z])([A-Z])/g, '$1_$2')
+            ?.toLowerCase() || 'entity'
+          const count = eventData.count || 1
+
+          console.log('[useMasterPlanProgress] discovery_entity_discovered:', {
+            entityType,
+            name: eventData.name,
+            count,
+          })
+
+          setProgressState((prev) => {
+            if (entityType === 'domain') {
+              return { ...prev, currentPhase: `Found domain: ${eventData.name || 'Unknown'}` }
+            } else if (entityType === 'bounded_context' || entityType === 'context') {
+              return { ...prev, boundedContexts: Math.max(prev.boundedContexts, count) }
+            } else if (entityType === 'aggregate') {
+              return { ...prev, aggregates: Math.max(prev.aggregates, count) }
+            } else if (entityType === 'entity') {
+              return { ...prev, entities: Math.max(prev.entities, count) }
+            }
+            return prev
+          })
           break
         }
 

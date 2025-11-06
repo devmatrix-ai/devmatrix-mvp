@@ -16,7 +16,7 @@
  * ```
  */
 
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { FiX } from 'react-icons/fi';
 import { GlassCard, GlassButton } from '../design-system';
 import { useTranslation } from '../../i18n';
@@ -43,31 +43,63 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
 }) => {
   const { t } = useTranslation();
 
-  // Extract session ID from event to track generation
-  // During Discovery phase: use session_id from discovery_generation_start
-  // During MasterPlan phase: use masterplan_id if available, fall back to session_id
+  // Extract session ID from event with fallback chain
+  // Priority: propMasterplanId > masterplan_id > session_id > discovery_id
   const eventData = event?.data || {}
-  const sessionId = propMasterplanId ||
-                    eventData.masterplan_id ||
-                    eventData.discovery_id ||
-                    eventData.session_id;
 
-  console.log('[MasterPlanProgressModal] Event received:', {
-    eventType: event?.event,
-    eventData: eventData,
-  });
+  // Use state to allow sessionId to update when masterplan_id arrives
+  const [sessionId, setSessionId] = useState<string | undefined>(propMasterplanId)
 
-  console.log('[MasterPlanProgressModal] Extracted session/masterplan ID:', {
+  // Update sessionId when a better identifier arrives
+  useEffect(() => {
+    const newSessionId = propMasterplanId ||
+                         eventData?.masterplan_id ||
+                         eventData?.session_id ||
+                         eventData?.discovery_id
+
+    // Only update if we have a new value that's different
+    if (newSessionId && newSessionId !== sessionId) {
+      console.log('[MasterPlanProgressModal] Updating sessionId:', {
+        from: sessionId,
+        to: newSessionId,
+        reason: newSessionId === eventData?.masterplan_id ? 'masterplan_id_arrived' : 'other'
+      })
+      setSessionId(newSessionId)
+    }
+  }, [propMasterplanId, eventData?.masterplan_id, eventData?.session_id, eventData?.discovery_id, sessionId])
+
+  console.log('[MasterPlanProgressModal] Current sessionId:', {
+    sessionId,
     propMasterplanId,
     eventMasterplanId: eventData.masterplan_id,
-    eventDiscoveryId: eventData.discovery_id,
     eventSessionId: eventData.session_id,
-    finalSessionId: sessionId,
-    eventType: event?.event,
-    fullEventData: JSON.stringify(eventData),
+    eventDiscoveryId: eventData.discovery_id,
   });
 
+  // Track joined rooms to avoid duplicate JOIN/LEAVE calls
+  const joinedRoomsRef = useRef<Set<string>>(new Set());
+
+  // Backup: Join rooms if not already joined (useChat should have done this already)
+  // This is a safety measure in case the modal is opened without going through the normal flow
+  useEffect(() => {
+    if (open && sessionId) {
+      if (!joinedRoomsRef.current.has(sessionId)) {
+        console.log('[MasterPlanProgressModal] Backup join for rooms:', sessionId);
+        wsService.send('join_discovery', { session_id: sessionId });
+        wsService.send('join_masterplan', { masterplan_id: sessionId });
+        joinedRoomsRef.current.add(sessionId);
+      }
+    } else if (!open && sessionId) {
+      // Modal is closing, leave all rooms
+      console.log('[MasterPlanProgressModal] Modal closed, leaving rooms:', sessionId);
+      wsService.send('leave_discovery', { session_id: sessionId });
+      wsService.send('leave_masterplan', { masterplan_id: sessionId });
+      joinedRoomsRef.current.delete(sessionId);
+    }
+  }, [open, sessionId]);
+
   // Get real-time progress from hook
+  // By this point, useChat should have already joined the discovery room
   const {
     state: progressState,
     phases,
@@ -121,20 +153,6 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
       document.body.style.overflow = 'unset';
     };
   }, [open, handleEscapeKey]);
-
-  // Join masterplan room to receive real-time events
-  useEffect(() => {
-    if (open && sessionId) {
-      console.log('[MasterPlanProgressModal] Joining masterplan room:', sessionId);
-      wsService.send('join_masterplan', { masterplan_id: sessionId });
-
-      // Return cleanup function to leave room when modal closes
-      return () => {
-        console.log('[MasterPlanProgressModal] Leaving masterplan room:', sessionId);
-        wsService.send('leave_masterplan', { masterplan_id: sessionId });
-      };
-    }
-  }, [open, sessionId]);
 
   // Handle backdrop click
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
