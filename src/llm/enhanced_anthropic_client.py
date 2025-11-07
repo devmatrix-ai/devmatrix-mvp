@@ -66,18 +66,32 @@ def _perform_streaming_sync(anthropic_client, model: str, max_tokens: int, tempe
     checkpoint_intervals = 500
     last_checkpoint_pos = 0
     chunk_count = 0
+    stream_start_time = time.time()
+    stream_timeout = 600  # 10 minutes max stream time
+    last_chunk_time = stream_start_time
 
     with anthropic_client.messages.stream(
         model=model,
         max_tokens=max_tokens,
         temperature=temperature,
         system=system,
-        messages=messages
+        messages=messages,
+        timeout=600.0  # 10 minute timeout for entire request
     ) as stream:
         for text in stream.text_stream:
             full_text += text
             chunk_buffer.append(text)
             chunk_count += 1
+            last_chunk_time = time.time()
+
+            # Check if we've exceeded total timeout
+            elapsed = time.time() - stream_start_time
+            if elapsed > stream_timeout:
+                logger.warning(
+                    f"Stream timeout exceeded ({stream_timeout}s), "
+                    f"received {len(full_text)} chars, {chunk_count} chunks"
+                )
+                break
 
             # PHASE 2: Log chunk progress
             if chunk_count % 50 == 0:

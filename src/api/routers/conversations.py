@@ -123,52 +123,28 @@ async def list_conversations(
         db = PostgresManager()
 
         # Build query - filter by user_id for security
-        if workspace_id:
-            query = """
-                SELECT
-                    c.id,
-                    c.created_at,
-                    c.updated_at,
-                    c.metadata,
-                    COUNT(m.id) as message_count,
-                    (
-                        SELECT content
-                        FROM messages
-                        WHERE conversation_id = c.id
-                        ORDER BY created_at DESC
-                        LIMIT 1
-                    ) as last_message
-                FROM conversations c
-                LEFT JOIN messages m ON m.conversation_id = c.id
-                WHERE c.metadata->>'workspace_id' = %s AND c.user_id = %s
-                GROUP BY c.id
-                ORDER BY c.updated_at DESC
-                LIMIT %s
-            """
-            params = (workspace_id, str(current_user.user_id), limit)
-        else:
-            query = """
-                SELECT
-                    c.id,
-                    c.created_at,
-                    c.updated_at,
-                    c.metadata,
-                    COUNT(m.id) as message_count,
-                    (
-                        SELECT content
-                        FROM messages
-                        WHERE conversation_id = c.id
-                        ORDER BY created_at DESC
-                        LIMIT 1
-                    ) as last_message
-                FROM conversations c
-                LEFT JOIN messages m ON m.conversation_id = c.id
-                WHERE c.user_id = %s
-                GROUP BY c.id
-                ORDER BY c.updated_at DESC
-                LIMIT %s
-            """
-            params = (str(current_user.user_id), limit)
+        # Note: conversations table does not have metadata or workspace_id columns
+        query = """
+            SELECT
+                c.conversation_id,
+                c.created_at,
+                c.updated_at,
+                COUNT(m.message_id) as message_count,
+                (
+                    SELECT content
+                    FROM messages
+                    WHERE conversation_id = c.conversation_id
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                ) as last_message
+            FROM conversations c
+            LEFT JOIN messages m ON m.conversation_id = c.conversation_id
+            WHERE c.user_id = %s
+            GROUP BY c.conversation_id
+            ORDER BY c.updated_at DESC
+            LIMIT %s
+        """
+        params = (str(current_user.user_id), limit)
 
         results = db._execute(query, params, fetch=True, operation="list_conversations")
 
@@ -183,12 +159,12 @@ async def list_conversations(
                     preview += "..."
 
             conversations.append(ConversationSummary(
-                id=row['id'],
+                id=row['conversation_id'],
                 created_at=row['created_at'].isoformat(),
                 updated_at=row['updated_at'].isoformat(),
                 message_count=row['message_count'],
                 last_message_preview=preview,
-                workspace_id=row['metadata'].get('workspace_id') if row['metadata'] else None
+                workspace_id=None
             ))
 
         logger.info(f"Listed {len(conversations)} conversations for user {current_user.user_id}")

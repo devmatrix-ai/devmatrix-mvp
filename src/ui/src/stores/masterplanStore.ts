@@ -26,6 +26,7 @@ export interface MasterPlanStoreState {
   // Current generation state
   currentMasterPlanId: string | null
   currentSessionId: string | null
+  currentDiscoveryId: string | null
   generationProgress: ProgressState | null
   isGenerating: boolean
 
@@ -57,6 +58,7 @@ export interface MasterPlanStoreState {
   // State actions
   setCurrentMasterPlan: (id: string) => void
   setCurrentSession: (sessionId: string) => void
+  setCurrentDiscovery: (discoveryId: string) => void
   startGeneration: () => void
   endGeneration: () => void
   updateProgress: (progress: Partial<ProgressState>) => void
@@ -76,6 +78,7 @@ export interface MasterPlanStoreState {
 const initialState = {
   currentMasterPlanId: null,
   currentSessionId: null,
+  currentDiscoveryId: null,
   generationProgress: null,
   isGenerating: false,
   phases: [],
@@ -126,6 +129,13 @@ export const useMasterPlanStore = create<MasterPlanStoreState, [["zustand/persis
   setCurrentSession: (sessionId: string) => {
     set({
       currentSessionId: sessionId,
+      lastUpdateTime: Date.now(),
+    })
+  },
+
+  setCurrentDiscovery: (discoveryId: string) => {
+    set({
+      currentDiscoveryId: discoveryId,
       lastUpdateTime: Date.now(),
     })
   },

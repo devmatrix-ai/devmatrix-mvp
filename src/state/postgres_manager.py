@@ -576,19 +576,19 @@ class PostgresManager:
             )
 
         query = """
-            INSERT INTO conversations (id, user_id, session_id, metadata)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (id) DO NOTHING
-            RETURNING id
+            INSERT INTO conversations (conversation_id, user_id, created_at, updated_at)
+            VALUES (%s, %s, NOW(), NOW())
+            ON CONFLICT (conversation_id) DO NOTHING
+            RETURNING conversation_id
         """
 
         result = self._execute(
             query,
-            (conversation_id, user_id, session_id, Json(metadata or {})),
+            (conversation_id, user_id),
             fetch=True,
             operation=f"create_conversation:{conversation_id}"
         )
-        return result[0]["id"] if result else conversation_id
+        return result[0]["conversation_id"] if result else conversation_id
 
     def update_conversation_metadata(
         self,
@@ -627,7 +627,7 @@ class PostgresManager:
         """
         query = """
             SELECT * FROM conversations
-            WHERE id = %s
+            WHERE conversation_id = %s
         """
 
         results = self._execute(
@@ -643,7 +643,7 @@ class PostgresManager:
         conversation_id: str,
         role: str,
         content: str,
-        metadata: dict = None,
+        metadata: dict = None,  # Accepted but not used (messages table has no metadata column)
     ) -> int:
         """
         Save a message to a conversation.
@@ -652,24 +652,24 @@ class PostgresManager:
             conversation_id: Conversation identifier
             role: Message role (user, assistant, system)
             content: Message content
-            metadata: Additional message metadata
+            metadata: Additional message metadata (accepted for API compatibility but not stored)
 
         Returns:
             Message ID
         """
         query = """
-            INSERT INTO messages (conversation_id, role, content, metadata)
-            VALUES (%s, %s, %s, %s)
-            RETURNING id
+            INSERT INTO messages (conversation_id, role, content)
+            VALUES (%s, %s, %s)
+            RETURNING message_id
         """
 
         result = self._execute(
             query,
-            (conversation_id, role, content, Json(metadata or {})),
+            (conversation_id, role, content),
             fetch=True,
             operation=f"save_message:{conversation_id}:{role}"
         )
-        return result[0]["id"]
+        return result[0]["message_id"]
 
     def get_conversation_messages(
         self,

@@ -97,6 +97,7 @@ export function useMasterPlanProgress(
     updateProgress,
     setPhases,
     updateMetrics,
+    setCurrentDiscovery,
     clearError: clearStoreError,
   } = useMasterPlanStore()
 
@@ -153,10 +154,13 @@ export function useMasterPlanProgress(
     // If sessionId is not provided, use all events (useful during generation before masterplanId exists)
     let eventToProcess = latestEvent
 
-    if (sessionId && events.length > 0) {
+    // Extract sessionId from latest event if not provided
+    const effectiveSessionId = sessionId || latestEvent?.data?.session_id
+
+    if (effectiveSessionId && events.length > 0) {
       // Find the latest event that matches this session
       console.log('[useMasterPlanProgress] DEBUG - Filtering events:', {
-        sessionIdToMatch: sessionId,
+        sessionIdToMatch: effectiveSessionId,
         totalEvents: events.length,
         eventSummary: events.map(e => ({
           type: e.type,
@@ -170,12 +174,12 @@ export function useMasterPlanProgress(
       // Filter events by session_id - sessionId is always the discovery session_id
       // All events (both discovery and masterplan) have session_id field
       const sessionEvents = events.filter(
-        (e) => e.sessionId === sessionId || e.data?.session_id === sessionId
+        (e) => e.sessionId === effectiveSessionId || e.data?.session_id === effectiveSessionId
       )
       eventToProcess = sessionEvents[sessionEvents.length - 1] || null
 
       console.log('[useMasterPlanProgress] Filtering events for session:', {
-        sessionId,
+        sessionId: effectiveSessionId,
         totalEvents: events.length,
         filteredEvents: sessionEvents.length,
         latestEvent: eventToProcess?.type,
@@ -185,6 +189,7 @@ export function useMasterPlanProgress(
       // No sessionId provided - use latest event from any session (during generation)
       console.log('[useMasterPlanProgress] No sessionId filter, using latest event:', {
         sessionIdProvided: !!sessionId,
+        effectiveSessionId,
         latestEventType: latestEvent?.type,
         eventBufferSize: events.length,
         latestEventData: latestEvent?.data,
@@ -218,6 +223,12 @@ export function useMasterPlanProgress(
         case 'masterplan_generation_start': {
           // Continue progress from discovery phase, don't reset
           console.log('[useMasterPlanProgress] masterplan_generation_start eventData:', eventData)
+
+          // Save discovery_id to store for traceability
+          if (eventData.discovery_id) {
+            setCurrentDiscovery(eventData.discovery_id)
+          }
+
           setProgressState((prev) => ({
             ...prev,
             currentPhase: 'MasterPlan Generation',
@@ -233,13 +244,14 @@ export function useMasterPlanProgress(
         case 'masterplan_tokens_progress': {
           const tokensReceived = eventData.tokens_received || 0
           const estimatedTotal = eventData.estimated_total || 1
-          const percentage = Math.min((tokensReceived / estimatedTotal) * 100, 95)
+          const calculatedPercentage = Math.min((tokensReceived / estimatedTotal) * 100, 95)
 
           setProgressState((prev) => ({
             ...prev,
             tokensReceived,
             estimatedTotalTokens: estimatedTotal,
-            percentage,
+            // Ensure progress never decreases (events may arrive out of order)
+            percentage: Math.max(prev.percentage, calculatedPercentage),
             elapsedSeconds: calculateElapsedSeconds(),
           }))
           break
@@ -330,6 +342,15 @@ export function useMasterPlanProgress(
 
           updatePhaseStatus('saving', 'completed', undefined, now)
 
+          // Log additional metadata if available
+          if (eventData.llm_model || eventData.architecture_style) {
+            console.log('[useMasterPlanProgress] MasterPlan metadata:', {
+              llm_model: eventData.llm_model,
+              architecture_style: eventData.architecture_style,
+              tech_stack: eventData.tech_stack,
+            })
+          }
+
           setProgressState((prev) => ({
             ...prev,
             currentPhase: 'Complete',
@@ -340,6 +361,7 @@ export function useMasterPlanProgress(
             phasesFound: eventData.total_phases || prev.phasesFound,
             milestonesFound: eventData.total_milestones || prev.milestonesFound,
             tasksFound: eventData.total_tasks || prev.tasksFound,
+            cost: eventData.generation_cost_usd || prev.cost,
           }))
           break
         }
@@ -364,13 +386,14 @@ export function useMasterPlanProgress(
         case 'discovery_tokens_progress': {
           const tokensReceived = eventData.tokens_received || 0
           const estimatedTotal = eventData.estimated_total || 1
-          const percentage = Math.min((tokensReceived / estimatedTotal) * 100, 95)
+          const calculatedPercentage = Math.min((tokensReceived / estimatedTotal) * 100, 95)
 
           setProgressState((prev) => ({
             ...prev,
             tokensReceived,
             estimatedTotalTokens: estimatedTotal,
-            percentage,
+            // Ensure progress never decreases (events may arrive out of order)
+            percentage: Math.max(prev.percentage, calculatedPercentage),
             elapsedSeconds: calculateElapsedSeconds(),
           }))
           break

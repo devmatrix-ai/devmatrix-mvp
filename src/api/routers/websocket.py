@@ -86,6 +86,7 @@ active_connections: Dict[str, Set[str]] = {
     "chat": set(),
     "executions": set(),
     "masterplans": set(),
+    "discoveries": set(),
 }
 
 
@@ -515,6 +516,67 @@ async def leave_execution(sid, data):
             logger.info(f"Client {sid} left execution {execution_id}")
     except Exception as e:
         logger.error(f"Error leaving execution: {e}")
+
+
+# ==========================================
+# Discovery Events
+# ==========================================
+
+@sio.event
+async def join_discovery(sid, data):
+    """
+    Join discovery monitoring room for real-time discovery generation updates.
+
+    Expected data:
+        {
+            "session_id": "session-uuid"
+        }
+    """
+    logger.info(f"🔍 [DEBUG] join_discovery handler called! sid={sid}, data={data}")
+    try:
+        session_id = data.get('session_id')
+        logger.info(f"🔍 [DEBUG] Extracted session_id: {session_id}")
+        if not session_id:
+            await sio.emit('error', {
+                'message': 'session_id is required'
+            }, room=sid)
+            return
+
+        # Join discovery-specific room
+        room_name = f"discovery_{session_id}"
+        await sio.enter_room(sid, room_name)
+        active_connections['discoveries'].add(sid)
+
+        await sio.emit('discovery_joined', {
+            'session_id': session_id,
+            'room': room_name,
+        }, room=sid)
+
+        logger.info(f"Client {sid} joined discovery {session_id}")
+
+        # Metrics
+        metrics.increment_counter(
+            "websocket_discovery_connections_total",
+            labels={"action": "join"},
+            help_text="Total discovery WebSocket connections"
+        )
+
+    except Exception as e:
+        logger.error(f"Error joining discovery: {e}", exc_info=True)
+        await sio.emit('error', {'message': str(e)}, room=sid)
+
+
+@sio.event
+async def leave_discovery(sid, data):
+    """Leave discovery monitoring room."""
+    try:
+        session_id = data.get('session_id')
+        if session_id:
+            await sio.leave_room(sid, f"discovery_{session_id}")
+            active_connections['discoveries'].discard(sid)
+            logger.info(f"Client {sid} left discovery {session_id}")
+    except Exception as e:
+        logger.error(f"Error leaving discovery: {e}")
 
 
 # ==========================================

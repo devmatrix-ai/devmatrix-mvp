@@ -9,6 +9,7 @@ import InlineProgressHeader from './InlineProgressHeader'
 import MasterPlanProgressModal from './MasterPlanProgressModal'
 import { ConversationHistory } from './ConversationHistory'
 import { FiMessageSquare, FiX, FiMinus, FiPlusCircle, FiDownload, FiMenu } from 'react-icons/fi'
+import type { ProgressEvent } from '../../types/masterplan'
 import '../chat/masterplan/animations.css'
 
 interface ChatWindowProps {
@@ -38,6 +39,7 @@ export function ChatWindow({
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<{ focus: () => void }>(null)
+  const lastMasterPlanProgressRef = useRef<ProgressEvent | null>(null)
   const [showHistory, setShowHistory] = useState(false)
   const [showMasterPlanModal, setShowMasterPlanModal] = useState(false)
 
@@ -69,6 +71,7 @@ export function ChatWindow({
   }, [isLoading, isConnected])
 
   // Auto-open MasterPlan progress modal when generation starts
+  // CRITICAL: Save the last known progress to keep modal data valid if masterPlanProgress becomes null
   useEffect(() => {
     if (masterPlanProgress) {
       console.log('[ChatWindow] MasterPlan progress detected, opening modal', {
@@ -76,7 +79,12 @@ export function ChatWindow({
         dataKeys: Object.keys(masterPlanProgress.data || {}),
         fullData: JSON.stringify(masterPlanProgress.data),
       })
+      // Save this progress in case it becomes null temporarily
+      lastMasterPlanProgressRef.current = masterPlanProgress
       setShowMasterPlanModal(true)
+    } else {
+      // masterPlanProgress became null, but keep modal open if it was already open
+      console.log('[ChatWindow] masterPlanProgress is null, but keeping modal open if it was opened')
     }
   }, [masterPlanProgress])
 
@@ -279,9 +287,10 @@ export function ChatWindow({
             )}
 
             {/* MasterPlan Progress Modal */}
-            {masterPlanProgress && (
+            {/* CRITICAL: Use saved progress if current is null, prevents premature modal closure */}
+            {showMasterPlanModal && (lastMasterPlanProgressRef.current || masterPlanProgress) && (
               <MasterPlanProgressModal
-                event={masterPlanProgress}
+                event={lastMasterPlanProgressRef.current || masterPlanProgress!}
                 open={showMasterPlanModal}
                 onClose={() => setShowMasterPlanModal(false)}
               />

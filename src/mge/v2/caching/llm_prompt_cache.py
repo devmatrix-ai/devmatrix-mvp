@@ -61,12 +61,12 @@ class LLMPromptCache:
         await cache.set("Write a function", "gpt-4", 0.7, response.text, ...)
     """
 
-    def __init__(self, redis_url: str = "redis://localhost:6379"):
+    def __init__(self, redis_url: str = "redis://redis:6379"):
         """
         Initialize LLM prompt cache
 
         Args:
-            redis_url: Redis connection URL (default: redis://localhost:6379)
+            redis_url: Redis connection URL (default: redis://redis:6379 for Docker)
         """
         self.redis_url = redis_url
         self.redis_client: Optional[redis.Redis] = None

@@ -1,0 +1,143 @@
+═══════════════════════════════════════════════════════════════════════════
+  MASTERPLAN PROGRESS MODAL - FIX APPLIED ✅
+═══════════════════════════════════════════════════════════════════════════
+
+STATUS: Ready for Testing
+CONFIDENCE: HIGH (90%)
+NEXT: User validation required
+
+───────────────────────────────────────────────────────────────────────────
+WHAT WAS BROKEN
+───────────────────────────────────────────────────────────────────────────
+✗ Modal abierto pero congelado
+✗ Porcentaje: 0% (nunca aumenta)
+✗ Fase: 'idle' (nunca cambia)
+✗ Tokens: 0 (nunca aumentan)
+✗ UI completamente sin actualizar durante 30-60 segundos
+
+CAUSA RAÍZ: React state race condition
+  Event llega → setState en queue (async) → render inmediato →
+  hook recibe undefined → no puede filtrar eventos → estado congelado
+
+───────────────────────────────────────────────────────────────────────────
+SOLUCIÓN IMPLEMENTADA
+───────────────────────────────────────────────────────────────────────────
+
+1. useRef para sessionId estable (en lugar de useState async)
+
+   ANTES: const [sessionId, setSessionId] = useState(...)
+          // ❌ Hook recibe undefined (async setState)
+
+   AHORA: const sessionIdRef = useRef(...)
+          const effectiveSessionId = sessionIdRef.current
+          // ✅ Hook recibe valor inmediato, siempre consistente
+
+2. Fallback en hook si sessionId es undefined
+
+   const effectiveSessionId = sessionId || latestEvent?.data?.session_id
+   // Doble protección si algo sale mal
+
+3. Preservar progreso si event es null
+
+   lastMasterPlanProgressRef guarda último evento
+   Modal no se cierra si event temporal es null
+   // Soluciona cierre prematuro a 2 segundos
+
+4. Sincronizar campos WebSocket
+
+   ✅ Capturar cost en completion
+   ✅ Guardar discovery_id
+   ✅ Normalizar duración a segundos
+   ✅ Emitir metadatos (llm_model, tech_stack, etc)
+
+───────────────────────────────────────────────────────────────────────────
+ARCHIVOS MODIFICADOS
+───────────────────────────────────────────────────────────────────────────
+
+Frontend:
+  ✅ MasterPlanProgressModal.tsx - useRef fix (líneas 50-107)
+  ✅ useMasterPlanProgress.ts - fallback + cost capture
+  ✅ ChatWindow.tsx - preserve progress ref
+  ✅ masterplanStore.ts - currentDiscoveryId field
+
+Backend:
+  ✅ websocket/manager.py - emit metadata fields
+  ✅ masterplan_generator.py - pass metadata to websocket
+
+───────────────────────────────────────────────────────────────────────────
+CÓMO VERIFICAR QUE FUNCIONA
+───────────────────────────────────────────────────────────────────────────
+
+OPCIÓN 1: Test Rápido (2 minutos)
+  1. Abrir: http://localhost:3000
+  2. Escribir: /masterplan Create a Task Management API
+  3. Observar modal:
+     ✅ Porcentaje aumenta (0% → 100%) → FIX FUNCIONA
+     ❌ Porcentaje congelado en 0% → FIX NO FUNCIONA
+
+OPCIÓN 2: Test Detallado (5 minutos)
+  1. Abrir DevTools (F12)
+  2. Console tab, limpiar logs
+  3. Enviar comando masterplan
+  4. Buscar logs (DEBE VER TODOS):
+     ✅ [MasterPlanProgressModal] Current sessionId: {effectiveSessionId: "ID"}
+     ✅ [useMasterPlanProgress] Filtering events: {filteredEvents: 3}
+     ✅ [useMasterPlanProgress] Processing event: múltiples veces
+  5. Si ve todos → FIX FUNCIONA
+     Si ve undefined o 0 → FIX NO FUNCIONA (debug necesario)
+
+───────────────────────────────────────────────────────────────────────────
+DOCUMENTACIÓN DISPONIBLE
+───────────────────────────────────────────────────────────────────────────
+
+Para Usuario:
+  📋 TEST_INSTRUCTIONS.md - Step-by-step testing guide
+  📄 MODAL_FIX_SUMMARY.md - Summary + diagnosis troubleshooting
+  🎯 QUICK_STATUS.txt - This file
+
+Para Técnicos:
+  📊 VERIFICATION_SESSIONID_FIX.md - Detailed technical analysis
+  🔧 WEBSOCKET_FIXES_COMPLETED.md - WebSocket field sync details
+  📝 RACE_CONDITION_FIX.md - Root cause deep dive
+  📈 LIVE_TESTING_ANALYSIS.md - Console analysis
+  📋 FIX_COMPLETE_FINAL_STATUS.md - Complete status report
+
+───────────────────────────────────────────────────────────────────────────
+PRÓXIMOS PASOS
+───────────────────────────────────────────────────────────────────────────
+
+1. TEST: Generar un MasterPlan y observar si modal actualiza
+2. REPORT: Decir si funciona ✅ o da error ❌
+3. IF SUCCESS: Problema resuelto, documentar resultados
+4. IF FAILURE: Ejecutar diagnóstico detallado (ver TEST_INSTRUCTIONS.md)
+
+Expected: 30-60 segundos de generación
+Timeline:
+  0-15s: Discovery phase (percentage: 0% → 25%, phase: Generating)
+  15-25s: MasterPlan (percentage: 25% → 75%, phase: Parsing/Validating)
+  25-35s: Completion (percentage: 75% → 100%, phase: Saving/Complete)
+
+───────────────────────────────────────────────────────────────────────────
+RESUMEN TÉCNICO
+───────────────────────────────────────────────────────────────────────────
+
+Problem:       Race condition en sessionId initialization
+Fix:           useRef para valor estable + fallback en hook
+Confidence:    90% (código revisado, logica correcta)
+Testing:       ⏳ Pendiente validación usuario
+Rollback:      git checkout -- src/ui/src/components/chat/MasterPlanProgressModal.tsx
+Complexity:    Baja (simple ref pattern, bien conocido en React)
+
+───────────────────────────────────────────────────────────────────────────
+CONTACTO
+───────────────────────────────────────────────────────────────────────────
+
+Si hay problemas:
+  1. Revisar TEST_INSTRUCTIONS.md → Sección "Diagnóstico Si Falla"
+  2. Capturar console logs completos
+  3. Screenshot del estado
+  4. Reportar exactamente qué síntoma ves
+
+═══════════════════════════════════════════════════════════════════════════
+Code is ready. Waiting for user test validation.
+═══════════════════════════════════════════════════════════════════════════

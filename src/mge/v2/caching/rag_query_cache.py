@@ -62,12 +62,12 @@ class RAGQueryCache:
         await cache.set("find auth code", embedding, "sentence-transformers", 5, results)
     """
 
-    def __init__(self, redis_url: str = "redis://localhost:6379"):
+    def __init__(self, redis_url: str = "redis://redis:6379"):
         """
         Initialize RAG query cache
 
         Args:
-            redis_url: Redis connection URL (default: redis://localhost:6379)
+            redis_url: Redis connection URL (default: redis://redis:6379 for Docker)
         """
         self.redis_url = redis_url
         self.redis_client: Optional[redis.Redis] = None
