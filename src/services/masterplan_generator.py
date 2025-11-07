@@ -319,7 +319,8 @@ class MasterPlanGenerator:
                     session_id=session_id,
                     discovery_id=str(discovery_id),
                     estimated_tokens=17000,
-                    estimated_duration_seconds=90
+                    estimated_duration_seconds=90,
+                    estimated_cost_usd=0.25
                 )
             else:
                 logger.warning("⚠️  WebSocket manager not available, skipping progress events")
@@ -363,6 +364,11 @@ class MasterPlanGenerator:
                 total_milestones = sum(len(p.get("milestones", [])) for p in phases)
                 total_tasks = masterplan_data.get("total_tasks", 120)
 
+                logger.info(
+                    f"📊 About to emit parsing_complete event",
+                    extra={"session_id": session_id, "phases": len(phases), "tasks": total_tasks}
+                )
+
                 await self.ws_manager.emit_masterplan_parsing_complete(
                     session_id=session_id,
                     total_phases=len(phases),
@@ -372,6 +378,7 @@ class MasterPlanGenerator:
 
             # Validate MasterPlan
             if self.ws_manager:
+                logger.info(f"📊 About to emit validation_start event", extra={"session_id": session_id})
                 await self.ws_manager.emit_masterplan_validation_start(session_id)
 
             self._validate_masterplan(masterplan_data, calculated_task_count)
@@ -382,6 +389,11 @@ class MasterPlanGenerator:
                 total_milestones = sum(len(p.get("milestones", [])) for p in phases)
                 total_tasks = masterplan_data.get("total_tasks", 120)
                 total_entities = len(phases) + total_milestones + total_tasks
+
+                logger.info(
+                    f"📊 About to emit saving_start event",
+                    extra={"session_id": session_id, "total_entities": total_entities}
+                )
 
                 await self.ws_manager.emit_masterplan_saving_start(
                     session_id=session_id,
@@ -420,7 +432,10 @@ class MasterPlanGenerator:
                     generation_cost_usd=masterplan_json.get("cost_usd", 0),
                     duration_seconds=total_duration,
                     estimated_total_cost_usd=masterplan_data.get("estimated_cost", 0),
-                    estimated_duration_minutes=masterplan_data.get("estimated_duration", 0)
+                    estimated_duration_minutes=masterplan_data.get("estimated_duration", 0),
+                    llm_model=masterplan_json.get("model"),
+                    tech_stack=masterplan_data.get("tech_stack"),
+                    architecture_style=masterplan_data.get("architecture_style")
                 )
 
             # Record success
@@ -540,8 +555,8 @@ class MasterPlanGenerator:
         start_time = time.time()
         last_progress_time = start_time
 
-        # Progress simulation intervals (every 5 seconds)
-        progress_interval = 5
+        # Progress simulation intervals (every 2 seconds to prevent WebSocket disconnects)
+        progress_interval = 2
 
         # Phase descriptions for progress
         phases = [

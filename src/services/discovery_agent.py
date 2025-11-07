@@ -191,7 +191,8 @@ class DiscoveryAgent:
             await self.ws_manager.emit_discovery_generation_start(
                 session_id=session_id,
                 estimated_tokens=8000,
-                estimated_duration_seconds=30
+                estimated_duration_seconds=30,
+                estimated_cost_usd=0.09
             )
             logger.info(f"✅ Successfully emitted discovery_generation_start")
         else:
@@ -203,6 +204,49 @@ class DiscoveryAgent:
 
             # Parse discovery result
             discovery_data = self._parse_discovery(discovery_json)
+
+            # Emit granular discovery events for detailed progress display
+            if self.ws_manager:
+                # Emit domain discovered
+                await self.ws_manager.emit_discovery_entity_discovered(
+                    session_id=session_id,
+                    entity_type="domain",
+                    name=discovery_data.get("domain", "Unknown"),
+                    count=1
+                )
+
+                # Emit bounded contexts discovered
+                bounded_contexts = discovery_data.get("bounded_contexts", [])
+                for i, context in enumerate(bounded_contexts, 1):
+                    await self.ws_manager.emit_discovery_entity_discovered(
+                        session_id=session_id,
+                        entity_type="bounded_context",
+                        name=context.get("name", f"Context {i}"),
+                        count=i
+                    )
+
+                # Emit aggregates discovered
+                aggregates = discovery_data.get("aggregates", [])
+                for i, aggregate in enumerate(aggregates, 1):
+                    await self.ws_manager.emit_discovery_entity_discovered(
+                        session_id=session_id,
+                        entity_type="aggregate",
+                        name=aggregate.get("name", f"Aggregate {i}"),
+                        count=i
+                    )
+
+                # Emit entities discovered (from value objects and domain events)
+                value_objects = discovery_data.get("value_objects", [])
+                domain_events = discovery_data.get("domain_events", [])
+                total_entities = len(value_objects) + len(domain_events)
+
+                if total_entities > 0:
+                    await self.ws_manager.emit_discovery_entity_discovered(
+                        session_id=session_id,
+                        entity_type="entity",
+                        name=f"{total_entities} Value Objects & Domain Events",
+                        count=total_entities
+                    )
 
             # Emit parsing complete event
             if self.ws_manager:
@@ -324,7 +368,7 @@ Provide a complete DDD analysis in the specified JSON format."""
             import asyncio
 
             estimated_total_tokens = 8000
-            estimated_duration = 30  # seconds
+            estimated_duration = 90  # seconds (LLM generation typically takes 30-60s)
             progress_interval = 3  # seconds
 
             async def emit_progress():
@@ -338,6 +382,14 @@ Provide a complete DDD analysis in the specified JSON format."""
                     "Defining domain events...",
                     "Finalizing services..."
                 ]
+
+                # Emit initial progress immediately to show modal is working
+                await self.ws_manager.emit_discovery_tokens_progress(
+                    session_id=session_id,
+                    tokens_received=100,
+                    estimated_total=estimated_total_tokens,
+                    current_phase=phases[0]
+                )
 
                 while elapsed < estimated_duration:
                     await asyncio.sleep(progress_interval)
@@ -372,12 +424,14 @@ Provide a complete DDD analysis in the specified JSON format."""
             temperature=0.7
         )
 
-        # Cancel progress task
+        # Let progress task complete naturally instead of canceling
+        # This ensures all progress events are emitted and delivered to clients
         if self.ws_manager:
-            progress_task.cancel()
             try:
-                await progress_task
-            except asyncio.CancelledError:
+                # Wait for progress task to complete (with timeout to avoid hanging)
+                await asyncio.wait_for(progress_task, timeout=2)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                # Task may have already completed or timed out naturally
                 pass
 
         duration = time.time() - start_time

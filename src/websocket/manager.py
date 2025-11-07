@@ -66,6 +66,10 @@ class WebSocketManager:
         """
         Emit event to a specific session (by sid).
 
+        Emits to TWO rooms for resilience against page refreshes:
+        1. Direct sid room (ephemeral, current connection)
+        2. Persistent discovery/masterplan room (survives refresh)
+
         Args:
             session_id: Session ID (Socket.IO sid)
             event: Event name
@@ -79,9 +83,21 @@ class WebSocketManager:
             )
 
         try:
+            # Emit to direct sid room (current connection)
             await self.sio.emit(event, data, room=session_id)
+
+            # ALSO emit to persistent discovery room for reconnected clients
+            # This allows clients to receive updates even after page refresh
+            try:
+                persistent_room = f"discovery_{session_id}"
+                await self.sio.emit(event, data, room=persistent_room)
+            except Exception:
+                # If persistent room emission fails, continue anyway
+                # (client on current sid already received it)
+                pass
+
             logger.info(
-                f"✅ Emitted event to session",
+                f"✅ Emitted event to session (both sid and persistent discovery room)",
                 event=event,
                 session_id=session_id,
                 data_keys=list(data.keys())
@@ -102,7 +118,7 @@ class WebSocketManager:
         data: Dict[str, Any]
     ):
         """
-        Emit event to chat room.
+        Emit event to chat room with resilience against reconnections.
 
         Args:
             conversation_id: Conversation ID
@@ -218,7 +234,9 @@ class WebSocketManager:
         session_id: str,
         discovery_id: str,
         estimated_tokens: int = 17000,
-        estimated_duration_seconds: int = 90
+        estimated_duration_seconds: int = 90,
+        estimated_cost_usd: float = 0.25,
+        masterplan_id: Optional[str] = None
     ):
         """
         Emit MasterPlan generation start event.
@@ -228,16 +246,23 @@ class WebSocketManager:
             discovery_id: Discovery document ID
             estimated_tokens: Estimated total tokens (~17000)
             estimated_duration_seconds: Estimated duration in seconds (~90)
+            estimated_cost_usd: Estimated cost in USD (~0.25 for Sonnet 4.5)
+            masterplan_id: MasterPlan ID if already created (optional)
         """
+        data = {
+            "discovery_id": discovery_id,
+            "session_id": session_id,
+            "estimated_tokens": estimated_tokens,
+            "estimated_duration_seconds": estimated_duration_seconds,
+            "estimated_cost_usd": estimated_cost_usd
+        }
+        if masterplan_id:
+            data["masterplan_id"] = masterplan_id
+
         await self.emit_to_session(
             session_id=session_id,
             event="masterplan_generation_start",
-            data={
-                "discovery_id": discovery_id,
-                "session_id": session_id,
-                "estimated_tokens": estimated_tokens,
-                "estimated_duration_seconds": estimated_duration_seconds
-            }
+            data=data
         )
 
     async def emit_masterplan_tokens_progress(
@@ -264,6 +289,7 @@ class WebSocketManager:
             session_id=session_id,
             event="masterplan_tokens_progress",
             data={
+                "session_id": session_id,
                 "tokens_received": tokens_received,
                 "estimated_total": estimated_total,
                 "percentage": percentage,
@@ -290,6 +316,7 @@ class WebSocketManager:
             parent: Parent entity name (optional)
         """
         data = {
+            "session_id": session_id,
             "type": entity_type,
             "count": count
         }
@@ -321,10 +348,15 @@ class WebSocketManager:
             total_milestones: Total number of milestones
             total_tasks: Total number of tasks
         """
+        logger.info(
+            f"🚀 Emitting masterplan_parsing_complete WebSocket event",
+            extra={"session_id": session_id, "total_phases": total_phases, "total_tasks": total_tasks}
+        )
         await self.emit_to_session(
             session_id=session_id,
             event="masterplan_parsing_complete",
             data={
+                "session_id": session_id,
                 "total_phases": total_phases,
                 "total_milestones": total_milestones,
                 "total_tasks": total_tasks
@@ -338,10 +370,14 @@ class WebSocketManager:
         Args:
             session_id: Session ID
         """
+        logger.info(
+            f"🚀 Emitting masterplan_validation_start WebSocket event",
+            extra={"session_id": session_id}
+        )
         await self.emit_to_session(
             session_id=session_id,
             event="masterplan_validation_start",
-            data={}
+            data={"session_id": session_id}
         )
 
     async def emit_masterplan_saving_start(
@@ -356,10 +392,17 @@ class WebSocketManager:
             session_id: Session ID
             total_entities: Total entities to save (phases + milestones + tasks)
         """
+        logger.info(
+            f"🚀 Emitting masterplan_saving_start WebSocket event",
+            extra={"session_id": session_id, "total_entities": total_entities}
+        )
         await self.emit_to_session(
             session_id=session_id,
             event="masterplan_saving_start",
-            data={"total_entities": total_entities}
+            data={
+                "session_id": session_id,
+                "total_entities": total_entities
+            }
         )
 
     async def emit_masterplan_generation_complete(
@@ -373,7 +416,11 @@ class WebSocketManager:
         generation_cost_usd: float,
         duration_seconds: float,
         estimated_total_cost_usd: float,
-        estimated_duration_minutes: int
+        estimated_duration_minutes: int,
+        llm_model: Optional[str] = None,
+        workspace_path: Optional[str] = None,
+        tech_stack: Optional[Dict[str, Any]] = None,
+        architecture_style: Optional[str] = None
     ):
         """
         Emit MasterPlan generation complete event.
@@ -388,22 +435,42 @@ class WebSocketManager:
             generation_cost_usd: Generation cost in USD
             duration_seconds: Actual generation duration
             estimated_total_cost_usd: Estimated total project cost
-            estimated_duration_minutes: Estimated total project duration
+            estimated_duration_minutes: Estimated total project duration (in minutes)
+            llm_model: LLM model used for generation (optional)
+            workspace_path: Workspace path for execution (optional)
+            tech_stack: Technology stack info (optional)
+            architecture_style: Architecture style (optional)
         """
+        # Normalize all durations to seconds for consistency
+        estimated_duration_seconds = estimated_duration_minutes * 60
+
+        data = {
+            "session_id": session_id,
+            "masterplan_id": masterplan_id,
+            "project_name": project_name,
+            "total_phases": total_phases,
+            "total_milestones": total_milestones,
+            "total_tasks": total_tasks,
+            "generation_cost_usd": generation_cost_usd,
+            "duration_seconds": duration_seconds,
+            "estimated_total_cost_usd": estimated_total_cost_usd,
+            "estimated_duration_seconds": estimated_duration_seconds
+        }
+
+        # Add optional fields if provided
+        if llm_model:
+            data["llm_model"] = llm_model
+        if workspace_path:
+            data["workspace_path"] = workspace_path
+        if tech_stack:
+            data["tech_stack"] = tech_stack
+        if architecture_style:
+            data["architecture_style"] = architecture_style
+
         await self.emit_to_session(
             session_id=session_id,
             event="masterplan_generation_complete",
-            data={
-                "masterplan_id": masterplan_id,
-                "project_name": project_name,
-                "total_phases": total_phases,
-                "total_milestones": total_milestones,
-                "total_tasks": total_tasks,
-                "generation_cost_usd": generation_cost_usd,
-                "duration_seconds": duration_seconds,
-                "estimated_total_cost_usd": estimated_total_cost_usd,
-                "estimated_duration_minutes": estimated_duration_minutes
-            }
+            data=data
         )
 
     # =========================================================================
@@ -414,7 +481,8 @@ class WebSocketManager:
         self,
         session_id: str,
         estimated_tokens: int = 8000,
-        estimated_duration_seconds: int = 30
+        estimated_duration_seconds: int = 30,
+        estimated_cost_usd: float = 0.09
     ):
         """
         Emit Discovery generation start event.
@@ -423,6 +491,7 @@ class WebSocketManager:
             session_id: Session ID
             estimated_tokens: Estimated total tokens (~8000)
             estimated_duration_seconds: Estimated duration in seconds (~30)
+            estimated_cost_usd: Estimated cost in USD (~0.09 for Sonnet 4.5)
         """
         await self.emit_to_session(
             session_id=session_id,
@@ -430,7 +499,8 @@ class WebSocketManager:
             data={
                 "session_id": session_id,
                 "estimated_tokens": estimated_tokens,
-                "estimated_duration_seconds": estimated_duration_seconds
+                "estimated_duration_seconds": estimated_duration_seconds,
+                "estimated_cost_usd": estimated_cost_usd
             }
         )
 
@@ -458,6 +528,7 @@ class WebSocketManager:
             session_id=session_id,
             event="discovery_tokens_progress",
             data={
+                "session_id": session_id,
                 "tokens_received": tokens_received,
                 "estimated_total": estimated_total,
                 "percentage": percentage,
@@ -482,6 +553,7 @@ class WebSocketManager:
             name: Name of the entity (optional)
         """
         data = {
+            "session_id": session_id,
             "type": entity_type,
             "count": count
         }
@@ -517,6 +589,7 @@ class WebSocketManager:
             session_id=session_id,
             event="discovery_parsing_complete",
             data={
+                "session_id": session_id,
                 "domain": domain,
                 "total_bounded_contexts": total_bounded_contexts,
                 "total_aggregates": total_aggregates,
@@ -534,7 +607,7 @@ class WebSocketManager:
         await self.emit_to_session(
             session_id=session_id,
             event="discovery_validation_start",
-            data={}
+            data={"session_id": session_id}
         )
 
     async def emit_discovery_saving_start(
@@ -552,7 +625,10 @@ class WebSocketManager:
         await self.emit_to_session(
             session_id=session_id,
             event="discovery_saving_start",
-            data={"total_entities": total_entities}
+            data={
+                "session_id": session_id,
+                "total_entities": total_entities
+            }
         )
 
     async def emit_discovery_generation_complete(
@@ -583,6 +659,7 @@ class WebSocketManager:
             session_id=session_id,
             event="discovery_generation_complete",
             data={
+                "session_id": session_id,
                 "discovery_id": discovery_id,
                 "domain": domain,
                 "total_bounded_contexts": total_bounded_contexts,

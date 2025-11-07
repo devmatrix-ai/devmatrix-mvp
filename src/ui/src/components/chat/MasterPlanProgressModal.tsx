@@ -47,24 +47,26 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
   // Priority: propMasterplanId > masterplan_id > session_id > discovery_id
   const eventData = event?.data || {}
 
-  // Use state to initialize sessionId from discovery session_id or prop
+  // Use ref to store sessionId ONCE - prevents race conditions and ensures consistency
   // CRITICAL: sessionId must NEVER change to masterplan_id - it must remain constant
   // throughout both discovery and masterplan phases for event filtering to work correctly
+  const sessionIdRef = useRef<string | undefined>(propMasterplanId)
   const [sessionId, setSessionId] = useState<string | undefined>(propMasterplanId)
 
-  // Initialize sessionId from discovery_session_id if not already set
-  useEffect(() => {
-    // Only set sessionId if we don't have one yet (first initialization only)
-    if (!sessionId && eventData?.session_id) {
-      console.log('[MasterPlanProgressModal] Initializing sessionId from discovery event:', {
-        sessionId: eventData.session_id
-      })
+  // CRITICAL: Initialize sessionId ref IMMEDIATELY on first event, never change it
+  if (!sessionIdRef.current && eventData?.session_id) {
+    sessionIdRef.current = eventData.session_id
+    if (!sessionId) {
       setSessionId(eventData.session_id)
     }
-  }, [eventData?.session_id, sessionId])
+  }
+
+  // Use ref value - always consistent, never changes
+  const effectiveSessionId = sessionIdRef.current
 
   console.log('[MasterPlanProgressModal] Current sessionId:', {
     sessionId,
+    effectiveSessionId,
     propMasterplanId,
     eventMasterplanId: eventData.masterplan_id,
     eventSessionId: eventData.session_id,
@@ -77,31 +79,32 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
   // Backup: Join rooms if not already joined (useChat should have done this already)
   // This is a safety measure in case the modal is opened without going through the normal flow
   useEffect(() => {
-    if (open && sessionId) {
-      if (!joinedRoomsRef.current.has(sessionId)) {
-        console.log('[MasterPlanProgressModal] Backup join for rooms:', sessionId);
-        wsService.send('join_discovery', { session_id: sessionId });
-        wsService.send('join_masterplan', { masterplan_id: sessionId });
-        joinedRoomsRef.current.add(sessionId);
+    if (open && effectiveSessionId) {
+      if (!joinedRoomsRef.current.has(effectiveSessionId)) {
+        console.log('[MasterPlanProgressModal] Backup join for rooms:', effectiveSessionId);
+        wsService.send('join_discovery', { session_id: effectiveSessionId });
+        wsService.send('join_masterplan', { masterplan_id: effectiveSessionId });
+        joinedRoomsRef.current.add(effectiveSessionId);
       }
-    } else if (!open && sessionId) {
+    } else if (!open && effectiveSessionId) {
       // Modal is closing, leave all rooms
-      console.log('[MasterPlanProgressModal] Modal closed, leaving rooms:', sessionId);
-      wsService.send('leave_discovery', { session_id: sessionId });
-      wsService.send('leave_masterplan', { masterplan_id: sessionId });
-      joinedRoomsRef.current.delete(sessionId);
+      console.log('[MasterPlanProgressModal] Modal closed, leaving rooms:', effectiveSessionId);
+      wsService.send('leave_discovery', { session_id: effectiveSessionId });
+      wsService.send('leave_masterplan', { masterplan_id: effectiveSessionId });
+      joinedRoomsRef.current.delete(effectiveSessionId);
     }
-  }, [open, sessionId]);
+  }, [open, effectiveSessionId]);
 
   // Get real-time progress from hook
   // By this point, useChat should have already joined the discovery room
+  // CRITICAL: Pass effectiveSessionId (computed immediately) not sessionId (state update delayed)
   const {
     state: progressState,
     phases,
     handleRetry,
     clearError,
     isLoading,
-  } = useMasterPlanProgress(sessionId);
+  } = useMasterPlanProgress(effectiveSessionId);
 
   // Debug logging
   React.useEffect(() => {
