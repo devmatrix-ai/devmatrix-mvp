@@ -10,6 +10,7 @@ Extends base AnthropicClient with:
 This is the primary client for MasterPlan MVP implementation.
 """
 
+import asyncio
 import logging
 import time
 import json
@@ -33,6 +34,99 @@ def json_serializable(obj):
     if isinstance(obj, UUID):
         return str(obj)
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def _perform_streaming_sync(anthropic_client, model: str, max_tokens: int, temperature: float, system, messages) -> Dict[str, Any]:
+    """
+    Synchronous streaming helper function.
+
+    This function performs the actual streaming operation synchronously.
+    It's designed to be called via asyncio.to_thread() to avoid blocking
+    the async event loop during long-running streaming operations.
+
+    Args:
+        anthropic_client: Anthropic client instance
+        model: Model to use
+        max_tokens: Maximum output tokens
+        temperature: Sampling temperature
+        system: System prompt with cache markers
+        messages: Message list
+
+    Returns:
+        Dict with streaming results and cache stats
+    """
+    full_text = ""
+    cache_stats = {
+        "input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "output_tokens": 0
+    }
+    chunk_buffer = []
+    checkpoint_intervals = 500
+    last_checkpoint_pos = 0
+    chunk_count = 0
+
+    with anthropic_client.messages.stream(
+        model=model,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        system=system,
+        messages=messages
+    ) as stream:
+        for text in stream.text_stream:
+            full_text += text
+            chunk_buffer.append(text)
+            chunk_count += 1
+
+            # PHASE 2: Log chunk progress
+            if chunk_count % 50 == 0:
+                logger.debug(
+                    f"Streaming progress: {len(full_text)} chars, "
+                    f"{chunk_count} chunks, "
+                    f"Last chunk: {len(text)} chars"
+                )
+
+            # PHASE 2: Detect content structure (JSON boundaries)
+            if len(full_text) - last_checkpoint_pos >= checkpoint_intervals:
+                checkpoint_data = {
+                    "position": len(full_text),
+                    "chunks_received": chunk_count,
+                    "timestamp": time.time(),
+                    "content_sample": full_text[max(0, len(full_text)-100):]
+                }
+                logger.debug(f"Checkpoint reached: {checkpoint_data}")
+                last_checkpoint_pos = len(full_text)
+
+        # Get final message with usage stats
+        final_message = stream.get_final_message()
+        cache_stats["input_tokens"] = final_message.usage.input_tokens
+        cache_stats["cache_read_input_tokens"] = getattr(final_message.usage, "cache_read_input_tokens", 0)
+        cache_stats["cache_creation_input_tokens"] = getattr(final_message.usage, "cache_creation_input_tokens", 0)
+        cache_stats["output_tokens"] = final_message.usage.output_tokens
+
+        # Create response-like object for compatibility
+        class StreamResponse:
+            def __init__(self, text, model, usage, stop_reason):
+                self.content = [type('obj', (object,), {'text': text})]
+                self.model = model
+                self.usage = usage
+                self.stop_reason = stop_reason
+
+        response = StreamResponse(
+            text=full_text,
+            model=final_message.model,
+            usage=final_message.usage,
+            stop_reason=final_message.stop_reason
+        )
+
+    return {
+        "response": response,
+        "cache_stats": cache_stats,
+        "full_text": full_text,
+        "chunk_count": chunk_count,
+        "chunk_buffer": chunk_buffer
+    }
 
 
 class EnhancedAnthropicClient:
@@ -70,7 +164,7 @@ class EnhancedAnthropicClient:
         metrics_collector: Optional[MetricsCollector] = None,
         enable_v2_caching: bool = True,  # NEW: Enable MGE V2 caching
         enable_v2_batching: bool = False,  # NEW: Enable MGE V2 request batching (disabled by default)
-        redis_url: str = "redis://localhost:6379"  # NEW: Redis URL for V2 caching
+        redis_url: str = "redis://redis:6379"  # Redis URL for V2 caching (Docker service name)
     ):
         """
         Initialize enhanced client.
@@ -265,131 +359,47 @@ class EnhancedAnthropicClient:
 
             if use_streaming:
                 logger.info(f"Using streaming mode for {task_type} (max_tokens={max_tokens})")
-                # Use streaming mode to collect response incrementally
-                full_text = ""
-                cache_stats = {
-                    "input_tokens": 0,
-                    "cache_read_input_tokens": 0,
-                    "cache_creation_input_tokens": 0,
-                    "output_tokens": 0
-                }
-                stream_error = None
-                partial_completion = False
-
-                # PHASE 2: Chunk Buffering - Track streaming progress
-                chunk_buffer = []  # Track individual chunks
-                checkpoint_intervals = 500  # Save checkpoint every 500 chars
-                last_checkpoint_pos = 0
-                chunk_count = 0
-
+                # FIX: Run streaming in thread pool to avoid blocking async event loop
+                # The synchronous Anthropic streaming API blocks, so we run it in a separate
+                # thread via asyncio.to_thread() to keep the event loop free for WebSocket,
+                # other requests, and timeouts while streaming completes.
                 try:
-                    with self.anthropic.messages.stream(
-                        model=model,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        system=system,  # ← With cache markers
-                        messages=messages
-                    ) as stream:
-                        for text in stream.text_stream:
-                            full_text += text
-                            chunk_buffer.append(text)
-                            chunk_count += 1
+                    streaming_result = await asyncio.to_thread(
+                        _perform_streaming_sync,
+                        self.anthropic,
+                        model,
+                        max_tokens,
+                        temperature,
+                        system,
+                        messages
+                    )
 
-                            # PHASE 2: Log chunk progress
-                            if chunk_count % 50 == 0:  # Log every 50 chunks
-                                logger.debug(
-                                    f"Streaming progress: {len(full_text)} chars, "
-                                    f"{chunk_count} chunks, "
-                                    f"Last chunk: {len(text)} chars"
-                                )
+                    response = streaming_result["response"]
+                    cache_stats = streaming_result["cache_stats"]
+                    full_text = streaming_result["full_text"]
+                    chunk_count = streaming_result["chunk_count"]
+                    chunk_buffer = streaming_result["chunk_buffer"]
 
-                            # PHASE 2: Detect content structure (JSON boundaries)
-                            if len(full_text) - last_checkpoint_pos >= checkpoint_intervals:
-                                # Detected checkpoint interval
-                                checkpoint_data = {
-                                    "position": len(full_text),
-                                    "chunks_received": chunk_count,
-                                    "timestamp": time.time(),
-                                    "content_sample": full_text[max(0, len(full_text)-100):]
-                                }
-                                logger.debug(f"Checkpoint reached: {checkpoint_data}")
-                                last_checkpoint_pos = len(full_text)
-
-                        # Get final message with usage stats
-                        final_message = stream.get_final_message()
-                        cache_stats["input_tokens"] = final_message.usage.input_tokens
-                        cache_stats["cache_read_input_tokens"] = getattr(final_message.usage, "cache_read_input_tokens", 0)
-                        cache_stats["cache_creation_input_tokens"] = getattr(final_message.usage, "cache_creation_input_tokens", 0)
-                        cache_stats["output_tokens"] = final_message.usage.output_tokens
-
-                        # Create response-like object for compatibility
-                        class StreamResponse:
-                            def __init__(self, text, model, usage, stop_reason):
-                                self.content = [type('obj', (object,), {'text': text})]
-                                self.model = model
-                                self.usage = usage
-                                self.stop_reason = stop_reason
-
-                        response = StreamResponse(
-                            text=full_text,
-                            model=final_message.model,
-                            usage=final_message.usage,
-                            stop_reason=final_message.stop_reason
-                        )
                 except Exception as stream_exception:
-                    # PHASE 1 & 2: Error Handling + Chunk Analysis
-                    stream_error = stream_exception
-                    partial_completion = len(full_text) > 0
-
+                    # Error Handling
                     logger.error(
                         f"Stream error during {task_type}: {type(stream_exception).__name__}: {str(stream_exception)}",
                         exc_info=True
                     )
+
+                    # Check if we have partial content saved somewhere
+                    partial_completion = False
+                    full_text = ""
+                    chunk_count = 0
+                    chunk_buffer = []
+
                     logger.warning(
-                        f"Partial content captured: {len(full_text)} chars, "
-                        f"{len(full_text.split())} words, "
-                        f"{chunk_count} chunks received. "
-                        f"Completion: {partial_completion}"
+                        f"Streaming failed: {str(stream_exception)}. "
+                        f"Attempting non-streaming fallback for {task_type}"
                     )
 
-                    # PHASE 2: Analyze chunk buffer for recovery opportunities
-                    if chunk_buffer:
-                        last_chunk = chunk_buffer[-1]
-                        logger.debug(
-                            f"Last chunk data: length={len(last_chunk)}, "
-                            f"content={last_chunk[:100]}"
-                        )
-
-                    # If we have partial content, use it; otherwise re-raise
-                    if partial_completion and len(full_text.strip()) > 100:
-                        logger.info(
-                            f"Using partial completion ({len(full_text)} chars, "
-                            f"{chunk_count} chunks) as fallback for {task_type}"
-                        )
-                        # Create partial response from what we got
-                        class PartialStreamResponse:
-                            def __init__(self, text):
-                                self.content = [type('obj', (object,), {'text': text})]
-                                self.model = model
-                                self.usage = type('obj', (object,), {
-                                    'input_tokens': 0,
-                                    'cache_read_input_tokens': 0,
-                                    'cache_creation_input_tokens': 0,
-                                    'output_tokens': 0
-                                })()
-                                self.stop_reason = "incomplete"
-
-                        response = PartialStreamResponse(text=full_text)
-                        cache_stats = {
-                            "input_tokens": 0,
-                            "cache_read_input_tokens": 0,
-                            "cache_creation_input_tokens": 0,
-                            "output_tokens": 0
-                        }
-                    else:
-                        # Not enough content to use as fallback, propagate error
-                        logger.error(f"Insufficient partial content ({len(full_text)} chars), failing request")
-                        raise
+                    # Propagate to outer exception handler for non-streaming fallback
+                    raise
             else:
                 # Regular non-streaming mode for smaller requests
                 logger.info(f"Using non-streaming mode for {task_type} (max_tokens={max_tokens})")
