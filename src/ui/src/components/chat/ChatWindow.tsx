@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState } from 'react'
-import { useChat } from '../../hooks/useChat'
+import { useChat, type ProgressEvent } from '../../hooks/useChat'
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts'
 import { useMasterPlanStore } from '../../stores/masterplanStore'
 import { MessageList } from './MessageList'
@@ -9,7 +9,6 @@ import InlineProgressHeader from './InlineProgressHeader'
 import MasterPlanProgressModal from './MasterPlanProgressModal'
 import { ConversationHistory } from './ConversationHistory'
 import { FiMessageSquare, FiX, FiMinus, FiPlusCircle, FiDownload, FiMenu } from 'react-icons/fi'
-import type { ProgressEvent } from '../../types/masterplan'
 import '../chat/masterplan/animations.css'
 
 interface ChatWindowProps {

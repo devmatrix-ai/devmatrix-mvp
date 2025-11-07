@@ -276,10 +276,12 @@ async def send_message(sid, data):
 
         # Process message and stream response
         chunk_count = 0
+        # Pass the current socket.io sid so discovery events reach this client
+        metadata_with_sid = {**metadata, 'sid': sid}
         async for chunk in chat_service.send_message(
             conversation_id=conversation_id,
             content=content,
-            metadata=metadata,
+            metadata=metadata_with_sid,
         ):
             await sio.emit('message', chunk, room=f"chat_{conversation_id}")
             chunk_count += 1
@@ -577,6 +579,58 @@ async def leave_discovery(sid, data):
             logger.info(f"Client {sid} left discovery {session_id}")
     except Exception as e:
         logger.error(f"Error leaving discovery: {e}")
+
+
+@sio.event
+async def request_catch_up(sid, data):
+    """
+    Request historical events for catch-up after joining a room.
+
+    This handler replays events that were emitted before the client joined,
+    ensuring the client receives all progress updates even if the modal
+    was opened after generation had already started.
+
+    Expected data:
+        {
+            "session_id": "session-uuid" (for discovery)
+            OR
+            "masterplan_id": "masterplan-uuid" (for masterplan)
+        }
+    """
+    try:
+        session_id = data.get('session_id') or data.get('masterplan_id')
+        if not session_id:
+            logger.warning(f"Client {sid} requested catch-up without session_id or masterplan_id")
+            return
+
+        logger.info(f"📡 [CATCH-UP] Client {sid} requested catch-up for session: {session_id}")
+
+        # Look up historical events from ws_manager
+        if not hasattr(ws_manager, 'event_history'):
+            logger.warning(f"WebSocketManager doesn't have event_history attribute")
+            return
+
+        events = ws_manager.event_history.get(session_id, [])
+        logger.info(f"📡 [CATCH-UP] Found {len(events)} historical events for session {session_id}")
+
+        # Replay all stored events to the requesting client
+        for event_data in events:
+            event_name = event_data.get('event')
+            event_payload = event_data.get('data', {})
+
+            logger.debug(f"📡 [CATCH-UP] Replaying {event_name} to {sid}")
+
+            await sio.emit(
+                event_name,
+                event_payload,
+                room=sid  # Send only to the requesting client
+            )
+
+        logger.info(f"✅ [CATCH-UP] Finished replaying {len(events)} events to {sid}")
+
+    except Exception as e:
+        logger.error(f"Error handling catch-up request: {e}", exc_info=True)
+        await sio.emit('error', {'message': str(e)}, room=sid)
 
 
 # ==========================================

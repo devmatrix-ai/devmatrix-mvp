@@ -23,6 +23,11 @@ import type {
 } from '../types/masterplan'
 
 /**
+ * Event types for MasterPlan progress tracking
+ */
+type MasterPlanEventType = 'discovery_tokens_progress' | 'masterplan_tokens_progress' | string
+
+/**
  * Initial progress state
  */
 const initialProgressState: ProgressState = {
@@ -47,7 +52,7 @@ const initialProgressState: ProgressState = {
 }
 
 /**
- * Phase definitions for MasterPlan generation
+ * Phase definitions for MasterPlan generation (9 phases)
  */
 const PHASES_DEFINITION: PhaseStatus[] = [
   {
@@ -67,6 +72,36 @@ const PHASES_DEFINITION: PhaseStatus[] = [
     status: 'pending',
     icon: '✓',
     label: 'Validation phase',
+  },
+  {
+    name: 'complexity_analysis',
+    status: 'pending',
+    icon: '📊',
+    label: 'Complexity Analysis',
+  },
+  {
+    name: 'dependency_calculation',
+    status: 'pending',
+    icon: '🔗',
+    label: 'Dependency Calculation',
+  },
+  {
+    name: 'timeline_estimation',
+    status: 'pending',
+    icon: '⏱️',
+    label: 'Timeline Estimation',
+  },
+  {
+    name: 'risk_analysis',
+    status: 'pending',
+    icon: '⚠️',
+    label: 'Risk Analysis',
+  },
+  {
+    name: 'resource_optimization',
+    status: 'pending',
+    icon: '⚡',
+    label: 'Resource Optimization',
   },
   {
     name: 'saving',
@@ -110,6 +145,11 @@ export function useMasterPlanProgress(
     discovery: { start: 0 },
     parsing: { start: 0 },
     validation: { start: 0 },
+    complexity_analysis: { start: 0 },
+    dependency_calculation: { start: 0 },
+    timeline_estimation: { start: 0 },
+    risk_analysis: { start: 0 },
+    resource_optimization: { start: 0 },
     saving: { start: 0 },
   })
   const startTimeRef = useRef<number | null>(null)
@@ -176,14 +216,64 @@ export function useMasterPlanProgress(
       const sessionEvents = events.filter(
         (e) => e.sessionId === effectiveSessionId || e.data?.session_id === effectiveSessionId
       )
-      eventToProcess = sessionEvents[sessionEvents.length - 1] || null
+      // CRITICAL FIX: Process ALL events from this session, not just the latest
+      // When modal opens after many events have arrived, we must process all of them
+      if (sessionEvents.length > 0) {
+        // Sort by timestamp to ensure chronological order
+        sessionEvents.sort((a, b) => a.timestamp - b.timestamp)
+
+        // Process each event in order
+        sessionEvents.forEach((evt) => {
+          const eventKey = `${evt.type}:${evt.timestamp}`
+          if (eventKey === lastProcessedEventRef.current) {
+            return // Already processed
+          }
+
+          lastProcessedEventRef.current = eventKey
+          const event = evt
+          const eventData = event.data || {}
+
+          // Process this event using the same logic as below
+          switch (event.type as MasterPlanEventType) {
+            case 'discovery_tokens_progress': {
+              const tokensReceived = eventData.tokens_received || 0
+              const estimatedTotal = eventData.estimated_total || 1
+              const calculatedPercentage = Math.min((tokensReceived / estimatedTotal) * 100, 95)
+              setProgressState((prev) => ({
+                ...prev,
+                tokensReceived,
+                estimatedTotalTokens: estimatedTotal,
+                percentage: Math.max(prev.percentage, calculatedPercentage),
+                elapsedSeconds: calculateElapsedSeconds(),
+              }))
+              break
+            }
+            case 'masterplan_tokens_progress': {
+              const tokensReceived = eventData.tokens_received || 0
+              const estimatedTotal = eventData.estimated_total || 1
+              const calculatedPercentage = Math.min((tokensReceived / estimatedTotal) * 100, 95)
+              setProgressState((prev) => ({
+                ...prev,
+                tokensReceived,
+                estimatedTotalTokens: estimatedTotal,
+                percentage: Math.max(prev.percentage, calculatedPercentage),
+                elapsedSeconds: calculateElapsedSeconds(),
+              }))
+              break
+            }
+          }
+        })
+        return
+      }
+
+      eventToProcess = null
 
       console.log('[useMasterPlanProgress] Filtering events for session:', {
         sessionId: effectiveSessionId,
         totalEvents: events.length,
         filteredEvents: sessionEvents.length,
-        latestEvent: eventToProcess?.type,
-        matchedEvents: sessionEvents.map(e => e.type),
+        eventsProcessed: sessionEvents.length,
+        matchedEvents: sessionEvents.map((e: any) => e.type),
       })
     } else if (events.length > 0) {
       // No sessionId provided - use latest event from any session (during generation)
@@ -503,6 +593,11 @@ export function useMasterPlanProgress(
       discovery: { start: 0 },
       parsing: { start: 0 },
       validation: { start: 0 },
+      complexity_analysis: { start: 0 },
+      dependency_calculation: { start: 0 },
+      timeline_estimation: { start: 0 },
+      risk_analysis: { start: 0 },
+      resource_optimization: { start: 0 },
       saving: { start: 0 },
     }
 

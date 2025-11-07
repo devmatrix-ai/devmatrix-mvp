@@ -55,6 +55,9 @@ def _perform_streaming_sync(anthropic_client, model: str, max_tokens: int, tempe
     Returns:
         Dict with streaming results and cache stats
     """
+    import threading
+    import queue
+
     full_text = ""
     cache_stats = {
         "input_tokens": 0,
@@ -68,7 +71,12 @@ def _perform_streaming_sync(anthropic_client, model: str, max_tokens: int, tempe
     chunk_count = 0
     stream_start_time = time.time()
     stream_timeout = 600  # 10 minutes max stream time
-    last_chunk_time = stream_start_time
+    chunk_timeout = 45  # 45 seconds max between chunks
+    stream_timed_out = False
+
+    # Queue to pass chunks from reader thread to main thread
+    chunk_queue = queue.Queue(maxsize=100)
+    STREAM_END_SENTINEL = object()  # Marker for stream completion
 
     with anthropic_client.messages.stream(
         model=model,
@@ -78,61 +86,149 @@ def _perform_streaming_sync(anthropic_client, model: str, max_tokens: int, tempe
         messages=messages,
         timeout=600.0  # 10 minute timeout for entire request
     ) as stream:
-        for text in stream.text_stream:
-            full_text += text
-            chunk_buffer.append(text)
-            chunk_count += 1
-            last_chunk_time = time.time()
+        # Thread that reads from stream.text_stream and puts chunks in queue
+        def read_stream_chunks():
+            """Read chunks from stream and put them in queue with timeout detection."""
+            try:
+                for text in stream.text_stream:
+                    try:
+                        # Use put_nowait to avoid blocking if queue is full
+                        chunk_queue.put_nowait(text)
+                    except queue.Full:
+                        logger.warning(f"Queue full, dropping chunk of {len(text)} chars")
+            except Exception as e:
+                logger.error(f"Error reading stream chunks: {e}")
+            finally:
+                # Use put_nowait for sentinel too to avoid deadlock
+                try:
+                    chunk_queue.put_nowait(STREAM_END_SENTINEL)
+                except queue.Full:
+                    logger.error("Queue full when trying to put STREAM_END_SENTINEL, using non-blocking put with timeout")
 
-            # Check if we've exceeded total timeout
-            elapsed = time.time() - stream_start_time
-            if elapsed > stream_timeout:
-                logger.warning(
-                    f"Stream timeout exceeded ({stream_timeout}s), "
-                    f"received {len(full_text)} chars, {chunk_count} chunks"
-                )
-                break
+        reader_thread = threading.Thread(target=read_stream_chunks, daemon=True)
+        reader_thread.start()
 
-            # PHASE 2: Log chunk progress
-            if chunk_count % 50 == 0:
-                logger.debug(
-                    f"Streaming progress: {len(full_text)} chars, "
-                    f"{chunk_count} chunks, "
-                    f"Last chunk: {len(text)} chars"
-                )
+        try:
+            while True:
+                # Try to get chunk with timeout
+                try:
+                    item = chunk_queue.get(timeout=chunk_timeout)
 
-            # PHASE 2: Detect content structure (JSON boundaries)
-            if len(full_text) - last_checkpoint_pos >= checkpoint_intervals:
-                checkpoint_data = {
-                    "position": len(full_text),
-                    "chunks_received": chunk_count,
-                    "timestamp": time.time(),
-                    "content_sample": full_text[max(0, len(full_text)-100):]
-                }
-                logger.debug(f"Checkpoint reached: {checkpoint_data}")
-                last_checkpoint_pos = len(full_text)
+                    # Check if stream ended
+                    if item is STREAM_END_SENTINEL:
+                        logger.info(f"Stream ended normally after {chunk_count} chunks, {len(full_text)} chars")
+                        break
+
+                    # Process chunk
+                    text = item
+                    full_text += text
+                    chunk_buffer.append(text)
+                    chunk_count += 1
+
+                    # Check if we've exceeded total timeout
+                    elapsed = time.time() - stream_start_time
+                    if elapsed > stream_timeout:
+                        logger.warning(
+                            f"Stream timeout exceeded ({stream_timeout}s), "
+                            f"received {len(full_text)} chars, {chunk_count} chunks"
+                        )
+                        stream_timed_out = True
+                        break
+
+                    # PHASE 2: Log chunk progress
+                    if chunk_count % 50 == 0:
+                        logger.debug(
+                            f"Streaming progress: {len(full_text)} chars, "
+                            f"{chunk_count} chunks, "
+                            f"Last chunk: {len(text)} chars"
+                        )
+
+                    # PHASE 2: Detect content structure (JSON boundaries)
+                    if len(full_text) - last_checkpoint_pos >= checkpoint_intervals:
+                        checkpoint_data = {
+                            "position": len(full_text),
+                            "chunks_received": chunk_count,
+                            "timestamp": time.time(),
+                            "content_sample": full_text[max(0, len(full_text)-100):]
+                        }
+                        logger.debug(f"Checkpoint reached: {checkpoint_data}")
+                        last_checkpoint_pos = len(full_text)
+
+                except queue.Empty:
+                    # No chunk received within chunk_timeout seconds
+                    logger.warning(
+                        f"⚠️ STREAM STALL DETECTED: No chunk received in {chunk_timeout}s "
+                        f"(received {len(full_text)} chars, {chunk_count} chunks). "
+                        f"Terminating stream with partial content."
+                    )
+                    stream_timed_out = True
+                    break
+        finally:
+            # Wait briefly for reader thread to finish
+            reader_thread.join(timeout=2)
 
         # Get final message with usage stats
-        final_message = stream.get_final_message()
-        cache_stats["input_tokens"] = final_message.usage.input_tokens
-        cache_stats["cache_read_input_tokens"] = getattr(final_message.usage, "cache_read_input_tokens", 0)
-        cache_stats["cache_creation_input_tokens"] = getattr(final_message.usage, "cache_creation_input_tokens", 0)
-        cache_stats["output_tokens"] = final_message.usage.output_tokens
+        # If stream timed out, don't try to get final message (it will hang)
+        if stream_timed_out:
+            logger.warning(
+                f"Skipping get_final_message due to stream timeout. "
+                f"Using partial content: {len(full_text)} chars, {chunk_count} chunks"
+            )
+            # Create minimal response with partial content
+            class StreamResponse:
+                def __init__(self, text):
+                    self.content = [type('obj', (object,), {'text': text})]
+                    self.model = model
+                    self.usage = type('obj', (object,), {
+                        'input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'cache_creation_input_tokens': 0,
+                        'output_tokens': len(full_text.split())
+                    })()
+                    self.stop_reason = "stream_timeout"
 
-        # Create response-like object for compatibility
-        class StreamResponse:
-            def __init__(self, text, model, usage, stop_reason):
-                self.content = [type('obj', (object,), {'text': text})]
-                self.model = model
-                self.usage = usage
-                self.stop_reason = stop_reason
+            response = StreamResponse(text=full_text)
+        else:
+            try:
+                final_message = stream.get_final_message()
+                cache_stats["input_tokens"] = final_message.usage.input_tokens
+                cache_stats["cache_read_input_tokens"] = getattr(final_message.usage, "cache_read_input_tokens", 0)
+                cache_stats["cache_creation_input_tokens"] = getattr(final_message.usage, "cache_creation_input_tokens", 0)
+                cache_stats["output_tokens"] = final_message.usage.output_tokens
 
-        response = StreamResponse(
-            text=full_text,
-            model=final_message.model,
-            usage=final_message.usage,
-            stop_reason=final_message.stop_reason
-        )
+                # Create response-like object for compatibility
+                class StreamResponse:
+                    def __init__(self, text, model, usage, stop_reason):
+                        self.content = [type('obj', (object,), {'text': text})]
+                        self.model = model
+                        self.usage = usage
+                        self.stop_reason = stop_reason
+
+                response = StreamResponse(
+                    text=full_text,
+                    model=final_message.model,
+                    usage=final_message.usage,
+                    stop_reason=final_message.stop_reason
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to get final message: {type(e).__name__}: {str(e)}. "
+                    f"Using partial content from streaming."
+                )
+                # Fallback to partial content
+                class StreamResponse:
+                    def __init__(self, text):
+                        self.content = [type('obj', (object,), {'text': text})]
+                        self.model = model
+                        self.usage = type('obj', (object,), {
+                            'input_tokens': 0,
+                            'cache_read_input_tokens': 0,
+                            'cache_creation_input_tokens': 0,
+                            'output_tokens': len(full_text.split())
+                        })()
+                        self.stop_reason = "error"
+
+                response = StreamResponse(text=full_text)
 
     return {
         "response": response,
@@ -809,3 +905,112 @@ class EnhancedAnthropicClient:
         parts.append(f"PROMPT:\n{variable_prompt}")
 
         return "\n\n".join(parts)
+
+    async def stream_with_callbacks(
+        self,
+        model: str,
+        messages: List[Dict[str, str]],
+        system: Optional[str] = None,
+        max_tokens: int = 8000,
+        temperature: float = 0.7,
+        entity_callback: Optional[callable] = None,
+        progress_callback: Optional[callable] = None,
+        target_keys: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Stream response with real-time entity parsing and callbacks.
+
+        Uses StreamingJSONParser to detect and emit JSON objects as they arrive,
+        enabling real-time entity discovery and event emission.
+
+        Args:
+            model: Model to use
+            messages: Message list
+            system: System prompt
+            max_tokens: Maximum output tokens
+            temperature: Sampling temperature
+            entity_callback: Called for each complete JSON object found
+            progress_callback: Called with parsing progress
+            target_keys: Optional list of keys to filter objects
+
+        Returns:
+            Dict with response, full_text, entities_found, etc.
+        """
+        from src.utils.streaming_parser import StreamingJSONParser
+
+        full_text = ""
+        entities_found = []
+
+        # Create parser with callbacks
+        def entity_handler(obj):
+            entities_found.append(obj)
+            if entity_callback:
+                try:
+                    entity_callback(obj)
+                except Exception as e:
+                    logger.error(f"Error in entity callback: {e}")
+
+        def progress_handler(progress):
+            if progress_callback:
+                try:
+                    progress_callback(progress)
+                except Exception as e:
+                    logger.error(f"Error in progress callback: {e}")
+
+        parser = StreamingJSONParser(
+            entity_callback=entity_handler,
+            progress_callback=progress_handler,
+            target_keys=target_keys
+        )
+
+        # Stream response
+        try:
+            with self.anthropic.messages.stream(
+                model=model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                system=system,
+                messages=messages,
+                timeout=600.0
+            ) as stream:
+                for text in stream.text_stream:
+                    full_text += text
+                    # Process chunk through parser
+                    parser.process_chunk(text)
+
+                # Finalize parser to extract any remaining objects
+                remaining = parser.finalize()
+                entities_found.extend(remaining)
+
+                # Get final message with usage stats
+                final_message = stream.get_final_message()
+
+            logger.info(
+                f"Stream with callbacks completed",
+                extra={
+                    "total_chars": len(full_text),
+                    "entities_found": len(entities_found),
+                    "parser_stats": parser.get_stats()
+                }
+            )
+
+            return {
+                "full_text": full_text,
+                "entities_found": entities_found,
+                "entity_count": len(entities_found),
+                "response": final_message,
+                "usage": {
+                    "input_tokens": final_message.usage.input_tokens,
+                    "output_tokens": final_message.usage.output_tokens,
+                    "cache_read_tokens": getattr(final_message.usage, "cache_read_input_tokens", 0),
+                    "cache_creation_tokens": getattr(final_message.usage, "cache_creation_input_tokens", 0)
+                },
+                "parser_stats": parser.get_stats()
+            }
+
+        except Exception as e:
+            logger.error(
+                f"Error in stream_with_callbacks: {type(e).__name__}: {str(e)}",
+                exc_info=True
+            )
+            raise
