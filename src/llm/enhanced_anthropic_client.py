@@ -464,7 +464,6 @@ class EnhancedAnthropicClient:
             response_text = response.content[0].text
             if self.enable_v2_caching and self.llm_cache:
                 # Save to cache (don't await - fire and forget for performance)
-                import asyncio
                 asyncio.create_task(
                     self.llm_cache.set(
                         prompt=full_prompt,
