@@ -167,6 +167,11 @@ export function useChat(options: UseChatOptions = {}) {
       if (sessionId) {
         console.log('🔍 [useChat] Joining discovery room immediately:', sessionId)
         wsService.send('join_discovery', { session_id: sessionId })
+
+        // CRITICAL: Also emit a 'catch_up' event to request historical events
+        // This ensures we get events that were emitted before we joined the room
+        console.log('🔍 [useChat] Requesting catch-up events for session:', sessionId)
+        wsService.send('request_catch_up', { session_id: sessionId })
       }
 
       console.log('🔍 [useChat] Setting masterPlanProgress state...')
@@ -206,6 +211,18 @@ export function useChat(options: UseChatOptions = {}) {
     // MasterPlan Progress Events
     const cleanup10 = on('masterplan_generation_start', (data: any) => {
       console.log('🚀 [WebSocket] masterplan_generation_start received:', data)
+
+      // Join masterplan room and request catch-up
+      const sessionId = data.masterplan_id || data.session_id
+      if (sessionId) {
+        console.log('🚀 [useChat] Joining masterplan room:', sessionId)
+        wsService.send('join_masterplan', { masterplan_id: sessionId })
+
+        // Request historical events
+        console.log('🚀 [useChat] Requesting catch-up events for masterplan:', sessionId)
+        wsService.send('request_catch_up', { masterplan_id: sessionId })
+      }
+
       setMasterPlanProgress({ event: 'masterplan_generation_start', data })
     })
 

@@ -8,7 +8,16 @@
 /**
  * Phase names for MasterPlan generation workflow
  */
-export type PhaseName = 'discovery' | 'parsing' | 'validation' | 'saving';
+export type PhaseName =
+  | 'discovery'
+  | 'parsing'
+  | 'validation'
+  | 'complexity_analysis'
+  | 'dependency_calculation'
+  | 'timeline_estimation'
+  | 'risk_analysis'
+  | 'resource_optimization'
+  | 'saving';
 
 /**
  * Phase status indicators
@@ -184,17 +193,24 @@ export interface MasterPlanStatusResponse {
  * WebSocket event types for MasterPlan generation
  */
 export type MasterPlanEventType =
+  // Discovery events
   | 'discovery_generation_start'
   | 'discovery_tokens_progress'
   | 'discovery_entity_discovered'
+  | 'discovery_entity_streaming'
+  | 'discovery_relationship_found'
+  | 'discovery_pattern_detected'
   | 'discovery_parsing_complete'
   | 'discovery_saving_start'
   | 'discovery_generation_complete'
+  // MasterPlan events
   | 'masterplan_generation_start'
   | 'masterplan_tokens_progress'
   | 'masterplan_entity_discovered'
   | 'masterplan_parsing_complete'
   | 'masterplan_validation_start'
+  | 'masterplan_phase_progress'
+  | 'streaming_progress'
   | 'masterplan_saving_start'
   | 'masterplan_generation_complete'
   | 'generation_error';

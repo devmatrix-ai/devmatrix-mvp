@@ -45,6 +45,9 @@ class WebSocketManager:
             sio_server: Socket.IO server instance (optional, will be set later if None)
         """
         self.sio = sio_server
+        self.event_loop = None  # Will be set dynamically when needed
+        # Store recent events for catch-up (max 100 events per session)
+        self.event_history: Dict[str, list] = {}
         logger.info("WebSocketManager initialized")
 
     def set_sio_server(self, sio_server: socketio.AsyncServer):
@@ -56,6 +59,39 @@ class WebSocketManager:
         """
         self.sio = sio_server
         logger.info("Socket.IO server set")
+
+    def store_event(self, session_id: str, event_name: str, event_data: Dict[str, Any]):
+        """
+        Store event in history for catch-up requests.
+
+        Events are stored per session_id to be replayed when clients request catch-up.
+        Each session keeps max 100 events to prevent unbounded memory growth.
+
+        Args:
+            session_id: Session ID (discovery or masterplan ID)
+            event_name: Name of the event (e.g., 'discovery_tokens_progress')
+            event_data: Event payload dictionary
+        """
+        import time
+
+        if session_id not in self.event_history:
+            self.event_history[session_id] = []
+
+        # Add event with timestamp
+        self.event_history[session_id].append({
+            'event': event_name,
+            'data': event_data,
+            'timestamp': time.time()
+        })
+
+        # Keep only last 100 events per session to prevent memory bloat
+        if len(self.event_history[session_id]) > 100:
+            self.event_history[session_id] = self.event_history[session_id][-100:]
+
+        print(f"🔴 STORED: {event_name} for {session_id} - total: {len(self.event_history[session_id])}")
+        logger.info(
+            f"📡 [STORED] Event for catch-up - session {session_id} has {len(self.event_history[session_id])} events"
+        )
 
     async def emit_to_session(
         self,
@@ -669,3 +705,173 @@ class WebSocketManager:
                 "duration_seconds": duration_seconds
             }
         )
+
+    async def emit_discovery_entity_streaming(
+        self,
+        session_id: str,
+        entity_type: str,
+        name: str,
+        properties: dict,
+        chunk_index: int,
+        timestamp: float = None
+    ):
+        """Emit DDD entity discovered during streaming."""
+        import time
+        await self.emit_to_session(
+            session_id=session_id,
+            event="discovery_entity_streaming",
+            data={
+                "session_id": session_id,
+                "entity_type": entity_type,  # bounded_context, aggregate, value_object, etc.
+                "name": name,
+                "properties": properties,
+                "chunk_index": chunk_index,
+                "timestamp": timestamp or time.time()
+            }
+        )
+
+    async def emit_discovery_relationship_found(
+        self,
+        session_id: str,
+        from_entity: str,
+        to_entity: str,
+        relationship_type: str,
+        details: dict = None
+    ):
+        """Emit relationship found between DDD entities."""
+        await self.emit_to_session(
+            session_id=session_id,
+            event="discovery_relationship_found",
+            data={
+                "session_id": session_id,
+                "from_entity": from_entity,
+                "to_entity": to_entity,
+                "relationship_type": relationship_type,  # publishes_event, depends_on, etc.
+                "details": details or {}
+            }
+        )
+
+    async def emit_discovery_pattern_detected(
+        self,
+        session_id: str,
+        pattern: str,
+        confidence: float,
+        affected_entities: list,
+        description: str = None
+    ):
+        """Emit architectural pattern detected in discovery."""
+        await self.emit_to_session(
+            session_id=session_id,
+            event="discovery_pattern_detected",
+            data={
+                "session_id": session_id,
+                "pattern": pattern,  # event_sourcing, saga, cqrs, etc.
+                "confidence": confidence,
+                "affected_entities": affected_entities,
+                "description": description or ""
+            }
+        )
+
+    async def emit_masterplan_phase_progress(
+        self,
+        session_id: str,
+        phase: str,
+        progress: dict,
+        current_operation: str = None
+    ):
+        """Emit progress for real MasterPlan processing phase."""
+        await self.emit_to_session(
+            session_id=session_id,
+            event="masterplan_phase_progress",
+            data={
+                "session_id": session_id,
+                "phase": phase,  # complexity_analysis, dependency_calculation, etc.
+                "progress": progress,  # {analyzed: 10, total: 20, ...}
+                "current_operation": current_operation or ""
+            }
+        )
+
+    async def emit_streaming_progress(
+        self,
+        session_id: str,
+        tokens_received: int,
+        estimated_total: int,
+        content_preview: str = None,
+        entities_found: int = 0
+    ):
+        """Emit real-time streaming progress with chunk data."""
+        import time
+        percentage = min(100, int((tokens_received / max(1, estimated_total)) * 100))
+        await self.emit_to_session(
+            session_id=session_id,
+            event="streaming_progress",
+            data={
+                "session_id": session_id,
+                "tokens_received": tokens_received,
+                "estimated_total": estimated_total,
+                "percentage": percentage,
+                "content_preview": content_preview[:100] if content_preview else "",
+                "entities_found": entities_found,
+                "timestamp": time.time()
+            }
+        )
+
+    def emit_streaming_progress_sync(
+        self,
+        session_id: str,
+        tokens_received: int,
+        estimated_total: int,
+        content_preview: str = None,
+        entities_found: int = 0
+    ):
+        """Emit real-time streaming progress SYNCHRONOUSLY (for use in sync contexts)."""
+        import time
+        import asyncio
+
+        percentage = min(100, int((tokens_received / max(1, estimated_total)) * 100))
+        try:
+            # Prepare event data
+            event_data = {
+                "session_id": session_id,
+                "tokens_received": tokens_received,
+                "estimated_total": estimated_total,
+                "percentage": percentage,
+                "content_preview": content_preview[:100] if content_preview else "",
+                "entities_found": entities_found,
+                "timestamp": time.time()
+            }
+
+            # CRITICAL: Store event for catch-up BEFORE emitting
+            # This ensures late-joining clients can recover this event via request_catch_up
+            self.store_event(session_id, "discovery_tokens_progress", event_data)
+
+            # Use stored event loop if available, otherwise try to get current loop
+            loop = self.event_loop
+            if not loop:
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = asyncio.get_event_loop()
+
+            if not loop or not loop.is_running():
+                logger.info(f"⚠️ No running event loop, skipping emit for {session_id}")
+                return
+
+            # Use run_coroutine_threadsafe to execute from sync context
+            future = asyncio.run_coroutine_threadsafe(
+                self.sio.emit(
+                    "discovery_tokens_progress",
+                    event_data,
+                    room=session_id
+                ),
+                loop
+            )
+            logger.info(f"✅ Queued discovery_tokens_progress to {session_id}: {tokens_received}/{estimated_total} ({percentage}%)")
+        except RuntimeError as e:
+            # Event loop might not exist, try fallback
+            if "There is no current event loop" in str(e) or "no running event loop" in str(e):
+                logger.info(f"⚠️ No event loop available, skipping emit: {e}")
+            else:
+                logger.error(f"Error emitting streaming progress sync: {e}", exc_info=True)
+        except Exception as e:
+            logger.error(f"Error emitting streaming progress sync: {e}", exc_info=True)

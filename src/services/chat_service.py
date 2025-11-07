@@ -453,7 +453,7 @@ class ChatService:
 
         # Check if message is a command
         if ChatCommand.is_command(content):
-            async for chunk in self._handle_command(conversation, content):
+            async for chunk in self._handle_command(conversation, content, metadata):
                 yield chunk
         else:
             async for chunk in self._handle_regular_message(conversation, content):
@@ -463,6 +463,7 @@ class ChatService:
         self,
         conversation: Conversation,
         message: str,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         """Handle command execution."""
         command, args = ChatCommand.parse_command(message)
@@ -535,7 +536,7 @@ class ChatService:
                 return
 
             # Execute MasterPlan generation
-            async for chunk in self._execute_masterplan_generation(conversation, args):
+            async for chunk in self._execute_masterplan_generation(conversation, args, metadata):
                 yield chunk
 
         else:
@@ -843,9 +844,15 @@ Respondé de manera natural, amigable y útil. Si es una pregunta de diseño o p
         self,
         conversation: Conversation,
         request: str,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
         Execute MasterPlan generation (Discovery + MasterPlan) with real-time progress.
+
+        Args:
+            conversation: The conversation context
+            request: The user's project description
+            metadata: Additional metadata including WebSocket sid
 
         Yields:
             Progress updates and final result
@@ -853,8 +860,11 @@ Respondé de manera natural, amigable y útil. Si es una pregunta de diseño o p
         try:
             from src.services import DiscoveryAgent, MasterPlanGenerator
 
-            # Get session_id from conversation metadata (should be socket.io sid)
-            session_id = conversation.metadata.get('sid', conversation.conversation_id)
+            # Get session_id - prefer current request metadata (with fresh sid), fallback to conversation metadata
+            # This ensures discovery events are sent to the current WebSocket client
+            session_id = (metadata or {}).get('sid') or conversation.metadata.get('sid', conversation.conversation_id)
+            self.logger.info(f"📡 [_execute_masterplan_generation] Using session_id for discovery events", session_id=session_id, from_metadata=bool((metadata or {}).get('sid')))
+
             # Get user_id from conversation object (set by authenticated WebSocket connection)
             user_id = conversation.user_id
             if not user_id:
@@ -866,6 +876,13 @@ Respondé de manera natural, amigable y útil. Si es una pregunta de diseño o p
                 "content": "🔍 Iniciando análisis DDD...",
                 "done": False,
             }
+
+            # Emit discovery_generation_start event to open modal on frontend
+            await self.websocket_manager.emit_to_session(
+                session_id=session_id,
+                event="discovery_generation_start",
+                data={"session_id": session_id}
+            )
 
             # STEP 1: Discovery (with WebSocket progress)
             # WebSocket events will be emitted automatically by DiscoveryAgent
@@ -902,6 +919,13 @@ Respondé de manera natural, amigable y útil. Si es una pregunta de diseño o p
 Ahora generando MasterPlan con 50 tareas...""",
                 "done": False,
             }
+
+            # Emit masterplan_generation_start event
+            await self.websocket_manager.emit_to_session(
+                session_id=session_id,
+                event="masterplan_generation_start",
+                data={"session_id": session_id}
+            )
 
             # STEP 2: MasterPlan Generation (with WebSocket progress)
             # WebSocket events will be emitted automatically by MasterPlanGenerator

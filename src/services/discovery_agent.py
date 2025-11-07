@@ -164,7 +164,16 @@ class DiscoveryAgent:
             ValueError: If user_request is empty or invalid
             RuntimeError: If discovery fails
         """
+        import asyncio
         overall_start_time = time.time()
+
+        # Capture the running event loop for use in sync callbacks
+        if self.ws_manager:
+            try:
+                self.ws_manager.event_loop = asyncio.get_running_loop()
+                logger.info(f"✅ Captured event loop for progress callbacks")
+            except RuntimeError:
+                logger.warning(f"Could not capture event loop for progress callbacks")
 
         # Validate input
         if not user_request or not user_request.strip():
@@ -343,7 +352,7 @@ class DiscoveryAgent:
 
     async def _generate_discovery(self, user_request: str, session_id: str) -> Dict[str, Any]:
         """
-        Generate discovery using LLM.
+        Generate discovery using LLM with granular DDD entity streaming.
 
         Args:
             user_request: User's project description
@@ -362,93 +371,177 @@ class DiscoveryAgent:
 
 Provide a complete DDD analysis in the specified JSON format."""
 
-        # Emit token progress updates (simulated since we don't have streaming visibility)
-        if self.ws_manager:
-            # Start progress monitoring task
-            import asyncio
+        # Track discovered entities for relationship detection
+        discovered_entities = {
+            "bounded_contexts": [],
+            "aggregates": [],
+            "services": []
+        }
 
-            estimated_total_tokens = 8000
-            estimated_duration = 90  # seconds (LLM generation typically takes 30-60s)
-            progress_interval = 3  # seconds
+        async def entity_discovered_callback(entity: Dict[str, Any]):
+            """
+            Callback for when a complete entity JSON is discovered in the stream.
+            Detects entity type and emits appropriate WebSocket events.
+            """
+            try:
+                # Detect entity type by presence of characteristic keys
+                if "bounded_contexts" in entity:
+                    # This is a bounded_contexts array
+                    for i, context in enumerate(entity["bounded_contexts"], 1):
+                        if self.ws_manager:
+                            await self.ws_manager.emit_discovery_entity_streaming(
+                                session_id=session_id,
+                                entity_type="bounded_context",
+                                name=context.get("name", f"Context {i}"),
+                                properties={
+                                    "description": context.get("description", ""),
+                                    "responsibilities": context.get("responsibilities", [])
+                                },
+                                chunk_index=i
+                            )
+                        discovered_entities["bounded_contexts"].append(context)
 
-            async def emit_progress():
-                """Emit periodic progress updates during LLM generation"""
-                elapsed = 0
-                phases = [
-                    "Analyzing domain concepts...",
-                    "Identifying bounded contexts...",
-                    "Discovering aggregates...",
-                    "Mapping entities and value objects...",
-                    "Defining domain events...",
-                    "Finalizing services..."
-                ]
+                elif "aggregates" in entity:
+                    # This is an aggregates array
+                    for i, aggregate in enumerate(entity["aggregates"], 1):
+                        if self.ws_manager:
+                            await self.ws_manager.emit_discovery_entity_streaming(
+                                session_id=session_id,
+                                entity_type="aggregate",
+                                name=aggregate.get("name", f"Aggregate {i}"),
+                                properties={
+                                    "root_entity": aggregate.get("root_entity", ""),
+                                    "entities": aggregate.get("entities", []),
+                                    "value_objects": aggregate.get("value_objects", []),
+                                    "bounded_context": aggregate.get("bounded_context", "")
+                                },
+                                chunk_index=i
+                            )
+                        discovered_entities["aggregates"].append(aggregate)
 
-                # Emit initial progress immediately to show modal is working
-                await self.ws_manager.emit_discovery_tokens_progress(
-                    session_id=session_id,
-                    tokens_received=100,
-                    estimated_total=estimated_total_tokens,
-                    current_phase=phases[0]
-                )
+                elif "value_objects" in entity:
+                    # This is a value_objects array
+                    for i, vo in enumerate(entity["value_objects"], 1):
+                        if self.ws_manager:
+                            await self.ws_manager.emit_discovery_entity_streaming(
+                                session_id=session_id,
+                                entity_type="value_object",
+                                name=vo.get("name", f"ValueObject {i}"),
+                                properties={
+                                    "attributes": vo.get("attributes", []),
+                                    "validation_rules": vo.get("validation_rules", [])
+                                },
+                                chunk_index=i
+                            )
 
-                while elapsed < estimated_duration:
-                    await asyncio.sleep(progress_interval)
-                    elapsed += progress_interval
+                elif "domain_events" in entity:
+                    # This is a domain_events array
+                    for i, event in enumerate(entity["domain_events"], 1):
+                        if self.ws_manager:
+                            await self.ws_manager.emit_discovery_entity_streaming(
+                                session_id=session_id,
+                                entity_type="domain_event",
+                                name=event.get("name", f"Event {i}"),
+                                properties={
+                                    "trigger": event.get("trigger", ""),
+                                    "data": event.get("data", []),
+                                    "subscribers": event.get("subscribers", [])
+                                },
+                                chunk_index=i
+                            )
 
-                    # Conservative progress (cap at 90% until done)
-                    progress_ratio = min(elapsed / estimated_duration, 0.90)
-                    tokens_received = int(estimated_total_tokens * progress_ratio)
+                elif "services" in entity:
+                    # This is a services array
+                    for i, service in enumerate(entity["services"], 1):
+                        if self.ws_manager:
+                            await self.ws_manager.emit_discovery_entity_streaming(
+                                session_id=session_id,
+                                entity_type="service",
+                                name=service.get("name", f"Service {i}"),
+                                properties={
+                                    "type": service.get("type", "domain"),
+                                    "responsibilities": service.get("responsibilities", [])
+                                },
+                                chunk_index=i
+                            )
+                        discovered_entities["services"].append(service)
 
-                    phase_index = min(int((elapsed / estimated_duration) * len(phases)), len(phases) - 1)
-                    current_phase = phases[phase_index]
+                elif "domain" in entity:
+                    # This is the top-level domain object
+                    if self.ws_manager:
+                        await self.ws_manager.emit_discovery_entity_streaming(
+                            session_id=session_id,
+                            entity_type="domain",
+                            name=entity.get("domain", "Unknown Domain"),
+                            properties={
+                                "assumptions": entity.get("assumptions", []),
+                                "clarifications_needed": entity.get("clarifications_needed", []),
+                                "risk_factors": entity.get("risk_factors", [])
+                            },
+                            chunk_index=0
+                        )
 
-                    await self.ws_manager.emit_discovery_tokens_progress(
+            except Exception as e:
+                logger.error(f"Error in entity_discovered_callback: {e}")
+
+        def progress_callback(progress_info: Dict[str, Any]):
+            """
+            Callback for streaming progress updates.
+            Emits real-time progress to WebSocket SYNCHRONOUSLY.
+            """
+            logger.info(f"📊 PROGRESS_CALLBACK: chunk_count={progress_info.get('chunk_count')}, objects={progress_info.get('objects_found')}, ws_manager={bool(self.ws_manager)}")
+            if self.ws_manager:
+                try:
+                    # Emit synchronously without async/await
+                    logger.info(f"📊 About to emit_streaming_progress_sync...")
+                    self.ws_manager.emit_streaming_progress_sync(
                         session_id=session_id,
-                        tokens_received=tokens_received,
-                        estimated_total=estimated_total_tokens,
-                        current_phase=current_phase
+                        tokens_received=progress_info.get("chunk_count", 0) * 4,  # Rough estimate
+                        estimated_total=8000,
+                        content_preview="Discovering DDD entities...",
+                        entities_found=progress_info.get("objects_found", 0)
                     )
+                    logger.info(f"📊 emit_streaming_progress_sync completed")
+                except Exception as e:
+                    logger.error(f"Error emitting progress: {e}", exc_info=True)
 
-            # Start progress task in background
-            progress_task = asyncio.create_task(emit_progress())
-
-        # Generate with caching (no cacheable context for discovery - it's always unique)
-        response = await self.llm.generate_with_caching(
-            task_type=TaskType.DISCOVERY,  # Always uses Sonnet 4.5
-            complexity=TaskComplexity.HIGH,
-            cacheable_context={
-                "system_prompt": DISCOVERY_SYSTEM_PROMPT
-            },
-            variable_prompt=variable_prompt,
+        # Stream discovery with callbacks for real-time entity extraction
+        response = await self.llm.stream_with_callbacks(
+            model="claude-sonnet-4-5-20250929",
+            messages=[
+                {
+                    "role": "user",
+                    "content": variable_prompt
+                }
+            ],
+            system=DISCOVERY_SYSTEM_PROMPT,
             max_tokens=8000,
-            temperature=0.7
+            temperature=0.7,
+            entity_callback=entity_discovered_callback,
+            progress_callback=progress_callback,
+            target_keys=["bounded_contexts", "aggregates", "value_objects", "domain_events", "services", "domain"]
         )
 
-        # Let progress task complete naturally instead of canceling
-        # This ensures all progress events are emitted and delivered to clients
-        if self.ws_manager:
-            try:
-                # Wait for progress task to complete (with timeout to avoid hanging)
-                await asyncio.wait_for(progress_task, timeout=2)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                # Task may have already completed or timed out naturally
-                pass
+        # Detect relationships between discovered entities
+        await self._detect_and_emit_relationships(session_id, discovered_entities)
+
+        # Detect architectural patterns
+        await self._detect_and_emit_patterns(session_id, discovered_entities)
 
         duration = time.time() - start_time
 
         logger.info(
             "Discovery LLM generation complete",
-            model=response["model"],
-            cost_usd=response["cost_usd"],
+            model="claude-sonnet-4-5-20250929",
             duration_seconds=duration,
             input_tokens=response["usage"]["input_tokens"],
             output_tokens=response["usage"]["output_tokens"]
         )
 
         return {
-            "content": response["content"],
-            "model": response["model"],
-            "cost_usd": response["cost_usd"],
+            "content": response["full_text"],
+            "model": "claude-sonnet-4-5-20250929",
+            "cost_usd": (response["usage"]["input_tokens"] * 0.003 + response["usage"]["output_tokens"] * 0.015) / 1000,
             "usage": response["usage"],
             "duration_seconds": duration
         }
@@ -504,6 +597,145 @@ Provide a complete DDD analysis in the specified JSON format."""
         )
 
         return discovery_data
+
+    async def _detect_and_emit_relationships(
+        self,
+        session_id: str,
+        discovered_entities: Dict[str, Any]
+    ) -> None:
+        """
+        Detect relationships between discovered entities and emit WebSocket events.
+
+        Analyzes aggregates and services to find dependencies and publishes events.
+
+        Args:
+            session_id: Session ID for WebSocket events
+            discovered_entities: Dictionary of discovered DDD entities
+        """
+        if not self.ws_manager:
+            return
+
+        try:
+            # Extract aggregates and services for relationship analysis
+            aggregates = discovered_entities.get("aggregates", [])
+            services = discovered_entities.get("services", [])
+
+            # Detect aggregate dependencies
+            for agg1 in aggregates:
+                agg1_name = agg1.get("name", "")
+                for agg2 in aggregates:
+                    if agg1_name == agg2.get("name"):
+                        continue
+                    agg2_name = agg2.get("name", "")
+
+                    # Simple heuristic: check if agg2 name appears in agg1 entities/value_objects
+                    agg1_content = str(agg1.get("entities", [])) + str(agg1.get("value_objects", []))
+                    if agg2_name.lower() in agg1_content.lower():
+                        await self.ws_manager.emit_discovery_relationship_found(
+                            session_id=session_id,
+                            from_entity=agg1_name,
+                            to_entity=agg2_name,
+                            relationship_type="depends_on",
+                            details={"type": "aggregate_dependency"}
+                        )
+
+            # Detect service-aggregate relationships
+            for service in services:
+                service_name = service.get("name", "")
+                service_responsibilities = str(service.get("responsibilities", []))
+
+                for agg in aggregates:
+                    agg_name = agg.get("name", "")
+                    # Check if aggregate name appears in service responsibilities
+                    if agg_name.lower() in service_responsibilities.lower():
+                        await self.ws_manager.emit_discovery_relationship_found(
+                            session_id=session_id,
+                            from_entity=service_name,
+                            to_entity=agg_name,
+                            relationship_type="orchestrates",
+                            details={"type": "service_aggregate_relationship"}
+                        )
+
+            logger.info(f"Relationship detection completed for session {session_id}")
+
+        except Exception as e:
+            logger.error(f"Error detecting relationships: {e}")
+
+    async def _detect_and_emit_patterns(
+        self,
+        session_id: str,
+        discovered_entities: Dict[str, Any]
+    ) -> None:
+        """
+        Detect architectural patterns in the discovery and emit WebSocket events.
+
+        Identifies common DDD patterns like Event Sourcing, Saga, CQRS, etc.
+
+        Args:
+            session_id: Session ID for WebSocket events
+            discovered_entities: Dictionary of discovered DDD entities
+        """
+        if not self.ws_manager:
+            return
+
+        try:
+            services = discovered_entities.get("services", [])
+            aggregates = discovered_entities.get("aggregates", [])
+            affected_entities = []
+
+            # Pattern 1: Event Sourcing - Many domain events with aggregate dependencies
+            domain_event_count = len(discovered_entities.get("domain_events", []))
+            if domain_event_count > 5:
+                affected_entities = [f"Domain has {domain_event_count} events"]
+                await self.ws_manager.emit_discovery_pattern_detected(
+                    session_id=session_id,
+                    pattern="event_sourcing_candidate",
+                    confidence=0.6 if domain_event_count > 8 else 0.4,
+                    affected_entities=affected_entities,
+                    description=f"High event volume ({domain_event_count} domain events) suggests potential Event Sourcing pattern"
+                )
+
+            # Pattern 2: CQRS - Separate read/write services
+            read_services = [s for s in services if "read" in s.get("name", "").lower() or "query" in s.get("name", "").lower()]
+            write_services = [s for s in services if "write" in s.get("name", "").lower() or "command" in s.get("name", "").lower()]
+
+            if read_services and write_services:
+                affected_entities = [s.get("name", "") for s in read_services + write_services]
+                await self.ws_manager.emit_discovery_pattern_detected(
+                    session_id=session_id,
+                    pattern="cqrs",
+                    confidence=0.8,
+                    affected_entities=affected_entities,
+                    description="CQRS pattern identified with separate read and write services"
+                )
+
+            # Pattern 3: Saga - Services with coordinating relationships
+            coordinating_services = [s for s in services if "coordinator" in s.get("name", "").lower() or "orchestrator" in s.get("name", "").lower()]
+            if coordinating_services and len(services) > 3:
+                affected_entities = [s.get("name", "") for s in coordinating_services]
+                await self.ws_manager.emit_discovery_pattern_detected(
+                    session_id=session_id,
+                    pattern="saga",
+                    confidence=0.7,
+                    affected_entities=affected_entities,
+                    description="Saga pattern identified with coordinating services across multiple aggregates"
+                )
+
+            # Pattern 4: Domain Events - Multiple domain events suggest event-driven architecture
+            if domain_event_count > 3:
+                affected_entities = [e.get("name", "") for e in discovered_entities.get("domain_events", [])[:5]]
+                await self.ws_manager.emit_discovery_pattern_detected(
+                    session_id=session_id,
+                    pattern="event_driven",
+                    confidence=0.7,
+                    affected_entities=affected_entities,
+                    description=f"Event-driven architecture pattern with {domain_event_count} domain events"
+                )
+
+            logger.info(f"Pattern detection completed for session {session_id}")
+
+        except Exception as e:
+            logger.error(f"Error detecting patterns: {e}")
 
     def _save_discovery(
         self,

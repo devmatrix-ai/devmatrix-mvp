@@ -64,13 +64,14 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
   // Use ref value - always consistent, never changes
   const effectiveSessionId = sessionIdRef.current
 
-  console.log('[MasterPlanProgressModal] Current sessionId:', {
+  console.log('[MasterPlanProgressModal] 🎯 CRITICAL DEBUG - sessionId:', {
     sessionId,
     effectiveSessionId,
     propMasterplanId,
     eventMasterplanId: eventData.masterplan_id,
     eventSessionId: eventData.session_id,
     eventDiscoveryId: eventData.discovery_id,
+    isSessionIdEmpty: !effectiveSessionId,
   });
 
   // Track joined rooms to avoid duplicate JOIN/LEAVE calls
@@ -267,7 +268,7 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
             </React.Suspense>
           )}
 
-          {/* In-progress state */}
+          {/* In-progress state - Show timeline and metrics while progressing OR while saving */}
           {!isError && !isComplete && (
             <div className="space-y-6">
               {/* Progress Timeline */}
@@ -295,7 +296,7 @@ const MasterPlanProgressModal: React.FC<MasterPlanProgressModalProps> = ({
                     milestones: progressState.milestonesFound,
                     tasks: progressState.tasksFound,
                   }}
-                  isComplete={false}
+                  isComplete={progressState.isComplete}
                 />
               </React.Suspense>
             </div>
