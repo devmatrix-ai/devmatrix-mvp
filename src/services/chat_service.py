@@ -142,7 +142,13 @@ class ChatService:
     and streaming responses from agents.
     """
 
-    def __init__(self, api_key: Optional[str] = None, metrics_collector=None, websocket_manager=None):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        metrics_collector=None,
+        websocket_manager=None,
+        sqlalchemy_session=None
+    ):
         """
         Initialize chat service.
 
@@ -150,6 +156,7 @@ class ChatService:
             api_key: Anthropic API key (optional, uses env var if not provided)
             metrics_collector: MetricsCollector instance for LLM metrics (optional)
             websocket_manager: WebSocketManager instance for real-time progress (optional)
+            sqlalchemy_session: SQLAlchemy database session for MGE V2 (optional)
         """
         from src.llm.anthropic_client import AnthropicClient
         from src.state.postgres_manager import PostgresManager
@@ -161,13 +168,16 @@ class ChatService:
         self.metrics_collector = metrics_collector
         self.websocket_manager = websocket_manager
 
-        # Initialize PostgreSQL for conversation persistence
+        # Initialize PostgreSQL for conversation persistence (state manager)
         try:
             self.db = PostgresManager()
             self.logger.info("PostgreSQL connection established for chat persistence")
         except Exception as e:
             self.logger.warning(f"Failed to connect to PostgreSQL: {e}. Conversations will not be persisted.")
             self.db = None
+
+        # SQLAlchemy session for MGE V2 (if provided)
+        self.sqlalchemy_session = sqlalchemy_session
 
         # Register specialized agents
         self._register_agents()
@@ -698,6 +708,166 @@ Respondé de manera natural, amigable y útil. Si es una pregunta de diseño o p
     ) -> AsyncIterator[Dict[str, Any]]:
         """
         Execute orchestration and stream progress.
+
+        Uses MGE V2 pipeline if MGE_V2_ENABLED=true, otherwise uses legacy OrchestratorAgent.
+
+        Yields:
+            Progress updates and final result
+        """
+        from src.config.constants import MGE_V2_ENABLED
+
+        if MGE_V2_ENABLED:
+            # Use MGE V2 execution pipeline
+            async for event in self._execute_mge_v2(conversation, request):
+                yield event
+        else:
+            # Use legacy OrchestratorAgent (V1)
+            async for event in self._execute_legacy_orchestration(conversation, request):
+                yield event
+
+    async def _execute_mge_v2(
+        self,
+        conversation: Conversation,
+        request: str,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """
+        Execute MGE V2 pipeline and stream progress.
+
+        Yields:
+            Progress updates and final result
+        """
+        try:
+            # Check if SQLAlchemy session is available
+            if not self.sqlalchemy_session:
+                yield {
+                    "type": "error",
+                    "content": "MGE V2 requires database session. Please initialize ChatService with sqlalchemy_session parameter.",
+                    "done": True,
+                }
+                return
+
+            # Import MGE V2 orchestration service
+            from src.services.mge_v2_orchestration_service import MGE_V2_OrchestrationService
+            from src.config.constants import MGE_V2_ENABLE_CACHING, MGE_V2_ENABLE_RAG
+
+            # Initialize MGE V2 service
+            mge_v2_service = MGE_V2_OrchestrationService(
+                db=self.sqlalchemy_session,
+                api_key=self.api_key,
+                enable_caching=MGE_V2_ENABLE_CACHING,
+                enable_rag=MGE_V2_ENABLE_RAG
+            )
+
+            # Send initial status
+            yield {
+                "type": "status",
+                "content": "🚀 Iniciando MGE V2 pipeline...",
+                "done": False,
+            }
+
+            # Stream MGE V2 pipeline events
+            completion_event = None
+            async for event in mge_v2_service.orchestrate_from_request(
+                user_request=request,
+                workspace_id=conversation.workspace_id,
+                session_id=conversation.conversation_id,
+                user_id=conversation.user_id
+            ):
+                # Translate MGE V2 events to chat service format
+                event_type = event.get("type")
+
+                if event_type == "status":
+                    yield {
+                        "type": "status",
+                        "content": event.get("message", ""),
+                        "done": False,
+                    }
+                elif event_type == "progress":
+                    phase = event.get("phase", "")
+                    message = event.get("message", "")
+                    yield {
+                        "type": "progress",
+                        "event": phase,
+                        "data": event,
+                        "content": message,
+                        "done": False,
+                    }
+                elif event_type == "complete":
+                    completion_event = event
+                elif event_type == "error":
+                    yield {
+                        "type": "error",
+                        "content": event.get("message", "Unknown error"),
+                        "done": True,
+                    }
+                    return
+
+            # Format completion message
+            if completion_event:
+                response = self._format_mge_v2_completion(completion_event)
+
+                # Add assistant response to conversation
+                assistant_message = Message(
+                    content=response,
+                    role=MessageRole.ASSISTANT,
+                    metadata={"mge_v2_result": completion_event},
+                )
+                conversation.add_message(assistant_message)
+
+                # Save to database
+                self._save_message_to_db(
+                    conversation_id=conversation.conversation_id,
+                    role=MessageRole.ASSISTANT.value,
+                    content=response,
+                    metadata={"mge_v2_result": completion_event}
+                )
+
+                # Yield final response
+                yield {
+                    "type": "message",
+                    "role": MessageRole.ASSISTANT.value,
+                    "content": response,
+                    "metadata": completion_event,
+                    "done": True,
+                }
+
+        except Exception as e:
+            error_message = f"Error durante MGE V2 orchestration: {str(e)}"
+            self.logger.error(error_message, exc_info=True)
+
+            yield {
+                "type": "error",
+                "content": error_message,
+                "done": True,
+            }
+
+    def _format_mge_v2_completion(self, event: Dict[str, Any]) -> str:
+        """Format MGE V2 completion event as markdown message."""
+        lines = [
+            "## ✅ MGE V2 Generation Complete",
+            "",
+            f"**MasterPlan ID**: `{event.get('masterplan_id', 'N/A')}`",
+            f"**Total Tasks**: {event.get('total_tasks', 0)}",
+            f"**Total Atoms**: {event.get('total_atoms', 0)}",
+            f"**Precision**: {event.get('precision', 0) * 100:.1f}%",
+            f"**Execution Time**: {event.get('execution_time', 0):.1f}s",
+            "",
+            "The code has been generated successfully using the MGE V2 pipeline. Check your workspace for the results.",
+            "",
+            "### Next Steps",
+            "- Review the generated code",
+            "- Run tests to validate functionality",
+            "- Deploy to your environment",
+        ]
+        return "\n".join(lines)
+
+    async def _execute_legacy_orchestration(
+        self,
+        conversation: Conversation,
+        request: str,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """
+        Execute legacy orchestration (V1) and stream progress.
 
         Yields:
             Progress updates and final result
