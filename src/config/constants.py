@@ -114,6 +114,20 @@ RAG_CACHE_ENABLED = os.getenv("RAG_CACHE_ENABLED", "true").lower() == "true"
 
 
 # ============================================================================
+# MGE V2 Configuration
+# ============================================================================
+
+# Enable MGE V2 execution pipeline (vs legacy OrchestratorAgent)
+MGE_V2_ENABLED = os.getenv("MGE_V2_ENABLED", "false").lower() == "true"
+
+# MGE V2 Execution Settings
+MGE_V2_MAX_CONCURRENCY = int(os.getenv("MGE_V2_MAX_CONCURRENCY", "100"))  # Max concurrent atoms per wave
+MGE_V2_MAX_RETRIES = int(os.getenv("MGE_V2_MAX_RETRIES", "4"))  # Max retry attempts per atom
+MGE_V2_ENABLE_CACHING = os.getenv("MGE_V2_ENABLE_CACHING", "true").lower() == "true"
+MGE_V2_ENABLE_RAG = os.getenv("MGE_V2_ENABLE_RAG", "true").lower() == "true"
+
+
+# ============================================================================
 # Authentication & Email Verification Configuration
 # ============================================================================
 
