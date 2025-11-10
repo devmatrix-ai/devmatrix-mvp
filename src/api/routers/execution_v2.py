@@ -156,20 +156,36 @@ def get_execution_service() -> ExecutionServiceV2:
     global _execution_service
 
     if _execution_service is None:
-        # Create components
-        # Note: In production, these would use real implementations
-        # For now, we'll use mocks in tests
-        from unittest.mock import MagicMock
+        # Initialize real LLM client
+        from src.llm import EnhancedAnthropicClient
+        from src.mge.v2.validation.atomic_validator import AtomicValidator
+        from src.config.database import get_db
+        import os
 
-        mock_llm = MagicMock()
-        mock_validator = MagicMock()
+        # Get API key from environment
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            logger.warning("ANTHROPIC_API_KEY not set, MGE V2 execution may fail")
 
-        retry_orchestrator = RetryOrchestrator(mock_llm, mock_validator)
+        # Get database session for validator
+        db_session = next(get_db())
+
+        # Initialize real components
+        llm_client = EnhancedAnthropicClient(
+            api_key=api_key,
+            cost_optimization=True,  # Use Haiku for simple tasks
+            enable_v2_caching=True,   # Enable MGE V2 caching
+        )
+
+        # Initialize validator with database session for real validation
+        validator = AtomicValidator(db=db_session)
+
+        retry_orchestrator = RetryOrchestrator(llm_client, validator)
         wave_executor = WaveExecutor(retry_orchestrator, max_concurrency=100)
 
         _execution_service = ExecutionServiceV2(wave_executor)
 
-        logger.info("ExecutionServiceV2 initialized")
+        logger.info("ExecutionServiceV2 initialized with real LLM client and validator")
 
     return _execution_service
 
