@@ -290,11 +290,15 @@ async def test_complete_mge_v2_pipeline_fastapi(
     # ============================================================================
     def discovery_matcher(event):
         """Check if event signals discovery completion."""
-        return event.get('type') == 'discovery_generation_complete'
+        return (
+            event.get('type') == 'status' and
+            event.get('phase') == 'discovery' and
+            'created successfully' in event.get('message', '').lower()
+        )
 
     def discovery_extractor(event, db):
         """Extract discovery data from completion event."""
-        discovery_id = event.get('data', {}).get('discovery_id')
+        discovery_id = event.get('discovery_id')
 
         # Verify discovery in database
         discovery = db.query(DiscoveryDocument).filter(
@@ -325,11 +329,15 @@ async def test_complete_mge_v2_pipeline_fastapi(
     # ============================================================================
     def masterplan_matcher(event):
         """Check if event signals masterplan completion."""
-        return event.get('type') == 'masterplan_generation_complete'
+        return (
+            event.get('type') == 'status' and
+            event.get('phase') == 'masterplan_generation' and
+            'generated successfully' in event.get('message', '').lower()
+        )
 
     def masterplan_extractor(event, db):
         """Extract masterplan data from completion event."""
-        masterplan_id = event.get('data', {}).get('masterplan_id')
+        masterplan_id = event.get('masterplan_id')
 
         # Verify MasterPlan in database
         masterplan = db.query(MasterPlan).filter(
@@ -363,7 +371,11 @@ async def test_complete_mge_v2_pipeline_fastapi(
     # ============================================================================
     def code_generation_matcher(event):
         """Check if event signals code generation completion."""
-        return event.get('phase') == 'code_generation' and 'complete' in event.get('type', '')
+        return (
+            event.get('type') == 'status' and
+            event.get('phase') == 'code_generation' and
+            'complete' in event.get('message', '').lower()
+        )
 
     def code_generation_extractor(event, db):
         """Extract code generation data."""
@@ -399,7 +411,11 @@ async def test_complete_mge_v2_pipeline_fastapi(
     # ============================================================================
     def atomization_matcher(event):
         """Check if event signals atomization completion."""
-        return event.get('phase') == 'atomization' and 'complete' in event.get('type', '')
+        return (
+            event.get('type') == 'status' and
+            event.get('phase') == 'atomization' and
+            'complete' in event.get('message', '').lower()
+        )
 
     def atomization_extractor(event, db):
         """Extract atomization data."""
