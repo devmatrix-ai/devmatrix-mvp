@@ -6,10 +6,10 @@ API for acceptance test generation, execution, and gate checking.
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
-from typing import Optional, List
+from typing import Optional, List, AsyncGenerator
 import logging
 
-from src.config.database import get_db
+from src.config.database import DatabaseConfig
 from src.models import AcceptanceTest, AcceptanceTestResult
 from src.testing import (
     AcceptanceTestGenerator,
@@ -24,10 +24,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v2/testing", tags=["acceptance-testing"])
 
 
+# Async database session dependency
+async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
+    """Get async database session for FastAPI dependency injection."""
+    AsyncSessionLocal = DatabaseConfig.get_async_session_factory()
+    async_db = AsyncSessionLocal()
+    try:
+        yield async_db
+        await async_db.commit()
+    except Exception:
+        await async_db.rollback()
+        raise
+    finally:
+        await async_db.close()
+
+
 @router.post("/generate/{masterplan_id}")
 async def generate_acceptance_tests(
     masterplan_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -83,7 +98,7 @@ async def generate_acceptance_tests(
 @router.post("/run/{wave_id}")
 async def run_acceptance_tests(
     wave_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -127,7 +142,7 @@ async def run_acceptance_tests(
 async def check_gate_status(
     masterplan_id: UUID,
     wave_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -170,7 +185,7 @@ async def get_test_results(
     priority: Optional[str] = None,
     status: Optional[str] = None,
     wave_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -233,7 +248,7 @@ async def get_test_results(
 async def get_gate_report(
     masterplan_id: UUID,
     wave_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -270,7 +285,7 @@ async def get_gate_report(
 @router.delete("/tests/{masterplan_id}")
 async def delete_acceptance_tests(
     masterplan_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -311,7 +326,7 @@ async def delete_acceptance_tests(
 async def regenerate_failed_tests(
     masterplan_id: UUID,
     failed_test_ids: List[UUID],
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -356,7 +371,7 @@ async def regenerate_failed_tests(
 @router.get("/statistics/{masterplan_id}")
 async def get_test_statistics(
     masterplan_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_user)
 ):
     """

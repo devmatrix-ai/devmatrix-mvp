@@ -509,6 +509,32 @@ class MasterPlanGenerator:
                 calculation_rationale=calculation_rationale
             )
 
+            # Generate acceptance tests from masterplan requirements
+            try:
+                logger.info(f"🧪 Generating acceptance tests for masterplan {masterplan_id}")
+
+                from src.testing.test_generator import AcceptanceTestGenerator
+                from src.config.database import get_async_db_context
+
+                async with get_async_db_context() as async_db:
+                    test_generator = AcceptanceTestGenerator(async_db)
+                    generated_tests = await test_generator.generate_from_masterplan(
+                        masterplan_id=masterplan_id
+                        # markdown_content is already in DB, generator will fetch it
+                    )
+
+                    logger.info(
+                        f"✅ Generated {len(generated_tests)} acceptance tests "
+                        f"for masterplan {masterplan_id}"
+                    )
+            except Exception as e:
+                # Don't fail masterplan generation if test generation fails
+                logger.error(
+                    f"❌ Failed to generate acceptance tests for masterplan {masterplan_id}: {e}",
+                    exc_info=True
+                )
+                logger.warning("Continuing without acceptance tests - they can be generated later")
+
             # Calculate total duration
             total_duration = time.time() - overall_start_time
 
@@ -920,6 +946,71 @@ IMPORTANT:
             actual_tasks=actual_task_count
         )
 
+    def _generate_masterplan_markdown(self, masterplan_data: Dict[str, Any]) -> str:
+        """
+        Generate masterplan markdown with Requirements section for acceptance tests.
+
+        Args:
+            masterplan_data: Parsed MasterPlan data
+
+        Returns:
+            Markdown content with ## Requirements section
+        """
+        md_lines = []
+
+        # Header
+        md_lines.append(f"# {masterplan_data['project_name']}")
+        md_lines.append("")
+
+        if masterplan_data.get("description"):
+            md_lines.append(masterplan_data["description"])
+            md_lines.append("")
+
+        # Tech Stack
+        md_lines.append("## Tech Stack")
+        md_lines.append("")
+        tech_stack = masterplan_data.get("tech_stack", {})
+        for key, value in tech_stack.items():
+            md_lines.append(f"- **{key.capitalize()}**: {value}")
+        md_lines.append("")
+
+        # Requirements Section (Critical for acceptance tests)
+        md_lines.append("## Requirements")
+        md_lines.append("")
+
+        # Extract MUST and SHOULD requirements from tasks
+        must_requirements = []
+        should_requirements = []
+
+        for phase in masterplan_data.get("phases", []):
+            for milestone in phase.get("milestones", []):
+                for task in milestone.get("tasks", []):
+                    # Extract requirement from task description
+                    task_desc = task.get("description", "")
+                    complexity = task.get("complexity", "medium")
+
+                    # Critical tasks are MUST requirements
+                    if complexity in ["critical", "high"]:
+                        must_requirements.append(task_desc)
+                    else:
+                        should_requirements.append(task_desc)
+
+        # MUST requirements
+        md_lines.append("### MUST")
+        md_lines.append("")
+        for req in must_requirements[:15]:  # Limit to 15 most critical
+            md_lines.append(f"- {req}")
+        md_lines.append("")
+
+        # SHOULD requirements
+        md_lines.append("### SHOULD")
+        md_lines.append("")
+        for req in should_requirements[:10]:  # Limit to 10 important ones
+            md_lines.append(f"- {req}")
+        md_lines.append("")
+
+        return "\n".join(md_lines)
+
     def _save_masterplan(
         self,
         discovery_id: UUID,
@@ -935,7 +1026,7 @@ IMPORTANT:
         calculation_rationale: str = None
     ) -> UUID:
         """
-        Save MasterPlan to database.
+        Save MasterPlan to database with markdown content for acceptance tests.
 
         Args:
             discovery_id: Discovery UUID
@@ -949,6 +1040,9 @@ IMPORTANT:
             masterplan_id: UUID of saved MasterPlan
         """
         with get_db_context() as db:
+            # Generate markdown content with requirements
+            markdown_content = self._generate_masterplan_markdown(masterplan_data)
+
             # Create MasterPlan
             masterplan = MasterPlan(
                 discovery_id=discovery_id,
@@ -969,7 +1063,9 @@ IMPORTANT:
                 complexity_metrics=complexity_metrics,
                 task_breakdown=task_breakdown,
                 parallelization_level=parallelization_level,
-                calculation_rationale=calculation_rationale
+                calculation_rationale=calculation_rationale,
+                # Markdown content for acceptance tests
+                markdown_content=markdown_content
             )
 
             db.add(masterplan)

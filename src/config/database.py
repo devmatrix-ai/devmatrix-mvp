@@ -5,11 +5,12 @@ PostgreSQL connection and session management.
 """
 
 import logging
-from typing import Generator
-from contextlib import contextmanager
+from typing import Generator, AsyncGenerator
+from contextlib import contextmanager, asynccontextmanager
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, Session, declarative_base
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import StaticPool
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,8 @@ class DatabaseConfig:
 
     _engine = None
     _session_factory = None
+    _async_engine = None
+    _async_session_factory = None
     _base = None
 
     @classmethod
@@ -86,6 +89,78 @@ class DatabaseConfig:
             logger.info("Session factory created")
 
         return cls._session_factory
+
+    @classmethod
+    def get_async_engine(cls, url: str = None, echo: bool = False):
+        """
+        Get async SQLAlchemy engine (singleton).
+
+        Args:
+            url: Database URL (if None, loads from settings)
+            echo: Echo SQL statements
+
+        Returns:
+            Async SQLAlchemy engine
+        """
+        if cls._async_engine is None:
+            # Load DATABASE_URL from settings if not provided
+            if url is None:
+                from src.config.settings import get_settings
+                settings = get_settings()
+                url = settings.DATABASE_URL
+
+            # Convert postgresql:// to postgresql+asyncpg://
+            if url.startswith("postgresql://"):
+                url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            elif url.startswith("postgres://"):
+                url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+
+            # PostgreSQL async engine config
+            if "postgresql+asyncpg" in url:
+                cls._async_engine = create_async_engine(
+                    url,
+                    echo=echo,
+                    pool_size=10,
+                    max_overflow=20,
+                    pool_pre_ping=True,
+                    pool_recycle=3600,
+                )
+            # SQLite async for testing
+            else:
+                # For testing, use aiosqlite
+                if url.startswith("sqlite"):
+                    url = url.replace("sqlite://", "sqlite+aiosqlite://", 1)
+                cls._async_engine = create_async_engine(
+                    url,
+                    echo=echo,
+                    connect_args={"check_same_thread": False},
+                    poolclass=StaticPool,
+                )
+
+            logger.info(f"Async database engine created: {url.split('@')[-1] if '@' in url else 'test-db'}")
+
+        return cls._async_engine
+
+    @classmethod
+    def get_async_session_factory(cls):
+        """
+        Get async session factory (singleton).
+
+        Returns:
+            Async SQLAlchemy session factory
+        """
+        if cls._async_session_factory is None:
+            async_engine = cls.get_async_engine()
+            cls._async_session_factory = async_sessionmaker(
+                bind=async_engine,
+                class_=AsyncSession,
+                autocommit=False,
+                autoflush=False,
+                expire_on_commit=False,
+            )
+            logger.info("Async session factory created")
+
+        return cls._async_session_factory
 
     @classmethod
     def get_base(cls):
@@ -159,6 +234,28 @@ def get_db_context():
         raise
     finally:
         db.close()
+
+
+@asynccontextmanager
+async def get_async_db_context() -> AsyncGenerator[AsyncSession, None]:
+    """
+    Async context manager for database session.
+
+    Usage:
+        async with get_async_db_context() as db:
+            result = await db.execute(select(Item))
+            items = result.scalars().all()
+    """
+    AsyncSessionLocal = DatabaseConfig.get_async_session_factory()
+    async_db = AsyncSessionLocal()
+    try:
+        yield async_db
+        await async_db.commit()
+    except Exception:
+        await async_db.rollback()
+        raise
+    finally:
+        await async_db.close()
 
 
 def init_db():
