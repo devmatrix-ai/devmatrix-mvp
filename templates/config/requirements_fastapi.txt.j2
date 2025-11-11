@@ -1,0 +1,24 @@
+# FastAPI and ASGI server
+fastapi=={{ fastapi_version | default('0.109.0') }}
+uvicorn[standard]=={{ uvicorn_version | default('0.27.0') }}
+
+# Database
+sqlalchemy=={{ sqlalchemy_version | default('2.0.25') }}
+alembic=={{ alembic_version | default('1.13.1') }}
+psycopg2-binary=={{ psycopg2_version | default('2.9.9') }}
+
+# Authentication and Security
+python-jose[cryptography]=={{ jose_version | default('3.3.0') }}
+passlib[bcrypt]=={{ passlib_version | default('1.7.4') }}
+python-multipart=={{ multipart_version | default('0.0.6') }}
+
+# Validation
+pydantic=={{ pydantic_version | default('2.5.3') }}
+pydantic-settings=={{ pydantic_settings_version | default('2.1.0') }}
+
+# Additional dependencies
+{% if additional_packages %}
+{% for package in additional_packages %}
+{{ package }}
+{% endfor %}
+{% endif %}

@@ -92,6 +92,7 @@ markers = [
     "unit: Unit tests (fast, no external dependencies)",
     "integration: Integration tests (require services)",
     "e2e: End-to-end tests (full workflow)",
+    "benchmark: Performance benchmark tests",
     "real_api: Tests using real Anthropic API (slow, costs money)",
     "real_services: Tests requiring real PostgreSQL/Redis/ChromaDB",
     "slow: Tests that take >30 seconds",
