@@ -20,8 +20,10 @@ import hashlib
 import json
 import logging
 import time
+import re
 from dataclasses import dataclass, asdict
-from typing import Optional
+from typing import Optional, Dict, List
+from uuid import UUID
 
 import redis.asyncio as redis
 
@@ -73,6 +75,15 @@ class LLMPromptCache:
         self.default_ttl = 86400  # 24 hours
         self.prefix = "llm_cache:"
 
+        # Dynamic TTL configuration (in seconds)
+        self.ttl_config = {
+            "code_generation": 86400,  # 24h - code patterns are stable
+            "validation": 43200,       # 12h - validation logic changes less often
+            "test_generation": 21600,  # 6h - tests may need updates
+            "review": 10800,           # 3h - review criteria evolve
+            "default": 86400           # 24h - fallback
+        }
+
         # Metrics will be imported later to avoid circular dependency
         self._metrics_initialized = False
 
@@ -88,11 +99,111 @@ class LLMPromptCache:
                 logger.error(f"Failed to connect to Redis: {e}")
                 raise
 
+    def _normalize_prompt(self, prompt: str) -> str:
+        """
+        Normalize prompt to improve cache hit rate
+
+        Normalizations:
+        - Strip leading/trailing whitespace
+        - Collapse multiple spaces to single space
+        - Normalize newlines to single \n
+        - Remove code block markers (```)
+        - Lowercase common keywords (def, class, function, etc.)
+
+        Args:
+            prompt: Raw prompt text
+
+        Returns:
+            Normalized prompt text
+        """
+        # Strip and collapse whitespace
+        normalized = prompt.strip()
+        normalized = re.sub(r'\s+', ' ', normalized)
+
+        # Normalize newlines
+        normalized = re.sub(r'\n+', '\n', normalized)
+
+        # Remove code block markers
+        normalized = re.sub(r'```[\w]*', '', normalized)
+
+        # Lowercase common programming keywords (preserves variable names)
+        keywords = [
+            'def', 'class', 'function', 'async', 'await', 'import', 'from',
+            'return', 'if', 'else', 'for', 'while', 'try', 'except', 'with'
+        ]
+        for keyword in keywords:
+            # Replace whole words only (case-insensitive)
+            normalized = re.sub(
+                rf'\b{keyword}\b',
+                keyword.lower(),
+                normalized,
+                flags=re.IGNORECASE
+            )
+
+        return normalized
+
+    def _detect_prompt_type(self, prompt: str) -> str:
+        """
+        Detect prompt type to determine appropriate TTL
+
+        Detection rules:
+        - Contains "generate", "write", "create" + "code" → code_generation
+        - Contains "validate", "check", "verify" → validation
+        - Contains "test", "pytest", "assert" → test_generation
+        - Contains "review", "analyze", "assess" → review
+        - Default → default
+
+        Args:
+            prompt: Prompt text (normalized)
+
+        Returns:
+            Prompt type string
+        """
+        prompt_lower = prompt.lower()
+
+        # Code generation patterns
+        if any(gen in prompt_lower for gen in ['generate', 'write', 'create', 'implement']):
+            if 'code' in prompt_lower or 'function' in prompt_lower or 'class' in prompt_lower:
+                return "code_generation"
+
+        # Validation patterns
+        if any(val in prompt_lower for val in ['validate', 'check', 'verify', 'lint']):
+            return "validation"
+
+        # Test generation patterns
+        if any(test in prompt_lower for test in ['test', 'pytest', 'assert', 'unittest']):
+            return "test_generation"
+
+        # Review patterns
+        if any(rev in prompt_lower for rev in ['review', 'analyze', 'assess', 'evaluate']):
+            return "review"
+
+        return "default"
+
+    def _get_dynamic_ttl(self, prompt: str) -> int:
+        """
+        Get dynamic TTL based on prompt type
+
+        Args:
+            prompt: Prompt text
+
+        Returns:
+            TTL in seconds
+        """
+        prompt_type = self._detect_prompt_type(prompt)
+        ttl = self.ttl_config.get(prompt_type, self.default_ttl)
+
+        logger.debug(f"Detected prompt type '{prompt_type}' → TTL={ttl}s")
+
+        return ttl
+
     def _generate_cache_key(
         self, prompt: str, model: str, temperature: float
     ) -> str:
         """
         Generate cache key from prompt + params
+
+        Uses normalized prompt to improve cache hit rate.
 
         Args:
             prompt: LLM prompt text
@@ -102,7 +213,10 @@ class LLMPromptCache:
         Returns:
             SHA256 hash as hex string with prefix
         """
-        content = f"{prompt}|{model}|{temperature}"
+        # Normalize prompt before hashing
+        normalized_prompt = self._normalize_prompt(prompt)
+
+        content = f"{normalized_prompt}|{model}|{temperature}"
         hash_obj = hashlib.sha256(content.encode("utf-8"))
         return f"{self.prefix}{hash_obj.hexdigest()}"
 
@@ -169,6 +283,8 @@ class LLMPromptCache:
         """
         Store LLM response in cache
 
+        If TTL not specified, uses dynamic TTL based on prompt type.
+
         Args:
             prompt: LLM prompt
             model: Model name
@@ -176,9 +292,13 @@ class LLMPromptCache:
             response_text: LLM response text
             prompt_tokens: Input tokens used
             completion_tokens: Output tokens used
-            ttl: Time-to-live in seconds (default: 24h)
+            ttl: Time-to-live in seconds (if None, uses dynamic TTL)
         """
         cache_key = self._generate_cache_key(prompt, model, temperature)
+
+        # Use dynamic TTL if not specified
+        if ttl is None:
+            ttl = self._get_dynamic_ttl(prompt)
 
         cached_response = {
             "text": response_text,
@@ -191,13 +311,13 @@ class LLMPromptCache:
         try:
             await self._ensure_connection()
             await self.redis_client.setex(
-                cache_key, ttl or self.default_ttl, json.dumps(cached_response)
+                cache_key, ttl, json.dumps(cached_response)
             )
 
             self._emit_metric("write")
 
             logger.debug(
-                f"LLM cache SET: {cache_key[:16]}... (TTL={ttl or self.default_ttl}s)"
+                f"LLM cache SET: {cache_key[:16]}... (TTL={ttl}s)"
             )
 
         except redis.RedisError as e:
@@ -250,6 +370,87 @@ class LLMPromptCache:
             self._emit_metric("error", operation="invalidate")
         except Exception as e:
             logger.error(f"Unexpected error on cache invalidation: {e}")
+
+    async def warm_up_cache(
+        self,
+        masterplan_id: UUID,
+        common_prompts: Optional[List[Dict[str, str]]] = None
+    ):
+        """
+        Warm up cache with common prompts at masterplan start
+
+        Pre-fills cache with common code generation patterns to improve
+        initial hit rate.
+
+        Args:
+            masterplan_id: MasterPlan UUID for tracking
+            common_prompts: Optional list of {prompt, model, temperature, response}
+                            If None, uses default common patterns
+
+        Default common patterns:
+        - Validation prompts (syntax, imports, types)
+        - Common code patterns (auth, CRUD, error handling)
+        - Test generation templates
+        """
+        if common_prompts is None:
+            # Default common prompts for typical MGE V2 operations
+            common_prompts = [
+                {
+                    "prompt": "Validate Python syntax and check for common errors",
+                    "model": "claude-3-5-sonnet-20241022",
+                    "temperature": 0.0,
+                    "response": "# Syntax validation template",
+                    "tokens_in": 100,
+                    "tokens_out": 50
+                },
+                {
+                    "prompt": "Check import statements and resolve dependencies",
+                    "model": "claude-3-5-sonnet-20241022",
+                    "temperature": 0.0,
+                    "response": "# Import validation template",
+                    "tokens_in": 100,
+                    "tokens_out": 50
+                },
+                {
+                    "prompt": "Verify type annotations and type safety",
+                    "model": "claude-3-5-sonnet-20241022",
+                    "temperature": 0.0,
+                    "response": "# Type validation template",
+                    "tokens_in": 100,
+                    "tokens_out": 50
+                },
+                {
+                    "prompt": "Generate pytest unit tests for function",
+                    "model": "claude-3-5-sonnet-20241022",
+                    "temperature": 0.7,
+                    "response": "# Test generation template",
+                    "tokens_in": 150,
+                    "tokens_out": 200
+                }
+            ]
+
+        try:
+            await self._ensure_connection()
+
+            warmed_count = 0
+
+            for prompt_data in common_prompts:
+                await self.set(
+                    prompt=prompt_data["prompt"],
+                    model=prompt_data["model"],
+                    temperature=prompt_data["temperature"],
+                    response_text=prompt_data["response"],
+                    prompt_tokens=prompt_data.get("tokens_in", 100),
+                    completion_tokens=prompt_data.get("tokens_out", 50)
+                )
+                warmed_count += 1
+
+            logger.info(
+                f"Cache warmed up with {warmed_count} common prompts for masterplan {masterplan_id}"
+            )
+
+        except Exception as e:
+            logger.error(f"Cache warm-up failed: {e}")
 
     def _emit_metric(self, metric_type: str, operation: str = None):
         """
