@@ -182,6 +182,9 @@ class MasterPlan(Base):
     # Workspace Path - Added for execution tracking
     workspace_path = Column(String(500), nullable=True)  # Absolute path to workspace directory
 
+    # Markdown Content - For acceptance test generation
+    markdown_content = Column(Text, nullable=True)  # Full masterplan markdown with requirements
+
     # Version Control
     version = Column(Integer, default=1)
 
