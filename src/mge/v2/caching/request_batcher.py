@@ -63,29 +63,41 @@ class RequestBatcher:
         llm_client,
         max_batch_size: int = 5,
         batch_window_ms: int = 500,
+        adaptive_sizing: bool = True,
+        enabled: bool = False
     ):
         """
-        Initialize RequestBatcher
+        Initialize RequestBatcher with adaptive sizing
 
         Args:
             llm_client: LLM client instance with generate() method
             max_batch_size: Maximum number of requests per batch (default: 5)
             batch_window_ms: Batch window in milliseconds (default: 500)
+            adaptive_sizing: Enable adaptive batch sizing based on latency (default: True)
+            enabled: Enable batching (default: False - opt-in)
         """
         self.llm_client = llm_client
         self.max_batch_size = max_batch_size
         self.batch_window_ms = batch_window_ms / 1000  # Convert to seconds
+        self.adaptive_sizing = adaptive_sizing
+        self.enabled = enabled
 
         self._pending_requests: List[BatchedRequest] = []
         self._batch_lock = asyncio.Lock()
         self._batch_task = None
+
+        # Adaptive sizing state
+        self._recent_latencies: List[float] = []  # Last 10 batch latencies
+        self._optimal_batch_size = max_batch_size
 
         # Metrics will be imported later to avoid circular dependency
         self._metrics_initialized = False
 
     async def execute_with_batching(self, atom_id: UUID, prompt: str) -> str:
         """
-        Execute atom prompt with batching
+        Execute atom prompt with batching (if enabled)
+
+        If batching is disabled, falls back to direct LLM call.
 
         Args:
             atom_id: Atom UUID
@@ -94,6 +106,15 @@ class RequestBatcher:
         Returns:
             LLM response text for this atom
         """
+        # If batching disabled, call LLM directly
+        if not self.enabled:
+            response = await self.llm_client.generate(
+                prompt=prompt,
+                model="claude-3-5-sonnet-20241022",
+                temperature=0.7
+            )
+            return response.text
+
         # Create future for this request
         future = asyncio.Future()
 
@@ -114,8 +135,10 @@ class RequestBatcher:
 
     async def _process_batch(self):
         """
-        Wait for batch window, then process all pending requests
+        Wait for batch window, then process all pending requests with adaptive sizing
         """
+        import time
+
         # Wait for batch window to collect more requests
         await asyncio.sleep(self.batch_window_ms)
 
@@ -123,11 +146,17 @@ class RequestBatcher:
             if not self._pending_requests:
                 return
 
-            # Take up to max_batch_size requests
-            batch = self._pending_requests[: self.max_batch_size]
-            self._pending_requests = self._pending_requests[self.max_batch_size :]
+            # Use adaptive batch size if enabled
+            batch_size = self._optimal_batch_size if self.adaptive_sizing else self.max_batch_size
 
-        logger.info(f"Processing batch of {len(batch)} requests")
+            # Take up to batch_size requests
+            batch = self._pending_requests[:batch_size]
+            self._pending_requests = self._pending_requests[batch_size:]
+
+        logger.info(f"Processing batch of {len(batch)} requests (optimal_size={self._optimal_batch_size})")
+
+        # Measure batch latency
+        start_time = time.time()
 
         try:
             # Combine prompts
@@ -149,8 +178,18 @@ class RequestBatcher:
             for batched_request, response_text in zip(batch, individual_responses):
                 batched_request.future.set_result(response_text)
 
+            # Measure and record latency
+            batch_latency = time.time() - start_time
+
+            # Update latency stats and adjust batch size if adaptive
+            if self.adaptive_sizing:
+                self._update_latency_stats(batch_latency, len(batch))
+                self._adjust_batch_size()
+
             # Emit metrics
             self._emit_batch_metrics(len(batch))
+
+            logger.debug(f"Batch completed in {batch_latency:.2f}s")
 
         except Exception as e:
             logger.error(f"Batch processing failed: {e}")
@@ -235,6 +274,67 @@ class RequestBatcher:
             logger.warning(f"Padding missing response at index {len(responses)}")
 
         return responses[:expected_count]
+
+    def _update_latency_stats(self, latency: float, batch_size: int):
+        """
+        Update latency statistics for adaptive sizing
+
+        Args:
+            latency: Batch latency in seconds
+            batch_size: Size of batch processed
+        """
+        # Normalize latency per request
+        latency_per_request = latency / batch_size if batch_size > 0 else latency
+
+        # Keep last 10 latencies
+        self._recent_latencies.append(latency_per_request)
+        if len(self._recent_latencies) > 10:
+            self._recent_latencies.pop(0)
+
+        logger.debug(
+            f"Latency stats updated: {latency:.2f}s total, "
+            f"{latency_per_request:.2f}s per request"
+        )
+
+    def _adjust_batch_size(self):
+        """
+        Adjust batch size based on latency trends
+
+        Strategy:
+        - If avg latency increasing → reduce batch size (less parallelism overhead)
+        - If avg latency decreasing → increase batch size (better throughput)
+        - Target: balance throughput vs latency
+        """
+        if len(self._recent_latencies) < 3:
+            return  # Not enough data
+
+        avg_latency = sum(self._recent_latencies) / len(self._recent_latencies)
+
+        # Compare recent (last 3) vs older (first 3)
+        recent_avg = sum(self._recent_latencies[-3:]) / 3
+        older_avg = sum(self._recent_latencies[:3]) / 3
+
+        latency_trend = recent_avg - older_avg
+
+        # Adjust batch size
+        if latency_trend > 0.1:  # Latency increasing > 100ms
+            # Reduce batch size
+            self._optimal_batch_size = max(2, self._optimal_batch_size - 1)
+            logger.info(
+                f"Latency increasing ({latency_trend:.2f}s), "
+                f"reducing batch size to {self._optimal_batch_size}"
+            )
+        elif latency_trend < -0.1:  # Latency decreasing > 100ms
+            # Increase batch size
+            self._optimal_batch_size = min(
+                self.max_batch_size,
+                self._optimal_batch_size + 1
+            )
+            logger.info(
+                f"Latency decreasing ({latency_trend:.2f}s), "
+                f"increasing batch size to {self._optimal_batch_size}"
+            )
+        # Else: stable, no change
 
     def _emit_batch_metrics(self, batch_size: int):
         """
