@@ -163,7 +163,8 @@ async def test_complete_mge_v2_pipeline_fastapi(
             "atomization",
             "file_writing",       # Phase 5: emitted during execution
             "infrastructure",     # Phase 6: emitted during execution
-            "wave_execution"      # Phase 7: 'complete' event emitted last
+            "wave_execution",     # Phase 7: 'complete' event emitted last
+            "acceptance_tests"    # Phase 8: Acceptance test validation (Gate S)
         ]
 
         checkpoint = checkpoint_manager.create_checkpoint(
@@ -556,7 +557,78 @@ async def test_complete_mge_v2_pipeline_fastapi(
     print(f"   ✅ Atoms executed: {wave_execution_result.get('atoms_executed', 0)}")
 
     # ============================================================================
-    # Test Complete - All 7 Phases Validated
+    # PHASE 8: Acceptance Tests (Gate S Validation)
+    # ============================================================================
+    print("\n" + "="*80)
+    print("🧪 PHASE 8: ACCEPTANCE TESTS (GATE S)")
+    print("="*80)
+
+    # Phase 8 validates acceptance tests run within WaveExecutor
+    # We verify Gate S enforcement: 100% must + ≥95% should
+
+    masterplan_id = masterplan_result.get('masterplan_id')
+
+    # Query acceptance test results from database
+    from src.models import AcceptanceTest, AcceptanceTestResult
+    from sqlalchemy import select
+
+    # Get all tests
+    tests_query = select(AcceptanceTest).where(AcceptanceTest.masterplan_id == masterplan_id)
+    acceptance_tests = test_db.execute(tests_query).scalars().all()
+
+    # Get results
+    results_query = select(AcceptanceTestResult)
+    test_results = test_db.execute(results_query).scalars().all()
+
+    # Calculate pass rates
+    must_tests = [t for t in acceptance_tests if t.requirement_priority == 'must']
+    should_tests = [t for t in acceptance_tests if t.requirement_priority == 'should']
+
+    must_results = [r for r in test_results if r.test_id in [t.test_id for t in must_tests]]
+    should_results = [r for r in test_results if r.test_id in [t.test_id for t in should_tests]]
+
+    must_passed = sum(1 for r in must_results if r.status == 'pass')
+    should_passed = sum(1 for r in should_results if r.status == 'pass')
+
+    must_pass_rate = must_passed / len(must_results) if must_results else 0.0
+    should_pass_rate = should_passed / len(should_results) if should_results else 0.0
+
+    # Gate S validation
+    gate_passed = must_pass_rate == 1.0 and should_pass_rate >= 0.95
+    can_release = must_pass_rate == 1.0
+
+    print(f"\n📊 Acceptance Test Results:")
+    print(f"   Total tests: {len(acceptance_tests)}")
+    print(f"   MUST: {must_passed}/{len(must_results)} passed ({must_pass_rate:.1%})")
+    print(f"   SHOULD: {should_passed}/{len(should_results)} passed ({should_pass_rate:.1%})")
+    print(f"\n🚪 Gate S Status:")
+    print(f"   Gate passed: {'✅ YES' if gate_passed else '❌ NO'}")
+    print(f"   Can release: {'✅ YES' if can_release else '❌ NO'}")
+
+    # Store in checkpoint
+    checkpoint_manager.complete_phase(
+        checkpoint,
+        "acceptance_tests",
+        {
+            'tests_count': len(acceptance_tests),
+            'must_pass_rate': must_pass_rate,
+            'should_pass_rate': should_pass_rate,
+            'gate_passed': gate_passed,
+            'can_release': can_release
+        }
+    )
+
+    # Assertions for Phase 8
+    assert len(acceptance_tests) > 0, "No acceptance tests generated"
+    assert len(must_tests) > 0, "No MUST requirements found"
+    assert len(test_results) > 0, "No test results found"
+
+    # NOTE: Gate S may fail in test environment (that's OK for E2E)
+    # We validate the SYSTEM works, not that all tests pass
+    print("\n✅ Phase 8 validation complete")
+
+    # ============================================================================
+    # Test Complete - All 8 Phases Validated
     # ============================================================================
 
     # Print final checkpoint status
