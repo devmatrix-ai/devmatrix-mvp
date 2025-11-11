@@ -6,34 +6,19 @@ Verifies review workflow orchestration (approve, reject, edit, regenerate).
 
 import pytest
 from datetime import datetime
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock, ANY
 from uuid import uuid4
 
 from src.mge.v2.review.review_service import ReviewService, ReviewDecision, ReviewResult
 from src.mge.v2.review.review_queue_manager import ReviewStatus
-from src.models.atomic_unit import AtomicUnit
+from src.mge.v2.review.confidence_scorer import ConfidenceScore, ConfidenceLevel
 
 
 @pytest.fixture
-def db_session():
-    """Mock database session"""
-    session = MagicMock()
-    session.commit = MagicMock()
-    session.rollback = MagicMock()
-    return session
-
-
-@pytest.fixture
-def review_service(db_session):
-    """Create ReviewService instance"""
-    return ReviewService(db_session)
-
-
-@pytest.fixture
-def mock_atom(db_session):
-    """Create mock AtomicUnit"""
-    atom = MagicMock(spec=AtomicUnit)
-    atom.id = uuid4()
+def mock_atom():
+    """Create mock AtomicUnit instance"""
+    atom = MagicMock()
+    atom.atom_id = uuid4()
     atom.masterplan_id = uuid4()
     atom.phase_number = 3
     atom.code = "def hello(): return 'world'"
@@ -43,34 +28,87 @@ def mock_atom(db_session):
     atom.validation_l2 = True
     atom.validation_l3 = True
     atom.validation_l4 = True
-    
-    # Mock query to return this atom
-    db_session.query.return_value.filter.return_value.first.return_value = atom
-    
     return atom
+
+
+@pytest.fixture
+def mock_confidence_score():
+    """Create mock ConfidenceScore"""
+    score = MagicMock(spec=ConfidenceScore)
+    score.total_score = 45.0
+    score.level = ConfidenceLevel.BAJA
+    score.validation_score = 25.0
+    score.retry_score = 20.0
+    score.complexity_score = 100.0
+    score.test_score = 50.0
+    # Add metrics dictionaries
+    score.complexity_metrics = {"cyclomatic_complexity": 5}
+    score.retry_metrics = {"retry_count": 0}
+    score.validation_metrics = {}
+    score.test_metrics = {}
+    return score
+
+
+@pytest.fixture
+def db_session(mock_atom):
+    """Mock database session with proper query chain"""
+    session = MagicMock()
+    session.commit = MagicMock()
+    session.rollback = MagicMock()
+    
+    # Setup query chain: db.query(Model).filter(...).first()
+    filter_mock = MagicMock()
+    filter_mock.first.return_value = mock_atom
+    
+    query_mock = MagicMock()
+    query_mock.filter.return_value = filter_mock
+    
+    # query() should accept any argument and return query_mock
+    session.query.return_value = query_mock
+    
+    return session
+
+
+@pytest.fixture
+def db_session_not_found():
+    """Mock database session that returns None (atom not found)"""
+    session = MagicMock()
+    session.commit = MagicMock()
+    session.rollback = MagicMock()
+    
+    filter_mock = MagicMock()
+    filter_mock.first.return_value = None
+    
+    query_mock = MagicMock()
+    query_mock.filter.return_value = filter_mock
+    
+    session.query.return_value = query_mock
+    
+    return session
+
+
+@pytest.fixture
+def review_service(db_session):
+    """Create ReviewService instance"""
+    return ReviewService(db_session)
 
 
 class TestReviewService:
     """Test ReviewService functionality"""
 
     @pytest.mark.asyncio
-    async def test_approve_workflow(self, review_service, mock_atom, db_session):
+    async def test_approve_workflow(self, review_service, mock_atom, mock_confidence_score):
         """Test approve workflow"""
-        # Add atom to queue first
+        # Add atom to queue
         review_service.queue_manager.add_to_queue(
             mock_atom,
-            MagicMock(total_score=45.0),
+            mock_confidence_score,
             None
         )
         
-        # Mock update_status to return review item
-        mock_review_item = MagicMock()
-        review_service.queue_manager.update_status = MagicMock(return_value=mock_review_item)
-        review_service.queue_manager.remove_from_queue = MagicMock(return_value=True)
-        
         # Approve
         result = await review_service.approve(
-            atom_id=mock_atom.id,
+            atom_id=mock_atom.atom_id,
             reviewer="reviewer@example.com",
             notes="Looks good"
         )
@@ -81,12 +119,11 @@ class TestReviewService:
         assert "approved successfully" in result.message
 
     @pytest.mark.asyncio
-    async def test_approve_atom_not_found(self, review_service, db_session):
+    async def test_approve_atom_not_found(self, db_session_not_found):
         """Test approve with non-existent atom"""
-        # Mock query to return None
-        db_session.query.return_value.filter.return_value.first.return_value = None
+        service = ReviewService(db_session_not_found)
         
-        result = await review_service.approve(
+        result = await service.approve(
             atom_id=uuid4(),
             reviewer="reviewer@example.com"
         )
@@ -95,21 +132,18 @@ class TestReviewService:
         assert "not found" in result.message
 
     @pytest.mark.asyncio
-    async def test_reject_workflow(self, review_service, mock_atom):
+    async def test_reject_workflow(self, review_service, mock_atom, mock_confidence_score):
         """Test reject workflow with AI suggestions"""
         # Add to queue
         review_service.queue_manager.add_to_queue(
             mock_atom,
-            MagicMock(total_score=45.0),
+            mock_confidence_score,
             None
         )
         
-        # Mock update_status
-        review_service.queue_manager.update_status = MagicMock(return_value=MagicMock())
-        
         # Reject
         result = await review_service.reject(
-            atom_id=mock_atom.id,
+            atom_id=mock_atom.atom_id,
             reviewer="reviewer@example.com",
             feedback="Fix syntax errors",
             provide_suggestions=True
@@ -118,20 +152,19 @@ class TestReviewService:
         assert result.success is True
         assert mock_atom.review_status == "rejected"
         assert mock_atom.review_feedback == "Fix syntax errors"
-        assert result.ai_suggestions is not None  # Should include AI suggestions
+        assert result.ai_suggestions is not None
 
     @pytest.mark.asyncio
-    async def test_reject_without_suggestions(self, review_service, mock_atom):
+    async def test_reject_without_suggestions(self, review_service, mock_atom, mock_confidence_score):
         """Test reject workflow without AI suggestions"""
         review_service.queue_manager.add_to_queue(
             mock_atom,
-            MagicMock(total_score=45.0),
+            mock_confidence_score,
             None
         )
-        review_service.queue_manager.update_status = MagicMock(return_value=MagicMock())
         
         result = await review_service.reject(
-            atom_id=mock_atom.id,
+            atom_id=mock_atom.atom_id,
             reviewer="reviewer@example.com",
             feedback="Fix errors",
             provide_suggestions=False
@@ -141,23 +174,21 @@ class TestReviewService:
         assert len(result.ai_suggestions) == 0
 
     @pytest.mark.asyncio
-    async def test_edit_workflow(self, review_service, mock_atom):
+    async def test_edit_workflow(self, review_service, mock_atom, mock_confidence_score):
         """Test manual code edit workflow"""
         # Add to queue
         review_service.queue_manager.add_to_queue(
             mock_atom,
-            MagicMock(total_score=45.0),
+            mock_confidence_score,
             None
         )
-        review_service.queue_manager.update_status = MagicMock(return_value=MagicMock())
-        review_service.queue_manager.remove_from_queue = MagicMock(return_value=True)
         
         original_code = mock_atom.code
         new_code = "def hello():\n    return 'world'"
         
         # Edit code
         result = await review_service.edit(
-            atom_id=mock_atom.id,
+            atom_id=mock_atom.atom_id,
             reviewer="reviewer@example.com",
             new_code=new_code,
             edit_notes="Fixed indentation"
@@ -170,19 +201,18 @@ class TestReviewService:
         assert result.new_confidence_score is not None
 
     @pytest.mark.asyncio
-    async def test_regenerate_workflow(self, review_service, mock_atom):
+    async def test_regenerate_workflow(self, review_service, mock_atom, mock_confidence_score):
         """Test regeneration request workflow"""
         # Add to queue
         review_service.queue_manager.add_to_queue(
             mock_atom,
-            MagicMock(total_score=45.0),
+            mock_confidence_score,
             None
         )
-        review_service.queue_manager.update_status = MagicMock(return_value=MagicMock())
         
         # Regenerate
         result = await review_service.regenerate(
-            atom_id=mock_atom.id,
+            atom_id=mock_atom.atom_id,
             reviewer="reviewer@example.com",
             feedback="Use list comprehension instead of loop"
         )
@@ -194,18 +224,21 @@ class TestReviewService:
         assert result.ai_suggestions is not None
 
     @pytest.mark.asyncio
-    async def test_regenerate_max_retries_exceeded(self, review_service, mock_atom):
+    async def test_regenerate_max_retries_exceeded(self, mock_atom, mock_confidence_score, db_session):
         """Test regeneration with max retries exceeded"""
+        # Set retry count to max
         mock_atom.retry_count = 3
         
-        review_service.queue_manager.add_to_queue(
+        service = ReviewService(db_session)
+        
+        service.queue_manager.add_to_queue(
             mock_atom,
-            MagicMock(total_score=45.0),
+            mock_confidence_score,
             None
         )
         
-        result = await review_service.regenerate(
-            atom_id=mock_atom.id,
+        result = await service.regenerate(
+            atom_id=mock_atom.atom_id,
             reviewer="reviewer@example.com",
             feedback="Try again",
             max_retries=3

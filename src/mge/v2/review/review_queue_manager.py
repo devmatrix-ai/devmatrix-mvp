@@ -183,7 +183,7 @@ class ReviewQueueManager:
 
         # Create review item
         review_item = ReviewItem(
-            atom_id=atom.id,
+            atom_id=atom.atom_id,
             masterplan_id=atom.masterplan_id,
             confidence_score=confidence_score,
             priority=priority,
@@ -193,10 +193,10 @@ class ReviewQueueManager:
         )
 
         # Add to queue
-        self._queue[atom.id] = review_item
+        self._queue[atom.atom_id] = review_item
 
         logger.info(
-            f"Added atom {atom.id} to review queue: "
+            f"Added atom {atom.atom_id} to review queue: "
             f"score={confidence_score.total_score:.2f}, "
             f"level={confidence_score.level.value}, "
             f"priority={priority.value}, "

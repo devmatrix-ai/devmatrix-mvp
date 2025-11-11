@@ -39,7 +39,7 @@ def queue_manager(db_session):
 def mock_atom():
     """Create mock AtomicUnit"""
     atom = MagicMock(spec=AtomicUnit)
-    atom.id = uuid4()
+    atom.atom_id = uuid4()
     atom.masterplan_id = uuid4()
     atom.phase_number = 3
     return atom
@@ -49,7 +49,7 @@ def mock_atom():
 def baja_confidence_score(mock_atom):
     """Low confidence score (baja level)"""
     return ConfidenceScore(
-        atom_id=mock_atom.id,
+        atom_id=mock_atom.atom_id,
         total_score=45.0,
         level=ConfidenceLevel.BAJA,
         validation_score=25.0,
@@ -67,7 +67,7 @@ def baja_confidence_score(mock_atom):
 def media_confidence_score(mock_atom):
     """Medium confidence score (media level)"""
     return ConfidenceScore(
-        atom_id=mock_atom.id,
+        atom_id=mock_atom.atom_id,
         total_score=65.0,
         level=ConfidenceLevel.MEDIA,
         validation_score=50.0,
@@ -92,7 +92,7 @@ class TestReviewQueueManager:
             priority=ReviewPriority.HIGH
         )
 
-        assert review_item.atom_id == mock_atom.id
+        assert review_item.atom_id == mock_atom.atom_id
         assert review_item.masterplan_id == mock_atom.masterplan_id
         assert review_item.confidence_score == baja_confidence_score
         assert review_item.priority == ReviewPriority.HIGH
@@ -100,7 +100,7 @@ class TestReviewQueueManager:
         assert review_item.sla_deadline is not None
 
         # Verify in queue
-        assert mock_atom.id in queue_manager._queue
+        assert mock_atom.atom_id in queue_manager._queue
 
     def test_add_to_queue_auto_priority(self, queue_manager, mock_atom, baja_confidence_score):
         """Test auto-calculation of priority"""
@@ -165,7 +165,7 @@ class TestReviewQueueManager:
         assert abs((review_critical.sla_deadline - expected_deadline_critical).total_seconds()) < 5
 
         # HIGH: 12 hours
-        mock_atom.id = uuid4()  # New atom
+        mock_atom.atom_id = uuid4()  # New atom
         review_high = queue_manager.add_to_queue(
             mock_atom, baja_confidence_score, ReviewPriority.HIGH
         )
@@ -173,7 +173,7 @@ class TestReviewQueueManager:
         assert abs((review_high.sla_deadline - expected_deadline_high).total_seconds()) < 5
 
         # MEDIUM: 24 hours
-        mock_atom.id = uuid4()
+        mock_atom.atom_id = uuid4()
         review_medium = queue_manager.add_to_queue(
             mock_atom, baja_confidence_score, ReviewPriority.MEDIUM
         )
@@ -181,7 +181,7 @@ class TestReviewQueueManager:
         assert abs((review_medium.sla_deadline - expected_deadline_medium).total_seconds()) < 5
 
         # LOW: 48 hours
-        mock_atom.id = uuid4()
+        mock_atom.atom_id = uuid4()
         review_low = queue_manager.add_to_queue(
             mock_atom, baja_confidence_score, ReviewPriority.LOW
         )
@@ -192,17 +192,17 @@ class TestReviewQueueManager:
         """Test pending reviews ordered by priority and SLA"""
         # Add multiple items with different priorities
         atom1 = MagicMock(spec=AtomicUnit)
-        atom1.id = uuid4()
+        atom1.atom_id = uuid4()
         atom1.masterplan_id = mock_atom.masterplan_id
         atom1.phase_number = 3
 
         atom2 = MagicMock(spec=AtomicUnit)
-        atom2.id = uuid4()
+        atom2.atom_id = uuid4()
         atom2.masterplan_id = mock_atom.masterplan_id
         atom2.phase_number = 3
 
         atom3 = MagicMock(spec=AtomicUnit)
-        atom3.id = uuid4()
+        atom3.atom_id = uuid4()
         atom3.masterplan_id = mock_atom.masterplan_id
         atom3.phase_number = 3
 
@@ -215,9 +215,9 @@ class TestReviewQueueManager:
 
         # Should be ordered: CRITICAL, HIGH, MEDIUM
         assert len(pending) == 3
-        assert pending[0].atom_id == atom2.id  # CRITICAL
-        assert pending[1].atom_id == atom3.id  # HIGH
-        assert pending[2].atom_id == atom1.id  # MEDIUM
+        assert pending[0].atom_id == atom2.atom_id  # CRITICAL
+        assert pending[1].atom_id == atom3.atom_id  # HIGH
+        assert pending[2].atom_id == atom1.atom_id  # MEDIUM
 
     def test_get_pending_reviews_filters(self, queue_manager, mock_atom, baja_confidence_score):
         """Test pending reviews with filters"""
@@ -226,12 +226,12 @@ class TestReviewQueueManager:
 
         # Add items to different masterplans
         atom1 = MagicMock(spec=AtomicUnit)
-        atom1.id = uuid4()
+        atom1.atom_id = uuid4()
         atom1.masterplan_id = masterplan1
         atom1.phase_number = 3
 
         atom2 = MagicMock(spec=AtomicUnit)
-        atom2.id = uuid4()
+        atom2.atom_id = uuid4()
         atom2.masterplan_id = masterplan2
         atom2.phase_number = 3
 
@@ -259,7 +259,7 @@ class TestReviewQueueManager:
 
         # Update to IN_REVIEW
         updated = queue_manager.update_status(
-            mock_atom.id,
+            mock_atom.atom_id,
             ReviewStatus.IN_REVIEW,
             assigned_to="reviewer1"
         )
@@ -270,7 +270,7 @@ class TestReviewQueueManager:
 
         # Update to APPROVED
         updated = queue_manager.update_status(
-            mock_atom.id,
+            mock_atom.atom_id,
             ReviewStatus.APPROVED,
             notes="Looks good"
         )
@@ -283,15 +283,15 @@ class TestReviewQueueManager:
         """Test removing item from queue"""
         queue_manager.add_to_queue(mock_atom, baja_confidence_score, ReviewPriority.HIGH)
 
-        assert mock_atom.id in queue_manager._queue
+        assert mock_atom.atom_id in queue_manager._queue
 
         # Remove
-        removed = queue_manager.remove_from_queue(mock_atom.id)
+        removed = queue_manager.remove_from_queue(mock_atom.atom_id)
         assert removed is True
-        assert mock_atom.id not in queue_manager._queue
+        assert mock_atom.atom_id not in queue_manager._queue
 
         # Try removing again (should fail)
-        removed_again = queue_manager.remove_from_queue(mock_atom.id)
+        removed_again = queue_manager.remove_from_queue(mock_atom.atom_id)
         assert removed_again is False
 
     def test_get_sla_violations(self, queue_manager, mock_atom, baja_confidence_score):
@@ -311,7 +311,7 @@ class TestReviewQueueManager:
         # Should detect violation
         violations = queue_manager.get_sla_violations()
         assert len(violations) == 1
-        assert violations[0].atom_id == mock_atom.id
+        assert violations[0].atom_id == mock_atom.atom_id
 
     def test_get_statistics(self, queue_manager, mock_atom, baja_confidence_score, media_confidence_score):
         """Test queue statistics calculation"""
@@ -319,17 +319,17 @@ class TestReviewQueueManager:
 
         # Add multiple items with different statuses
         atom1 = MagicMock(spec=AtomicUnit)
-        atom1.id = uuid4()
+        atom1.atom_id = uuid4()
         atom1.masterplan_id = masterplan_id
         atom1.phase_number = 3
 
         atom2 = MagicMock(spec=AtomicUnit)
-        atom2.id = uuid4()
+        atom2.atom_id = uuid4()
         atom2.masterplan_id = masterplan_id
         atom2.phase_number = 3
 
         atom3 = MagicMock(spec=AtomicUnit)
-        atom3.id = uuid4()
+        atom3.atom_id = uuid4()
         atom3.masterplan_id = masterplan_id
         atom3.phase_number = 3
 
@@ -339,8 +339,8 @@ class TestReviewQueueManager:
         queue_manager.add_to_queue(atom3, baja_confidence_score, ReviewPriority.HIGH)
 
         # Update statuses
-        queue_manager.update_status(atom1.id, ReviewStatus.APPROVED)
-        queue_manager.update_status(atom2.id, ReviewStatus.REJECTED)
+        queue_manager.update_status(atom1.atom_id, ReviewStatus.APPROVED)
+        queue_manager.update_status(atom2.atom_id, ReviewStatus.REJECTED)
 
         # Get statistics
         stats = queue_manager.get_statistics(masterplan_id=masterplan_id)
@@ -392,7 +392,7 @@ class TestReviewQueueManager:
     def test_should_add_to_queue_alta(self, queue_manager, mock_atom):
         """Test should_add_to_queue for alta confidence"""
         alta_confidence = ConfidenceScore(
-            atom_id=mock_atom.id,
+            atom_id=mock_atom.atom_id,
             total_score=85.0,
             level=ConfidenceLevel.ALTA,
             validation_score=100.0,
@@ -418,7 +418,7 @@ class TestReviewQueueManager:
         """Test ReviewItem.is_sla_violated()"""
         # Create item with expired SLA
         review_item = ReviewItem(
-            atom_id=mock_atom.id,
+            atom_id=mock_atom.atom_id,
             masterplan_id=mock_atom.masterplan_id,
             confidence_score=baja_confidence_score,
             priority=ReviewPriority.HIGH,
@@ -447,7 +447,7 @@ class TestReviewQueueManager:
         created = datetime.utcnow() - timedelta(hours=5)
 
         review_item = ReviewItem(
-            atom_id=mock_atom.id,
+            atom_id=mock_atom.atom_id,
             masterplan_id=mock_atom.masterplan_id,
             confidence_score=baja_confidence_score,
             priority=ReviewPriority.HIGH,
@@ -465,7 +465,7 @@ class TestReviewQueueManager:
     def test_review_item_to_dict(self, mock_atom, baja_confidence_score):
         """Test ReviewItem serialization"""
         review_item = ReviewItem(
-            atom_id=mock_atom.id,
+            atom_id=mock_atom.atom_id,
             masterplan_id=mock_atom.masterplan_id,
             confidence_score=baja_confidence_score,
             priority=ReviewPriority.HIGH,
@@ -495,12 +495,12 @@ class TestReviewQueueManager:
         # Add 10 items and approve 9, reject 1 (10% correction rate)
         for i in range(10):
             atom = MagicMock(spec=AtomicUnit)
-            atom.id = uuid4()
+            atom.atom_id = uuid4()
             atom.masterplan_id = masterplan_id
             atom.phase_number = 3
 
             score = ConfidenceScore(
-                atom_id=atom.id,
+                atom_id=atom.atom_id,
                 total_score=45.0,
                 level=ConfidenceLevel.BAJA,
                 validation_score=25.0,
@@ -517,9 +517,9 @@ class TestReviewQueueManager:
 
             # Approve first 9, reject last 1
             if i < 9:
-                queue_manager.update_status(atom.id, ReviewStatus.APPROVED)
+                queue_manager.update_status(atom.atom_id, ReviewStatus.APPROVED)
             else:
-                queue_manager.update_status(atom.id, ReviewStatus.REJECTED)
+                queue_manager.update_status(atom.atom_id, ReviewStatus.REJECTED)
 
         stats = queue_manager.get_statistics(masterplan_id=masterplan_id)
 

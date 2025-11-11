@@ -157,7 +157,7 @@ class ReviewService:
         """
         try:
             # Get atom from database
-            atom = self.db.query(AtomicUnit).filter(AtomicUnit.id == atom_id).first()
+            atom = self.db.query(AtomicUnit).filter(AtomicUnit.atom_id == atom_id).first()
             if not atom:
                 return ReviewResult(
                     success=False,
@@ -233,7 +233,7 @@ class ReviewService:
         """
         try:
             # Get atom from database
-            atom = self.db.query(AtomicUnit).filter(AtomicUnit.id == atom_id).first()
+            atom = self.db.query(AtomicUnit).filter(AtomicUnit.atom_id == atom_id).first()
             if not atom:
                 return ReviewResult(
                     success=False,
@@ -322,7 +322,7 @@ class ReviewService:
         """
         try:
             # Get atom from database
-            atom = self.db.query(AtomicUnit).filter(AtomicUnit.id == atom_id).first()
+            atom = self.db.query(AtomicUnit).filter(AtomicUnit.atom_id == atom_id).first()
             if not atom:
                 return ReviewResult(
                     success=False,
@@ -418,7 +418,7 @@ class ReviewService:
         """
         try:
             # Get atom from database
-            atom = self.db.query(AtomicUnit).filter(AtomicUnit.id == atom_id).first()
+            atom = self.db.query(AtomicUnit).filter(AtomicUnit.atom_id == atom_id).first()
             if not atom:
                 return ReviewResult(
                     success=False,
