@@ -30,7 +30,8 @@ email-validator==2.1.0               # Email validation for pydantic
 # ========================================
 redis==5.1.0                      # Realtime workflow state
 redis[asyncio]>=5.1.0             # Async Redis client for caching
-psycopg2-binary==2.9.9            # PostgreSQL driver
+psycopg2-binary==2.9.9            # PostgreSQL driver (sync)
+asyncpg==0.29.0                   # PostgreSQL async driver for SQLAlchemy async
 sqlalchemy==2.0.35                # ORM for persistent state
 alembic==1.13.2                   # Database migrations
 pgvector==0.3.2                   # Vector similarity (future)

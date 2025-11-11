@@ -10,6 +10,7 @@ import time
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 from uuid import UUID
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from .retry_orchestrator import RetryOrchestrator, RetryResult
 from .metrics import (
@@ -63,7 +64,8 @@ class WaveExecutor:
     def __init__(
         self,
         retry_orchestrator: RetryOrchestrator,
-        max_concurrency: int = 100
+        max_concurrency: int = 100,
+        async_db_session: Optional[AsyncSession] = None
     ):
         """
         Initialize WaveExecutor.
@@ -71,9 +73,11 @@ class WaveExecutor:
         Args:
             retry_orchestrator: Orchestrator for retry logic
             max_concurrency: Maximum concurrent atoms per wave (default: 100)
+            async_db_session: Optional async database session for acceptance tests
         """
         self.retry_orchestrator = retry_orchestrator
         self.max_concurrency = max_concurrency
+        self.async_db_session = async_db_session
 
     async def execute_wave(
         self,
@@ -287,5 +291,62 @@ class WaveExecutor:
         logger.info(f"  Success: {total_success}/{total_atoms} ({precision:.1f}%)")
         logger.info(f"  Failed: {total_atoms - total_success}")
         logger.info("=" * 70)
+
+        # ========================================
+        # PHASE 8: ACCEPTANCE TESTS (Gate S)
+        # ========================================
+        if self.async_db_session and masterplan_id:
+            logger.info("\n" + "=" * 70)
+            logger.info("🧪 PHASE 8: ACCEPTANCE TESTS (GATE S)")
+            logger.info("=" * 70)
+
+            try:
+                from src.testing.test_runner import AcceptanceTestRunner
+                from src.testing.gate_validator import GateValidator
+
+                # Initialize test runner
+                test_runner = AcceptanceTestRunner(self.async_db_session)
+
+                # Run acceptance tests
+                logger.info(f"Running acceptance tests for masterplan {masterplan_id}...")
+                test_results = await test_runner.run_tests_for_masterplan(masterplan_id)
+
+                # Log test results
+                logger.info(f"\n📊 Acceptance Test Results:")
+                logger.info(f"  Total: {test_results['total']}")
+                logger.info(f"  Passed: {test_results['passed']}")
+                logger.info(f"  Failed: {test_results['failed']}")
+                logger.info(f"  Overall Pass Rate: {test_results['overall_pass_rate']:.1%}")
+                logger.info(f"\n  MUST Requirements:")
+                logger.info(f"    Total: {test_results['must_total']}")
+                logger.info(f"    Passed: {test_results['must_passed']}")
+                logger.info(f"    Pass Rate: {test_results['must_pass_rate']:.1%}")
+                logger.info(f"\n  SHOULD Requirements:")
+                logger.info(f"    Total: {test_results['should_total']}")
+                logger.info(f"    Passed: {test_results['should_passed']}")
+                logger.info(f"    Pass Rate: {test_results['should_pass_rate']:.1%}")
+
+                # Validate Gate S
+                gate_validator = GateValidator()
+                gate_result = gate_validator.validate_gate_s(
+                    must_pass_rate=test_results['must_pass_rate'],
+                    should_pass_rate=test_results['should_pass_rate']
+                )
+
+                if gate_result['passed']:
+                    logger.info(f"\n✅ Gate S PASSED")
+                    logger.info(f"  {gate_result['message']}")
+                else:
+                    logger.warning(f"\n❌ Gate S FAILED")
+                    logger.warning(f"  {gate_result['message']}")
+                    for failure in gate_result.get('failures', []):
+                        logger.warning(f"    - {failure}")
+
+                logger.info("=" * 70)
+
+            except Exception as e:
+                logger.error(f"❌ Failed to run acceptance tests: {e}", exc_info=True)
+                logger.warning("Continuing without acceptance test validation...")
+                logger.info("=" * 70)
 
         return all_results
