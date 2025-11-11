@@ -257,8 +257,13 @@ class AtomService:
 
     def _get_task_code(self, task: MasterPlanTask) -> str:
         """Get code to decompose from task"""
-        # For now, use description as placeholder
-        # In production, would load actual code from files or LLM response
+        # Use LLM-generated code if available
+        if task.llm_response and len(task.llm_response.strip()) > 0:
+            logger.info(f"Using LLM-generated code for task {task.task_id}")
+            return task.llm_response
+
+        # Fallback to description (for backwards compatibility)
+        logger.warning(f"Task {task.task_id} has no generated code, using description")
         return task.description
 
     def _detect_language(self, task: MasterPlanTask) -> str:

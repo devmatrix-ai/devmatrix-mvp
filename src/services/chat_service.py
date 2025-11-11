@@ -751,9 +751,12 @@ Respondé de manera natural, amigable y útil. Si es una pregunta de diseño o p
             from src.services.mge_v2_orchestration_service import MGE_V2_OrchestrationService
             from src.config.constants import MGE_V2_ENABLE_CACHING, MGE_V2_ENABLE_RAG
 
+            # Create a database session from the sessionmaker
+            db_session = self.sqlalchemy_session()
+
             # Initialize MGE V2 service
             mge_v2_service = MGE_V2_OrchestrationService(
-                db=self.sqlalchemy_session,
+                db=db_session,
                 api_key=self.api_key,
                 enable_caching=MGE_V2_ENABLE_CACHING,
                 enable_rag=MGE_V2_ENABLE_RAG
@@ -831,6 +834,9 @@ Respondé de manera natural, amigable y útil. Si es una pregunta de diseño o p
                     "metadata": completion_event,
                     "done": True,
                 }
+
+            # Always close the database session
+            db_session.close()
 
         except Exception as e:
             error_message = f"Error durante MGE V2 orchestration: {str(e)}"

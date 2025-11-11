@@ -1,0 +1,101 @@
+# {{ project_name | default('FastAPI Project') }}
+
+{{ project_description | default('A FastAPI-based REST API application') }}
+
+## Features
+
+{% if features %}
+{% for feature in features %}
+- {{ feature }}
+{% endfor %}
+{% else %}
+- RESTful API endpoints
+- PostgreSQL database integration
+- JWT authentication
+- Pydantic validation
+- Alembic migrations
+- Docker support
+{% endif %}
+
+## Prerequisites
+
+- Python {{ python_version | default('3.11+') }}
+- PostgreSQL {{ postgres_version | default('15+') }}
+- Docker and Docker Compose (optional)
+
+## Installation
+
+### Using Docker (Recommended)
+
+```bash
+# Build and start services
+docker-compose up -d
+
+# Run migrations
+docker-compose exec app alembic upgrade head
+
+# Access API at http://localhost:{{ port | default(8000) }}
+```
+
+### Local Development
+
+```bash
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Copy environment file
+cp .env.example .env
+# Edit .env with your configuration
+
+# Run migrations
+alembic upgrade head
+
+# Start development server
+uvicorn {{ main_module | default('main') }}:app --reload
+```
+
+## API Documentation
+
+Once the application is running, visit:
+- Swagger UI: http://localhost:{{ port | default(8000) }}/docs
+- ReDoc: http://localhost:{{ port | default(8000) }}/redoc
+
+## Project Structure
+
+```
+{{ project_name | default('project') }}/
+├── src/
+│   ├── api/           # API endpoints
+│   ├── models/        # Database models
+│   ├── schemas/       # Pydantic schemas
+│   ├── services/      # Business logic
+│   └── core/          # Configuration
+├── alembic/           # Database migrations
+├── tests/             # Test suite
+├── Dockerfile
+├── docker-compose.yml
+├── requirements.txt
+└── README.md
+```
+
+## Environment Variables
+
+See `.env.example` for required environment variables.
+
+## Testing
+
+```bash
+# Run tests
+pytest
+
+# Run with coverage
+pytest --cov=src tests/
+```
+
+## License
+
+{{ license | default('MIT') }}

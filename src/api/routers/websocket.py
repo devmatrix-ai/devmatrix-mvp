@@ -78,7 +78,15 @@ sio = socketio.AsyncServer(
 ws_manager = WebSocketManager(sio)
 
 # Services - use global metrics collector for LLM metrics
-chat_service = ChatService(metrics_collector=metrics, websocket_manager=ws_manager)
+# Import SQLAlchemy session factory for MGE V2 support
+from src.config.database import DatabaseConfig
+
+session_factory = DatabaseConfig.get_session_factory()
+chat_service = ChatService(
+    metrics_collector=metrics,
+    websocket_manager=ws_manager,
+    sqlalchemy_session=session_factory
+)
 workspace_service = WorkspaceService()
 
 # Active connections tracking

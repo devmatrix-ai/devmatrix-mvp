@@ -60,7 +60,7 @@ class AtomicUnit(Base):
 
     # Atom Info
     atom_number = Column(Integer, nullable=False)  # Sequential within masterplan (1-800)
-    name = Column(String(200), nullable=False)
+    name = Column(String(1000), nullable=False)  # Long descriptive names for atoms
     description = Column(Text, nullable=False)
 
     # Code

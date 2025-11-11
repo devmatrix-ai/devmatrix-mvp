@@ -77,6 +77,7 @@ RUN pip install --no-cache-dir -r requirements-dev.txt
 COPY src/ ./src/
 COPY tests/ ./tests/
 COPY alembic/ ./alembic/
+COPY templates/ ./templates/
 COPY alembic.ini pyproject.toml ./
 
 # Create necessary directories
@@ -124,6 +125,7 @@ COPY --from=builder /opt/venv /opt/venv
 # Copy application code with correct ownership
 COPY --chown=devmatrix:devmatrix src/ ./src/
 COPY --chown=devmatrix:devmatrix alembic/ ./alembic/
+COPY --chown=devmatrix:devmatrix templates/ ./templates/
 COPY --chown=devmatrix:devmatrix alembic.ini pyproject.toml ./
 
 # Copy built UI from ui-builder stage

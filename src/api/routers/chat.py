@@ -361,9 +361,9 @@ async def create_message(
         # Create message
         message_id = str(uuid4())
         query = """
-            INSERT INTO messages (id, conversation_id, role, content, created_at)
+            INSERT INTO messages (message_id, conversation_id, role, content, created_at)
             VALUES (%s, %s, %s, %s, NOW())
-            RETURNING id, role, content, created_at
+            RETURNING message_id, role, content, created_at
         """
         result = db._execute(
             query,
@@ -389,7 +389,7 @@ async def create_message(
         if result:
             row = result[0]
             return {
-                "id": row['id'],
+                "id": row['message_id'],
                 "role": row['role'],
                 "content": row['content'],
                 "created_at": row['created_at'].isoformat()

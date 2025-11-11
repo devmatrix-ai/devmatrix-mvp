@@ -155,14 +155,15 @@ async def test_complete_mge_v2_pipeline_fastapi(
         print(f"🔑 Session ID: {test_session_id}\n")
 
         # Create new checkpoint
+        # NOTE: Phase order matches event emission order from orchestration service
         phases = [
             "discovery",
             "masterplan",
             "code_generation",
             "atomization",
-            "wave_execution",
-            "file_writing",
-            "infrastructure"
+            "file_writing",       # Phase 5: emitted during execution
+            "infrastructure",     # Phase 6: emitted during execution
+            "wave_execution"      # Phase 7: 'complete' event emitted last
         ]
 
         checkpoint = checkpoint_manager.create_checkpoint(
@@ -234,15 +235,25 @@ async def test_complete_mge_v2_pipeline_fastapi(
                 event_type = event.get('type', '')
                 event_phase = event.get('phase', '')
 
-                # Log event
+                # Log ALL events for debugging
+                print(f"  [DEBUG] Event: type={event_type}, phase={event_phase}, keys={list(event.keys())}")
+
+                # Log status events
                 if event_type == 'status':
                     print(f"  📍 {event_phase}: {event.get('message', '')}")
 
                 # Check if this event signals phase completion
                 if phase_event_matcher(event):
+                    print(f"  🎯 MATCHED! Extracting data for phase {phase_name}")
                     phase_result = phase_data_extractor(event, test_db)
                     _consumed_phases.add(phase_name)
                     break
+
+                # Check for error events that terminate the generator
+                if event_type == 'error':
+                    error_msg = event.get('message', 'Unknown error')
+                    print(f"  ⚠️ Pipeline error detected: {error_msg}")
+                    raise RuntimeError(f"Pipeline failed during {phase_name}: {error_msg}")
 
             if phase_result is None:
                 raise RuntimeError(f"Phase {phase_name} did not complete (no matching event)")
@@ -310,7 +321,7 @@ async def test_complete_mge_v2_pipeline_fastapi(
             'domain': discovery.domain if discovery else 'N/A',
             'bounded_contexts_count': len(discovery.bounded_contexts or []) if discovery else 0,
             'aggregates_count': len(discovery.aggregates or []) if discovery else 0,
-            'entities_count': len(discovery.entities or []) if discovery else 0
+            'value_objects_count': len(discovery.value_objects or []) if discovery else 0
         }
 
     discovery_result = await execute_phase_with_checkpoint(
@@ -445,7 +456,107 @@ async def test_complete_mge_v2_pipeline_fastapi(
     print(f"   ✅ Avg atomicity: {atomization_result.get('avg_atomicity', 0):.2%}")
 
     # ============================================================================
-    # Continue with remaining phases...
+    # PHASE 5: File Writing (processed before wave_execution complete event)
+    # ============================================================================
+    def file_writing_matcher(event):
+        """Check if event signals file writing completion."""
+        return (
+            event.get('type') == 'status' and
+            event.get('phase') == 'file_writing' and
+            'files_written' in event
+        )
+
+    def file_writing_extractor(event, db):
+        """Extract file writing data."""
+        from pathlib import Path
+
+        files_written = event.get('files_written', 0)
+        workspace_path = event.get('workspace_path', '')
+
+        # Verify files actually exist on filesystem
+        workspace = Path(workspace_path)
+        actual_files = len(list(workspace.rglob('*.py'))) if workspace.exists() else 0
+
+        return {
+            'files_written': files_written,
+            'workspace_path': workspace_path,
+            'files_verified': actual_files
+        }
+
+    file_writing_result = await execute_phase_with_checkpoint(
+        "file_writing",
+        file_writing_matcher,
+        file_writing_extractor
+    )
+
+    print(f"   ✅ Files written: {file_writing_result.get('files_written', 0)}")
+    print(f"   ✅ Workspace: {file_writing_result.get('workspace_path', 'N/A')}")
+    print(f"   ✅ Files verified on disk: {file_writing_result.get('files_verified', 0)}")
+
+    # ============================================================================
+    # PHASE 6: Infrastructure Generation (processed before wave_execution complete event)
+    # ============================================================================
+    def infrastructure_matcher(event):
+        """Check if event signals infrastructure generation completion."""
+        return (
+            event.get('type') == 'status' and
+            event.get('phase') == 'infrastructure_generation' and
+            'files_generated' in event
+        )
+
+    def infrastructure_extractor(event, db):
+        """Extract infrastructure generation data."""
+        files_generated = event.get('files_generated', 0)
+        project_type = event.get('project_type', 'unknown')
+
+        return {
+            'files_generated': files_generated,
+            'project_type': project_type
+        }
+
+    infrastructure_result = await execute_phase_with_checkpoint(
+        "infrastructure",
+        infrastructure_matcher,
+        infrastructure_extractor
+    )
+
+    print(f"   ✅ Infrastructure files: {infrastructure_result.get('files_generated', 0)}")
+    print(f"   ✅ Project type: {infrastructure_result.get('project_type', 'unknown')}")
+
+    # ============================================================================
+    # PHASE 7: Wave Execution (processes 'complete' event which comes LAST)
+    # ============================================================================
+    def wave_execution_matcher(event):
+        """Check if event signals wave execution completion."""
+        return (
+            event.get('type') == 'complete' and
+            'execution_id' in event
+        )
+
+    def wave_execution_extractor(event, db):
+        """Extract wave execution data."""
+        execution_id = event.get('execution_id')
+        total_waves = event.get('total_waves', 0)
+        total_atoms = event.get('total_atoms', 0)
+
+        return {
+            'execution_id': execution_id,
+            'total_waves': total_waves,
+            'atoms_executed': total_atoms
+        }
+
+    wave_execution_result = await execute_phase_with_checkpoint(
+        "wave_execution",
+        wave_execution_matcher,
+        wave_execution_extractor
+    )
+
+    print(f"   ✅ Execution ID: {wave_execution_result.get('execution_id', 'N/A')}")
+    print(f"   ✅ Total waves: {wave_execution_result.get('total_waves', 0)}")
+    print(f"   ✅ Atoms executed: {wave_execution_result.get('atoms_executed', 0)}")
+
+    # ============================================================================
+    # Test Complete - All 7 Phases Validated
     # ============================================================================
 
     # Print final checkpoint status

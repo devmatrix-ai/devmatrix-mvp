@@ -605,7 +605,7 @@ class PostgresManager:
         query = """
             UPDATE conversations
             SET metadata = %s, updated_at = NOW()
-            WHERE id = %s
+            WHERE conversation_id = %s
         """
 
         self._execute(
@@ -644,7 +644,7 @@ class PostgresManager:
         role: str,
         content: str,
         metadata: dict = None,  # Accepted but not used (messages table has no metadata column)
-    ) -> int:
+    ) -> str:
         """
         Save a message to a conversation.
 
@@ -655,17 +655,20 @@ class PostgresManager:
             metadata: Additional message metadata (accepted for API compatibility but not stored)
 
         Returns:
-            Message ID
+            Message ID (UUID as string)
         """
+        import uuid
+
+        message_id = str(uuid.uuid4())
         query = """
-            INSERT INTO messages (conversation_id, role, content)
-            VALUES (%s, %s, %s)
+            INSERT INTO messages (message_id, conversation_id, role, content, created_at)
+            VALUES (%s, %s, %s, %s, NOW())
             RETURNING message_id
         """
 
         result = self._execute(
             query,
-            (conversation_id, role, content),
+            (message_id, conversation_id, role, content),
             fetch=True,
             operation=f"save_message:{conversation_id}:{role}"
         )
