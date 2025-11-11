@@ -2,12 +2,17 @@
 Metrics Router
 
 Endpoints for Prometheus-compatible metrics export and MGE V2 cache statistics.
+Includes precision scoring for masterplan quality measurement.
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+from uuid import UUID
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Response, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.core.deps import get_db_session
 
 
 router = APIRouter(prefix="/metrics", tags=["metrics"])
@@ -202,3 +207,143 @@ async def get_cache_layer_statistics(cache_layer: str) -> CacheStatistics:
 
     stats = get_cache_statistics(cache_layer)
     return CacheStatistics(cache_layer=cache_layer, **stats)
+
+
+# ========================================
+# Precision Metrics (MGE V2 Quality Measurement)
+# ========================================
+
+
+@router.get(
+    "/precision/{masterplan_id}",
+    summary="Get precision score for masterplan",
+    description="Calculate composite precision score: 50% Spec + 30% Integration + 20% Validation",
+)
+async def get_precision_score(
+    masterplan_id: UUID,
+    wave_id: Optional[UUID] = None,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """
+    Get composite precision score for a masterplan.
+
+    **Formula:**
+    - 50% Spec Conformance (acceptance tests)
+    - 30% Integration Pass (atom execution success)
+    - 20% Validation Pass (L1-L4 validation)
+
+    **Target:** ≥98% precision
+
+    Args:
+        masterplan_id: MasterPlan UUID
+        wave_id: Optional wave UUID (calculate for specific wave)
+
+    Returns:
+        Precision metrics with detailed breakdown
+    """
+    from src.metrics.precision_metrics import PrecisionMetricsCalculator
+
+    calculator = PrecisionMetricsCalculator(db)
+
+    try:
+        metrics = await calculator.calculate_precision_score(
+            masterplan_id,
+            wave_id
+        )
+        return metrics
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error calculating precision score: {str(e)}"
+        )
+
+
+@router.get(
+    "/precision/{masterplan_id}/report",
+    summary="Get precision report for masterplan",
+    description="Get detailed formatted precision report",
+)
+async def get_precision_report(
+    masterplan_id: UUID,
+    wave_id: Optional[UUID] = None,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """
+    Get formatted precision report for a masterplan.
+
+    Returns:
+        Plain text formatted report
+    """
+    from src.metrics.precision_metrics import PrecisionMetricsCalculator
+
+    calculator = PrecisionMetricsCalculator(db)
+
+    try:
+        report = await calculator.get_precision_report(
+            masterplan_id,
+            wave_id
+        )
+        return {
+            "masterplan_id": str(masterplan_id),
+            "wave_id": str(wave_id) if wave_id else None,
+            "report": report
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating precision report: {str(e)}"
+        )
+
+
+@router.get(
+    "/precision/batch",
+    summary="Get batch precision scores",
+    description="Get precision scores for multiple masterplans",
+)
+async def get_batch_precision_scores(
+    masterplan_ids: str,  # Comma-separated UUIDs
+    db: AsyncSession = Depends(get_db_session)
+):
+    """
+    Get precision scores for multiple masterplans.
+
+    Args:
+        masterplan_ids: Comma-separated list of masterplan UUIDs
+
+    Returns:
+        List of precision metrics for each masterplan
+    """
+    from src.metrics.precision_metrics import PrecisionMetricsCalculator
+
+    calculator = PrecisionMetricsCalculator(db)
+
+    try:
+        # Parse comma-separated UUIDs
+        ids = [UUID(id.strip()) for id in masterplan_ids.split(',')]
+
+        results = []
+        for mp_id in ids:
+            try:
+                metrics = await calculator.calculate_precision_score(mp_id)
+                results.append(metrics)
+            except Exception as e:
+                results.append({
+                    'masterplan_id': str(mp_id),
+                    'error': str(e),
+                    'precision_score': None
+                })
+
+        return {
+            'count': len(results),
+            'results': results
+        }
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid UUID format: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error calculating batch precision scores: {str(e)}"
+        )
