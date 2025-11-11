@@ -13,11 +13,13 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional, Callable
 
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import MasterPlan, AtomicUnit, DependencyGraph
 from ..execution.wave_executor import WaveExecutor, WaveExecutionResult, AtomStatus
 from ..execution.retry_orchestrator import RetryOrchestrator
 from ..observability import StructuredLogger
+from ..testing.acceptance_gate import AcceptanceTestGate
 
 
 logger = StructuredLogger("execution_service_v2", output_json=True)
@@ -41,7 +43,8 @@ class ExecutionServiceV2:
         code_generator: Optional[Callable] = None,
         max_concurrent: int = 100,
         max_retries: int = 3,
-        enable_backoff: bool = True
+        enable_backoff: bool = True,
+        async_db_session: Optional[AsyncSession] = None
     ):
         """
         Initialize ExecutionServiceV2
@@ -52,8 +55,10 @@ class ExecutionServiceV2:
             max_concurrent: Max concurrent atom executions (default: 100)
             max_retries: Max retry attempts per atom (default: 3)
             enable_backoff: Enable exponential backoff (default: True)
+            async_db_session: Optional async database session for acceptance gate
         """
         self.db = db
+        self.async_db_session = async_db_session
         self.code_generator = code_generator
 
         # Initialize executors
@@ -147,8 +152,49 @@ class ExecutionServiceV2:
             [r for r in retry_results if r['success']]
         )
 
+        # Check Spec Conformance Gate (Gate S) before marking as completed
+        gate_result = None
+        gate_blocked = False
+
+        if failed_atoms == 0 and self.async_db_session:
+            # Only check gate if all atoms succeeded
+            try:
+                gate = AcceptanceTestGate(self.async_db_session)
+                gate_result = await gate.check_gate(masterplan_id)
+
+                # Gate S enforcement: MUST <100% → block release
+                if not gate_result['can_release']:
+                    gate_blocked = True
+                    logger.error(
+                        f"Gate S FAILED for masterplan {masterplan_id}: MUST requirements <100%",
+                        extra={
+                            "masterplan_id": str(masterplan_id),
+                            "must_pass_rate": gate_result['must_pass_rate'],
+                            "should_pass_rate": gate_result['should_pass_rate']
+                        }
+                    )
+                else:
+                    logger.info(
+                        f"Gate S check for masterplan {masterplan_id}: {'PASSED' if gate_result['gate_passed'] else 'PARTIAL PASS'}",
+                        extra={
+                            "masterplan_id": str(masterplan_id),
+                            "gate_passed": gate_result['gate_passed'],
+                            "can_release": gate_result['can_release'],
+                            "must_pass_rate": gate_result['must_pass_rate'],
+                            "should_pass_rate": gate_result['should_pass_rate']
+                        }
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to check acceptance gate for masterplan {masterplan_id}: {str(e)}",
+                    extra={"masterplan_id": str(masterplan_id), "error": str(e)}
+                )
+
         # Update masterplan status
-        if failed_atoms == 0:
+        if gate_blocked:
+            # Gate S blocked release: MUST requirements not met
+            masterplan.status = "gate_failed"
+        elif failed_atoms == 0:
             masterplan.status = "completed"
         elif failed_atoms < total_atoms:
             masterplan.status = "partially_completed"
@@ -170,6 +216,7 @@ class ExecutionServiceV2:
             "failed_atoms": failed_atoms,
             "success_rate": (successful_atoms / total_atoms * 100) if total_atoms > 0 else 0.0,
             "retry_stats": retry_stats,
+            "gate_result": gate_result,  # Include gate check results
             "wave_results": [
                 {
                     "wave_number": wr.wave_number,
