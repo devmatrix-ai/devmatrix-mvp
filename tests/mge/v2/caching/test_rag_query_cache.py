@@ -132,7 +132,7 @@ class TestExactMatchCacheHit:
 
             await cache.get("test query", [0.1, 0.2, 0.3], "sentence-transformers", 5)
 
-            mock_emit.assert_any_call("hit", cache_layer="rag")
+            mock_emit.assert_any_call("hit", cache_layer="rag_l2_exact")
 
 
 @pytest.mark.asyncio
@@ -161,17 +161,18 @@ class TestSimilarityBasedCacheHit:
         ), patch.object(cache, "redis_client", new_callable=Mock) as mock_client, patch.object(
             cache, "_emit_metric"
         ):
-            # Exact match miss, similarity match hit
-            mock_client.get = AsyncMock(return_value=None)
-            mock_client.scan = AsyncMock(return_value=(0, [b"rag_cache:key1"]))
-
-            # Mock second get for similarity search
+            # Mock for exact match miss and similarity match hit
             async def get_side_effect(key):
-                if key == b"rag_cache:key1":
+                # First call (exact match) returns None
+                # Subsequent calls (similarity search) return cached data
+                if key == b"rag_cache:key1" or key == "rag_cache:key1":
                     return json.dumps(cached_data)
                 return None
 
             mock_client.get = AsyncMock(side_effect=get_side_effect)
+
+            # Mock zrangebyscore for similarity index search
+            mock_client.zrangebyscore = AsyncMock(return_value=[b"rag_cache:key1"])
 
             result = await cache.get(
                 "test query", query_embedding.tolist(), "sentence-transformers", 5
@@ -201,20 +202,24 @@ class TestSimilarityBasedCacheHit:
         ), patch.object(cache, "redis_client", new_callable=Mock) as mock_client, patch.object(
             cache, "_emit_metric"
         ) as mock_emit:
-            mock_client.scan = AsyncMock(return_value=(0, [b"rag_cache:key1"]))
-
+            # Mock for exact match miss and similarity match hit
             async def get_side_effect(key):
-                if key == b"rag_cache:key1":
+                # First call (exact match) returns None
+                # Subsequent calls (similarity search) return cached data
+                if key == b"rag_cache:key1" or key == "rag_cache:key1":
                     return json.dumps(cached_data)
                 return None
 
             mock_client.get = AsyncMock(side_effect=get_side_effect)
 
+            # Mock zrangebyscore for similarity index search
+            mock_client.zrangebyscore = AsyncMock(return_value=[b"rag_cache:key1"])
+
             await cache.get(
                 "test query", query_embedding.tolist(), "sentence-transformers", 5
             )
 
-            mock_emit.assert_any_call("hit", cache_layer="rag_similarity")
+            mock_emit.assert_any_call("hit", cache_layer="rag_l2_similarity")
 
     async def test_low_similarity_returns_none(self):
         """Similarity below threshold (<0.95) should return None"""
@@ -278,14 +283,18 @@ class TestCosineSimilarity:
         ), patch.object(cache, "redis_client", new_callable=Mock) as mock_client, patch.object(
             cache, "_emit_metric"
         ):
-            mock_client.scan = AsyncMock(return_value=(0, [b"rag_cache:key1"]))
-
+            # Mock for exact match miss and similarity match hit
             async def get_side_effect(key):
-                if key == b"rag_cache:key1":
+                # First call (exact match) returns None
+                # Subsequent calls (similarity search) return cached data
+                if key == b"rag_cache:key1" or key == "rag_cache:key1":
                     return json.dumps(cached_data)
                 return None
 
             mock_client.get = AsyncMock(side_effect=get_side_effect)
+
+            # Mock zrangebyscore for similarity index search
+            mock_client.zrangebyscore = AsyncMock(return_value=[b"rag_cache:key1"])
 
             result = await cache.get("test", embedding.tolist(), "sentence-transformers", 5)
 
@@ -425,6 +434,7 @@ class TestCacheSet:
             cache, "_emit_metric"
         ) as mock_emit:
             mock_client.setex = AsyncMock()
+            mock_client.zadd = AsyncMock()  # Mock zadd for similarity index
 
             await cache.set(
                 "test query",

@@ -26,11 +26,14 @@ class TestLLMCacheIntegration:
         # Create client with V2 caching enabled
         client = EnhancedAnthropicClient(enable_v2_caching=True)
 
+        # Use current Sonnet 4.5 model (matches what model_selector returns)
+        test_model = "claude-sonnet-4-5-20250929"
+
         # Pre-populate cache
         full_prompt = "SYSTEM:\nYou are a test assistant\n\nPROMPT:\nTest prompt"
         await client.llm_cache.set(
             prompt=full_prompt,
-            model="claude-3-5-sonnet-20241022",
+            model=test_model,
             temperature=0.7,
             response_text="Cached response",
             prompt_tokens=100,
@@ -39,14 +42,16 @@ class TestLLMCacheIntegration:
 
         # Mock _build_full_prompt to return our test prompt
         with patch.object(client, '_build_full_prompt', return_value=full_prompt):
-            # Generate with caching (should hit cache)
-            result = await client.generate_with_caching(
-                task_type="test",
-                complexity="low",
-                cacheable_context={"system_prompt": "You are a test assistant"},
-                variable_prompt="Test prompt",
-                temperature=0.7
-            )
+            # Mock model selector to return our test model
+            with patch.object(client.model_selector, 'select_model', return_value=test_model):
+                # Generate with caching (should hit cache)
+                result = await client.generate_with_caching(
+                    task_type="test",
+                    complexity="low",
+                    cacheable_context={"system_prompt": "You are a test assistant"},
+                    variable_prompt="Test prompt",
+                    temperature=0.7
+                )
 
         # Verify cache hit
         assert result["cached"] is True
@@ -112,7 +117,7 @@ class TestRAGCacheIntegration:
 
     async def test_rag_cache_hit_returns_cached_results(self):
         """RAG cache hit should return cached documents"""
-        from src.rag.retriever import Retriever
+        from src.rag.retriever import Retriever, RetrievalContext
         from src.rag.vector_store import VectorStore
         from src.rag.embeddings import EmbeddingModel
 
@@ -141,9 +146,16 @@ class TestRAGCacheIntegration:
             ]
         )
 
-        # Retrieve (should hit cache)
-        results = retriever._retrieve_similarity(
+        # Create retrieval context
+        context = RetrievalContext(
             query="test query",
+            query_embedding=[0.1, 0.2, 0.3],
+            embedding_model_name="sentence-transformers"
+        )
+
+        # Retrieve (should hit cache) - use async version
+        results = await retriever._retrieve_similarity_async(
+            context=context,
             top_k=5,
             min_similarity=0.7,
             filters=None
@@ -220,26 +232,30 @@ class TestCostSavingsMetrics:
         # Create client with V2 caching
         client = EnhancedAnthropicClient(enable_v2_caching=True)
 
+        # Use current Sonnet 4.5 model
+        test_model = "claude-sonnet-4-5-20250929"
+
         # Pre-populate cache
         full_prompt = "SYSTEM:\nTest\n\nPROMPT:\nTest"
         await client.llm_cache.set(
             prompt=full_prompt,
-            model="claude-3-5-sonnet-20241022",
+            model=test_model,
             temperature=0.7,
             response_text="Cached",
             prompt_tokens=1000,  # High token count for measurable savings
             completion_tokens=500
         )
 
-        # Mock _build_full_prompt
+        # Mock _build_full_prompt and model selector
         with patch.object(client, '_build_full_prompt', return_value=full_prompt):
-            result = await client.generate_with_caching(
-                task_type="test",
-                complexity="low",
-                cacheable_context={"system_prompt": "Test"},
-                variable_prompt="Test",
-                temperature=0.7
-            )
+            with patch.object(client.model_selector, 'select_model', return_value=test_model):
+                result = await client.generate_with_caching(
+                    task_type="test",
+                    complexity="low",
+                    cacheable_context={"system_prompt": "Test"},
+                    variable_prompt="Test",
+                    temperature=0.7
+                )
 
         # Verify metric was incremented
         # Savings should be > 0 (would have cost money without cache)

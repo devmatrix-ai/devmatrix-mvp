@@ -22,7 +22,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from ..observability import StructuredLogger, HealthCheck, MetricsMiddleware, setup_logging
 from ..observability.global_metrics import metrics_collector
-from .routers import workflows, executions, metrics, health, websocket, rag, chat, masterplans, auth, usage, admin, validation, execution_v2, atomization, dependency, review, testing, conversations, acceptance_gate, traceability
+from .routers import workflows, executions, metrics, health, websocket, rag, chat, masterplans, auth, usage, admin, validation, execution_v2, atomization, dependency, review, testing, conversations, acceptance_gate, traceability, traces
 from ..services.orphan_cleanup import OrphanCleanupWorker
 
 
@@ -211,7 +211,8 @@ def create_app() -> FastAPI:
     app.include_router(review.router)  # Phase 6: Human Review
     app.include_router(testing.router)  # Phase 6 Week 12: Acceptance Testing
     app.include_router(acceptance_gate.router, prefix="/api/v2")  # Phase 6 Week 13: Spec Conformance Gate
-    app.include_router(traceability.router, prefix="/api/v2")  # Phase 6 Week 13: E2E Traceability
+    app.include_router(traceability.router, prefix="/api/v2")  # Phase 6 Week 13: E2E Traceability (old)
+    app.include_router(traces.router)  # Phase 6 Week 13: E2E Traceability (new in-memory)
 
     # Mount Socket.IO app
     app.mount("/socket.io", websocket.sio_app)

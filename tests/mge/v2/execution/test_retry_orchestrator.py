@@ -647,3 +647,130 @@ class TestMasterplanIntegration:
         # Check masterplan_id passed
         call_args = mock_llm_client.generate_with_caching.call_args_list[0]
         assert call_args[1]["masterplan_id"] == str(masterplan_id)
+
+
+# ============================================================
+# Test: Context Handling
+# ============================================================
+
+class TestContextHandling:
+    """Tests for atom context handling in prompt generation."""
+
+    @pytest.mark.asyncio
+    async def test_file_context_in_prompt(
+        self, mock_llm_client, mock_validator, mock_atom_spec
+    ):
+        """Test that file_context is included in prompt."""
+        orchestrator = RetryOrchestrator(mock_llm_client, mock_validator)
+
+        # Add file context
+        mock_atom_spec.context = {
+            "file_context": {
+                "file_path": "src/utils/helper.py",
+                "imports": ["os", "sys", "json"]
+            }
+        }
+
+        # Set up successful validation
+        success_result = AtomicValidationResult(
+            passed=True,
+            issues=[],
+            metrics={}
+        )
+        mock_validator.validate.return_value = success_result
+
+        # Execute
+        result = await orchestrator.execute_with_retry(
+            atom_spec=mock_atom_spec,
+            dependencies=[],
+            masterplan_id=None
+        )
+
+        # Verify success
+        assert result.success is True
+
+        # Verify file context was included in prompt
+        call_args = mock_llm_client.generate_with_caching.call_args_list[0]
+        variable_prompt = call_args[1]["variable_prompt"]
+        assert "File Context" in variable_prompt
+        assert "src/utils/helper.py" in variable_prompt
+        assert "os" in variable_prompt
+
+    @pytest.mark.asyncio
+    async def test_parent_context_in_prompt(
+        self, mock_llm_client, mock_validator, mock_atom_spec
+    ):
+        """Test that parent_context is included in prompt."""
+        orchestrator = RetryOrchestrator(mock_llm_client, mock_validator)
+
+        # Add parent context
+        mock_atom_spec.context = {
+            "parent_context": "class UserManager"
+        }
+
+        # Set up successful validation
+        success_result = AtomicValidationResult(
+            passed=True,
+            issues=[],
+            metrics={}
+        )
+        mock_validator.validate.return_value = success_result
+
+        # Execute
+        result = await orchestrator.execute_with_retry(
+            atom_spec=mock_atom_spec,
+            dependencies=[],
+            masterplan_id=None
+        )
+
+        # Verify success
+        assert result.success is True
+
+        # Verify parent context was included in prompt
+        call_args = mock_llm_client.generate_with_caching.call_args_list[0]
+        variable_prompt = call_args[1]["variable_prompt"]
+        assert "Parent scope" in variable_prompt
+        assert "class UserManager" in variable_prompt
+
+    @pytest.mark.asyncio
+    async def test_combined_contexts_in_prompt(
+        self, mock_llm_client, mock_validator, mock_atom_spec
+    ):
+        """Test that both file and parent contexts are included."""
+        orchestrator = RetryOrchestrator(mock_llm_client, mock_validator)
+
+        # Add both contexts
+        mock_atom_spec.context = {
+            "file_context": {
+                "file_path": "src/models/user.py",
+                "imports": ["typing", "dataclasses"]
+            },
+            "parent_context": "class User"
+        }
+
+        # Set up successful validation
+        success_result = AtomicValidationResult(
+            passed=True,
+            issues=[],
+            metrics={}
+        )
+        mock_validator.validate.return_value = success_result
+
+        # Execute
+        result = await orchestrator.execute_with_retry(
+            atom_spec=mock_atom_spec,
+            dependencies=[],
+            masterplan_id=None
+        )
+
+        # Verify success
+        assert result.success is True
+
+        # Verify both contexts were included
+        call_args = mock_llm_client.generate_with_caching.call_args_list[0]
+        variable_prompt = call_args[1]["variable_prompt"]
+        assert "File Context" in variable_prompt
+        assert "src/models/user.py" in variable_prompt
+        assert "typing" in variable_prompt
+        assert "Parent scope" in variable_prompt
+        assert "class User" in variable_prompt
