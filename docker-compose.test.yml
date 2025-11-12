@@ -1,0 +1,303 @@
+# Docker Compose configuration for testing and precision measurement
+#
+# Usage:
+#   docker-compose -f docker-compose.test.yml up --wait
+#   docker-compose -f docker-compose.test.yml run tests
+#   docker-compose -f docker-compose.test.yml run baseline
+#   docker-compose -f docker-compose.test.yml down
+
+services:
+  # Test PostgreSQL Database
+  postgres-test:
+    image: pgvector/pgvector:pg16
+    container_name: devmatrix-postgres-test
+    environment:
+      POSTGRES_DB: devmatrix_test
+      POSTGRES_USER: devmatrix_test
+      POSTGRES_PASSWORD: devmatrix_test
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5433:5432"  # Different port to avoid conflict
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devmatrix_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - test-network
+
+  # Test Redis
+  redis-test:
+    image: redis:7-alpine
+    container_name: devmatrix-redis-test
+    command: redis-server --appendonly yes
+    ports:
+      - "6380:6379"  # Different port to avoid conflict
+    volumes:
+      - redis_test_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - test-network
+
+  # Playwright Browser for E2E tests (if needed)
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.40.0-jammy
+    container_name: devmatrix-playwright
+    environment:
+      DISPLAY: ":99"
+    volumes:
+      - ./tests:/app/tests:ro
+      - ./src:/app/src:ro
+    networks:
+      - test-network
+    profiles:
+      - e2e  # Only start for E2E tests
+
+  # Test API Server
+  api-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: devmatrix-api-test
+    environment:
+      POSTGRES_HOST: postgres-test
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: devmatrix_test
+      POSTGRES_USER: devmatrix_test
+      POSTGRES_PASSWORD: devmatrix_test
+      REDIS_HOST: redis-test
+      REDIS_PORT: 6379
+      ENVIRONMENT: test
+      LOG_LEVEL: DEBUG
+      LOG_FORMAT: json
+      # Test-specific settings
+      TESTING: "true"
+      SKIP_STARTUP_TASKS: "true"
+    ports:
+      - "8001:8000"  # Different port to avoid conflict
+    volumes:
+      - ./src:/app/src:ro
+      - ./tests:/app/tests:ro
+      - ./workspace:/app/workspace
+      - ./reports:/app/reports
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - test-network
+
+  # Test Runner
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: devmatrix-tests
+    environment:
+      POSTGRES_HOST: postgres-test
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: devmatrix_test
+      POSTGRES_USER: devmatrix_test
+      POSTGRES_PASSWORD: devmatrix_test
+      REDIS_HOST: redis-test
+      REDIS_PORT: 6379
+      ENVIRONMENT: test
+      TESTING: "true"
+      # Pytest settings
+      PYTEST_ARGS: "${PYTEST_ARGS:--v -s}"
+    volumes:
+      - ./src:/app/src:ro
+      - ./tests:/app/tests:ro
+      - ./reports:/app/reports
+      - ./coverage:/app/coverage
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+      api-test:
+        condition: service_healthy
+    command: >
+      sh -c "
+        echo '🧪 Running test suite...' &&
+        pytest tests/ ${PYTEST_ARGS} --cov=src --cov-report=html:/app/coverage/html --cov-report=term &&
+        echo '✅ Tests completed'
+      "
+    networks:
+      - test-network
+    profiles:
+      - test
+
+  # Determinism Test Runner (focused tests)
+  determinism-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: devmatrix-determinism-tests
+    environment:
+      POSTGRES_HOST: postgres-test
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: devmatrix_test
+      POSTGRES_USER: devmatrix_test
+      POSTGRES_PASSWORD: devmatrix_test
+      REDIS_HOST: redis-test
+      REDIS_PORT: 6379
+      ENVIRONMENT: test
+      TESTING: "true"
+    volumes:
+      - ./src:/app/src:ro
+      - ./tests:/app/tests:ro
+      - ./reports:/app/reports
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    command: >
+      sh -c "
+        echo '🎲 Running determinism tests...' &&
+        pytest tests/test_determinism.py -v -s &&
+        echo '✅ Determinism tests completed'
+      "
+    networks:
+      - test-network
+    profiles:
+      - determinism
+
+  # Baseline Measurement Runner
+  baseline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: devmatrix-baseline
+    environment:
+      POSTGRES_HOST: postgres-test
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: devmatrix_test
+      POSTGRES_USER: devmatrix_test
+      POSTGRES_PASSWORD: devmatrix_test
+      REDIS_HOST: redis-test
+      REDIS_PORT: 6379
+      ENVIRONMENT: test
+      TESTING: "true"
+      # Baseline settings
+      BASELINE_ITERATIONS: "${BASELINE_ITERATIONS:-10}"
+      BASELINE_OUTPUT_DIR: "${BASELINE_OUTPUT_DIR:-/app/reports/precision}"
+    volumes:
+      - ./src:/app/src:ro
+      - ./scripts:/app/scripts:ro
+      - ./reports:/app/reports
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    command: >
+      sh -c "
+        echo '📊 Running precision baseline measurement...' &&
+        python scripts/measure_precision_baseline.py \
+          --iterations ${BASELINE_ITERATIONS:-10} \
+          --output-dir /app/reports/precision &&
+        echo '✅ Baseline measurement completed' &&
+        echo '' &&
+        echo 'Reports saved to: ./reports/precision/' &&
+        ls -lh /app/reports/precision/
+      "
+    networks:
+      - test-network
+    profiles:
+      - baseline
+
+  # Quick Baseline (3 iterations for fast feedback)
+  baseline-quick:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: devmatrix-baseline-quick
+    environment:
+      POSTGRES_HOST: postgres-test
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: devmatrix_test
+      POSTGRES_USER: devmatrix_test
+      POSTGRES_PASSWORD: devmatrix_test
+      REDIS_HOST: redis-test
+      REDIS_PORT: 6379
+      ENVIRONMENT: test
+      TESTING: "true"
+    volumes:
+      - ./src:/app/src:ro
+      - ./scripts:/app/scripts:ro
+      - ./reports:/app/reports
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    command: >
+      sh -c "
+        echo '⚡ Running quick baseline (3 iterations)...' &&
+        python scripts/measure_precision_baseline.py \
+          --iterations 3 \
+          --output-dir /app/reports/precision &&
+        echo '✅ Quick baseline completed'
+      "
+    networks:
+      - test-network
+    profiles:
+      - quick
+
+networks:
+  test-network:
+    driver: bridge
+    name: devmatrix-test-network
+
+volumes:
+  postgres_test_data:
+    name: devmatrix-postgres-test-data
+  redis_test_data:
+    name: devmatrix-redis-test-data
+
+# Usage Examples:
+#
+# 1. Start test infrastructure:
+#    docker-compose -f docker-compose.test.yml up -d postgres-test redis-test api-test
+#
+# 2. Run all tests:
+#    docker-compose -f docker-compose.test.yml --profile test up tests
+#
+# 3. Run determinism tests only:
+#    docker-compose -f docker-compose.test.yml --profile determinism up determinism-tests
+#
+# 4. Run baseline measurement:
+#    docker-compose -f docker-compose.test.yml --profile baseline up baseline
+#
+# 5. Run quick baseline (3 iterations):
+#    docker-compose -f docker-compose.test.yml --profile quick up baseline-quick
+#
+# 6. Interactive test shell:
+#    docker-compose -f docker-compose.test.yml run --rm tests bash
+#
+# 7. Clean up:
+#    docker-compose -f docker-compose.test.yml down -v
+#
+# 8. Run with custom iterations:
+#    BASELINE_ITERATIONS=20 docker-compose -f docker-compose.test.yml --profile baseline up baseline

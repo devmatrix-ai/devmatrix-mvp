@@ -516,7 +516,7 @@ Provide a complete DDD analysis in the specified JSON format."""
             ],
             system=DISCOVERY_SYSTEM_PROMPT,
             max_tokens=8000,
-            temperature=0.0  # Deterministic mode,
+            temperature=0.0,  # Deterministic mode
             entity_callback=entity_discovered_callback,
             progress_callback=progress_callback,
             target_keys=["bounded_contexts", "aggregates", "value_objects", "domain_events", "services", "domain"]
