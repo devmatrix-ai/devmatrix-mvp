@@ -20,6 +20,23 @@ class TestTemplateEngine:
     - Jest/Vitest for TypeScript/JavaScript atoms
     """
 
+    # Common exception name mappings (lowercase -> PascalCase)
+    EXCEPTION_MAP = {
+        'valueerror': 'ValueError',
+        'typeerror': 'TypeError',
+        'keyerror': 'KeyError',
+        'indexerror': 'IndexError',
+        'attributeerror': 'AttributeError',
+        'nameerror': 'NameError',
+        'runtimeerror': 'RuntimeError',
+        'notimplementederror': 'NotImplementedError',
+        'zerodivisionerror': 'ZeroDivisionError',
+        'ioerror': 'IOError',
+        'oserror': 'OSError',
+        'importerror': 'ImportError',
+        'assertionerror': 'AssertionError',
+    }
+
     def __init__(self):
         # Pytest template
         self.pytest_template = """
@@ -121,7 +138,8 @@ describe('{requirement_id}', () => {{
         if 'raise' in text or 'throw' in text:
             match = re.search(r'raise\s+(\w+)', text)
             if match:
-                exception_type = match.group(1)
+                exception_name = match.group(1).lower()
+                exception_type = self.EXCEPTION_MAP.get(exception_name, match.group(1).capitalize())
                 return f"    with pytest.raises({exception_type}):\n        function_under_test()"
 
         # Pattern: "must validate X"
@@ -130,6 +148,19 @@ describe('{requirement_id}', () => {{
             if match:
                 validation_target = match.group(1)
                 return f"    result = validate_{validation_target}(input_data)\n    assert result.is_valid == True"
+
+        # Pattern: "response time" or "latency" (BEFORE generic comparison to be more specific)
+        if 'response time' in text or 'latency' in text:
+            match = re.search(r'<\s*(\d+)\s*(ms|seconds?)', text)
+            if match:
+                threshold = match.group(1)
+                unit = match.group(2)
+                multiplier = 1 if 'ms' in unit else 1000
+                return f"""    import time
+    start = time.time()
+    result = function_under_test()
+    duration_ms = (time.time() - start) * 1000
+    assert duration_ms < {int(threshold) * multiplier}"""
 
         # Pattern: "must be < X" or "must be > X"
         if match := re.search(r'(must be|should be)\s*([<>]=?)\s*(\d+)', text):
@@ -156,19 +187,6 @@ describe('{requirement_id}', () => {{
     viewport_sizes = [(320, 568), (768, 1024), (1920, 1080)]
     for width, height in viewport_sizes:
         assert layout_renders_correctly(width, height)"""
-
-        # Pattern: "response time" or "latency"
-        if 'response time' in text or 'latency' in text:
-            match = re.search(r'<\s*(\d+)\s*(ms|seconds?)', text)
-            if match:
-                threshold = match.group(1)
-                unit = match.group(2)
-                multiplier = 1 if 'ms' in unit else 1000
-                return f"""    import time
-    start = time.time()
-    result = function_under_test()
-    duration_ms = (time.time() - start) * 1000
-    assert duration_ms < {int(threshold) * multiplier}"""
 
         # Default: placeholder for manual implementation
         return f"    # TODO: Implement test for: {req.text}\n    assert True  # Replace with actual test"
@@ -198,7 +216,8 @@ describe('{requirement_id}', () => {{
         if 'throw' in text or 'raise' in text:
             match = re.search(r'(throw|raise)\s+(\w+)', text)
             if match:
-                exception_type = match.group(2)
+                exception_name = match.group(2).lower()
+                exception_type = self.EXCEPTION_MAP.get(exception_name, match.group(2).capitalize())
                 return f"    await expect(() => functionUnderTest()).rejects.toThrow({exception_type});"
 
         # Pattern: "must validate X"
@@ -207,6 +226,18 @@ describe('{requirement_id}', () => {{
             if match:
                 validation_target = match.group(1)
                 return f"    const result = validate{validation_target.capitalize()}(inputData);\n    expect(result.isValid).toBe(true);"
+
+        # Pattern: "response time" or "latency" (BEFORE generic comparison to be more specific)
+        if 'response time' in text or 'latency' in text:
+            match = re.search(r'<\s*(\d+)\s*(ms|seconds?)', text)
+            if match:
+                threshold = match.group(1)
+                unit = match.group(2)
+                multiplier = 1 if 'ms' in unit else 1000
+                return f"""    const start = performance.now();
+    const result = await functionUnderTest();
+    const duration = performance.now() - start;
+    expect(duration).toBeLessThan({int(threshold) * multiplier});"""
 
         # Pattern: "must be < X" or "must be > X"
         if match := re.search(r'(must be|should be)\s*([<>]=?)\s*(\d+)', text):
@@ -233,18 +264,6 @@ describe('{requirement_id}', () => {{
     for (const { width, height } of viewportSizes) {
       expect(await layoutRendersCorrectly(width, height)).toBe(true);
     }"""
-
-        # Pattern: "response time" or "latency"
-        if 'response time' in text or 'latency' in text:
-            match = re.search(r'<\s*(\d+)\s*(ms|seconds?)', text)
-            if match:
-                threshold = match.group(1)
-                unit = match.group(2)
-                multiplier = 1 if 'ms' in unit else 1000
-                return f"""    const start = performance.now();
-    const result = await functionUnderTest();
-    const duration = performance.now() - start;
-    expect(duration).toBeLessThan({int(threshold) * multiplier});"""
 
         # Default
         return f"    // TODO: Implement test for: {req.text}\n    expect(true).toBe(true);  // Replace with actual test"

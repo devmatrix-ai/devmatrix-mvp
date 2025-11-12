@@ -10,7 +10,7 @@ Tests test execution logic:
 """
 import pytest
 from uuid import uuid4
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.testing.test_runner import AcceptanceTestRunner
@@ -175,13 +175,17 @@ class TestAcceptanceTestRunner:
         runner = AcceptanceTestRunner(mock_async_db)
 
         # Create mixed results (2 pass, 1 fail)
+        # sample_tests: [MUST, MUST, SHOULD]
+        # idx 0 (MUST): pass
+        # idx 1 (MUST): fail
+        # idx 2 (SHOULD): fail
         results = []
         for idx, test in enumerate(sample_tests):
             result = AcceptanceTestResult(
                 test_id=test.test_id,
                 wave_id=None,
-                status='pass' if idx < 2 else 'fail',
-                error_message=None if idx < 2 else "Test failed",
+                status='pass' if idx == 0 else 'fail',
+                error_message=None if idx == 0 else "Test failed",
                 execution_duration_ms=100
             )
             result.test = test
@@ -190,9 +194,9 @@ class TestAcceptanceTestRunner:
         aggregated = runner._aggregate_results(results)
 
         assert aggregated['total'] == 3
-        assert aggregated['passed'] == 2
-        assert aggregated['failed'] == 1
-        assert aggregated['overall_pass_rate'] == pytest.approx(0.666, rel=0.01)
+        assert aggregated['passed'] == 1
+        assert aggregated['failed'] == 2
+        assert aggregated['overall_pass_rate'] == pytest.approx(0.333, rel=0.01)
 
         # 2 MUST: 1 pass, 1 fail
         assert aggregated['must_total'] == 2
@@ -298,7 +302,7 @@ class TestAcceptanceTestRunner:
         masterplan_id = uuid4()
 
         # Mock empty test query
-        mock_result = AsyncMock()
+        mock_result = Mock()
         mock_result.scalars.return_value.all.return_value = []
         mock_async_db.execute.return_value = mock_result
 
@@ -314,7 +318,7 @@ class TestAcceptanceTestRunner:
         wave_id = uuid4()
 
         # Mock wave query returning None
-        mock_result = AsyncMock()
+        mock_result = Mock()
         mock_result.scalar_one_or_none.return_value = None
         mock_async_db.execute.return_value = mock_result
 
@@ -329,7 +333,7 @@ class TestAcceptanceTestRunner:
         masterplan_id = uuid4()
 
         # Mock empty test query
-        mock_result = AsyncMock()
+        mock_result = Mock()
         mock_result.scalars.return_value.all.return_value = []
         mock_async_db.execute.return_value = mock_result
 
@@ -345,11 +349,13 @@ class TestAcceptanceTestRunner:
         wave_id = uuid4()
 
         # Mock test query
-        mock_test_result = AsyncMock()
-        mock_test_result.scalars.return_value.all.return_value = sample_tests
+        mock_test_result = Mock()
+        mock_scalars = Mock()
+        mock_scalars.all.return_value = sample_tests
+        mock_test_result.scalars.return_value = mock_scalars
 
         # Mock result query (called once per test)
-        mock_result_result = AsyncMock()
+        mock_result_result = Mock()
         test_result = AcceptanceTestResult(
             test_id=sample_tests[0].test_id,
             wave_id=wave_id,

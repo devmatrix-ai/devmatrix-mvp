@@ -11,7 +11,7 @@ Tests complete test generation orchestration:
 import pytest
 import pytest_asyncio
 from uuid import uuid4
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.testing.test_generator import AcceptanceTestGenerator
@@ -57,7 +57,7 @@ def sample_masterplan(sample_markdown):
     """Sample MasterPlan object"""
     masterplan = MasterPlan(
         masterplan_id=uuid4(),
-        title="Authentication System",
+        project_name="Authentication System",
         description="Complete auth system",
         markdown_content=sample_markdown,
         metadata={'primary_language': 'python'}
@@ -78,7 +78,7 @@ class TestAcceptanceTestGenerator:
         masterplan_id = sample_masterplan.masterplan_id
 
         # Mock database query to return masterplan
-        mock_result = AsyncMock()
+        mock_result = Mock()
         mock_result.scalar_one_or_none.return_value = sample_masterplan
         mock_async_db.execute.return_value = mock_result
 
@@ -112,9 +112,14 @@ class TestAcceptanceTestGenerator:
         """Test generation when markdown is explicitly provided"""
         masterplan_id = uuid4()
 
+        # Mock masterplan query for language detection (called by _determine_test_language)
+        mock_result = Mock()
+        mock_result.scalar_one_or_none.return_value = None  # Will default to pytest
+        mock_async_db.execute.return_value = mock_result
+
         generator = AcceptanceTestGenerator(mock_async_db)
 
-        # Generate with explicit markdown (should not query DB)
+        # Generate with explicit markdown (execute called only for language detection)
         tests = await generator.generate_from_masterplan(
             masterplan_id,
             markdown_content=sample_markdown
@@ -123,8 +128,8 @@ class TestAcceptanceTestGenerator:
         # Verify tests were generated
         assert len(tests) == 5
 
-        # Verify DB was NOT queried (execute not called)
-        mock_async_db.execute.assert_not_called()
+        # Verify DB was queried only once for language detection
+        assert mock_async_db.execute.call_count == 1
 
     @pytest.mark.asyncio
     async def test_generate_masterplan_not_found(self, mock_async_db):
@@ -132,7 +137,7 @@ class TestAcceptanceTestGenerator:
         masterplan_id = uuid4()
 
         # Mock database query to return None
-        mock_result = AsyncMock()
+        mock_result = Mock()
         mock_result.scalar_one_or_none.return_value = None
         mock_async_db.execute.return_value = mock_result
 
@@ -146,12 +151,12 @@ class TestAcceptanceTestGenerator:
         """Test error when masterplan has no markdown content"""
         masterplan = MasterPlan(
             masterplan_id=uuid4(),
-            title="Test",
+            project_name="Test",
             description="Test",
             markdown_content=None  # No content
         )
 
-        mock_result = AsyncMock()
+        mock_result = Mock()
         mock_result.scalar_one_or_none.return_value = masterplan
         mock_async_db.execute.return_value = mock_result
 
@@ -190,12 +195,12 @@ class TestAcceptanceTestGenerator:
         masterplan_id = uuid4()
         masterplan = MasterPlan(
             masterplan_id=masterplan_id,
-            title="Python Project",
+            project_name="Python Project",
             description="",
             metadata={'primary_language': 'python'}
         )
 
-        mock_result = AsyncMock()
+        mock_result = Mock()
         mock_result.scalar_one_or_none.return_value = masterplan
         mock_async_db.execute.return_value = mock_result
 
@@ -210,7 +215,7 @@ class TestAcceptanceTestGenerator:
         masterplan_id = uuid4()
         masterplan = MasterPlan(
             masterplan_id=masterplan_id,
-            title="TypeScript Project",
+            project_name="TypeScript Project",
             description="",
             metadata={
                 'primary_language': 'typescript',
@@ -218,7 +223,7 @@ class TestAcceptanceTestGenerator:
             }
         )
 
-        mock_result = AsyncMock()
+        mock_result = Mock()
         mock_result.scalar_one_or_none.return_value = masterplan
         mock_async_db.execute.return_value = mock_result
 
@@ -233,12 +238,12 @@ class TestAcceptanceTestGenerator:
         masterplan_id = uuid4()
         masterplan = MasterPlan(
             masterplan_id=masterplan_id,
-            title="JavaScript Project",
+            project_name="JavaScript Project",
             description="",
             metadata={'primary_language': 'javascript'}
         )
 
-        mock_result = AsyncMock()
+        mock_result = Mock()
         mock_result.scalar_one_or_none.return_value = masterplan
         mock_async_db.execute.return_value = mock_result
 
@@ -253,12 +258,12 @@ class TestAcceptanceTestGenerator:
         masterplan_id = uuid4()
         masterplan = MasterPlan(
             masterplan_id=masterplan_id,
-            title="React TypeScript App",
+            project_name="React TypeScript App",
             description="",
             metadata={}
         )
 
-        mock_result = AsyncMock()
+        mock_result = Mock()
         mock_result.scalar_one_or_none.return_value = masterplan
         mock_async_db.execute.return_value = mock_result
 
@@ -273,12 +278,12 @@ class TestAcceptanceTestGenerator:
         masterplan_id = uuid4()
         masterplan = MasterPlan(
             masterplan_id=masterplan_id,
-            title="Unknown Project",
+            project_name="Unknown Project",
             description="",
             metadata={}
         )
 
-        mock_result = AsyncMock()
+        mock_result = Mock()
         mock_result.scalar_one_or_none.return_value = masterplan
         mock_async_db.execute.return_value = mock_result
 
@@ -316,7 +321,7 @@ class TestAcceptanceTestGenerator:
             test_language="pytest"
         )
 
-        mock_result = AsyncMock()
+        mock_result = Mock()
         mock_result.scalars.return_value.all.return_value = [failed_test_1, failed_test_2]
         mock_async_db.execute.return_value = mock_result
 
@@ -340,7 +345,7 @@ class TestAcceptanceTestGenerator:
         """Test regeneration when no tests found"""
         masterplan_id = uuid4()
 
-        mock_result = AsyncMock()
+        mock_result = Mock()
         mock_result.scalars.return_value.all.return_value = []
         mock_async_db.execute.return_value = mock_result
 
@@ -392,7 +397,7 @@ class TestAcceptanceTestGenerator:
             ),
         ]
 
-        mock_result = AsyncMock()
+        mock_result = Mock()
         mock_result.scalars.return_value.all.return_value = tests
         mock_async_db.execute.return_value = mock_result
 
@@ -410,7 +415,7 @@ class TestAcceptanceTestGenerator:
         """Test statistics for masterplan with no tests"""
         masterplan_id = uuid4()
 
-        mock_result = AsyncMock()
+        mock_result = Mock()
         mock_result.scalars.return_value.all.return_value = []
         mock_async_db.execute.return_value = mock_result
 
@@ -452,7 +457,7 @@ class TestAcceptanceTestGenerator:
             ),
         ]
 
-        mock_result = AsyncMock()
+        mock_result = Mock()
         mock_result.scalars.return_value.all.return_value = tests
         mock_async_db.execute.return_value = mock_result
 
@@ -472,7 +477,7 @@ class TestAcceptanceTestGenerator:
         """Test deletion when no tests exist"""
         masterplan_id = uuid4()
 
-        mock_result = AsyncMock()
+        mock_result = Mock()
         mock_result.scalars.return_value.all.return_value = []
         mock_async_db.execute.return_value = mock_result
 
