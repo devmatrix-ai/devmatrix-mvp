@@ -100,7 +100,7 @@ EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "cuda")
 # Retrieval Parameters
 RAG_TOP_K = int(os.getenv("RAG_TOP_K", "5"))  # Number of examples to retrieve
 # RAG Retrieval Threshold - minimum similarity score for results to be included
-RAG_SIMILARITY_THRESHOLD = float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.7"))
+RAG_SIMILARITY_THRESHOLD = float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.5"))
 RAG_ENABLE_FEEDBACK = os.getenv("RAG_ENABLE_FEEDBACK", "true").lower() == "true"  # Feedback loop enabled
 
 # ChromaDB Collection Configuration
@@ -391,9 +391,9 @@ def validate_config() -> tuple[bool, list[str]]:
     return len(errors) == 0, errors
 
 # Adaptive thresholds per collection (used for multi-collection retrieval)
-# Curated examples: stricter threshold (high quality) 
-RAG_SIMILARITY_THRESHOLD_CURATED = float(os.getenv("RAG_SIMILARITY_THRESHOLD_CURATED", "0.65"))
+# Curated examples: stricter threshold (high quality)
+RAG_SIMILARITY_THRESHOLD_CURATED = float(os.getenv("RAG_SIMILARITY_THRESHOLD_CURATED", "0.45"))
 # Project code: lenient threshold (more recall needed)
-RAG_SIMILARITY_THRESHOLD_PROJECT = float(os.getenv("RAG_SIMILARITY_THRESHOLD_PROJECT", "0.55"))
+RAG_SIMILARITY_THRESHOLD_PROJECT = float(os.getenv("RAG_SIMILARITY_THRESHOLD_PROJECT", "0.35"))
 # Standards: moderate threshold
-RAG_SIMILARITY_THRESHOLD_STANDARDS = float(os.getenv("RAG_SIMILARITY_THRESHOLD_STANDARDS", "0.60"))
+RAG_SIMILARITY_THRESHOLD_STANDARDS = float(os.getenv("RAG_SIMILARITY_THRESHOLD_STANDARDS", "0.40"))

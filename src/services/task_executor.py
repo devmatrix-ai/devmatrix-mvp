@@ -335,7 +335,7 @@ class TaskExecutor:
             results = self.retriever.retrieve(
                 query=query,
                 top_k=5,
-                min_similarity=0.7
+                min_similarity=0.5
             )
 
             logger.info(f"Retrieved {len(results)} RAG examples for task {task.task_number}")
