@@ -342,7 +342,7 @@ class EnhancedAnthropicClient:
         cacheable_context: Dict[str, Any],
         variable_prompt: str,
         max_tokens: int = 8000,
-        temperature: float = 0.0  # Deterministic mode default,
+        temperature: float = 0.0,  # Deterministic mode default
         force_model: Optional[str] = None
     ) -> Dict[str, Any]:
         """
@@ -677,7 +677,7 @@ class EnhancedAnthropicClient:
         self,
         prompt: str,
         model: str,
-        temperature: float = 0.0  # Deterministic mode default,
+        temperature: float = 0.0,  # Deterministic mode default
         max_tokens: int = 8000
     ):
         """
@@ -912,7 +912,7 @@ class EnhancedAnthropicClient:
         messages: List[Dict[str, str]],
         system: Optional[str] = None,
         max_tokens: int = 8000,
-        temperature: float = 0.0  # Deterministic mode default,
+        temperature: float = 0.0,  # Deterministic mode default
         entity_callback: Optional[callable] = None,
         progress_callback: Optional[callable] = None,
         target_keys: Optional[List[str]] = None
