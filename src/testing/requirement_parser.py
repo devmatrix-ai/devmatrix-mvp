@@ -19,6 +19,23 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Common exception name mappings (lowercase -> PascalCase)
+EXCEPTION_MAP = {
+    'valueerror': 'ValueError',
+    'typeerror': 'TypeError',
+    'keyerror': 'KeyError',
+    'indexerror': 'IndexError',
+    'attributeerror': 'AttributeError',
+    'nameerror': 'NameError',
+    'runtimeerror': 'RuntimeError',
+    'notimplementederror': 'NotImplementedError',
+    'zerodivisionerror': 'ZeroDivisionError',
+    'ioerror': 'IOError',
+    'oserror': 'OSError',
+    'importerror': 'ImportError',
+    'assertionerror': 'AssertionError',
+}
+
 
 @dataclass
 class Requirement:
@@ -39,8 +56,11 @@ class RequirementParser:
 
     def __init__(self):
         # Regex patterns for parsing (case-insensitive)
-        self.must_pattern = re.compile(r'###\s+must\s*\n((?:- .+\n)+)', re.MULTILINE | re.IGNORECASE)
-        self.should_pattern = re.compile(r'###\s+should\s*\n((?:- .+\n)+)', re.MULTILINE | re.IGNORECASE)
+        # Capture entire block between ### MUST/SHOULD and next ### or end
+        # Negative lookahead (?!###) ensures we don't capture header lines
+        # Then extract only lines starting with "- " using requirement_pattern
+        self.must_pattern = re.compile(r'###\s+must\s*\n((?:(?!###).+(?:\n|$))+?)(?=\n###|$)', re.MULTILINE | re.IGNORECASE)
+        self.should_pattern = re.compile(r'###\s+should\s*\n((?:(?!###).+(?:\n|$))+?)(?=\n###|$)', re.MULTILINE | re.IGNORECASE)
         self.requirement_pattern = re.compile(r'^- (.+)$', re.MULTILINE)
 
     def parse_masterplan(self, masterplan_id: UUID, markdown_content: str) -> List[Requirement]:
@@ -193,7 +213,8 @@ class RequirementParser:
         # Pattern: "must/should raise X"
         exception_match = re.search(r'(must|should)\s+raise\s+(\w+)', text)
         if exception_match:
-            metadata['expected_exception'] = exception_match.group(2)
+            exception_name = exception_match.group(2).lower()
+            metadata['expected_exception'] = EXCEPTION_MAP.get(exception_name, exception_match.group(2).capitalize())
 
         # Pattern: "must/should be <X" or ">X"
         threshold_match = re.search(r'(must|should)\s+be\s*([<>]=?)\s*(\d+)\s*(\w+)?', text)

@@ -211,13 +211,13 @@ class AcceptanceTestGenerator:
                         return 'vitest'
                     return 'jest'
 
-        # Check title/description for language hints
-        title = masterplan.title.lower() if hasattr(masterplan, 'title') else ''
+        # Check project_name/description for language hints
+        project_name = masterplan.project_name.lower() if hasattr(masterplan, 'project_name') else ''
         description = masterplan.description.lower() if hasattr(masterplan, 'description') else ''
 
-        if 'python' in title or 'python' in description:
+        if 'python' in project_name or 'python' in description:
             return 'pytest'
-        elif 'typescript' in title or 'javascript' in title or 'react' in title or 'vue' in title:
+        elif 'typescript' in project_name or 'javascript' in project_name or 'react' in project_name or 'vue' in project_name:
             return 'vitest'
 
         # Default to pytest
