@@ -42,7 +42,7 @@ services:
 
   # Neo4j Graph Database for Component Registry
   neo4j:
-    image: neo4j:5
+    image: neo4j:5.26
     container_name: devmatrix-neo4j
     restart: unless-stopped
     environment:
