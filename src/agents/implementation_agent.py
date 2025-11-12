@@ -334,7 +334,7 @@ Do not include explanations outside the code block."""
         response = self.llm.generate(
             messages=[{"role": "user", "content": code_prompt}],
             system=system_prompt,
-            temperature=0.7,
+            temperature=0.0,  # Deterministic mode
             max_tokens=4096
         )
 

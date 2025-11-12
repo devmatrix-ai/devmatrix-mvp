@@ -333,7 +333,7 @@ Use these examples as inspiration for docstring style and structure, but adapt t
         response = self.llm.generate(
             messages=[{"role": "user", "content": doc_prompt}],
             system=self.SYSTEM_PROMPT,
-            temperature=0.7,
+            temperature=0.0,  # Deterministic mode
             max_tokens=4096
         )
 
@@ -371,7 +371,7 @@ Use these examples as inspiration for docstring style and structure, but adapt t
         response = self.llm.generate(
             messages=[{"role": "user", "content": readme_prompt}],
             system=self.SYSTEM_PROMPT,
-            temperature=0.7,
+            temperature=0.0,  # Deterministic mode
             max_tokens=4096
         )
 

@@ -71,10 +71,11 @@ class RetryOrchestrator:
     """
 
     # Temperature schedule: attempt → temperature
+    # All attempts use deterministic mode for reproducible precision
     TEMPERATURE_SCHEDULE = {
-        1: 0.7,  # First retry: creative
-        2: 0.5,  # Second retry: balanced
-        3: 0.3,  # Third retry: deterministic
+        1: 0.0,  # First retry: deterministic
+        2: 0.0,  # Second retry: deterministic
+        3: 0.0,  # Third retry: deterministic
     }
 
     # Backoff schedule: attempt → seconds
@@ -295,7 +296,7 @@ class RetryOrchestrator:
         Returns:
             Temperature value (0.0-1.0)
         """
-        temperature = self.TEMPERATURE_SCHEDULE.get(attempt, 0.3)
+        temperature = self.TEMPERATURE_SCHEDULE.get(attempt, 0.0)  # Deterministic default
 
         logger.debug(
             f"Temperature for attempt {attempt}: {temperature}",

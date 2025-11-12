@@ -246,7 +246,7 @@ Return ONLY the JSON structure specified in the system prompt."""
                     "system_prompt": DISCOVERY_SYSTEM_PROMPT
                 },
                 variable_prompt=user_prompt,
-                temperature=0.7,
+                temperature=0.0,  # Deterministic mode for reproducible precision
                 max_tokens=4096
             )
 

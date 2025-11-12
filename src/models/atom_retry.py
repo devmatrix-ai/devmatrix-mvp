@@ -24,10 +24,10 @@ class AtomRetryHistory(Base):
     """
     Atom Retry History - Retry tracking with feedback
 
-    MGE V2 retry strategy:
-    - Attempt 1: temperature=0.7 (original)
-    - Attempt 2: temperature=0.5 + error feedback
-    - Attempt 3: temperature=0.3 + detailed error analysis
+    MGE V2 retry strategy (Deterministic mode):
+    - All attempts: temperature=0.0 (deterministic)
+    - Error feedback added progressively
+    - Detailed error analysis on later attempts
 
     Stores:
     - Temperature adjustments

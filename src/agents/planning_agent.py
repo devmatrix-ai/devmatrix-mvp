@@ -145,7 +145,7 @@ Respond in a structured format."""
         response = self.llm.generate(
             messages=[{"role": "user", "content": analysis_prompt}],
             system=self.SYSTEM_PROMPT,
-            temperature=0.3,
+            temperature=0.0,  # Deterministic mode
         )
 
         state["messages"].append({
@@ -209,7 +209,7 @@ Use these examples as inspiration for task structure and dependencies, but adapt
         response = self.llm.generate(
             messages=[{"role": "user", "content": planning_prompt}],
             system=self.SYSTEM_PROMPT,
-            temperature=0.5,
+            temperature=0.0,  # Deterministic mode
             max_tokens=4096,
         )
 
