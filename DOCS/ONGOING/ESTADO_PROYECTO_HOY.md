@@ -150,51 +150,83 @@ TOTAL: ██████░░░░░░░░░░░░░░ 40% completa
 
 ---
 
-## 🚀 PRÓXIMOS PASOS INMEDIATOS
+## 🎯 MEDICIÓN BASELINE - RESULTADOS CRÍTICOS (2025-11-12 23:50)
 
-### ESTA NOCHE (1-2 horas)
+### ✅ Medición Completada
+```
+Iteraciones:         3
+Exitosas:            3
+Fallidas:            0
+Precision:           40.0%  ❌ (esperado 55-65%)
+Determinism Score:   33.33% ❌ (bajo)
+Violations:          2/3 iteraciones
+Task Count:          10 (std=0) ✅ Consistente
+```
+
+### 🎓 LECCIÓN APRENDIDA - ROOT CAUSE ANALYSIS
+
+**Hallazgo Crítico**:
+- ✅ `LLMConfig.DEFAULT_TEMPERATURE = 0.0` está correctamente implementado
+- ✅ Todos los servicios LLM usan temperature=0.0 (discovery, masterplan, code_gen)
+- ✅ Validación estática pasó (100%)
+- ❌ **Pero Anthropic API NO soporta determinismo explícito**
+- ❌ Temperature=0.0 reduce randomness pero NO garantiza outputs idénticos
+- ❌ **3 code hashes DIFERENTES en 3 iteraciones** → Determinismo NO garantizado
+
+**Causa Raíz**:
+Anthropic Claude API (a diferencia de OpenAI) **NO tiene parámetro `seed`** para garantizar determinismo exacto.
+Temperature=0.0 es "menos aleatoria" pero no reproducible garantizado.
+
+**Implicación Arquitectónica**:
+El plan original de Fase 1 asumía que temperature=0.0 = determinismo reproducible.
+**Eso era incorrecto**. El verdadero problema de precisión está en RAG, validación, y arquitectura (Fases 0, 2-5).
+
+### 🚫 DECISIÓN: CAMBIO DE ESTRATEGIA
+- ❌ **NO**: Fase 1 por sí sola NO puede mejorar 38% → 65%
+- ✅ **SÍ**: Ejecutar Fase 0 (RAG) + Fase 2 (Atomización) EN PARALELO, luego Fase 1
+- ✅ **SÍ**: Fase 1 aún es útil pero su impacto es menor del esperado
+
+---
+
+## 🔧 PRÓXIMOS PASOS - DEBUG FASE 1 (HOY)
+
+### Paso 1: Deep Dive - Verificar qué genera código
 ```bash
-# 1. Medir baseline PRE-cambios (si no lo hicimos)
-python scripts/measure_precision_baseline.py --iterations 3 > baseline_before.json
+# Revisar dónde se genera el código LLM
+grep -r "anthropic\|llm.generate" src/services/*.py | grep -v ".pyc"
 
-# 2. Verificar que precision sea ~38%
-# (Este es nuestro punto de partida)
+# Verificar masterplan_generator.py específicamente
+grep -n "temperature\|Anthropic\|llm" src/services/masterplan_generator.py | head -20
 
-# 3. Generar reporte
-open reports/precision/baseline_before.html
+# Buscar hardcoded temperatures
+grep -r "temperature.*=" src/ | grep -v "0\.0" | grep -v ".pyc"
 ```
 
-### MAÑANA TEMPRANO (1-2 horas)
+### Paso 2: Reconstruir Container (si es necesario)
 ```bash
-# 1. Verificar que los cambios Fase 1 estén en el código
-grep -r "temperature=0" src/ | head -20
+# Rebuild API container con código más reciente
+docker-compose down devmatrix-api
+docker-compose up -d --build devmatrix-api
 
-# 2. Medir baseline POST-cambios
-python scripts/measure_precision_baseline.py --iterations 5 > baseline_after.json
+# Esperar 30 segundos
+sleep 30
 
-# 3. Comparar: debería haber subido a ~55-65%
-# (Si no sube, hay un problema que debuggear)
-
-# 4. Ejecutar tests de determinismo
-pytest tests/test_determinism.py -v
-
-# 5. Validar setup determinístico
-python scripts/validate_deterministic_setup.py
+# Re-ejecutar medición dentro del container
+docker exec -w /app devmatrix-api python scripts/measure_precision_baseline.py --iterations 3
 ```
 
-### PRÓXIMA SEMANA (5-7 horas diarias)
-```
-Lunes-Martes:
-  - Ejecutar pruebas de Fase 2 (atomic specs)
-  - Medir impacto (debería ser 65% → 75%)
+### Paso 3: Plan Alterno - Ejecutar Fase 0 (RAG) EN PARALELO
+Si Fase 1 no se puede arreglar rápido:
+- Iniciar Fase 0 (RAG Vector Store) con otro agente
+- Ejecutar en paralelo mientras se debuggea Fase 1
+- Ambas son necesarias para llegar a 98%
 
-Miércoles-Jueves:
-  - Iniciar Fase 3 (dependency planning)
-  - Diseñar pre-calculador
+### Paso 4: Re-medir Después de Fix
+```bash
+# Una vez que se fix el issue de temperatura, re-medir
+python scripts/measure_precision_baseline.py --iterations 5
 
-Viernes:
-  - Revisar progreso de la semana
-  - Planificar Fase 4
+# Esperado: 55-65% después del fix correcto
 ```
 
 ---
