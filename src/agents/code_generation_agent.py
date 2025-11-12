@@ -493,7 +493,7 @@ Be specific and actionable."""
             response = self.llm.generate(
                 messages=[{"role": "user", "content": commit_prompt}],
                 system=self.SYSTEM_PROMPT,
-                temperature=0.0  # Deterministic mode,
+                temperature=0.0,  # Deterministic mode
                 max_tokens=100
             )
 

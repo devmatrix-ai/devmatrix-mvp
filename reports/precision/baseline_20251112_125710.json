@@ -1,0 +1,80 @@
+{
+  "error": "All iterations failed",
+  "measurements": [
+    {
+      "iteration": 1,
+      "discovery_id": null,
+      "masterplan_id": null,
+      "task_count": 0,
+      "atom_count": 0,
+      "atoms_succeeded": 0,
+      "atoms_failed": 0,
+      "success_rate": 0.0,
+      "code_hash": "",
+      "execution_time": 44.95790696144104,
+      "cost_usd": 0.0,
+      "determinism_violations": 0,
+      "error": "Discovery generation failed: (psycopg2.OperationalError) could not translate host name \"postgres\" to address: Temporary failure in name resolution\n\n(Background on this error at: https://sqlalche.me/e/20/e3q8)"
+    },
+    {
+      "iteration": 2,
+      "discovery_id": null,
+      "masterplan_id": null,
+      "task_count": 0,
+      "atom_count": 0,
+      "atoms_succeeded": 0,
+      "atoms_failed": 0,
+      "success_rate": 0.0,
+      "code_hash": "",
+      "execution_time": 20.05369281768799,
+      "cost_usd": 0.0,
+      "determinism_violations": 0,
+      "error": "Discovery generation failed: (psycopg2.OperationalError) could not translate host name \"postgres\" to address: Temporary failure in name resolution\n\n(Background on this error at: https://sqlalche.me/e/20/e3q8)"
+    },
+    {
+      "iteration": 3,
+      "discovery_id": null,
+      "masterplan_id": null,
+      "task_count": 0,
+      "atom_count": 0,
+      "atoms_succeeded": 0,
+      "atoms_failed": 0,
+      "success_rate": 0.0,
+      "code_hash": "",
+      "execution_time": 20.059264183044434,
+      "cost_usd": 0.0,
+      "determinism_violations": 0,
+      "error": "Discovery generation failed: (psycopg2.OperationalError) could not translate host name \"postgres\" to address: Temporary failure in name resolution\n\n(Background on this error at: https://sqlalche.me/e/20/e3q8)"
+    },
+    {
+      "iteration": 4,
+      "discovery_id": null,
+      "masterplan_id": null,
+      "task_count": 0,
+      "atom_count": 0,
+      "atoms_succeeded": 0,
+      "atoms_failed": 0,
+      "success_rate": 0.0,
+      "code_hash": "",
+      "execution_time": 20.05762481689453,
+      "cost_usd": 0.0,
+      "determinism_violations": 0,
+      "error": "Discovery generation failed: (psycopg2.OperationalError) could not translate host name \"postgres\" to address: Temporary failure in name resolution\n\n(Background on this error at: https://sqlalche.me/e/20/e3q8)"
+    },
+    {
+      "iteration": 5,
+      "discovery_id": null,
+      "masterplan_id": null,
+      "task_count": 0,
+      "atom_count": 0,
+      "atoms_succeeded": 0,
+      "atoms_failed": 0,
+      "success_rate": 0.0,
+      "code_hash": "",
+      "execution_time": 20.049395084381104,
+      "cost_usd": 0.0,
+      "determinism_violations": 0,
+      "error": "Discovery generation failed: (psycopg2.OperationalError) could not translate host name \"postgres\" to address: Temporary failure in name resolution\n\n(Background on this error at: https://sqlalche.me/e/20/e3q8)"
+    }
+  ]
+}
