@@ -21,8 +21,8 @@ CHAT_MAX_TOKENS = int(os.getenv("CHAT_MAX_TOKENS", "400"))
 # Model selection
 DEFAULT_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
 
-# Temperature settings
-DEFAULT_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.7"))
+# Temperature settings - Deterministic mode for reproducible precision
+DEFAULT_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.0"))
 
 
 # ============================================================================

@@ -422,7 +422,7 @@ Generate complete, production-ready code for this task.
             },
             variable_prompt=variable_prompt,
             max_tokens=8000,
-            temperature=0.7
+            temperature=0.0  # Deterministic mode
         )
 
         duration = time.time() - start_time

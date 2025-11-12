@@ -121,7 +121,7 @@ class CodeGenerationService:
                         "system_prompt": self._get_system_prompt()
                     },
                     variable_prompt=prompt,
-                    temperature=0.3,  # Lower temperature for more consistent code
+                    temperature=0.0,  # Deterministic mode for reproducible precision
                     max_tokens=2000
                 )
 

@@ -47,14 +47,14 @@ class RetryOrchestrator:
 
     Features:
     - 4 attempts total (1 initial + 3 retries)
-    - Temperature backoff: 0.7 → 0.5 → 0.3 → 0.3
+    - Temperature: All attempts use 0.0 for deterministic mode
     - Error feedback to LLM on retries
     - Success early-exit
     - Prometheus metrics emission
     """
 
     MAX_ATTEMPTS = 4
-    TEMPERATURE_SCHEDULE = [0.7, 0.5, 0.3, 0.3]  # Initial + 3 retries
+    TEMPERATURE_SCHEDULE = [0.0, 0.0, 0.0, 0.0]  # All attempts deterministic
 
     def __init__(
         self,

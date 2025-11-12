@@ -62,6 +62,9 @@ from src.config.constants import (
     get_task_timeout,
 )
 
+# Centralized LLM configuration for deterministic behavior
+from src.config.llm_config import LLMConfig
+
 __all__ = [
     # LLM Configuration
     "DEFAULT_MAX_TOKENS",
@@ -69,6 +72,7 @@ __all__ = [
     "CHAT_MAX_TOKENS",
     "DEFAULT_MODEL",
     "DEFAULT_TEMPERATURE",
+    "LLMConfig",
     # Network Configuration
     "API_HOST",
     "API_PORT",

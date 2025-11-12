@@ -336,7 +336,7 @@ Use these examples as inspiration for test structure and patterns, but adapt to 
         response = self.llm.generate(
             messages=[{"role": "user", "content": test_prompt}],
             system=self.SYSTEM_PROMPT,
-            temperature=0.7,
+            temperature=0.0,  # Deterministic mode
             max_tokens=4096
         )
 

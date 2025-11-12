@@ -287,7 +287,7 @@ Important:
         response = self.llm.generate(
             messages=[{"role": "user", "content": analysis_prompt}],
             system=self.SYSTEM_PROMPT,
-            temperature=0.3
+            temperature=0.0  # Deterministic mode
         )
 
         content = response['content']
@@ -409,7 +409,7 @@ Use these examples as inspiration for task decomposition patterns, but adapt to 
         response = self.llm.generate(
             messages=[{"role": "user", "content": decomposition_prompt}],
             system=self.SYSTEM_PROMPT,
-            temperature=0.5,
+            temperature=0.0,  # Deterministic mode
             max_tokens=4096
         )
 

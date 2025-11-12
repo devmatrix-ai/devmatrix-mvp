@@ -825,7 +825,7 @@ IMPORTANT:
             },
             variable_prompt=variable_prompt,
             max_tokens=64000,  # Maximum for 120 tasks (Sonnet 4.5 supports up to 64K)
-            temperature=0.7
+            temperature=0.0  # Deterministic mode for reproducible precision
         )
 
         duration = time.time() - start_time
@@ -905,21 +905,19 @@ IMPORTANT:
         # Check total tasks
         total_tasks = masterplan_data.get("total_tasks", 0)
 
-        # ENFORCE CALCULATED TASK COUNT (±15% tolerance)
+        # ENFORCE CALCULATED TASK COUNT (0% tolerance - deterministic mode)
         if calculated_task_count is not None:
-            deviation = abs(total_tasks - calculated_task_count) / calculated_task_count
-            if deviation > 0.15:  # 15% tolerance
+            if total_tasks != calculated_task_count:
                 raise ValueError(
                     f"Task count validation failed: calculated={calculated_task_count}, "
-                    f"actual={total_tasks}, deviation={deviation:.1%}. "
-                    f"Expected within ±15% tolerance. "
-                    f"LLM may have ignored task count constraint in prompt."
+                    f"actual={total_tasks}. "
+                    f"Exact match required in deterministic mode. "
+                    f"LLM must respect task count constraint precisely."
                 )
             logger.info(
-                f"✅ Task count enforced",
+                f"✅ Task count enforced (exact match)",
                 calculated=calculated_task_count,
-                actual=total_tasks,
-                deviation=f"{deviation:.1%}"
+                actual=total_tasks
             )
 
         # Check phases

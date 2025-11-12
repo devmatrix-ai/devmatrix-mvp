@@ -241,7 +241,7 @@ Provide analysis in a structured format."""
         response = self.llm.generate(
             messages=[{"role": "user", "content": analysis_prompt}],
             system=self.SYSTEM_PROMPT,
-            temperature=0.3
+            temperature=0.0  # Deterministic mode
         )
 
         # Extract filename suggestion
@@ -283,7 +283,7 @@ Be specific and actionable."""
         response = self.llm.generate(
             messages=[{"role": "user", "content": planning_prompt}],
             system=self.SYSTEM_PROMPT,
-            temperature=0.5
+            temperature=0.0  # Deterministic mode
         )
 
         state["plan"] = {"description": response['content']}
@@ -311,7 +311,7 @@ Be specific and actionable."""
         response = self.llm.generate(
             messages=[{"role": "user", "content": code_prompt}],
             system=self.SYSTEM_PROMPT,
-            temperature=0.7,
+            temperature=0.0,  # Deterministic mode
             max_tokens=4096
         )
 
@@ -339,7 +339,7 @@ Be specific and actionable."""
         response = self.llm.generate(
             messages=[{"role": "user", "content": review_prompt}],
             system=self.SYSTEM_PROMPT,
-            temperature=0.3
+            temperature=0.0  # Deterministic mode
         )
 
         # Parse score
@@ -493,7 +493,7 @@ Be specific and actionable."""
             response = self.llm.generate(
                 messages=[{"role": "user", "content": commit_prompt}],
                 system=self.SYSTEM_PROMPT,
-                temperature=0.3,
+                temperature=0.0  # Deterministic mode,
                 max_tokens=100
             )
 

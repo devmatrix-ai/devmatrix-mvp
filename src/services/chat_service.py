@@ -663,7 +663,7 @@ Respondé de manera natural, amigable y útil. Si es una pregunta de diseño o p
                 lambda: self.llm.generate(
                     messages=[{"role": "user", "content": user_prompt}],
                     system=system_prompt,
-                    temperature=0.7,
+                    temperature=0.0  # Deterministic mode,
                     max_tokens=400
                 )
             )
