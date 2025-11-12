@@ -22,6 +22,14 @@ from .metrics import (
     ATOM_EXECUTION_TIME_SECONDS,
 )
 
+# Optional tracing support
+try:
+    from src.mge.v2.tracing import TraceCollector
+    TRACING_AVAILABLE = True
+except ImportError:
+    TRACING_AVAILABLE = False
+    TraceCollector = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -65,7 +73,8 @@ class WaveExecutor:
         self,
         retry_orchestrator: RetryOrchestrator,
         max_concurrency: int = 100,
-        async_db_session: Optional[AsyncSession] = None
+        async_db_session: Optional[AsyncSession] = None,
+        trace_collector: Optional['TraceCollector'] = None
     ):
         """
         Initialize WaveExecutor.
@@ -74,10 +83,16 @@ class WaveExecutor:
             retry_orchestrator: Orchestrator for retry logic
             max_concurrency: Maximum concurrent atoms per wave (default: 100)
             async_db_session: Optional async database session for acceptance tests
+            trace_collector: Optional trace collector for E2E tracing
         """
         self.retry_orchestrator = retry_orchestrator
         self.max_concurrency = max_concurrency
         self.async_db_session = async_db_session
+        self.trace_collector = trace_collector
+
+        # Pass trace_collector to retry_orchestrator if available
+        if self.trace_collector and not self.retry_orchestrator.trace_collector:
+            self.retry_orchestrator.trace_collector = self.trace_collector
 
     async def execute_wave(
         self,
@@ -114,6 +129,19 @@ class WaveExecutor:
             async with semaphore:
                 atom_start_time = time.time()
 
+                # Start trace if tracing is enabled
+                if self.trace_collector:
+                    deps_list = [dep_id for dep_id in getattr(atom, "depends_on", []) if dep_id in all_atoms]
+                    context_data = getattr(atom, "context", {})
+                    self.trace_collector.start_trace(
+                        atom_id=atom.id,
+                        masterplan_id=masterplan_id or UUID(int=0),
+                        wave_id=wave_id,
+                        atom_name=getattr(atom, "name", "unknown"),
+                        context_data=context_data,
+                        dependencies=deps_list
+                    )
+
                 try:
                     # Get dependencies (already completed in previous waves)
                     deps = [
@@ -122,7 +150,7 @@ class WaveExecutor:
                         if dep_id in all_atoms
                     ]
 
-                    # Execute with retry
+                    # Execute with retry (retry_orchestrator will record retry attempts via trace_collector)
                     retry_result: RetryResult = await self.retry_orchestrator.execute_with_retry(
                         atom_spec=atom,
                         dependencies=deps,
@@ -130,6 +158,15 @@ class WaveExecutor:
                     )
 
                     atom_execution_time = time.time() - atom_start_time
+
+                    # Record validation in trace
+                    if self.trace_collector and retry_result.validation_result:
+                        validation_duration_ms = atom_execution_time * 1000  # Approximate
+                        self.trace_collector.record_validation(
+                            atom_id=atom.id,
+                            validation_result=retry_result.validation_result,
+                            duration_ms=validation_duration_ms
+                        )
 
                     # Emit atom execution time metric
                     ATOM_EXECUTION_TIME_SECONDS.observe(atom_execution_time)
@@ -144,6 +181,15 @@ class WaveExecutor:
                         error_message=retry_result.error_message,
                         execution_time_seconds=atom_execution_time
                     )
+
+                    # Complete trace
+                    if self.trace_collector:
+                        self.trace_collector.complete_trace(
+                            atom_id=atom.id,
+                            success=retry_result.success,
+                            code=retry_result.code,
+                            error=retry_result.error_message
+                        )
 
                     # Emit success/failure metrics
                     if retry_result.success:
@@ -162,6 +208,14 @@ class WaveExecutor:
                 except Exception as e:
                     atom_execution_time = time.time() - atom_start_time
                     logger.error(f"  ⚠️ Exception executing {atom.name}: {e}")
+
+                    # Complete trace with error
+                    if self.trace_collector:
+                        self.trace_collector.complete_trace(
+                            atom_id=atom.id,
+                            success=False,
+                            error=str(e)
+                        )
 
                     ATOMS_FAILED_TOTAL.labels(
                         masterplan_id=str(masterplan_id) if masterplan_id else "unknown"

@@ -6,6 +6,7 @@ Intelligent retry logic with temperature backoff and error feedback.
 
 import asyncio
 import logging
+import time
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
 from uuid import UUID
@@ -18,6 +19,14 @@ from .metrics import (
     RETRY_TEMPERATURE_CHANGES,
     update_success_rate,
 )
+
+# Optional tracing support
+try:
+    from src.mge.v2.tracing import TraceCollector
+    TRACING_AVAILABLE = True
+except ImportError:
+    TRACING_AVAILABLE = False
+    TraceCollector = None
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +59,8 @@ class RetryOrchestrator:
     def __init__(
         self,
         llm_client: EnhancedAnthropicClient,
-        validator: AtomicValidator
+        validator: AtomicValidator,
+        trace_collector: Optional['TraceCollector'] = None
     ):
         """
         Initialize RetryOrchestrator.
@@ -58,9 +68,11 @@ class RetryOrchestrator:
         Args:
             llm_client: LLM client for code generation
             validator: Validator for generated code
+            trace_collector: Optional trace collector for E2E tracing
         """
         self.llm_client = llm_client
         self.validator = validator
+        self.trace_collector = trace_collector
 
     async def execute_with_retry(
         self,
@@ -85,6 +97,7 @@ class RetryOrchestrator:
 
         for attempt in range(1, self.MAX_ATTEMPTS + 1):
             temperature = self.TEMPERATURE_SCHEDULE[attempt - 1]
+            attempt_start = time.time()
 
             logger.info(
                 f"Attempt {attempt}/{self.MAX_ATTEMPTS} for {atom_spec.name} "
@@ -116,11 +129,25 @@ class RetryOrchestrator:
                 # Validate
                 validation_result = await self.validator.validate(atom_spec)
 
+                # Calculate attempt duration
+                attempt_duration_ms = (time.time() - attempt_start) * 1000
+
                 # Emit retry attempt metric
                 RETRY_ATTEMPTS_TOTAL.labels(
                     atom_id=str(atom_spec.id),
                     attempt_number=str(attempt)
                 ).inc()
+
+                # Record retry attempt in trace
+                if self.trace_collector and hasattr(atom_spec, 'id'):
+                    self.trace_collector.record_retry_attempt(
+                        atom_id=atom_spec.id,
+                        attempt=attempt,
+                        temperature=temperature,
+                        success=validation_result.passed,
+                        duration_ms=attempt_duration_ms,
+                        error_feedback=errors if attempt > 1 else None
+                    )
 
                 if validation_result.passed:
                     logger.info(f"✅ Success on attempt {attempt} for {atom_spec.name}")
@@ -148,11 +175,25 @@ class RetryOrchestrator:
                 logger.error(f"Exception during attempt {attempt} for {atom_spec.name}: {e}")
                 errors.append(f"Exception: {str(e)}")
 
+                # Calculate attempt duration
+                attempt_duration_ms = (time.time() - attempt_start) * 1000
+
                 # Emit retry attempt metric
                 RETRY_ATTEMPTS_TOTAL.labels(
                     atom_id=str(atom_spec.id),
                     attempt_number=str(attempt)
                 ).inc()
+
+                # Record failed retry attempt in trace
+                if self.trace_collector and hasattr(atom_spec, 'id'):
+                    self.trace_collector.record_retry_attempt(
+                        atom_id=atom_spec.id,
+                        attempt=attempt,
+                        temperature=temperature,
+                        success=False,
+                        duration_ms=attempt_duration_ms,
+                        error_feedback=[str(e)]
+                    )
 
         # All attempts failed
         logger.error(

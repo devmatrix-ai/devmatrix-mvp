@@ -238,8 +238,9 @@ class TestCacheSet:
         ):
             mock_client.setex = AsyncMock()
 
+            # Use a neutral prompt that doesn't trigger prompt type detection
             await cache.set(
-                "test prompt",
+                "Sample prompt for caching",
                 "gpt-4",
                 0.7,
                 "response text",
@@ -247,7 +248,7 @@ class TestCacheSet:
                 20,
             )
 
-            # Check TTL is default (86400)
+            # Check TTL is default (86400) - no type detection triggered
             call_args = mock_client.setex.call_args
             assert call_args[0][1] == 86400  # Default TTL
 
@@ -395,7 +396,7 @@ class TestRedisErrorHandling:
 
             await cache.get("test prompt", "gpt-4", 0.7)
 
-            mock_emit.assert_called_with("error", operation="get")
+            mock_emit.assert_any_call("error", operation="get")
 
     async def test_set_handles_redis_error(self):
         """Set should handle Redis errors gracefully"""
@@ -446,4 +447,4 @@ class TestRedisErrorHandling:
                 20,
             )
 
-            mock_emit.assert_called_with("error", operation="set")
+            mock_emit.assert_any_call("error", operation="set")

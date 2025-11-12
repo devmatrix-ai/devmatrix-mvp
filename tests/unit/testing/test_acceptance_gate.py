@@ -101,7 +101,7 @@ class TestAcceptanceTestGate:
         all_tests = sample_must_tests + sample_should_tests
 
         # Mock test query
-        mock_test_result = AsyncMock()
+        mock_test_result = MagicMock()  # Result is NOT async (already awaited from execute)
         mock_test_result.scalars.return_value.all.return_value = all_tests
 
         # Mock result queries (all pass)
@@ -114,7 +114,7 @@ class TestAcceptanceTestGate:
                 error_message=None,
                 execution_duration_ms=100
             )
-            mock_result = AsyncMock()
+            mock_result = MagicMock()  # Result is NOT async (already awaited from execute)
             mock_result.scalar_one_or_none.return_value = result
             mock_results.append(mock_result)
 
@@ -150,7 +150,7 @@ class TestAcceptanceTestGate:
         all_tests = sample_must_tests + should_tests
 
         # Mock test query
-        mock_test_result = AsyncMock()
+        mock_test_result = MagicMock()  # Result is NOT async (already awaited from execute)
         mock_test_result.scalars.return_value.all.return_value = all_tests
 
         # Mock results (2 must pass, 19 should pass, 1 should fail)
@@ -165,7 +165,7 @@ class TestAcceptanceTestGate:
                 error_message=None if status == 'pass' else "Failed",
                 execution_duration_ms=100
             )
-            mock_result = AsyncMock()
+            mock_result = MagicMock()  # Result is NOT async (already awaited from execute)
             mock_result.scalar_one_or_none.return_value = result
             mock_results.append(mock_result)
 
@@ -199,7 +199,7 @@ class TestAcceptanceTestGate:
         all_tests = must_tests + sample_should_tests
 
         # Mock test query
-        mock_test_result = AsyncMock()
+        mock_test_result = MagicMock()  # Result is NOT async (already awaited from execute)
         mock_test_result.scalars.return_value.all.return_value = all_tests
 
         # Mock results (99 must pass, 1 must fail, 2 should pass)
@@ -214,7 +214,7 @@ class TestAcceptanceTestGate:
                 error_message=None if status == 'pass' else "Failed",
                 execution_duration_ms=100
             )
-            mock_result = AsyncMock()
+            mock_result = MagicMock()  # Result is NOT async (already awaited from execute)
             mock_result.scalar_one_or_none.return_value = result
             mock_results.append(mock_result)
 
@@ -248,7 +248,7 @@ class TestAcceptanceTestGate:
         all_tests = sample_must_tests + should_tests
 
         # Mock test query
-        mock_test_result = AsyncMock()
+        mock_test_result = MagicMock()  # Result is NOT async (already awaited from execute)
         mock_test_result.scalars.return_value.all.return_value = all_tests
 
         # Mock results (2 must pass, 94 should pass, 6 should fail)
@@ -263,7 +263,7 @@ class TestAcceptanceTestGate:
                 error_message=None if status == 'pass' else "Failed",
                 execution_duration_ms=100
             )
-            mock_result = AsyncMock()
+            mock_result = MagicMock()  # Result is NOT async (already awaited from execute)
             mock_result.scalar_one_or_none.return_value = result
             mock_results.append(mock_result)
 
@@ -284,7 +284,7 @@ class TestAcceptanceTestGate:
         masterplan_id = uuid4()
 
         # Mock empty test query
-        mock_result = AsyncMock()
+        mock_result = MagicMock()  # Result is NOT async (already awaited from execute)
         mock_result.scalars.return_value.all.return_value = []
         mock_async_db.execute.return_value = mock_result
 
@@ -309,7 +309,7 @@ class TestAcceptanceTestGate:
         all_tests = sample_must_tests + sample_should_tests
 
         # Mock test query
-        mock_test_result = AsyncMock()
+        mock_test_result = MagicMock()  # Result is NOT async (already awaited from execute)
         mock_test_result.scalars.return_value.all.return_value = all_tests
 
         # Mock results (1 must fails, 1 should fails)
@@ -323,7 +323,7 @@ class TestAcceptanceTestGate:
                 error_message=f"Error {idx}" if status == 'fail' else None,
                 execution_duration_ms=100
             )
-            mock_result = AsyncMock()
+            mock_result = MagicMock()  # Result is NOT async (already awaited from execute)
             mock_result.scalar_one_or_none.return_value = result
             mock_results.append(mock_result)
 
@@ -356,7 +356,7 @@ class TestAcceptanceTestGate:
         all_tests = sample_must_tests + sample_should_tests
 
         # Mock all pass
-        mock_test_result = AsyncMock()
+        mock_test_result = MagicMock()  # Result is NOT async (already awaited from execute)
         mock_test_result.scalars.return_value.all.return_value = all_tests
 
         mock_results = []
@@ -368,7 +368,7 @@ class TestAcceptanceTestGate:
                 error_message=None,
                 execution_duration_ms=100
             )
-            mock_result = AsyncMock()
+            mock_result = MagicMock()  # Result is NOT async (already awaited from execute)
             mock_result.scalar_one_or_none.return_value = result
             mock_results.append(mock_result)
 
@@ -386,7 +386,7 @@ class TestAcceptanceTestGate:
         wave_id = uuid4()
 
         # Mock 1 must fail
-        mock_test_result = AsyncMock()
+        mock_test_result = MagicMock()  # Result is NOT async (already awaited from execute)
         mock_test_result.scalars.return_value.all.return_value = sample_must_tests
 
         mock_results = []
@@ -398,7 +398,7 @@ class TestAcceptanceTestGate:
                 error_message=None if idx == 0 else "Failed",
                 execution_duration_ms=100
             )
-            mock_result = AsyncMock()
+            mock_result = MagicMock()  # Result is NOT async (already awaited from execute)
             mock_result.scalar_one_or_none.return_value = result
             mock_results.append(mock_result)
 
@@ -420,7 +420,7 @@ class TestAcceptanceTestGate:
         all_tests = sample_must_tests + sample_should_tests
 
         # Mock all pass
-        mock_test_result = AsyncMock()
+        mock_test_result = MagicMock()  # Result is NOT async (already awaited from execute)
         mock_test_result.scalars.return_value.all.return_value = all_tests
 
         mock_results = []
@@ -432,7 +432,7 @@ class TestAcceptanceTestGate:
                 error_message=None,
                 execution_duration_ms=100
             )
-            mock_result = AsyncMock()
+            mock_result = MagicMock()  # Result is NOT async (already awaited from execute)
             mock_result.scalar_one_or_none.return_value = result
             mock_results.append(mock_result)
 
@@ -458,7 +458,7 @@ class TestAcceptanceTestGate:
         masterplan_id = sample_must_tests[0].masterplan_id
 
         # Mock test query
-        mock_test_result = AsyncMock()
+        mock_test_result = MagicMock()  # Result is NOT async (already awaited from execute)
         mock_test_result.scalars.return_value.all.return_value = sample_must_tests
 
         # Mock results (1 pass, 1 fail)
@@ -471,7 +471,7 @@ class TestAcceptanceTestGate:
                 error_message=None if idx == 0 else "Failed",
                 execution_duration_ms=100
             )
-            mock_result = AsyncMock()
+            mock_result = MagicMock()  # Result is NOT async (already awaited from execute)
             mock_result.scalar_one_or_none.return_value = result
             mock_results.append(mock_result)
 
@@ -482,3 +482,109 @@ class TestAcceptanceTestGate:
 
         assert len(passed_reqs) == 1
         assert 'JWT' in passed_reqs[0]['requirement_text']
+
+    @pytest.mark.asyncio
+    async def test_get_requirements_by_status_with_wave_id(self, mock_async_db, sample_must_tests):
+        """Test filtering requirements by status with wave_id filter"""
+        masterplan_id = sample_must_tests[0].masterplan_id
+        wave_id = uuid4()
+
+        # Mock test query
+        mock_test_result = MagicMock()  # Result is NOT async (already awaited from execute)
+        mock_test_result.scalars.return_value.all.return_value = sample_must_tests
+
+        # Mock results with wave_id
+        mock_results = []
+        for idx, test in enumerate(sample_must_tests):
+            result = AcceptanceTestResult(
+                test_id=test.test_id,
+                wave_id=wave_id,
+                status='pass',
+                error_message=None,
+                execution_duration_ms=100
+            )
+            mock_result = MagicMock()  # Result is NOT async (already awaited from execute)
+            mock_result.scalar_one_or_none.return_value = result
+            mock_results.append(mock_result)
+
+        mock_async_db.execute.side_effect = [mock_test_result] + mock_results
+
+        gate = AcceptanceTestGate(mock_async_db)
+        passed_reqs = await gate.get_requirements_by_status(masterplan_id, 'pass', wave_id=wave_id)
+
+        assert len(passed_reqs) == 2
+        assert all(req['status'] == 'pass' for req in passed_reqs)
+
+    @pytest.mark.asyncio
+    async def test_get_gate_report_with_failures(self, mock_async_db, sample_must_tests, sample_should_tests):
+        """Test gate report includes FAILED REQUIREMENTS section when tests fail"""
+        masterplan_id = sample_must_tests[0].masterplan_id
+        all_tests = sample_must_tests + sample_should_tests
+
+        # Mock test query
+        mock_test_result = MagicMock()  # Result is NOT async (already awaited from execute)
+        mock_test_result.scalars.return_value.all.return_value = all_tests
+
+        # Mock results (1 must fails, 1 should fails)
+        mock_results = []
+        for idx, test in enumerate(all_tests):
+            status = 'pass' if idx in [0, 2] else 'fail'
+            result = AcceptanceTestResult(
+                test_id=test.test_id,
+                wave_id=None,
+                status=status,
+                error_message=f"Error {idx}" if status == 'fail' else None,
+                execution_duration_ms=100
+            )
+            mock_result = MagicMock()  # Result is NOT async (already awaited from execute)
+            mock_result.scalar_one_or_none.return_value = result
+            mock_results.append(mock_result)
+
+        mock_async_db.execute.side_effect = [mock_test_result] + mock_results
+
+        gate = AcceptanceTestGate(mock_async_db)
+        report = await gate.get_gate_report(masterplan_id)
+
+        # Check report contains failed requirements section
+        assert "FAILED REQUIREMENTS" in report
+        assert "MUST" in report
+        assert "SHOULD" in report
+        assert "Error" in report
+
+    @pytest.mark.asyncio
+    async def test_get_latest_results_no_results_found(self, mock_async_db, sample_must_tests):
+        """Test _get_latest_results when no results exist for a test (line 208 coverage)"""
+        masterplan_id = sample_must_tests[0].masterplan_id
+        all_tests = sample_must_tests
+
+        # Mock test query
+        mock_test_result = MagicMock()  # Result is NOT async (already awaited from execute)
+        mock_test_result.scalars.return_value.all.return_value = all_tests
+
+        # Mock results where one test has NO result (scalar_one_or_none returns None)
+        mock_results = []
+        for idx, test in enumerate(all_tests):
+            mock_result = MagicMock()  # Result is NOT async (already awaited from execute)
+            if idx == 0:
+                # First test has result
+                result = AcceptanceTestResult(
+                    test_id=test.test_id,
+                    wave_id=None,
+                    status='pass',
+                    error_message=None,
+                    execution_duration_ms=100
+                )
+                mock_result.scalar_one_or_none.return_value = result
+            else:
+                # Second test has NO result (None) - triggers line 208 warning
+                mock_result.scalar_one_or_none.return_value = None
+            mock_results.append(mock_result)
+
+        mock_async_db.execute.side_effect = [mock_test_result] + mock_results
+
+        gate = AcceptanceTestGate(mock_async_db)
+        result = await gate.check_gate(masterplan_id)
+
+        # Should only count the test that has a result
+        assert result['must_total'] == 1  # Only 1 result found
+        assert result['must_passed'] == 1

@@ -87,17 +87,21 @@ class LLMPromptCache:
         # Metrics will be imported later to avoid circular dependency
         self._metrics_initialized = False
 
+        # In-memory fallback cache when Redis unavailable
+        self._memory_cache: Dict[str, Dict] = {}
+        self._redis_available = True  # Track Redis availability
+
     async def _ensure_connection(self):
         """Ensure Redis connection is established"""
-        if self.redis_client is None:
+        if self.redis_client is None and self._redis_available:
             try:
                 self.redis_client = await redis.from_url(
                     self.redis_url, decode_responses=False
                 )
                 logger.info(f"Connected to Redis at {self.redis_url}")
             except redis.RedisError as e:
-                logger.error(f"Failed to connect to Redis: {e}")
-                raise
+                logger.warning(f"Redis unavailable, falling back to in-memory cache: {e}")
+                self._redis_available = False
 
     def _normalize_prompt(self, prompt: str) -> str:
         """
@@ -236,17 +240,44 @@ class LLMPromptCache:
         """
         cache_key = self._generate_cache_key(prompt, model, temperature)
 
+        # Try Redis first
         try:
             await self._ensure_connection()
-            cached_data = await self.redis_client.get(cache_key)
 
-            if cached_data:
-                data = json.loads(cached_data)
+            if self.redis_client:
+                cached_data = await self.redis_client.get(cache_key)
 
-                # Emit cache hit metric
+                if cached_data:
+                    data = json.loads(cached_data)
+
+                    # Emit cache hit metric
+                    self._emit_metric("hit")
+
+                    logger.info(f"LLM cache HIT (Redis): {cache_key[:16]}...")
+
+                    return CachedLLMResponse(
+                        text=data["text"],
+                        model=data["model"],
+                        prompt_tokens=data["prompt_tokens"],
+                        completion_tokens=data["completion_tokens"],
+                        cached_at=data["cached_at"],
+                    )
+
+        except redis.RedisError as e:
+            logger.warning(f"Redis error on cache get, falling back to memory: {e}")
+            self._redis_available = False
+            self._emit_metric("error", operation="get")
+        except Exception as e:
+            logger.error(f"Unexpected error on cache get: {e}")
+
+        # Fallback to in-memory cache
+        if cache_key in self._memory_cache:
+            data = self._memory_cache[cache_key]
+
+            # Check TTL expiration
+            if time.time() - data["cached_at"] < self.default_ttl:
                 self._emit_metric("hit")
-
-                logger.info(f"LLM cache HIT: {cache_key[:16]}...")
+                logger.info(f"LLM cache HIT (memory): {cache_key[:16]}...")
 
                 return CachedLLMResponse(
                     text=data["text"],
@@ -255,20 +286,14 @@ class LLMPromptCache:
                     completion_tokens=data["completion_tokens"],
                     cached_at=data["cached_at"],
                 )
+            else:
+                # Expired, remove it
+                del self._memory_cache[cache_key]
 
-            # Cache miss
-            self._emit_metric("miss")
-            logger.debug(f"LLM cache MISS: {cache_key[:16]}...")
-
-            return None
-
-        except redis.RedisError as e:
-            logger.error(f"Redis error on cache get: {e}")
-            self._emit_metric("error", operation="get")
-            return None
-        except Exception as e:
-            logger.error(f"Unexpected error on cache get: {e}")
-            return None
+        # Cache miss
+        self._emit_metric("miss")
+        logger.debug(f"LLM cache MISS: {cache_key[:16]}...")
+        return None
 
     async def set(
         self,
@@ -279,6 +304,7 @@ class LLMPromptCache:
         prompt_tokens: int,
         completion_tokens: int,
         ttl: Optional[int] = None,
+        masterplan_id: Optional[str] = None,
     ):
         """
         Store LLM response in cache
@@ -293,6 +319,7 @@ class LLMPromptCache:
             prompt_tokens: Input tokens used
             completion_tokens: Output tokens used
             ttl: Time-to-live in seconds (if None, uses dynamic TTL)
+            masterplan_id: Optional masterplan ID for cache invalidation
         """
         cache_key = self._generate_cache_key(prompt, model, temperature)
 
@@ -306,27 +333,40 @@ class LLMPromptCache:
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "cached_at": time.time(),
+            "masterplan_id": masterplan_id,  # Store for invalidation
         }
 
+        # Try Redis first
         try:
             await self._ensure_connection()
-            await self.redis_client.setex(
-                cache_key, ttl, json.dumps(cached_response)
-            )
 
-            self._emit_metric("write")
+            if self.redis_client:
+                await self.redis_client.setex(
+                    cache_key, ttl, json.dumps(cached_response)
+                )
 
-            logger.debug(
-                f"LLM cache SET: {cache_key[:16]}... (TTL={ttl}s)"
-            )
+                self._emit_metric("write")
+
+                logger.debug(
+                    f"LLM cache SET (Redis): {cache_key[:16]}... (TTL={ttl}s)"
+                )
+                return
 
         except redis.RedisError as e:
-            logger.error(f"Redis error on cache set: {e}")
+            logger.warning(f"Redis error on cache set, falling back to memory: {e}")
+            self._redis_available = False
             self._emit_metric("error", operation="set")
         except Exception as e:
             logger.error(f"Unexpected error on cache set: {e}")
 
-    async def invalidate_masterplan(self, masterplan_id: str):
+        # Fallback to in-memory cache
+        self._memory_cache[cache_key] = cached_response
+        self._emit_metric("write")
+        logger.debug(
+            f"LLM cache SET (memory): {cache_key[:16]}... (TTL={ttl}s)"
+        )
+
+    async def invalidate_masterplan(self, masterplan_id: str) -> int:
         """
         Invalidate all cache entries for a masterplan
 
@@ -336,40 +376,62 @@ class LLMPromptCache:
         Args:
             masterplan_id: Masterplan UUID to invalidate
 
+        Returns:
+            Number of cache entries invalidated
+
         Note:
             This is an expensive operation (O(N) scan) but only used
             when masterplan is regenerated or modified.
         """
-        pattern = f"{self.prefix}*{masterplan_id}*"
+        deleted_count = 0
 
+        # Try Redis first
         try:
             await self._ensure_connection()
-            cursor = 0
-            deleted_count = 0
 
-            while True:
-                cursor, keys = await self.redis_client.scan(
-                    cursor=cursor, match=pattern, count=100
-                )
+            if self.redis_client:
+                pattern = f"{self.prefix}*{masterplan_id}*"
+                cursor = 0
 
-                if keys:
-                    await self.redis_client.delete(*keys)
-                    deleted_count += len(keys)
+                while True:
+                    cursor, keys = await self.redis_client.scan(
+                        cursor=cursor, match=pattern, count=100
+                    )
 
-                if cursor == 0:
-                    break
+                    if keys:
+                        await self.redis_client.delete(*keys)
+                        deleted_count += len(keys)
 
-            logger.info(
-                f"Invalidated {deleted_count} cache entries for masterplan {masterplan_id}"
-            )
-
-            self._emit_metric("invalidation")
+                    if cursor == 0:
+                        break
 
         except redis.RedisError as e:
-            logger.error(f"Redis error on cache invalidation: {e}")
+            logger.warning(f"Redis error on cache invalidation, falling back to memory: {e}")
+            self._redis_available = False
             self._emit_metric("error", operation="invalidate")
         except Exception as e:
             logger.error(f"Unexpected error on cache invalidation: {e}")
+
+        # Also invalidate from in-memory cache
+        memory_deleted = 0
+        keys_to_delete = []
+        for key, value in self._memory_cache.items():
+            if value.get("masterplan_id") == masterplan_id:
+                keys_to_delete.append(key)
+
+        for key in keys_to_delete:
+            del self._memory_cache[key]
+            memory_deleted += 1
+
+        deleted_count += memory_deleted
+
+        logger.info(
+            f"Invalidated {deleted_count} cache entries for masterplan {masterplan_id} "
+            f"(Redis: {deleted_count - memory_deleted}, Memory: {memory_deleted})"
+        )
+
+        self._emit_metric("invalidation")
+        return deleted_count
 
     async def warm_up_cache(
         self,

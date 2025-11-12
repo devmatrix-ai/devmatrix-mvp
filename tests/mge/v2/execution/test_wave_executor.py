@@ -380,6 +380,48 @@ class TestExceptionHandling:
         assert len(failed_results) == 1
         assert "Exception" in failed_results[0].error_message
 
+    async def test_exception_in_gather(self, mock_retry_orchestrator, mock_atoms):
+        """Test exception returned by gather (not raised)."""
+        # Simulate gather returning an exception instead of raising it
+        import asyncio
+        from unittest.mock import patch
+
+        # Make execute_with_retry return normally for first atom, but we'll inject exception in gather
+        mock_retry_orchestrator.execute_with_retry.return_value = RetryResult(
+            code="def foo(): pass",
+            validation_result=AtomicValidationResult(passed=True, issues=[], metrics={}),
+            attempts_used=1,
+            success=True
+        )
+
+        executor = WaveExecutor(mock_retry_orchestrator)
+        wave_atoms = list(mock_atoms.values())[:2]
+
+        # Patch gather to return an exception in results
+        original_gather = asyncio.gather
+
+        async def mock_gather(*args, **kwargs):
+            # Call original gather
+            results = await original_gather(*args, **kwargs)
+            # Replace first result with an exception
+            return [Exception("Gather exception"), results[1]]
+
+        with patch('asyncio.gather', side_effect=mock_gather):
+            result = await executor.execute_wave(
+                wave_id=1,
+                wave_atoms=wave_atoms,
+                all_atoms=mock_atoms
+            )
+
+        # First atom should be marked as failed due to gather exception
+        assert result.total_atoms == 2
+        assert result.failed >= 1
+
+        # Check that gather exception was handled
+        failed_results = [r for r in result.atom_results.values() if not r.success]
+        assert len(failed_results) >= 1
+        assert any("Gather exception" in r.error_message for r in failed_results)
+
 
 @pytest.mark.asyncio
 class TestMultiWaveExecution:
@@ -683,3 +725,169 @@ class TestEdgeCases:
 
         # Should handle gracefully (no dependencies)
         assert result.succeeded == 1
+
+
+@pytest.mark.asyncio
+class TestAcceptanceTestsIntegration:
+    """Test PHASE 8 acceptance tests integration."""
+
+    async def test_execute_plan_with_acceptance_tests_success(self, mock_retry_orchestrator, mock_atoms):
+        """Test execute_plan with acceptance tests enabled (passing gate)."""
+        mock_retry_orchestrator.execute_with_retry.return_value = RetryResult(
+            code="def foo(): pass",
+            validation_result=AtomicValidationResult(passed=True, issues=[], metrics={}),
+            attempts_used=1,
+            success=True
+        )
+
+        # Mock async DB session
+        mock_db_session = AsyncMock()
+
+        # Create executor with async_db_session
+        executor = WaveExecutor(mock_retry_orchestrator, async_db_session=mock_db_session)
+
+        # Create execution plan
+        wave = Mock()
+        wave.level = 1
+        wave.atom_ids = [list(mock_atoms.keys())[0]]
+
+        masterplan_id = uuid4()
+
+        # Mock the acceptance test runner
+        with patch('src.testing.test_runner.AcceptanceTestRunner') as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_tests_for_masterplan.return_value = {
+                'total': 10,
+                'passed': 10,
+                'failed': 0,
+                'overall_pass_rate': 1.0,
+                'must_total': 5,
+                'must_passed': 5,
+                'must_pass_rate': 1.0,
+                'should_total': 5,
+                'should_passed': 5,
+                'should_pass_rate': 1.0
+            }
+            mock_runner_class.return_value = mock_runner
+
+            with patch('src.testing.gate_validator.GateValidator') as mock_gate_class:
+                mock_gate = Mock()
+                mock_gate.validate_gate_s.return_value = {
+                    'passed': True,
+                    'message': 'All gates passed'
+                }
+                mock_gate_class.return_value = mock_gate
+
+                # Execute
+                results = await executor.execute_plan(
+                    execution_plan=[wave],
+                    atoms=mock_atoms,
+                    masterplan_id=masterplan_id
+                )
+
+        # Verify acceptance tests were run
+        mock_runner.run_tests_for_masterplan.assert_called_once_with(masterplan_id)
+        mock_gate.validate_gate_s.assert_called_once()
+
+        # Verify execution completed
+        assert len(results) > 0
+
+    async def test_execute_plan_with_acceptance_tests_failure(self, mock_retry_orchestrator, mock_atoms):
+        """Test execute_plan with acceptance tests enabled (failing gate)."""
+        mock_retry_orchestrator.execute_with_retry.return_value = RetryResult(
+            code="def foo(): pass",
+            validation_result=AtomicValidationResult(passed=True, issues=[], metrics={}),
+            attempts_used=1,
+            success=True
+        )
+
+        # Mock async DB session
+        mock_db_session = AsyncMock()
+
+        # Create executor with async_db_session
+        executor = WaveExecutor(mock_retry_orchestrator, async_db_session=mock_db_session)
+
+        # Create execution plan
+        wave = Mock()
+        wave.level = 1
+        wave.atom_ids = [list(mock_atoms.keys())[0]]
+
+        masterplan_id = uuid4()
+
+        # Mock the acceptance test runner
+        with patch('src.testing.test_runner.AcceptanceTestRunner') as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_tests_for_masterplan.return_value = {
+                'total': 10,
+                'passed': 8,
+                'failed': 2,
+                'overall_pass_rate': 0.8,
+                'must_total': 5,
+                'must_passed': 4,
+                'must_pass_rate': 0.8,
+                'should_total': 5,
+                'should_passed': 4,
+                'should_pass_rate': 0.8
+            }
+            mock_runner_class.return_value = mock_runner
+
+            with patch('src.testing.gate_validator.GateValidator') as mock_gate_class:
+                mock_gate = Mock()
+                mock_gate.validate_gate_s.return_value = {
+                    'passed': False,
+                    'message': 'Gate failed',
+                    'failures': ['MUST pass rate below 100%', 'SHOULD pass rate below 95%']
+                }
+                mock_gate_class.return_value = mock_gate
+
+                # Execute
+                results = await executor.execute_plan(
+                    execution_plan=[wave],
+                    atoms=mock_atoms,
+                    masterplan_id=masterplan_id
+                )
+
+        # Verify acceptance tests were run
+        mock_runner.run_tests_for_masterplan.assert_called_once_with(masterplan_id)
+        mock_gate.validate_gate_s.assert_called_once()
+
+        # Verify execution completed despite gate failure
+        assert len(results) > 0
+
+    async def test_execute_plan_with_acceptance_tests_exception(self, mock_retry_orchestrator, mock_atoms):
+        """Test execute_plan when acceptance tests raise exception."""
+        mock_retry_orchestrator.execute_with_retry.return_value = RetryResult(
+            code="def foo(): pass",
+            validation_result=AtomicValidationResult(passed=True, issues=[], metrics={}),
+            attempts_used=1,
+            success=True
+        )
+
+        # Mock async DB session
+        mock_db_session = AsyncMock()
+
+        # Create executor with async_db_session
+        executor = WaveExecutor(mock_retry_orchestrator, async_db_session=mock_db_session)
+
+        # Create execution plan
+        wave = Mock()
+        wave.level = 1
+        wave.atom_ids = [list(mock_atoms.keys())[0]]
+
+        masterplan_id = uuid4()
+
+        # Mock the acceptance test runner to raise exception
+        with patch('src.testing.test_runner.AcceptanceTestRunner') as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_tests_for_masterplan.side_effect = Exception("Test runner failed")
+            mock_runner_class.return_value = mock_runner
+
+            # Execute - should continue despite exception
+            results = await executor.execute_plan(
+                execution_plan=[wave],
+                atoms=mock_atoms,
+                masterplan_id=masterplan_id
+            )
+
+        # Verify execution completed despite exception
+        assert len(results) > 0

@@ -41,7 +41,7 @@ class TestBatchCollection:
     @pytest.mark.asyncio
     async def test_batches_requests_within_window(self, mock_llm_client):
         """Requests within batch window should be batched together"""
-        batcher = RequestBatcher(mock_llm_client, max_batch_size=5, batch_window_ms=100)
+        batcher = RequestBatcher(mock_llm_client, max_batch_size=5, batch_window_ms=100, enabled=True)
 
         mock_llm_client.generate.return_value = MockLLMResponse(
             text="RESPONSE 1:\nAnswer 1\n\nRESPONSE 2:\nAnswer 2"
@@ -67,7 +67,7 @@ class TestBatchCollection:
     @pytest.mark.asyncio
     async def test_respects_max_batch_size(self, mock_llm_client):
         """Should not exceed max batch size"""
-        batcher = RequestBatcher(mock_llm_client, max_batch_size=2, batch_window_ms=100)
+        batcher = RequestBatcher(mock_llm_client, max_batch_size=2, batch_window_ms=100, enabled=True)
 
         mock_llm_client.generate.return_value = MockLLMResponse(
             text="RESPONSE 1:\nAnswer 1\n\nRESPONSE 2:\nAnswer 2"
@@ -183,15 +183,17 @@ class TestFutureResolution:
 
     async def test_futures_resolved_correctly(self, mock_llm_client):
         """Each request's future should be resolved with correct response"""
-        batcher = RequestBatcher(mock_llm_client, max_batch_size=5, batch_window_ms=100)
+        batcher = RequestBatcher(mock_llm_client, max_batch_size=5, batch_window_ms=100, enabled=True)
 
         mock_llm_client.generate.return_value = MockLLMResponse(
             text="RESPONSE 1:\nAnswer A\n\nRESPONSE 2:\nAnswer B"
         )
 
-        # Submit 2 requests
-        result1 = await batcher.execute_with_batching(uuid4(), "Prompt 1")
-        result2 = await batcher.execute_with_batching(uuid4(), "Prompt 2")
+        # Submit 2 requests concurrently
+        task1 = asyncio.create_task(batcher.execute_with_batching(uuid4(), "Prompt 1"))
+        task2 = asyncio.create_task(batcher.execute_with_batching(uuid4(), "Prompt 2"))
+
+        result1, result2 = await asyncio.gather(task1, task2)
 
         # Each should get correct response
         assert "Answer A" in result1 or "Answer B" in result1
@@ -199,7 +201,7 @@ class TestFutureResolution:
 
     async def test_futures_fail_on_exception(self, mock_llm_client):
         """Futures should be failed if batch processing fails"""
-        batcher = RequestBatcher(mock_llm_client, max_batch_size=5, batch_window_ms=100)
+        batcher = RequestBatcher(mock_llm_client, max_batch_size=5, batch_window_ms=100, enabled=True)
 
         mock_llm_client.generate.side_effect = Exception("LLM error")
 
@@ -214,7 +216,7 @@ class TestMetricsEmission:
 
     async def test_emits_batch_size_metric(self, mock_llm_client):
         """Should emit batch size metric"""
-        batcher = RequestBatcher(mock_llm_client, max_batch_size=5, batch_window_ms=100)
+        batcher = RequestBatcher(mock_llm_client, max_batch_size=5, batch_window_ms=100, enabled=True)
 
         mock_llm_client.generate.return_value = MockLLMResponse(
             text="RESPONSE 1:\nAnswer 1\n\nRESPONSE 2:\nAnswer 2"
@@ -236,19 +238,13 @@ class TestMetricsEmission:
 
     async def test_emits_requests_processed_metric(self, mock_llm_client):
         """Should emit requests processed metric"""
-        batcher = RequestBatcher(mock_llm_client, max_batch_size=5, batch_window_ms=100)
+        batcher = RequestBatcher(mock_llm_client, max_batch_size=5, batch_window_ms=100, enabled=True)
 
         mock_llm_client.generate.return_value = MockLLMResponse(
             text="RESPONSE 1:\nAnswer 1\n\nRESPONSE 2:\nAnswer 2\n\nRESPONSE 3:\nAnswer 3"
         )
 
-        with patch("src.mge.v2.caching.request_batcher.BATCH_SIZE", Mock()) as mock_size, patch(
-            "src.mge.v2.caching.request_batcher.BATCH_REQUESTS_PROCESSED", Mock()
-        ) as mock_processed:
-            batcher._metrics_initialized = True
-            batcher._BATCH_SIZE = mock_size
-            batcher._BATCH_REQUESTS_PROCESSED = mock_processed
-
+        with patch.object(batcher, "_emit_batch_metrics") as mock_emit:
             # Submit 3 requests
             tasks = [
                 asyncio.create_task(batcher.execute_with_batching(uuid4(), f"Prompt {i}"))
@@ -257,5 +253,5 @@ class TestMetricsEmission:
 
             await asyncio.gather(*tasks)
 
-            # Should increment by 3
-            mock_processed.inc.assert_called_with(3)
+            # Should emit batch size = 3
+            mock_emit.assert_called_once_with(3)
