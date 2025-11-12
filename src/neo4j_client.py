@@ -225,3 +225,290 @@ class Neo4jClient:
         except Exception as e:
             logger.error(f"Connection verification failed: {e}")
             return False
+
+    async def create_relationship(
+        self,
+        source_label: str,
+        source_id: str,
+        target_label: str,
+        target_id: str,
+        relationship_type: str,
+        properties: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Create a relationship between two nodes"""
+        if not self.driver:
+            raise RuntimeError("Driver not initialized")
+
+        properties = properties or {}
+        props_str = ", ".join(
+            [f"{k}: ${k}" for k in properties.keys()]
+        ) if properties else ""
+        props_clause = f" {{{props_str}}}" if props_str else ""
+
+        query = f"""
+        MATCH (source:{source_label} {{id: $source_id}})
+        MATCH (target:{target_label} {{id: $target_id}})
+        CREATE (source)-[r:{relationship_type}{props_clause}]->(target)
+        RETURN COUNT(r) as count
+        """
+
+        params = {
+            "source_id": source_id,
+            "target_id": target_id,
+            **properties,
+        }
+
+        async with self.driver.session() as session:
+            result = await session.run(query, **params)
+            record = await result.single()
+            return record["count"] > 0 if record else False
+
+    async def get_template_with_dependencies(
+        self, template_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get template with all its dependencies and relationships"""
+        if not self.driver:
+            raise RuntimeError("Driver not initialized")
+
+        query = """
+        MATCH (t:Template {id: $template_id})
+        OPTIONAL MATCH (t)-[:BELONGS_TO]->(cat:Category)
+        OPTIONAL MATCH (t)-[:USES]->(f:Framework)
+        OPTIONAL MATCH (t)-[:REQUIRES]->(d:Dependency)
+        OPTIONAL MATCH (t)-[:IMPLEMENTS]->(p:Pattern)
+        OPTIONAL MATCH (t)-[:CREATED_BY]->(u:User)
+        RETURN {
+            template: t,
+            category: cat,
+            framework: f,
+            dependencies: collect(DISTINCT d),
+            patterns: collect(DISTINCT p),
+            creator: u
+        } as full_template
+        """
+
+        async with self.driver.session() as session:
+            result = await session.run(query, template_id=template_id)
+            record = await result.single()
+            return dict(record["full_template"]) if record else None
+
+    async def find_similar_templates(
+        self,
+        template_id: str,
+        limit: int = 5,
+        min_similarity: float = 0.7,
+    ) -> List[Dict[str, Any]]:
+        """Find similar templates based on relationships"""
+        if not self.driver:
+            raise RuntimeError("Driver not initialized")
+
+        query = """
+        MATCH (t:Template {id: $template_id})
+        MATCH (t)-[sim:SIMILAR_TO]->(similar)
+        WHERE similar.status = 'active'
+        AND sim.similarity_score >= $min_similarity
+        RETURN similar as template, sim.similarity_score as score
+        ORDER BY score DESC
+        LIMIT $limit
+        """
+
+        async with self.driver.session() as session:
+            result = await session.run(
+                query,
+                template_id=template_id,
+                limit=limit,
+                min_similarity=min_similarity,
+            )
+            records = [record async for record in result]
+            return [
+                {
+                    **dict(record["template"]),
+                    "similarity_score": record["score"],
+                }
+                for record in records
+            ]
+
+    async def batch_create_templates(
+        self, templates: List[Dict[str, Any]]
+    ) -> Dict[str, int]:
+        """Create multiple templates in a single transaction (bulk insert)"""
+        if not self.driver:
+            raise RuntimeError("Driver not initialized")
+
+        query = """
+        UNWIND $templates as template_data
+        CREATE (t:Template {
+            id: template_data.id,
+            name: template_data.name,
+            category: template_data.category,
+            subcategory: template_data.subcategory,
+            framework: template_data.framework,
+            language: template_data.language,
+            precision: template_data.precision,
+            code: template_data.code,
+            description: template_data.description,
+            complexity: template_data.complexity,
+            version: template_data.version,
+            status: template_data.status,
+            source: template_data.source,
+            created_at: datetime()
+        })
+        RETURN COUNT(t) as created
+        """
+
+        async with self.driver.session() as session:
+            result = await session.run(query, templates=templates)
+            record = await result.single()
+            return {
+                "created": record["created"] if record else 0,
+                "total": len(templates),
+            }
+
+    async def get_category_templates(
+        self, category_id: str, status: str = "active", limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Get all templates belonging to a category"""
+        if not self.driver:
+            raise RuntimeError("Driver not initialized")
+
+        query = """
+        MATCH (c:Category {id: $category_id})
+        MATCH (c)<-[bt:BELONGS_TO]-(t:Template)
+        WHERE t.status = $status
+        RETURN t
+        ORDER BY t.precision DESC
+        LIMIT $limit
+        """
+
+        async with self.driver.session() as session:
+            result = await session.run(
+                query, category_id=category_id, status=status, limit=limit
+            )
+            records = [record async for record in result]
+            return [dict(record["t"]) for record in records]
+
+    async def create_category(self, category_data: Dict[str, Any]) -> Optional[str]:
+        """Create a category node"""
+        if not self.driver:
+            raise RuntimeError("Driver not initialized")
+
+        query = """
+        CREATE (c:Category {
+            id: $id,
+            name: $name,
+            icon: $icon,
+            description: $description,
+            order: $order,
+            created_at: datetime()
+        })
+        RETURN c.id as category_id
+        """
+
+        async with self.driver.session() as session:
+            result = await session.run(query, **category_data)
+            record = await result.single()
+            return record["category_id"] if record else None
+
+    async def create_framework(self, framework_data: Dict[str, Any]) -> Optional[str]:
+        """Create a framework node"""
+        if not self.driver:
+            raise RuntimeError("Driver not initialized")
+
+        query = """
+        CREATE (f:Framework {
+            id: $id,
+            name: $name,
+            type: $type,
+            language: $language,
+            version_range: $version_range,
+            ecosystem: $ecosystem,
+            created_at: datetime()
+        })
+        RETURN f.id as framework_id
+        """
+
+        async with self.driver.session() as session:
+            result = await session.run(query, **framework_data)
+            record = await result.single()
+            return record["framework_id"] if record else None
+
+    async def create_pattern(self, pattern_data: Dict[str, Any]) -> Optional[str]:
+        """Create a pattern node"""
+        if not self.driver:
+            raise RuntimeError("Driver not initialized")
+
+        query = """
+        CREATE (p:Pattern {
+            id: $id,
+            name: $name,
+            description: $description,
+            category: $category,
+            complexity_level: $complexity_level,
+            use_cases: $use_cases,
+            created_at: datetime()
+        })
+        RETURN p.id as pattern_id
+        """
+
+        async with self.driver.session() as session:
+            result = await session.run(query, **pattern_data)
+            record = await result.single()
+            return record["pattern_id"] if record else None
+
+    async def create_dependency(self, dependency_data: Dict[str, Any]) -> Optional[str]:
+        """Create a dependency node"""
+        if not self.driver:
+            raise RuntimeError("Driver not initialized")
+
+        query = """
+        CREATE (d:Dependency {
+            id: $id,
+            name: $name,
+            language: $language,
+            version_range: $version_range,
+            type: $type,
+            security_status: $security_status,
+            created_at: datetime()
+        })
+        RETURN d.id as dependency_id
+        """
+
+        async with self.driver.session() as session:
+            result = await session.run(query, **dependency_data)
+            record = await result.single()
+            return record["dependency_id"] if record else None
+
+    async def get_database_stats(self) -> Dict[str, Any]:
+        """Get comprehensive database statistics"""
+        if not self.driver:
+            raise RuntimeError("Driver not initialized")
+
+        stats = {}
+
+        async with self.driver.session() as session:
+            # Node counts
+            for label in ["Template", "TrezoComponent", "CustomComponent", "Pattern",
+                         "Framework", "Dependency", "Category", "MasterPlan", "Atom", "User", "Project"]:
+                result = await session.run(
+                    f"MATCH (n:{label}) RETURN count(n) as count"
+                )
+                record = await result.single()
+                stats[f"{label.lower()}_count"] = record["count"] if record else 0
+
+            # Relationship counts
+            result = await session.run(
+                "MATCH ()-[r]->() RETURN count(r) as count"
+            )
+            record = await result.single()
+            stats["relationship_count"] = record["count"] if record else 0
+
+            # Average precision
+            result = await session.run(
+                "MATCH (t:Template) RETURN avg(t.precision) as avg_precision"
+            )
+            record = await result.single()
+            stats["avg_template_precision"] = (
+                float(record["avg_precision"]) if record and record["avg_precision"] else 0.0
+            )
+
+        return stats
