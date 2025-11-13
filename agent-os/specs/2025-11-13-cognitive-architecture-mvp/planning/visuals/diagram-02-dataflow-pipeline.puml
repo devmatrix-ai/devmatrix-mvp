@@ -1,0 +1,125 @@
+@startuml cognitive-dataflow-pipeline
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam defaultTextAlignment center
+skinparam padding 10
+
+actor User as user
+participant "Requirements\nSpec" as spec
+participant "Multi-Pass\nPlanner" as planner
+participant "STS\nNormalizer" as sts
+participant "DAG\nBuilder" as dag
+participant "Pattern\nBank" as patterns
+participant "CPIE\nInference" as cpie
+participant "Co-Reasoning\nSystem" as coreason
+participant "Ensemble\nValidator" as validator
+participant "Synthesis\nEngine" as synthesis
+participant "Output:\nCode/Atoms" as output
+
+autonumber
+
+user --> spec: Provide Requirements
+activate spec
+
+spec --> planner: Parse & Extract
+activate planner
+
+note over planner
+    Pass 1: Requirements Analysis
+    Pass 2: Architecture Design
+    Pass 3: Contract Definition
+    Pass 4: Integration Points
+    Pass 5: Atomic Breakdown
+    Pass 6: Validation
+end note
+
+planner --> sts: 50-120 Atomic Tasks
+activate sts
+
+sts --> sts: Normalize Purpose\nCompute Hash\nExtract I/O
+sts --> dag: Semantic Signatures
+deactivate sts
+
+activate dag
+dag --> dag: Build Dependency Graph\nDetect Cycles\nCompute Topological Levels
+dag --> patterns: Query for Similar Patterns
+deactivate dag
+
+activate patterns
+patterns --> patterns: Vector Similarity (768D)\nStructural Similarity\nMetadata Filtering
+patterns --> cpie: (A) Pattern Found ≥85%\n(B) No Pattern
+
+activate cpie
+
+alt Pattern Found
+    cpie --> cpie: Adapt Existing Pattern\nReasoning on Differences
+    cpie --> coreason: Adaptation Strategy
+else No Pattern
+    cpie --> cpie: Generate from First Principles\n(Single LLM or Dual LLM)
+    cpie --> coreason: Generation Strategy
+end
+
+deactivate cpie
+
+activate coreason
+
+note over coreason
+    Adaptive Routing by Complexity:
+    - complexity < 0.6: Single-LLM (70%)
+    - 0.6 ≤ complexity < 0.85: Dual-LLM (25%)
+    - complexity ≥ 0.85: LRM/o1 (5%)
+end note
+
+coreason --> coreason: Claude/DeepSeek\nCo-Generation\nCoherence Check
+coreason --> validator: Candidate Atoms\n(10 LOC max)
+deactivate coreason
+
+activate validator
+
+note over validator
+    Ensemble Validation:
+    - Purpose Compliance
+    - I/O Respect
+    - LOC Limit (≤10)
+    - Syntax Correctness
+    - Security & Efficiency
+    - Quality Score
+end note
+
+validator --> validator: Validate\nScore Quality\nApply Weights
+alt Score ≥ 95%
+    validator --> synthesis: Accept Atom
+    validator --> patterns: Learn Pattern\n(Feedback Loop)
+else Score < 95%
+    validator --> cpie: Regenerate\n(Retry Loop)
+    cpie --> coreason
+end
+
+deactivate validator
+
+activate synthesis
+
+synthesis --> synthesis: Assemble Atoms\nResolve Dependencies\nApply Formatting
+
+synthesis --> output: Final Generated Code\n(Clean, Testable, Production-Ready)
+deactivate synthesis
+
+deactivate output
+
+note over output
+    Output Quality:
+    - Perfect Syntax
+    - Type Hints Complete
+    - Documentation Included
+    - Tests Included
+    - Ready to Deploy
+end note
+
+par Feedback Loops
+    output --> patterns: Pattern Success Tracking\n(if precision ≥ 95%)
+    output --> patterns: Update Usage Count\nSuccess Rate
+end
+
+user <- output: Deliver Implementation
+
+@enduml

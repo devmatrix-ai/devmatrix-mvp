@@ -1,0 +1,108 @@
+@startuml cognitive-architecture-overview
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam defaultTextAlignment center
+skinparam padding 10
+
+package "Cognitive Architecture MVP" {
+
+    ' Input Layer
+    package "Input Processing" {
+        component [Requirements\nSpecification] as SPECS #E1F5FF
+    }
+
+    ' Core Planning Layer
+    package "Planning Engine" {
+        component [Multi-Pass\nPlanner\n(6 Passes)] as PLANNER #FFF3E0
+        component [Semantic Task\nSignatures\n(STS)] as STS #E8F5E9
+    }
+
+    ' Orchestration Layer
+    package "Orchestration & DAG" {
+        component [DAG Builder\n(Neo4j)] as DAG #F3E5F5
+        component [Dependency\nGraph] as DEPGRAPH #F3E5F5
+    }
+
+    ' Inference Layer
+    package "Inference Engine" {
+        component [Pattern Bank\n(Qdrant)] as PATTERNS #E0F2F1
+        component [CPIE\n(Cognitive\nInference)] as CPIE #E0F2F1
+        component [Co-Reasoning\nSystem] as COREASON #E0F2F1
+    }
+
+    ' Validation Layer
+    package "Quality Assurance" {
+        component [Ensemble\nValidator] as VALIDATOR #FFEBEE
+        component [Metrics &\nMonitoring] as METRICS #FFEBEE
+    }
+
+    ' Output Layer
+    package "Output Generation" {
+        component [Atomic Code\nSynthesis] as SYNTHESIS #C8E6C9
+        component [Generated\nCode/Atoms] as OUTPUT #C8E6C9
+    }
+
+    ' Knowledge Base
+    database "Pattern Knowledge Base" as KB #ECEFF1
+    database "Neo4j Graph DB" as GRAPHDB #ECEFF1
+
+    ' Connections
+    SPECS --> PLANNER : specs
+    PLANNER --> STS : normalized tasks
+    STS --> DAG : semantic signatures
+    DAG --> DEPGRAPH : build graph
+    DEPGRAPH --> PATTERNS : query patterns
+    PATTERNS --> CPIE : similar patterns found
+    CPIE --> COREASON : inference strategy
+    COREASON --> VALIDATOR : generated atoms
+    VALIDATOR --> METRICS : quality scores
+    METRICS --> SYNTHESIS : validated atoms
+    SYNTHESIS --> OUTPUT : final code
+
+    ' Feedback loops
+    OUTPUT -.-> KB : learn patterns\n(95%+ precision)
+    VALIDATOR -.-> KB : pattern validation
+    METRICS -.-> PATTERNS : adaptive\nthresholds
+
+    ' Database connections
+    PATTERNS -.-> KB : store/retrieve
+    DAG -.-> GRAPHDB : persist graph
+    CPIE -.-> PATTERNS : pattern matching
+
+}
+
+legend right
+    |<#E1F5FF> Input Layer |
+    |<#FFF3E0> Planning |
+    |<#F3E5F5> Orchestration |
+    |<#E0F2F1> Inference |
+    |<#FFEBEE> Validation |
+    |<#C8E6C9> Output |
+    |<#ECEFF1> Knowledge Base |
+end legend
+
+note right of PLANNER
+    6-Pass Progressive Refinement:
+    1. Requirements Analysis
+    2. Architecture Design
+    3. Contract Definition
+    4. Integration Points
+    5. Atomic Breakdown
+    6. Validation
+end note
+
+note right of CPIE
+    Cognitive Pattern Inference:
+    - Pattern found (≥85%): adapt
+    - No pattern: generate new
+    - Constraints: max 10 LOC/atom
+end note
+
+note right of VALIDATOR
+    Ensemble Voting:
+    - MVP: 1 validator
+    - Final: 3 validators
+    - Threshold: 66% approval
+end note
+
+@enduml

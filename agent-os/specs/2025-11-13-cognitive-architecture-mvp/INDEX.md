@@ -163,6 +163,42 @@
 
 ---
 
+## Visual Assets
+
+### Architecture Diagrams
+Located in `planning/visuals/`:
+
+1. **diagram-01-architecture-overview.puml**
+   - System architecture showing 7 core components
+   - Data flow between layers (input → planning → orchestration → inference → validation → output)
+   - Component interactions and feedback loops
+   - Knowledge base integration (Pattern Bank + Neo4j)
+   - Format: PlantUML (can be rendered to PNG/SVG)
+
+2. **diagram-02-dataflow-pipeline.puml**
+   - Sequence diagram of the complete data flow
+   - Step-by-step process from requirements to output
+   - 6-pass planning refinement process
+   - Pattern matching alternatives (found vs. new generation)
+   - Adaptive routing based on complexity
+   - Validation and feedback loops
+   - Format: PlantUML sequence diagram
+
+**Rendering Instructions**:
+```bash
+# Install PlantUML
+brew install plantuml  # macOS
+apt-get install plantuml  # Linux
+
+# Generate PNG from diagram
+plantuml -Tpng planning/visuals/diagram-01-architecture-overview.puml
+plantuml -Tpng planning/visuals/diagram-02-dataflow-pipeline.puml
+
+# Or use online: https://www.plantuml.com/plantuml/uml/
+```
+
+---
+
 ## Document Cross-References
 
 ### Related Specifications
