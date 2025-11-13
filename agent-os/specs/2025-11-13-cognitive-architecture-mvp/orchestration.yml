@@ -1,0 +1,259 @@
+orchestration:
+  spec_path: agent-os/specs/2025-11-13-cognitive-architecture-mvp
+  spec_name: Cognitive Architecture MVP
+  total_phases: 2
+  total_task_groups: 31
+
+task_groups:
+  # PHASE 0: Preparation (3 days)
+  - name: "0.1: Repository & Branch Setup"
+    phase: 0
+    duration_days: 1
+    priority: critical
+    claude_code_subagent: backend-architect
+    rationale: "Git/branch setup, infrastructure planning"
+
+  - name: "0.2: Infrastructure & Dependencies"
+    phase: 0
+    duration_days: 0.5
+    priority: critical
+    claude_code_subagent: backend-architect
+    rationale: "Docker setup, dependency management, infrastructure"
+
+  - name: "0.3: Database Migrations"
+    phase: 0
+    duration_days: 1
+    priority: critical
+    claude_code_subagent: python-expert
+    rationale: "Alembic migrations, schema design, database setup"
+
+  - name: "0.4: Testing & CI/CD Setup"
+    phase: 0
+    duration_days: 0.5
+    priority: high
+    claude_code_subagent: backend-architect
+    rationale: "GitHub Actions, CI/CD pipeline, test infrastructure"
+
+  # PHASE 1: Core MVP (4 weeks)
+  # Week 1: Semantic Foundations
+  - name: "1.1: Semantic Task Signatures (STS)"
+    phase: 1
+    week: 1
+    duration_days: 1.5
+    priority: critical
+    component: src/cognitive/signatures/semantic_signature.py
+    claude_code_subagent: python-expert
+    rationale: "Core Python component, SOLID principles, type-safe"
+
+  - name: "1.2: Pattern Bank with Qdrant Integration"
+    phase: 1
+    week: 1
+    duration_days: 1.5
+    priority: critical
+    component: src/cognitive/patterns/pattern_bank.py
+    claude_code_subagent: python-expert
+    rationale: "Vector DB integration, semantic search, production code"
+
+  - name: "1.3: CPIE (Cognitive Pattern Inference Engine)"
+    phase: 1
+    week: 1
+    duration_days: 2
+    priority: critical
+    component: src/cognitive/inference/cpie.py
+    claude_code_subagent: python-expert
+    rationale: "Complex inference logic, LLM integration, core algorithm"
+
+  # Week 2: Orchestration & Planning
+  - name: "2.1: Co-Reasoning System"
+    phase: 1
+    week: 2
+    duration_days: 1.5
+    priority: high
+    component: src/cognitive/co_reasoning/co_reasoning_system.py
+    claude_code_subagent: python-expert
+    rationale: "Multi-LLM coordination, async orchestration"
+
+  - name: "2.2: Multi-Pass Planning"
+    phase: 1
+    week: 2
+    duration_days: 2
+    priority: critical
+    component: src/cognitive/planning/multi_pass_planner.py
+    claude_code_subagent: backend-architect
+    rationale: "System design, 6-pass orchestration, architecture"
+
+  - name: "2.3: DAG Builder (Neo4j)"
+    phase: 1
+    week: 2
+    duration_days: 1
+    priority: high
+    component: src/cognitive/planning/dag_builder.py
+    claude_code_subagent: python-expert
+    rationale: "Graph algorithms, Neo4j integration, cycle detection"
+
+  - name: "2.4: Orchestrator MVP"
+    phase: 1
+    week: 2
+    duration_days: 1.5
+    priority: high
+    component: src/cognitive/orchestrator_mvp.py
+    claude_code_subagent: backend-architect
+    rationale: "System orchestration, pipeline composition, architecture"
+
+  # Week 3: Validation & Quality
+  - name: "3.1: Ensemble Validator (MVP)"
+    phase: 1
+    week: 3
+    duration_days: 1.5
+    priority: critical
+    component: src/cognitive/validation/ensemble_validator.py
+    claude_code_subagent: python-expert
+    rationale: "Validation logic, quality scoring, Python implementation"
+
+  - name: "3.2: Integration Testing with Reference Projects"
+    phase: 1
+    week: 3
+    duration_days: 1.5
+    priority: high
+    claude_code_subagent: python-expert
+    rationale: "E2E testing, test framework, quality assurance"
+
+  - name: "3.3: Performance Optimization"
+    phase: 1
+    week: 3
+    duration_days: 1
+    priority: medium
+    claude_code_subagent: performance-engineer
+    rationale: "Profiling, optimization, benchmarking, performance targets"
+
+  - name: "3.4: Documentation & Testing Infrastructure"
+    phase: 1
+    week: 3
+    duration_days: 1
+    priority: high
+    claude_code_subagent: technical-writer
+    rationale: "API docs, architecture docs, testing guide"
+
+  # Week 4: Polish & Finalization
+  - name: "4.1: Quality Assurance & Bug Fixes"
+    phase: 1
+    week: 4
+    duration_days: 1
+    priority: high
+    claude_code_subagent: python-expert
+    rationale: "Bug fixing, QA testing, code quality"
+
+  - name: "4.2: Performance Finalization"
+    phase: 1
+    week: 4
+    duration_days: 0.5
+    priority: medium
+    claude_code_subagent: performance-engineer
+    rationale: "Final optimization, tuning, performance metrics"
+
+  - name: "4.3: Deployment Preparation"
+    phase: 1
+    week: 4
+    duration_days: 1
+    priority: high
+    claude_code_subagent: backend-architect
+    rationale: "Deployment strategy, canary deployment, rollback plan"
+
+  - name: "4.4: Pre-Release Validation"
+    phase: 1
+    week: 4
+    duration_days: 1.5
+    priority: critical
+    claude_code_subagent: security-engineer
+    rationale: "Security audit, validation, pre-release checks"
+
+  # PHASE 2: LRM Integration (2 weeks)
+  # Week 5: Advanced Reasoning
+  - name: "5.1: LRM Client Integration"
+    phase: 2
+    week: 5
+    duration_days: 1.5
+    priority: high
+    component: src/cognitive/lrm/lrm_client.py
+    claude_code_subagent: python-expert
+    rationale: "o1/DeepSeek integration, API client, production code"
+
+  - name: "5.2: Smart Task Router with Complexity-Based Routing"
+    phase: 2
+    week: 5
+    duration_days: 1.5
+    priority: high
+    component: src/cognitive/routing/smart_task_router.py
+    claude_code_subagent: backend-architect
+    rationale: "Routing algorithm design, complexity estimation"
+
+  - name: "5.3: CPIE Extension for LRM"
+    phase: 2
+    week: 5
+    duration_days: 1
+    priority: high
+    claude_code_subagent: python-expert
+    rationale: "CPIE enhancement, LRM integration, code extension"
+
+  # Week 6: Optimization & Deployment
+  - name: "6.1: A/B Testing (LRM vs Non-LRM)"
+    phase: 2
+    week: 6
+    duration_days: 1
+    priority: medium
+    claude_code_subagent: performance-engineer
+    rationale: "A/B testing framework, metrics collection, analysis"
+
+  - name: "6.2: Threshold Calibration & Optimization"
+    phase: 2
+    week: 6
+    duration_days: 1
+    priority: high
+    claude_code_subagent: performance-engineer
+    rationale: "Parameter tuning, threshold calibration, optimization"
+
+  - name: "6.3: Advanced Pattern Bank Enhancement"
+    phase: 2
+    week: 6
+    duration_days: 0.5
+    priority: medium
+    claude_code_subagent: python-expert
+    rationale: "Pattern bank enhancement, learning system"
+
+  - name: "6.4: Final System Optimization"
+    phase: 2
+    week: 6
+    duration_days: 0.5
+    priority: medium
+    claude_code_subagent: performance-engineer
+    rationale: "System-wide optimization, tuning, final polish"
+
+  - name: "6.5: Production Deployment Readiness"
+    phase: 2
+    week: 6
+    duration_days: 1
+    priority: critical
+    claude_code_subagent: backend-architect
+    rationale: "Production deployment, scaling, monitoring setup"
+
+  # Cross-Phase Tasks
+  - name: "X.1: Code Quality & Testing"
+    phase: cross
+    duration_days: continuous
+    priority: critical
+    claude_code_subagent: python-expert
+    rationale: "Code review, quality gates, test coverage maintenance"
+
+  - name: "X.2: Documentation & Knowledge Transfer"
+    phase: cross
+    duration_days: continuous
+    priority: high
+    claude_code_subagent: technical-writer
+    rationale: "Ongoing documentation, team training, knowledge base"
+
+  - name: "X.3: Metrics & Monitoring"
+    phase: cross
+    duration_days: continuous
+    priority: high
+    claude_code_subagent: performance-engineer
+    rationale: "Metrics collection, monitoring, observability setup"
