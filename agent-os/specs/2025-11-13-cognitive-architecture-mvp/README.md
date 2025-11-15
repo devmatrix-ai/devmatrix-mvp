@@ -81,13 +81,16 @@ This specification package defines the complete architecture for DevMatrix's Cog
 - **Problem**: Cascading errors (P(success) = 0.95^800 ≈ 0%)
 
 ### Target State (MVP, 4 weeks)
-- **Precision**: 92%
-- **Approach**: Cognitive architecture (pre-atomization)
-- **Components**: 7 core modules
+- **E2E Precision** (Primary): ≥88% (complete apps pass all validation layers)
+- **Atomic Precision** (Secondary): ≥92%
+- **Approach**: Cognitive architecture (pre-atomization) + real infrastructure validation
+- **Validation**: 4-layer (build, unit tests with 95% coverage, E2E tests, production-ready)
+- **Components**: 7 core modules + E2E Production Validator
 - **Pattern Bank**: 30% reuse rate
 
 ### Final State (6 weeks, with LRM)
-- **Precision**: 99%
+- **E2E Precision** (Primary): ≥92%
+- **Atomic Precision** (Secondary): ≥95%
 - **Learning**: 50% pattern reuse rate
 - **Maintenance**: Zero manual maintenance
 - **ROI**: 500%+ in 18 months

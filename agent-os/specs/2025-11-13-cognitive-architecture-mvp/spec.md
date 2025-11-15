@@ -9,6 +9,8 @@
 **Success Probability**: 85-90%
 **Expected ROI**: 500%+ in 18 months
 
+**Validation Approach**: End-to-end precision measurement with **real infrastructure** (Qdrant, Neo4j, PostgreSQL, Redis, Docker) and **real LLM APIs** (Claude Sonnet 4, DeepSeek). Generated applications must run completely in Docker containers with **95% code coverage** and pass production-ready quality gates (build, unit tests, E2E tests, production checks).
+
 ### The Problem: Cascading Error Propagation
 
 The current wave-based system generates 500+ lines of code monolithically, then attempts to atomize post-hoc. This causes catastrophic error cascading:
@@ -140,6 +142,30 @@ Traditional generative coding relies on LLM randomness at scale. The cognitive a
 - **Existing LLM Clients (Claude, DeepSeek)**: Co-reasoning orchestration
 - **Database Models**: Extended with semantic signature tracking
 - **Neo4j**: DAG construction and cycle detection
+
+### Integration with DevMatrix Pipeline
+
+**Pipeline Integration**: This cognitive architecture is fully integrated into the **current DevMatrix pipeline**. It replaces the wave-based atomization approach with pre-atomization planning while maintaining compatibility with all existing DevMatrix components (specs, tasks, orchestration, API, WebSocket, UI).
+
+**Code Structure Convention**:
+- **All generated code**: Must be placed in `/src` folder structure only
+  - Example: `/src/cognitive/signatures/semantic_signature.py`
+  - Example: `/src/cognitive/validation/e2e_production_validator.py`
+  - Never place code in `/DOCS`, `/agent-os/specs`, or other non-source directories
+
+**Documentation Structure Convention**:
+- **All DevMatrix documentation**: Must be placed in `/DOCS` folder
+  - Example: `/DOCS/COGNITIVE_ARCHITECTURE.md`
+  - Example: `/DOCS/E2E_VALIDATION_GUIDE.md`
+- **Spec documentation**: Stays in `/agent-os/specs/[spec-name]/` (planning artifacts)
+- **Code documentation**: Inline docstrings and type hints in `/src` files
+
+**Integration Points**:
+1. **Specs & Tasks**: Cognitive architecture consumes specs from `/agent-os/specs/` and generates code to `/src`
+2. **Orchestration**: Integrates with existing orchestrator patterns defined in `orchestration.yml`
+3. **API Layer**: New cognitive endpoints added to `/src/api/routers/` following existing patterns
+4. **Database**: Schema extensions via Alembic migrations in `/src/database/migrations/`
+5. **WebSocket**: Progress events published through existing `/src/websocket/manager.py`
 
 ---
 
@@ -367,22 +393,39 @@ avg_cost = (0.70 * $0.001) + (0.25 * $0.003) + (0.05 * $0.010)
          = $0.00195 ≈ $0.002 per atom
 ```
 
-### 3.7 Ensemble Validator
+### 3.7 E2E Production Validator
 
-**MVP Validation** (Week 3-4):
-- Single validator: Claude Opus
-- Validates: purpose compliance, I/O respect, LOC limit, syntax
+**Purpose**: Validate complete generated applications end-to-end in real Docker environments with production-ready quality gates.
 
-**Phase 2 Validation** (Week 5-6):
-- Three independent validators: Claude + GPT-4 + DeepSeek
-- Voting threshold: 66% approval (2 of 3 must approve)
-- Validation checks:
-  - Purpose compliance: Code implements stated purpose
-  - I/O respect: Inputs/outputs match specification
-  - LOC limit: ≤10 lines per atom
-  - Syntax correctness: Parses without errors
-  - Security: No obvious vulnerabilities
-  - Efficiency: No obvious inefficiencies
+**4-Layer Validation Pipeline**:
+
+**Layer 1: Build Validation**
+- Docker image builds successfully
+- All dependencies resolve correctly
+- No build-time errors or warnings
+- Production configuration valid
+
+**Layer 2: Unit Test Validation**
+- All unit tests pass (generated + golden tests)
+- ≥95% code coverage requirement
+- Test execution time < 5 minutes
+- No flaky tests (3 consecutive runs)
+
+**Layer 3: E2E Test Validation**
+- Application runs completely in Docker
+- All user workflows execute successfully
+- API contracts respected (golden E2E tests)
+- Integration with real databases (PostgreSQL, Redis)
+- Real vector/graph operations (Qdrant, Neo4j)
+
+**Layer 4: Production-Ready Checks**
+- Documentation complete (README, API docs)
+- Security scan passes (no critical/high vulnerabilities)
+- Performance benchmarks met (response time, throughput)
+- Code quality gates (linting, type checking, complexity)
+- Logs and monitoring configured
+
+**Success Criteria**: Application must pass ALL 4 layers to be considered valid. This is the **primary precision metric** for the cognitive architecture.
 
 ---
 
@@ -865,28 +908,57 @@ Blended cost: (70% * $0.001) + (25% * $0.003) + (5% * $0.010) = $0.002/atom
 - Cost calculation
 - Model selection logic
 
-### Integration Tests
+### Integration Tests: Synthetic Realistic Applications
 
-**End-to-End Pipeline** (5 reference projects):
-1. **Simple CRUD**: User model with email validation
-   - Expected atoms: 15
-   - Success criteria: ≥90% precision
+**Purpose**: Test cognitive architecture with complete, realistic applications running in Docker with real infrastructure.
 
-2. **Authentication System**: JWT with refresh tokens
-   - Expected atoms: 25
-   - Success criteria: ≥92% precision
+**Level 1: Simple Applications** (Week 3)
 
-3. **REST API**: Pagination + filtering + auth
-   - Expected atoms: 40
-   - Success criteria: ≥88% precision
+1. **TODO Backend API**
+   - Stack: FastAPI + PostgreSQL + Redis
+   - Features: CRUD tasks, user auth (JWT), task filtering
+   - Expected atoms: 40-50
+   - E2E Success: ≥88% (app runs completely, all endpoints work)
+   - Coverage: ≥95%
+   - Golden tests: 15 E2E API tests (manually written)
 
-4. **React Form**: Multi-field validation
-   - Expected atoms: 20
-   - Success criteria: ≥90% precision
+2. **Landing Page**
+   - Stack: Next.js + Tailwind + shadcn/ui
+   - Features: Hero, features section, contact form
+   - Expected atoms: 25-30
+   - E2E Success: ≥90% (builds, deploys, form submits)
+   - Coverage: ≥95%
+   - Golden tests: 8 E2E UI tests (Playwright)
 
-5. **Data Table**: Sorting + pagination + filtering
-   - Expected atoms: 18
-   - Success criteria: ≥88% precision
+**Level 2: Moderate Applications** (Week 4)
+
+3. **TODO Fullstack App**
+   - Stack: Next.js + FastAPI + PostgreSQL + Redis + Docker Compose
+   - Features: Complete TODO app with auth, real-time updates, responsive UI
+   - Expected atoms: 80-100
+   - E2E Success: ≥85% (full stack integration, WebSocket works)
+   - Coverage: ≥95%
+   - Golden tests: 25 E2E tests (API + UI + integration)
+
+4. **Blog Platform**
+   - Stack: Next.js + PostgreSQL + Markdown + Auth
+   - Features: Posts CRUD, comments, user profiles, markdown editor
+   - Expected atoms: 90-110
+   - E2E Success: ≥85% (publishing works, auth works, responsive)
+   - Coverage: ≥95%
+   - Golden tests: 30 E2E tests (user workflows)
+
+**Level 3: Complex Application** (Week 4)
+
+5. **E-commerce Minimal**
+   - Stack: Next.js + FastAPI + PostgreSQL + Redis + Stripe (test mode)
+   - Features: Products catalog, cart, checkout, orders, admin panel
+   - Expected atoms: 120-150
+   - E2E Success: ≥80% (complete purchase flow works end-to-end)
+   - Coverage: ≥95%
+   - Golden tests: 40 E2E tests (customer + admin workflows)
+
+**Success Metric**: **E2E Precision** = % of applications that pass all 4 validation layers (build, unit, E2E, production-ready). Target: ≥88% of apps work completely by Week 4.
 
 ### Performance Benchmarks
 
@@ -1074,11 +1146,17 @@ No visual mockups are provided for this backend architecture specification. Howe
 
 ## Success Criteria
 
-### Precision Targets (Primary KPI)
+### E2E Precision Targets (Primary KPI)
 
-- **MVP (Week 4)**: 92% precision on reference projects
-- **Final (Week 6)**: 99% precision with LRM
-- **Stretch Goal**: 99.5% precision after 3 months
+**Primary Metric**: **E2E Application Success Rate** = % of complete applications that pass all 4 validation layers (build, unit tests with 95% coverage, E2E tests, production-ready checks) and run completely in Docker.
+
+- **MVP (Week 4)**: ≥88% E2E precision (4 of 5 synthetic apps work completely)
+- **Final (Week 6)**: ≥92% E2E precision with LRM (all 5 apps work completely)
+- **Stretch Goal**: ≥95% E2E precision after 3 months
+
+**Secondary Metric**: Atomic precision (% of individual atoms that pass validation)
+- **MVP**: ≥92% atomic precision
+- **Final**: ≥95% atomic precision
 
 ### Speed Targets
 

@@ -110,13 +110,14 @@ task_groups:
     claude_code_subagent: python-expert
     rationale: "Validation logic, quality scoring, Python implementation"
 
-  - name: "3.2: Integration Testing with Reference Projects"
+  - name: "3.5: E2E Validation Framework with Real Infrastructure"
     phase: 1
     week: 3
-    duration_days: 1.5
-    priority: high
+    duration_days: 2
+    priority: critical
+    component: src/cognitive/validation/e2e_production_validator.py
     claude_code_subagent: python-expert
-    rationale: "E2E testing, test framework, quality assurance"
+    rationale: "Complete E2E validation system with Docker, real infrastructure, synthetic realistic applications, 4-layer validation, golden tests, production-ready quality gates"
 
   - name: "3.3: Performance Optimization"
     phase: 1
