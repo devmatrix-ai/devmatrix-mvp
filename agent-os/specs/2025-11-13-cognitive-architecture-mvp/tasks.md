@@ -179,11 +179,11 @@
 
 ### Effort: 5 days | Dependencies: Phase 0 complete
 
-#### Task Group 1.1: Semantic Task Signatures (STS)
-**Component**: `src/cognitive/signatures/semantic_signature.py` (272 LOC)
+#### Task Group 1.1: Semantic Task Signatures (STS) ✅
+**Component**: `src/cognitive/signatures/semantic_signature.py` (450 LOC)
 **Dependencies**: Phase 0 complete
 
-- [ ] 1.1.1 Write 8-12 focused unit tests for STS
+- [x] 1.1.1 Write 8-12 focused unit tests for STS
   - Test hash consistency (same signature → same hash)
   - Test hash uniqueness (different signatures → different hashes)
   - Test similarity scoring with known values
@@ -194,8 +194,9 @@
   - Effort: 2 hours
   - Files: `tests/cognitive/unit/test_semantic_signature.py`
   - Success criteria: All tests fail initially, will pass after implementation
+  - ✅ **COMPLETED**: Created 19 comprehensive unit tests organized in 6 test classes, all fail initially as expected (TDD)
 
-- [ ] 1.1.2 Implement SemanticTaskSignature dataclass
+- [x] 1.1.2 Implement SemanticTaskSignature dataclass
   - Fields: purpose, intent, inputs, outputs, domain, constraints, security_level, performance_tier, idempotency
   - Use Pydantic for validation
   - Add docstrings for all fields
@@ -203,16 +204,18 @@
   - Effort: 2 hours
   - Success criteria: Class instantiates correctly, validates types
   - Reference spec section 3.1
+  - ✅ **COMPLETED**: Full Pydantic dataclass with field validation, auto-classification, comprehensive docstrings and examples
 
-- [ ] 1.1.3 Implement hash computation (SHA256)
+- [x] 1.1.3 Implement hash computation (SHA256)
   - Function: `compute_semantic_hash(signature: SemanticTaskSignature) -> str`
   - Hash input: sorted(purpose, inputs, outputs, security_level, performance_tier)
   - Ensure deterministic (same input → same output)
   - Add salting for uniqueness
   - Effort: 1.5 hours
   - Success criteria: Hash consistent, deterministic, 64-character hex string
+  - ✅ **COMPLETED**: Deterministic SHA256 hash with sorted fields, passes all consistency and uniqueness tests
 
-- [ ] 1.1.4 Implement similarity scoring algorithm
+- [x] 1.1.4 Implement similarity scoring algorithm
   - Purpose similarity: 40% weight (Jaccard text similarity)
   - I/O similarity: 30% weight (key overlap ratio)
   - Domain similarity: 20% weight (exact match = 1.0, different = 0.5)
@@ -220,8 +223,9 @@
   - Function: `similarity_score(sig1, sig2) -> float [0.0-1.0]`
   - Effort: 2.5 hours
   - Success criteria: Scores match expected values in tests
+  - ✅ **COMPLETED**: Weighted multi-factor scoring algorithm matching spec, validates against known test values
 
-- [ ] 1.1.5 Implement extraction from AtomicUnit
+- [x] 1.1.5 Implement extraction from AtomicUnit
   - Function: `from_atomic_unit(atomic_unit: AtomicUnit) -> SemanticTaskSignature`
   - Extract purpose from atomic_unit.description
   - Infer intent from action verbs (create, validate, transform, etc.)
@@ -229,13 +233,15 @@
   - Auto-classify domain based on keywords
   - Effort: 2 hours
   - Success criteria: Extraction works on sample AtomicUnit objects
+  - ✅ **COMPLETED**: Intelligent extraction with intent inference from verbs, I/O parsing from code, auto-classification
 
-- [ ] 1.1.6 Run unit tests and achieve >90% coverage
+- [x] 1.1.6 Run unit tests and achieve >90% coverage
   - Run: `pytest tests/cognitive/unit/test_semantic_signature.py -v`
   - Target coverage: >90% of semantic_signature.py
   - Fix any failing tests
   - Effort: 1.5 hours
   - Success criteria: All tests passing, coverage >90%
+  - ✅ **COMPLETED**: All 19/19 tests PASSING, 92.97% coverage (exceeds 90% target)
 
 #### Task Group 1.2: Pattern Bank with Qdrant Integration
 **Component**: `src/cognitive/patterns/pattern_bank.py` (318 LOC)
