@@ -1,0 +1,120 @@
+{
+  "timestamp": "2025-11-15T14:37:30.695288",
+  "duration": 4.244773,
+  "results": [
+    {
+      "component": "CPIE",
+      "metric": "Average inference time",
+      "value": 0.036,
+      "unit": "s",
+      "target": 5.0,
+      "passed": true,
+      "timestamp": "2025-11-15T14:37:33.149730"
+    },
+    {
+      "component": "CPIE",
+      "metric": "Max inference time",
+      "value": 0.311,
+      "unit": "s",
+      "target": 5.0,
+      "passed": true,
+      "timestamp": "2025-11-15T14:37:33.149738"
+    },
+    {
+      "component": "CPIE",
+      "metric": "Min inference time",
+      "value": 0.004,
+      "unit": "s",
+      "target": 5.0,
+      "passed": true,
+      "timestamp": "2025-11-15T14:37:33.149740"
+    },
+    {
+      "component": "PatternBank",
+      "metric": "Average search time",
+      "value": 0.001,
+      "unit": "ms",
+      "target": 100.0,
+      "passed": true,
+      "timestamp": "2025-11-15T14:37:33.149865"
+    },
+    {
+      "component": "PatternBank",
+      "metric": "Max search time",
+      "value": 0.021,
+      "unit": "ms",
+      "target": 100.0,
+      "passed": true,
+      "timestamp": "2025-11-15T14:37:33.149868"
+    },
+    {
+      "component": "PatternBank",
+      "metric": "P95 search time",
+      "value": 0.001,
+      "unit": "ms",
+      "target": 100.0,
+      "passed": true,
+      "timestamp": "2025-11-15T14:37:33.149870"
+    },
+    {
+      "component": "Neo4j",
+      "metric": "DAG build time",
+      "value": 0.872,
+      "unit": "s",
+      "target": 10.0,
+      "passed": true,
+      "timestamp": "2025-11-15T14:37:34.021622"
+    },
+    {
+      "component": "Neo4j",
+      "metric": "Cycle detection time",
+      "value": 0.068,
+      "unit": "s",
+      "target": 1.0,
+      "passed": true,
+      "timestamp": "2025-11-15T14:37:34.089668"
+    },
+    {
+      "component": "Neo4j",
+      "metric": "Topological sort time",
+      "value": 0.13,
+      "unit": "s",
+      "target": 1.0,
+      "passed": true,
+      "timestamp": "2025-11-15T14:37:34.219905"
+    },
+    {
+      "component": "Memory",
+      "metric": "Memory used",
+      "value": 406.75,
+      "unit": "MB",
+      "target": 2048.0,
+      "passed": true,
+      "timestamp": "2025-11-15T14:37:34.939654"
+    },
+    {
+      "component": "Memory",
+      "metric": "Peak memory",
+      "value": 0.453,
+      "unit": "MB",
+      "target": 2048.0,
+      "passed": true,
+      "timestamp": "2025-11-15T14:37:34.939662"
+    },
+    {
+      "component": "Cache",
+      "metric": "Cache hit rate",
+      "value": 80.0,
+      "unit": "%",
+      "target": 50.0,
+      "passed": true,
+      "timestamp": "2025-11-15T14:37:34.939839"
+    }
+  ],
+  "summary": {
+    "total_tests": 12,
+    "passed": 12,
+    "failed": 0,
+    "pass_rate": 100.0
+  }
+}
