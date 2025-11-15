@@ -20,7 +20,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
 from sentence_transformers import SentenceTransformer
 
-from src.cognitive.config import settings
+from src.cognitive.config.settings import settings
 
 logger = logging.getLogger(__name__)
 

@@ -18,7 +18,7 @@ import logging
 from neo4j import GraphDatabase, Driver, Session
 from neo4j.exceptions import ServiceUnavailable, AuthError
 
-from src.cognitive.config import settings
+from src.cognitive.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
