@@ -25,6 +25,8 @@ from qdrant_client.models import (
     SearchRequest,
 )
 from sentence_transformers import SentenceTransformer
+import torch
+from transformers import AutoTokenizer, AutoModel
 
 from src.cognitive.config.settings import settings
 from src.cognitive.signatures.semantic_signature import (
@@ -98,7 +100,8 @@ class PatternBank:
     ```
 
     **Spec Compliance**:
-    - Qdrant collection: semantic_patterns (384-dim all-MiniLM-L6-v2)
+    - Qdrant collection: semantic_patterns (768-dim GraphCodeBERT)
+    - Embedding model: microsoft/graphcodebert-base (code-aware)
     - Distance metric: Cosine similarity
     - Success threshold: ≥95% for storage
     - Similarity threshold: ≥85% for retrieval
@@ -115,22 +118,36 @@ class PatternBank:
 
         Args:
             collection_name: Qdrant collection name (default: from settings)
-            embedding_model: Sentence Transformers model (default: from settings)
+            embedding_model: Embedding model name (default: from settings)
         """
         self.collection_name = collection_name or settings.qdrant_collection_semantic
         self.embedding_dimension = settings.embedding_dimension
         self.embedding_model_name = embedding_model or settings.embedding_model
+        self.use_sentence_transformers = settings.use_sentence_transformers
 
         # Qdrant client (initialized on connect())
         self.client: Optional[QdrantClient] = None
         self.is_connected = False
 
-        # Sentence Transformers encoder for embeddings
-        self.encoder = SentenceTransformer(self.embedding_model_name)
+        # Initialize embedding encoder
+        if self.use_sentence_transformers:
+            # SentenceTransformers wrapper (e.g., all-MiniLM-L6-v2)
+            self.encoder = SentenceTransformer(self.embedding_model_name)
+            self.tokenizer = None
+            self.model = None
+        else:
+            # Direct transformers usage (e.g., GraphCodeBERT)
+            self.tokenizer = AutoTokenizer.from_pretrained(self.embedding_model_name)
+            self.model = AutoModel.from_pretrained(self.embedding_model_name)
+            self.encoder = None
+
+            # Set model to eval mode
+            self.model.eval()
 
         logger.info(
             f"Initialized PatternBank with collection '{self.collection_name}', "
-            f"model '{self.embedding_model_name}'"
+            f"model '{self.embedding_model_name}' "
+            f"(SentenceTransformers: {self.use_sentence_transformers})"
         )
 
     def connect(self) -> None:
@@ -162,7 +179,7 @@ class PatternBank:
         Create Qdrant collection for semantic patterns.
 
         Creates collection with:
-        - 384 dimensions (all-MiniLM-L6-v2)
+        - 768 dimensions (GraphCodeBERT)
         - Cosine distance metric
         - Metadata indexes for domain, success_rate filtering
         """
@@ -202,6 +219,38 @@ class PatternBank:
 
         self.client.delete_collection(collection_name=self.collection_name)
         logger.warning(f"Deleted collection '{self.collection_name}'")
+
+    def _encode(self, text: str) -> List[float]:
+        """
+        Generate embedding vector from text.
+
+        Supports both SentenceTransformers and direct Transformers models.
+
+        Args:
+            text: Text to encode (code + purpose)
+
+        Returns:
+            Embedding vector as list of floats
+        """
+        if self.use_sentence_transformers:
+            # SentenceTransformers path
+            return self.encoder.encode(text).tolist()
+        else:
+            # Direct transformers path (GraphCodeBERT)
+            inputs = self.tokenizer(
+                text,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=512
+            )
+
+            with torch.no_grad():
+                outputs = self.model(**inputs)
+                # Use CLS token (first token) embedding
+                embeddings = outputs.last_hidden_state[:, 0, :].squeeze()
+
+            return embeddings.numpy().tolist()
 
     def store_pattern(
         self, signature: SemanticTaskSignature, code: str, success_rate: float
@@ -246,7 +295,7 @@ class PatternBank:
 
         # Create embedding from signature purpose + code
         embedding_text = f"{signature.purpose}\n\n{code}"
-        embedding = self.encoder.encode(embedding_text).tolist()
+        embedding = self._encode(embedding_text)
 
         # Create metadata
         metadata = {
@@ -316,7 +365,7 @@ class PatternBank:
 
         # Create query embedding
         query_text = f"{signature.purpose}"
-        query_embedding = self.encoder.encode(query_text).tolist()
+        query_embedding = self._encode(query_text)
 
         # Search Qdrant
         search_result = self.client.search(
@@ -375,7 +424,7 @@ class PatternBank:
 
         # Create query embedding
         query_text = f"{signature.purpose}"
-        query_embedding = self.encoder.encode(query_text).tolist()
+        query_embedding = self._encode(query_text)
 
         # Build filter for domain if specified
         search_filter = None
@@ -422,7 +471,7 @@ class PatternBank:
         self, signature: SemanticTaskSignature, top_k: int
     ) -> List[Dict]:
         """Internal vector search (for testing)."""
-        query_embedding = self.encoder.encode(f"{signature.purpose}").tolist()
+        query_embedding = self._encode(f"{signature.purpose}")
         results = self.client.search(
             collection_name=self.collection_name,
             query_vector=query_embedding,
