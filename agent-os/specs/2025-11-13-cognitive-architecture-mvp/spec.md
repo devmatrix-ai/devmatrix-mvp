@@ -137,11 +137,14 @@ Traditional generative coding relies on LLM randomness at scale. The cognitive a
 
 ### Key Dependencies & Integrations
 
-- **Existing Vector Store (Qdrant)**: Pattern bank collection
-- **Existing Embeddings (Sentence Transformers)**: Semantic signature encoding
+- **Existing Qdrant** (RUNNING): 21,624 patterns in `devmatrix_patterns` collection, empty `semantic_patterns` collection ready for use (ports 6333/6334)
+- **Existing Neo4j** (RUNNING): 30,071 pattern nodes + relationships already stored (ports 7474/7687)
+- **Existing PostgreSQL + pgvector**: Primary database (port 5432)
+- **Existing Redis**: State management (port 6379)
+- **Existing ChromaDB**: Current RAG system (port 8000) - may consolidate with Qdrant
 - **Existing LLM Clients (Claude, DeepSeek)**: Co-reasoning orchestration
+- **Existing Embeddings (Sentence Transformers)**: Semantic signature encoding
 - **Database Models**: Extended with semantic signature tracking
-- **Neo4j**: DAG construction and cycle detection
 
 ### Integration with DevMatrix Pipeline
 
@@ -229,32 +232,42 @@ similarity_score(STS1, STS2) ≈ 0.72 (similar but different domains)
 ### 3.2 Pattern Bank (Auto-Evolutionary)
 
 **Technology Stack**:
-- Vector DB: Qdrant (768-dimensional embeddings)
+- Vector DB: Qdrant (768-dimensional embeddings) - **ALREADY RUNNING**
 - Embeddings: Sentence Transformers (all-MiniLM-L6-v2)
 - Metadata: In-memory dictionary + database storage
 - Indexing: Hybrid (70% vector + 30% structural metadata)
 
-**Success Threshold**: 95% minimum precision to store
+**Existing Data (READY TO USE)**:
+- **21,624 patterns** already stored in `devmatrix_patterns` collection
+- Extracted from 9 production repositories (Next.js, Supabase, FastAPI, Prisma, etc.)
+- Vector size: 768, Distance: Cosine
+- **Empty `semantic_patterns` collection** ready for new STS storage
+
+**Success Threshold**: 95% minimum precision to store new patterns
 
 **Workflow**:
-1. **Validate**: Check if code meets success criteria (precision ≥ 95%)
-2. **Embed**: Generate semantic embedding of (purpose + code)
-3. **Store**: Save to Qdrant with metadata
-4. **Search**: Find similar patterns (≥85% similarity threshold)
+1. **Search Existing**: Query `devmatrix_patterns` collection for similar patterns first (21K+ available)
+2. **Validate**: Check if code meets success criteria (precision ≥ 95%)
+3. **Embed**: Generate semantic embedding of (purpose + code)
+4. **Store**: Save to `semantic_patterns` collection with metadata (cognitive-generated patterns)
+5. **Reuse**: Leverage both collections for pattern matching
 
 **Metrics Tracked**:
-- `pattern_reuse_rate`: Target 30% MVP → 50% final
+- `pattern_reuse_rate`: Target 30% MVP → 50% final (baseline: 21K+ existing patterns)
 - `avg_success_rate`: Maintain > 95% per pattern
 - `usage_count`: Track which patterns are useful
 - `creation_timestamp`: For temporal analysis
+- `collection_distribution`: Track usage of existing vs new patterns
 
 **Example Search**:
 ```
 Query: "Create user model with email validation"
   → Embed query
-  → Search Qdrant (top 5 results)
+  → Search both collections:
+     - devmatrix_patterns (21,624 existing)
+     - semantic_patterns (cognitive-generated)
   → Filter by similarity ≥ 0.85
-  → Return: [Pattern1 (0.92), Pattern2 (0.88)]
+  → Return: [Pattern1 (0.92, from Next.js), Pattern2 (0.88, from FastAPI)]
   → Adapt Pattern1 via reasoning
 ```
 
@@ -329,6 +342,12 @@ Query: "Create user model with email validation"
 
 **Purpose**: Build dependency graph with cycle detection and topological sorting
 
+**Existing Infrastructure (READY TO USE)**:
+- **Neo4j 5.26** already running (ports 7474 HTTP, 7687 Bolt)
+- **30,071 Pattern nodes** with 84 dependency relationships already stored
+- Tags, Categories, Templates, Repositories, Frameworks metadata available
+- Can leverage existing pattern relationships for initial DAG construction
+
 **Key Operations**:
 
 1. **Cycle Detection**:
@@ -350,10 +369,23 @@ Level 2: Tasks depending on Level 0-1
 - Each level executes in parallel
 - Level ordering enforced
 
+4. **Pattern Relationship Queries** (NEW - use existing data):
+```cypher
+// Find patterns with similar dependencies
+MATCH (p:Pattern)-[:DEPENDS_ON]->(dep:Pattern)
+WHERE p.name CONTAINS 'auth'
+RETURN p, dep
+
+// Find reusable dependency chains
+MATCH path=(p1:Pattern)-[:DEPENDS_ON*1..3]->(p2:Pattern)
+RETURN path
+```
+
 **Performance Targets**:
 - Build time: < 10 seconds for 100 atoms
 - Cycle detection: < 1 second
 - Topological sort: < 1 second
+- Pattern relationship queries: < 500ms (30K+ nodes indexed)
 
 ### 3.6 Co-Reasoning System
 
@@ -431,27 +463,31 @@ avg_cost = (0.70 * $0.001) + (0.25 * $0.003) + (0.05 * $0.010)
 
 ## Implementation Roadmap
 
-### Phase 0: Preparation (3 days)
+### Phase 0: Preparation (2 days)
 
 **Day 1: Branch & Directory Setup**
 - Create feature branch: `feature/cognitive-architecture-mvp`
-- Create directories: `src/cognitive/{signatures,inference,patterns,planning,validation,co_reasoning}`
-- Install dependencies: `faiss-cpu`, `sentence-transformers`, `neo4j`
+- Create directories: `src/cognitive/{signatures,inference,patterns,planning,validation,co_reasoning,infrastructure}`
+- Install Python dependencies: `neo4j`, `qdrant-client`, `sentence-transformers`
+- Add environment variables to `.env` for Neo4j/Qdrant connections
 - Effort: 2-3 hours
 
-**Day 2: Database Migrations**
-- Add semantic signature fields to atomic_unit table
-- Add pattern similarity score field
-- Create indexes for fast lookup
-- Effort: 2-3 hours
+**Day 2: Infrastructure Integration & Database Migrations**
+- **Neo4j Integration**: Create client in `src/cognitive/infrastructure/neo4j_client.py`
+  - Connect to existing Neo4j instance (bolt://localhost:7687)
+  - Test queries against existing 30,071 pattern nodes
+  - Document pattern schema and relationship types
+- **Qdrant Integration**: Create client in `src/cognitive/infrastructure/qdrant_client.py`
+  - Connect to existing Qdrant instance (localhost:6333)
+  - Test queries against `devmatrix_patterns` collection (21,624 patterns)
+  - Prepare `semantic_patterns` collection for STS storage
+- **PostgreSQL Migrations**:
+  - Add semantic signature fields to atomic_unit table
+  - Add pattern similarity score field
+  - Create indexes for fast lookup
+- Effort: 4-5 hours
 
-**Day 3: Neo4j Setup**
-- Configure Neo4j in docker-compose.yml
-- Verify connectivity
-- Create initial schemas
-- Effort: 2-3 hours
-
-**Total Effort**: 2-3 development days
+**Total Effort**: 1.5-2 development days (reduced from 3 days - infrastructure already exists)
 
 ### Phase 1: Core MVP (4 weeks)
 
