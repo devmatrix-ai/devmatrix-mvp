@@ -59,8 +59,8 @@ class CognitiveSettings(BaseSettings):
         description="Sentence Transformers model for semantic embeddings"
     )
     embedding_dimension: int = Field(
-        default=768,
-        description="Embedding vector dimension (must match Qdrant)"
+        default=384,
+        description="Embedding vector dimension (384 for all-MiniLM-L6-v2)"
     )
 
     # Pattern Bank Configuration
