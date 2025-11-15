@@ -55,12 +55,16 @@ class CognitiveSettings(BaseSettings):
 
     # Embeddings Configuration
     embedding_model: str = Field(
-        default="sentence-transformers/all-MiniLM-L6-v2",
-        description="Sentence Transformers model for semantic embeddings"
+        default="microsoft/graphcodebert-base",
+        description="GraphCodeBERT model for code-aware semantic embeddings"
     )
     embedding_dimension: int = Field(
-        default=384,
-        description="Embedding vector dimension (384 for all-MiniLM-L6-v2)"
+        default=768,
+        description="Embedding vector dimension (768 for GraphCodeBERT)"
+    )
+    use_sentence_transformers: bool = Field(
+        default=False,
+        description="Use SentenceTransformers wrapper (False for GraphCodeBERT)"
     )
 
     # Pattern Bank Configuration
