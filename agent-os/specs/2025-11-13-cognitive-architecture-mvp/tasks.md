@@ -9,9 +9,10 @@
 
 ---
 
-## PHASE 0: Preparation (3 days)
+## PHASE 0: Preparation (2 days)
 
-### Effort: 6-9 hours | Risk: 🟢 Low | Dependencies: None
+### Effort: 6-8 hours | Risk: 🟢 Low | Dependencies: None
+### NOTE: Neo4j & Qdrant infrastructure ALREADY RUNNING with 30K+ and 21K+ patterns respectively
 
 #### Task Group 0.1: Repository & Branch Setup
 **Dependencies**: None
@@ -35,41 +36,55 @@
   - Effort: 15 minutes
   - Success criteria: Packages importable from src.cognitive.*
 
-#### Task Group 0.2: Infrastructure & Dependencies
+#### Task Group 0.2: Infrastructure Integration (EXISTING INFRA)
 **Dependencies**: Task Group 0.1
+**NOTE**: Neo4j (30,071 patterns) and Qdrant (21,624 patterns) already running - just need Python clients
 
 - [ ] 0.2.1 Add Python dependencies to requirements.txt
   - Add: `sentence-transformers>=2.2.0`
-  - Add: `qdrant-client>=2.4.0`
+  - Add: `qdrant-client>=1.7.0`
   - Add: `neo4j>=5.0.0`
-  - Add: `faiss-cpu>=1.7.4`
   - Add: `pydantic>=2.0.0`
   - Add: `pytest>=7.0.0`
   - Add: `pytest-asyncio>=0.21.0`
-  - Effort: 20 minutes
+  - Effort: 15 minutes
   - Success criteria: Requirements file updated, no conflicts
 
-- [ ] 0.2.2 Setup Docker containers for Neo4j and Qdrant
-  - Update `docker-compose.yml` with Neo4j 5.x service
-  - Update `docker-compose.yml` with Qdrant service
-  - Configure ports: Neo4j (7687, 7474), Qdrant (6333)
-  - Set volume mounts for persistence
+- [ ] 0.2.2 Add environment variables for existing infrastructure
+  - Add to `.env`: `NEO4J_URI=bolt://localhost:7687`
+  - Add to `.env`: `NEO4J_USER=neo4j`, `NEO4J_PASSWORD=devmatrix`
+  - Add to `.env`: `QDRANT_HOST=localhost`, `QDRANT_PORT=6333`
+  - Add to `.env`: `QDRANT_COLLECTION_PATTERNS=devmatrix_patterns`
+  - Add to `.env`: `QDRANT_COLLECTION_SEMANTIC=semantic_patterns`
+  - Update `.env.example` with new variables
+  - Effort: 15 minutes
+  - Success criteria: Environment variables documented and configured
+
+- [ ] 0.2.3 Create Neo4j client wrapper (integrate with EXISTING data)
+  - File: `src/cognitive/infrastructure/neo4j_client.py` (~150 LOC)
+  - Connect to existing Neo4j instance (bolt://localhost:7687)
+  - Create methods: `query_patterns()`, `get_dependencies()`, `create_dag()`
+  - **Test against existing 30,071 pattern nodes**
+  - Document existing schema: Pattern, Dependency, Tag, Category nodes
+  - Effort: 1 hour
+  - Success criteria: Client connects, can query existing patterns successfully
+
+- [ ] 0.2.4 Create Qdrant client wrapper (integrate with EXISTING collections)
+  - File: `src/cognitive/infrastructure/qdrant_client.py` (~120 LOC)
+  - Connect to existing Qdrant instance (localhost:6333)
+  - Create methods: `search_patterns()`, `store_semantic_signature()`, `get_similar()`
+  - **Test against existing `devmatrix_patterns` collection (21,624 patterns)**
+  - Verify `semantic_patterns` collection exists (empty, ready for use)
   - Effort: 45 minutes
-  - Success criteria: Services start without errors, healthchecks pass
+  - Success criteria: Client connects, can search existing 21K+ patterns successfully
 
-- [ ] 0.2.3 Configure Neo4j connectivity
-  - Test connection from Python (bolt://localhost:7687)
-  - Create basic auth credentials
-  - Initialize graph database schema
+- [ ] 0.2.5 Document existing pattern schema and data
+  - Document: Neo4j pattern node properties (from existing 30K nodes)
+  - Document: Qdrant pattern metadata structure (from existing 21K vectors)
+  - Document: Pattern sources (9 repositories: Next.js, Supabase, FastAPI, etc.)
+  - Location: `/DOCS/PATTERN_SCHEMA.md`
   - Effort: 30 minutes
-  - Success criteria: Python client connects and creates nodes successfully
-
-- [ ] 0.2.4 Configure Qdrant connectivity
-  - Test connection from Python (http://localhost:6333)
-  - Create collections for pattern bank
-  - Test vector insertion and retrieval
-  - Effort: 30 minutes
-  - Success criteria: Python client connects, can store and retrieve vectors
+  - Success criteria: Schema documented, ready for cognitive architecture integration
 
 #### Task Group 0.3: Database Migrations
 **Dependencies**: Task Groups 0.1, 0.2
@@ -90,12 +105,14 @@
   - Effort: 30 minutes
   - Success criteria: Migration runs, columns accessible
 
-- [ ] 0.3.3 Create Neo4j graph schema
-  - Define AtomicTask node with properties (id, purpose, domain, etc.)
-  - Define DEPENDS_ON relationship with weight
-  - Create constraints for node uniqueness
+- [ ] 0.3.3 Extend Neo4j graph schema for cognitive architecture
+  - **Existing schema**: Pattern (30K nodes), Dependency (84), Tag (21), Category (13)
+  - **Add new**: AtomicTask node type for generated tasks
+  - **Add new**: DEPENDS_ON relationship for task dependencies
+  - Create constraints for AtomicTask uniqueness
+  - Keep existing Pattern nodes for reference/learning
   - Effort: 30 minutes
-  - Success criteria: Schema created, no constraint violations
+  - Success criteria: New schema coexists with existing 30K patterns, no conflicts
 
 - [ ] 0.3.4 Verify all database migrations run
   - Run migrations in order
