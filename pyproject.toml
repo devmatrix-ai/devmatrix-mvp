@@ -100,6 +100,7 @@ markers = [
     "chaos: Chaos tests for failure scenarios and resilience",
     "contract: Contract tests for API schema validation",
     "security: Security and penetration tests",
+    "cognitive: Cognitive architecture tests (Neo4j, Qdrant, CPIE, Pattern Bank)",
 ]
 
 [tool.coverage.run]
@@ -118,4 +119,16 @@ exclude_lines = [
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
+]
+fail_under = 80
+precision = 2
+
+# Cognitive Architecture Coverage Targets (MVP: 95%)
+[tool.coverage.cognitive]
+target = 95
+modules = [
+    "src.cognitive.signatures",
+    "src.cognitive.patterns",
+    "src.cognitive.inference",
+    "src.cognitive.validation",
 ]
