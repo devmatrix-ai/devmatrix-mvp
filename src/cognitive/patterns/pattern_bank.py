@@ -98,7 +98,7 @@ class PatternBank:
     ```
 
     **Spec Compliance**:
-    - Qdrant collection: semantic_patterns (768-dim Sentence Transformers)
+    - Qdrant collection: semantic_patterns (384-dim all-MiniLM-L6-v2)
     - Distance metric: Cosine similarity
     - Success threshold: ≥95% for storage
     - Similarity threshold: ≥85% for retrieval
@@ -162,7 +162,7 @@ class PatternBank:
         Create Qdrant collection for semantic patterns.
 
         Creates collection with:
-        - 768 dimensions (Sentence Transformers)
+        - 384 dimensions (all-MiniLM-L6-v2)
         - Cosine distance metric
         - Metadata indexes for domain, success_rate filtering
         """
@@ -238,8 +238,8 @@ class PatternBank:
                 f"(got {success_rate})"
             )
 
-        # Generate pattern ID
-        pattern_id = f"pat_{uuid.uuid4().hex[:12]}"
+        # Generate pattern ID (UUID for Qdrant compatibility)
+        pattern_id = str(uuid.uuid4())
 
         # Compute semantic hash
         semantic_hash = compute_semantic_hash(signature)
