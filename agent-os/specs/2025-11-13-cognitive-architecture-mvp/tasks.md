@@ -403,67 +403,79 @@
 
 ### Effort: 5 days | Dependencies: Week 1 complete
 
-#### Task Group 2.1: Co-Reasoning System
-**Component**: `src/cognitive/co_reasoning/co_reasoning.py` (250 LOC)
+#### Task Group 2.1: Co-Reasoning System ✅ **COMPLETE**
+**Component**: `src/cognitive/co_reasoning/co_reasoning.py` (380 LOC)
 **Dependencies**: Task Group 1.2 complete (LLM clients), Week 1 complete
 
-- [ ] 2.1.1 Write 7-10 focused unit tests for Co-Reasoning
+- [x] 2.1.1 Write 7-10 focused unit tests for Co-Reasoning ✅
+  - Created 29 comprehensive unit tests (22 core + 7 error handling)
   - Test complexity estimation accuracy
   - Test routing decisions (single vs dual)
   - Test Claude vs DeepSeek model selection
   - Test cost calculation
   - Test model-specific prompting
+  - Test error handling and edge cases
   - Effort: 2 hours
-  - Files: `tests/cognitive/unit/test_co_reasoning.py`
-  - Success criteria: All tests fail initially
+  - Files: `tests/cognitive/unit/test_co_reasoning.py` (~640 LOC)
+  - Success criteria: All tests fail initially ✅
 
-- [ ] 2.1.2 Implement complexity estimation algorithm
+- [x] 2.1.2 Implement complexity estimation algorithm ✅
   - Formula: complexity = (0.30 * io_complexity) + (0.40 * security_impact) + (0.20 * domain_novelty) + (0.10 * constraint_count)
   - Function: `estimate_complexity(signature: SemanticTaskSignature) -> float [0.0-1.0]`
-  - I/O complexity: count unique input/output types
-  - Security impact: map security_level to score (LOW=0.1, MEDIUM=0.5, HIGH=0.8, CRITICAL=1.0)
+  - I/O complexity: count unique input/output types, normalize by 10
+  - Security impact: map security_level to score (low=0.1, medium=0.5, high=0.8, critical=1.0)
   - Domain novelty: check pattern bank match (found=0.1, not_found=0.8)
-  - Constraint count: count constraints / total possible constraints
+  - Constraint count: count constraints / 10 (max possible)
   - Effort: 2 hours
-  - Success criteria: Complexity scores distributed across [0.0-1.0]
+  - Success criteria: Complexity scores distributed across [0.0-1.0] ✅
 
-- [ ] 2.1.3 Implement single-LLM routing (Complexity < 0.6)
+- [x] 2.1.3 Implement single-LLM routing (Complexity < 0.6) ✅
   - Route to Claude for both strategy and code
-  - Cost: ~$0.001 per atom
+  - Cost: $0.001 per atom
   - Expected precision: 88%
-  - Use claude-opus-4 model
+  - Use claude-opus-4 model (strategy), claude-sonnet-4 (code)
   - Effort: 1.5 hours
-  - Success criteria: Claude routing selected for simple tasks
+  - Success criteria: Claude routing selected for simple tasks ✅
 
-- [ ] 2.1.4 Implement dual-LLM routing (0.6 ≤ Complexity < 0.85)
+- [x] 2.1.4 Implement dual-LLM routing (0.6 ≤ Complexity < 0.85) ✅
   - Route to Claude for strategic reasoning
   - Route to DeepSeek for implementation
-  - Cost: ~$0.003 per atom
+  - Cost: $0.003 per atom
   - Expected precision: 94%
-  - Function: `dual_llm_reasoning(signature, strategy_prompt, code_prompt)`
+  - Function: `_generate_dual_llm(signature)`
   - Effort: 2 hours
-  - Success criteria: Claude→DeepSeek pipeline works correctly
+  - Success criteria: Claude→DeepSeek pipeline works correctly ✅
 
-- [ ] 2.1.5 Implement cost calculation
+- [x] 2.1.5 Implement cost calculation ✅
   - Function: `calculate_cost(complexity, routing_decision) -> float`
   - Single-LLM: $0.001
   - Dual-LLM: $0.003
-  - Weighted average for blended cost
+  - Error handling for unknown routing
   - Effort: 1 hour
-  - Success criteria: Cost calculations match specification
+  - Success criteria: Cost calculations match specification ✅
 
-- [ ] 2.1.6 Implement model selector (ready for Phase 2 LRM)
+- [x] 2.1.6 Implement model selector (ready for Phase 2 LRM) ✅
   - Class: `ModelSelector`
-  - Currently supports: Claude, DeepSeek
-  - Add LRM support hook (Phase 2 implementation)
+  - Currently supports: Claude (opus-4, sonnet-4), DeepSeek
+  - `add_model_support()` and `register_model()` for extensibility
+  - LRM support hook ready for Phase 2
   - Effort: 1 hour
-  - Success criteria: Model selector extensible for LRM
+  - Success criteria: Model selector extensible for LRM ✅
 
-- [ ] 2.1.7 Run unit tests and achieve >90% coverage
-  - Run: `pytest tests/cognitive/unit/test_co_reasoning.py -v`
+- [x] 2.1.7 Run unit tests and achieve >90% coverage ✅
+  - Run: `pytest tests/cognitive/unit/test_co_reasoning.py -v --cov`
   - Target coverage: >90% of co_reasoning.py
+  - **Final Results**: 29 tests, 99.15% coverage, all tests passing
   - Effort: 1 hour
-  - Success criteria: All tests passing
+  - Success criteria: All tests passing ✅
+
+**Final Results**: 29 tests, 99.15% coverage, all tests passing
+**Implementation**: 380 LOC (co_reasoning.py), 640 LOC (test_co_reasoning.py)
+**Components**:
+- `estimate_complexity()` - 4-component weighted formula
+- `calculate_cost()` - Routing-based cost calculation
+- `ModelSelector` - Extensible model selection with LRM hook
+- `CoReasoningSystem` - Complete orchestration with error handling
 
 #### Task Group 2.2: Multi-Pass Planning
 **Component**: `src/cognitive/planning/multi_pass_planner.py` (520 LOC)
