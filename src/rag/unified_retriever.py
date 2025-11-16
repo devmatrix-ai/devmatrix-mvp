@@ -77,15 +77,15 @@ class UnifiedRAGRetriever:
         self.embeddings = embedding_model or create_embedding_model()
 
         # Initialize separate embedding model for Qdrant (768-dim)
-        # Using all-mpnet-base-v2 (collection was built with this model)
+        # Using GraphCodeBERT (collection rebuilt with this model)
         self.qdrant_embeddings = None
         try:
             from sentence_transformers import SentenceTransformer
-            # Use all-mpnet-base-v2 for compatibility with existing collection (768-dim)
-            self.qdrant_embeddings = SentenceTransformer('all-mpnet-base-v2')
-            self.logger.info("Loaded all-mpnet-base-v2 model for Qdrant (768-dim, collection-compatible)")
+            # Use GraphCodeBERT for code-aware embeddings (768-dim)
+            self.qdrant_embeddings = SentenceTransformer('microsoft/graphcodebert-base')
+            self.logger.info("Loaded GraphCodeBERT model for Qdrant (768-dim, code-aware)")
         except Exception as e:
-            self.logger.warning(f"Could not load all-mpnet-base-v2 for Qdrant: {e}")
+            self.logger.warning(f"Could not load GraphCodeBERT for Qdrant: {e}")
 
         # Initialize ChromaDB
         self.chroma_enabled = False
@@ -240,7 +240,7 @@ class UnifiedRAGRetriever:
             return []
 
         try:
-            # Generate query embedding using all-mpnet-base-v2 (768-dim, collection-compatible)
+            # Generate query embedding using GraphCodeBERT (768-dim, code-aware)
             if self.qdrant_embeddings is None:
                 self.logger.warning("Qdrant embeddings not available")
                 return []
