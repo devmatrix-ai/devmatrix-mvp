@@ -161,16 +161,15 @@ class VectorStore:
 
         try:
             self.logger.info(
-                "Connecting to ChromaDB",
-                host=host,
-                port=port,
+                "Initializing ChromaDB",
+                persist_directory=".chromadb",
                 collection=collection_name
             )
 
-            # Initialize ChromaDB client
-            self.client = chromadb.HttpClient(
-                host=host,
-                port=port,
+            # Initialize ChromaDB client in persistent mode
+            # Use PersistentClient instead of HttpClient to avoid version compatibility issues
+            self.client = chromadb.PersistentClient(
+                path=".chromadb",
                 settings=Settings(
                     anonymized_telemetry=False,
                     allow_reset=False,
@@ -184,18 +183,17 @@ class VectorStore:
             )
 
             self.logger.info(
-                "ChromaDB connection established",
+                "ChromaDB initialized successfully",
                 collection=collection_name,
-                count=self.collection.count()
+                count=self.collection.count(),
+                mode="persistent_local"
             )
 
         except Exception as e:
             self.logger.error(
-                "Failed to connect to ChromaDB",
+                "Failed to initialize ChromaDB",
                 error=str(e),
-                error_type=type(e).__name__,
-                host=host,
-                port=port
+                error_type=type(e).__name__
             )
             raise
 
