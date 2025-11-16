@@ -34,7 +34,7 @@ from src.models.masterplan import (
     PhaseType
 )
 from src.config.database import get_db_context
-from src.rag import create_retriever, create_vector_store, create_embedding_model
+from src.rag import create_retriever, create_vector_store, create_embedding_model, create_unified_retriever
 from src.observability import get_logger
 from src.observability.metrics_collector import MetricsCollector
 from src.websocket import WebSocketManager
@@ -254,10 +254,10 @@ class MasterPlanGenerator:
         # Initialize RAG components if enabled
         if self.use_rag:
             try:
-                embedding_model = create_embedding_model()
-                vector_store = create_vector_store(embedding_model)
-                self.retriever = create_retriever(vector_store)
-                logger.info("RAG retriever initialized for MasterPlan generation")
+                # Initialize Unified RAG (ChromaDB + Qdrant 21K + Neo4j 30K)
+                self.retriever = create_unified_retriever()
+                logger.info("Unified RAG initialized", chroma=self.retriever.chroma_enabled,
+                           qdrant=self.retriever.qdrant_enabled, neo4j=self.retriever.neo4j_enabled)
             except Exception as e:
                 logger.warning(f"Failed to initialize RAG: {e}. Continuing without RAG.")
                 self.use_rag = False
@@ -604,43 +604,18 @@ class MasterPlanGenerator:
             return discovery
 
     async def _retrieve_rag_examples(self, discovery: DiscoveryDocument) -> List[Dict]:
-        """
-        Retrieve similar examples from RAG.
-
-        Args:
-            discovery: DiscoveryDocument
-
-        Returns:
-            List of similar code examples
-        """
+        """Retrieve similar examples from Unified RAG (ChromaDB + Qdrant + Neo4j)."""
         if not self.use_rag or not self.retriever:
             return []
-
         try:
-            # Build query from discovery
             query = f"Domain: {discovery.domain}. Bounded contexts: {', '.join([bc['name'] for bc in discovery.bounded_contexts])}"
-
-            # Retrieve top 5 similar examples
-            results = self.retriever.retrieve(
-                query=query,
-                top_k=5,
-                min_similarity=0.5
-            )
-
-            logger.info(f"Retrieved {len(results)} RAG examples for MasterPlan generation")
-
-            return [
-                {
-                    "code": r.code,
-                    "metadata": r.metadata,
-                    "similarity": r.similarity
-                }
-                for r in results
-            ]
-
+            results = await self.retriever.retrieve(query=query, top_k=5)
+            logger.info(f"Retrieved {len(results)} RAG examples", sources=[r.source for r in results])
+            return [{"code": r.content, "metadata": {**r.metadata, "source": r.source, "rank": r.rank}, "similarity": r.score} for r in results]
         except Exception as e:
             logger.warning(f"Failed to retrieve RAG examples: {e}. Continuing without RAG.")
             return []
+
 
     async def _generate_masterplan_llm_with_progress(
         self,

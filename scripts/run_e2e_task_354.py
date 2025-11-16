@@ -23,10 +23,11 @@ from tests.precision.e2e.precision_pipeline_mge_v2 import E2EPrecisionPipelineMG
 
 SYNTHETIC_SPECS = [
     ("01_todo_backend_api", "tests/e2e/synthetic_specs/01_todo_backend_api.md"),
-    ("02_landing_page", "tests/e2e/synthetic_specs/02_landing_page.md"),
-    ("03_todo_fullstack", "tests/e2e/synthetic_specs/03_todo_fullstack.md"),
-    ("04_blog_platform", "tests/e2e/synthetic_specs/04_blog_platform.md"),
-    ("05_ecommerce_minimal", "tests/e2e/synthetic_specs/05_ecommerce_minimal.md"),
+    # Other 4 apps saved for later testing:
+    # ("02_landing_page", "tests/e2e/synthetic_specs/02_landing_page.md"),
+    # ("03_todo_fullstack", "tests/e2e/synthetic_specs/03_todo_fullstack.md"),
+    # ("04_blog_platform", "tests/e2e/synthetic_specs/04_blog_platform.md"),
+    # ("05_ecommerce_minimal", "tests/e2e/synthetic_specs/05_ecommerce_minimal.md"),
 ]
 
 

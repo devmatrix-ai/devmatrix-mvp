@@ -314,7 +314,7 @@ Return ONLY the test function code (Python), no markdown or explanation.
 
         response = self.client.messages.create(
             model=self.model,
-            max_tokens=1500,
+            max_tokens=4000,  # Increased to prevent f-string truncation
             temperature=0.2,  # Slight creativity for test variations
             messages=[{"role": "user", "content": prompt}],
         )

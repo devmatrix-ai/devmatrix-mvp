@@ -73,6 +73,11 @@ from src.rag.persistent_cache import (
     CacheStats,
     get_cache,
 )
+from src.rag.unified_retriever import (
+    UnifiedRAGRetriever,
+    UnifiedRetrievalResult,
+    create_unified_retriever,
+)
 
 __all__ = [
     "EmbeddingModel",
@@ -100,4 +105,7 @@ __all__ = [
     "CacheEntry",
     "CacheStats",
     "get_cache",
+    "UnifiedRAGRetriever",
+    "UnifiedRetrievalResult",
+    "create_unified_retriever",
 ]
