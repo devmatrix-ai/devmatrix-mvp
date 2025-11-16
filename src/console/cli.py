@@ -16,6 +16,10 @@ from src.console.session_manager import SessionManager, PipelineState
 from src.console.websocket_client import WebSocketClient
 from src.console.pipeline_visualizer import PipelineVisualizer, TaskNode
 from src.console.command_dispatcher import CommandDispatcher
+from src.console.token_tracker import TokenTracker
+from src.console.artifact_previewer import ArtifactPreviewer
+from src.console.autocomplete import CommandAutocomplete
+from src.console.log_viewer import LogViewer, LogLevel
 from src.observability import setup_logging, get_logger
 
 logger = get_logger(__name__)
@@ -38,6 +42,16 @@ class DevMatrixConsole:
         self.websocket: Optional[WebSocketClient] = None
         self.running = True
         self.session_id: Optional[str] = None
+
+        # Phase 2 features
+        self.token_tracker = TokenTracker(
+            default_model=self.config.default_model,
+            budget=self.config.token_budget if self.config.enable_token_tracking else None,
+            cost_limit=self.config.cost_limit if self.config.enable_cost_tracking else None,
+        )
+        self.artifact_previewer = ArtifactPreviewer(self.console)
+        self.log_viewer = LogViewer(self.console)
+        self.autocomplete = CommandAutocomplete(self.dispatcher)
 
         logger.info(f"DevMatrixConsole initialized (theme={self.config.theme})")
 
