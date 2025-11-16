@@ -286,7 +286,7 @@ class UnifiedRAGRetriever:
                            n.description AS description,
                            n.name AS name,
                            labels(n) AS labels,
-                           id(n) AS node_id
+                           elementId(n) AS node_id
                     LIMIT $limit
                     """,
                     parameters={"query": query, "limit": top_k}

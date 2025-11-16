@@ -275,12 +275,12 @@ class ValidationService:
             },
             'issues': [
                 {
-                    'level': issue.level,
-                    'category': issue.category,
-                    'message': issue.message,
-                    'line': issue.line,
-                    'column': issue.column,
-                    'suggestion': issue.suggestion
+                    'level': issue['level'] if isinstance(issue, dict) else issue.level,
+                    'category': issue['category'] if isinstance(issue, dict) else issue.category,
+                    'message': issue['message'] if isinstance(issue, dict) else issue.message,
+                    'line': issue['line'] if isinstance(issue, dict) else issue.line,
+                    'column': issue['column'] if isinstance(issue, dict) else issue.column,
+                    'suggestion': issue['suggestion'] if isinstance(issue, dict) else issue.suggestion
                 }
                 for issue in result.issues
             ],
@@ -303,11 +303,11 @@ class ValidationService:
             },
             'issues': [
                 {
-                    'level': issue.level,
-                    'category': issue.category,
-                    'message': issue.message,
-                    'affected_atoms': [str(aid) for aid in issue.affected_atoms],
-                    'suggestion': issue.suggestion
+                    'level': issue['level'] if isinstance(issue, dict) else issue.level,
+                    'category': issue['category'] if isinstance(issue, dict) else issue.category,
+                    'message': issue['message'] if isinstance(issue, dict) else issue.message,
+                    'affected_atoms': [str(aid) for aid in (issue['affected_atoms'] if isinstance(issue, dict) else issue.affected_atoms)],
+                    'suggestion': issue['suggestion'] if isinstance(issue, dict) else issue.suggestion
                 }
                 for issue in result.issues
             ],
@@ -330,11 +330,11 @@ class ValidationService:
             },
             'issues': [
                 {
-                    'level': issue.level,
-                    'category': issue.category,
-                    'message': issue.message,
-                    'affected_tasks': [str(tid) for tid in issue.affected_tasks],
-                    'suggestion': issue.suggestion
+                    'level': issue['level'] if isinstance(issue, dict) else issue.level,
+                    'category': issue['category'] if isinstance(issue, dict) else issue.category,
+                    'message': issue['message'] if isinstance(issue, dict) else issue.message,
+                    'affected_tasks': [str(tid) for tid in (issue['affected_tasks'] if isinstance(issue, dict) else issue.affected_tasks)],
+                    'suggestion': issue['suggestion'] if isinstance(issue, dict) else issue.suggestion
                 }
                 for issue in result.issues
             ],
@@ -362,11 +362,11 @@ class ValidationService:
             },
             'issues': [
                 {
-                    'level': issue.level,
-                    'category': issue.category,
-                    'message': issue.message,
-                    'affected_phases': [str(pid) for pid in issue.affected_phases],
-                    'suggestion': issue.suggestion
+                    'level': issue['level'] if isinstance(issue, dict) else issue.level,
+                    'category': issue['category'] if isinstance(issue, dict) else issue.category,
+                    'message': issue['message'] if isinstance(issue, dict) else issue.message,
+                    'affected_phases': [str(pid) for pid in (issue['affected_phases'] if isinstance(issue, dict) else issue.affected_phases)],
+                    'suggestion': issue['suggestion'] if isinstance(issue, dict) else issue.suggestion
                 }
                 for issue in result.issues
             ],
