@@ -455,6 +455,9 @@ class MGE_V2_OrchestrationService:
                 "timestamp": datetime.utcnow().isoformat()
             }
 
+            # CRITICAL: Return to close the async generator after error
+            return
+
     async def orchestrate_from_request(
         self,
         user_request: str,
