@@ -609,7 +609,8 @@ class MasterPlanGenerator:
             return []
         try:
             query = f"Domain: {discovery.domain}. Bounded contexts: {', '.join([bc['name'] for bc in discovery.bounded_contexts])}"
-            results = await self.retriever.retrieve(query=query, top_k=5)
+            # Increased from 5 to 30 to leverage 21,624 Qdrant patterns + Neo4j + ChromaDB
+            results = await self.retriever.retrieve(query=query, top_k=30)
             logger.info(f"Retrieved {len(results)} RAG examples", sources=[r.source for r in results])
             return [{"code": r.content, "metadata": {**r.metadata, "source": r.source, "rank": r.rank}, "similarity": r.score} for r in results]
         except Exception as e:

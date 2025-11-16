@@ -87,15 +87,11 @@ class UnifiedRAGRetriever:
         except Exception as e:
             self.logger.warning(f"Could not load GraphCodeBERT for Qdrant: {e}")
 
-        # Initialize ChromaDB
+        # ChromaDB disabled - focusing on Qdrant (21,624 patterns) + Neo4j (30,314 nodes)
+        # ChromaDB is empty and duplicates Qdrant functionality
         self.chroma_enabled = False
         self.chroma = None
-        try:
-            self.chroma = chroma_store or create_vector_store(self.embeddings)
-            self.chroma_enabled = True
-            self.logger.info("ChromaDB initialized successfully")
-        except Exception as e:
-            self.logger.warning(f"ChromaDB initialization failed: {e}")
+        self.logger.info("ChromaDB disabled - using Qdrant + Neo4j for RAG")
 
         # Initialize Qdrant (21,624 patterns)
         self.qdrant_enabled = False
@@ -133,20 +129,20 @@ class UnifiedRAGRetriever:
         self,
         query: str,
         top_k: int = 10,
-        chroma_weight: float = 0.3,
-        qdrant_weight: float = 0.5,
-        neo4j_weight: float = 0.2,
+        chroma_weight: float = 0.0,
+        qdrant_weight: float = 0.7,
+        neo4j_weight: float = 0.3,
         **kwargs
     ) -> List[UnifiedRetrievalResult]:
         """
-        Retrieve from all sources and merge results.
+        Retrieve from Qdrant + Neo4j (ChromaDB disabled).
 
         Args:
             query: Search query
             top_k: Number of results to return
-            chroma_weight: Weight for ChromaDB scores (default 0.3)
-            qdrant_weight: Weight for Qdrant scores (default 0.5)
-            neo4j_weight: Weight for Neo4j scores (default 0.2)
+            chroma_weight: Weight for ChromaDB scores (disabled, default 0.0)
+            qdrant_weight: Weight for Qdrant scores (default 0.7 - primary source)
+            neo4j_weight: Weight for Neo4j scores (default 0.3 - graph relationships)
 
         Returns:
             List of unified retrieval results, ranked by weighted score
@@ -273,24 +269,52 @@ class UnifiedRAGRetriever:
             return []
 
         try:
+            # Tokenize query for better keyword matching
+            # Extract meaningful tokens (min 3 chars, exclude common words)
+            import re
+            tokens = re.findall(r'\b\w{3,}\b', query.lower())
+            # Remove common stop words
+            stop_words = {'the', 'and', 'for', 'with', 'from', 'that', 'this', 'domain', 'bounded', 'contexts'}
+            tokens = [t for t in tokens if t not in stop_words]
+
+            if not tokens:
+                self.logger.warning(f"No valid tokens extracted from query: {query}")
+                return []
+
+            # Use first 3 most relevant tokens for search
+            search_tokens = tokens[:3]
+
             # Keyword-based graph search using actual Neo4j schema
             # Schema: Pattern nodes have 'code', 'description', 'name' properties
             with self.neo4j_driver.session() as session:
-                result = session.run(
-                    """
+                # Build dynamic WHERE clause for multiple tokens
+                where_clauses = []
+                for i, token in enumerate(search_tokens):
+                    where_clauses.append(f"""
+                        (n.description CONTAINS $token{i}
+                         OR n.code CONTAINS $token{i}
+                         OR n.name CONTAINS $token{i})
+                    """)
+
+                where_condition = " OR ".join(where_clauses)
+
+                cypher_query = f"""
                     MATCH (n)
-                    WHERE n.description CONTAINS $query
-                       OR n.code CONTAINS $query
-                       OR n.name CONTAINS $query
+                    WHERE {where_condition}
                     RETURN n.code AS code,
                            n.description AS description,
                            n.name AS name,
                            labels(n) AS labels,
                            elementId(n) AS node_id
                     LIMIT $limit
-                    """,
-                    parameters={"query": query, "limit": top_k}
-                )
+                """
+
+                # Build parameters dict
+                params = {"limit": top_k}
+                for i, token in enumerate(search_tokens):
+                    params[f"token{i}"] = token
+
+                result = session.run(cypher_query, parameters=params)
 
                 records = list(result)
 
