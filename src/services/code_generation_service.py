@@ -24,6 +24,12 @@ from datetime import datetime
 from src.models import MasterPlanTask
 from src.llm import EnhancedAnthropicClient
 from src.observability import StructuredLogger
+from src.services.error_pattern_store import (
+    ErrorPatternStore,
+    ErrorPattern,
+    SuccessPattern,
+    get_error_pattern_store
+)
 
 logger = StructuredLogger("code_generation_service", output_json=True)
 
@@ -44,7 +50,8 @@ class CodeGenerationService:
         self,
         db: Session,
         llm_client: Optional[EnhancedAnthropicClient] = None,
-        max_retries: int = 3
+        max_retries: int = 3,
+        enable_feedback_loop: bool = True
     ):
         """
         Initialize code generation service.
@@ -53,14 +60,26 @@ class CodeGenerationService:
             db: Database session
             llm_client: LLM client (creates new if not provided)
             max_retries: Maximum retry attempts per task
+            enable_feedback_loop: Enable cognitive feedback loop for learning
         """
         self.db = db
         self.llm_client = llm_client or EnhancedAnthropicClient()
         self.max_retries = max_retries
+        self.enable_feedback_loop = enable_feedback_loop
+
+        # Initialize error pattern store for cognitive feedback loop
+        self.pattern_store = None
+        if enable_feedback_loop:
+            try:
+                self.pattern_store = get_error_pattern_store()
+                logger.info("Cognitive feedback loop enabled")
+            except Exception as e:
+                logger.warning(f"Could not initialize feedback loop: {e}")
+                self.enable_feedback_loop = False
 
         logger.info(
             "CodeGenerationService initialized",
-            extra={"max_retries": max_retries}
+            extra={"max_retries": max_retries, "feedback_loop": self.enable_feedback_loop}
         )
 
     async def generate_code_for_task(self, task_id: uuid.UUID) -> Dict[str, Any]:
@@ -98,10 +117,11 @@ class CodeGenerationService:
                 "code_length": len(task.llm_response)
             }
 
-        # Build prompt
-        prompt = self._build_prompt(task)
+        # Track errors and code for feedback loop
+        last_error = None
+        last_code = None
 
-        # Generate with retries
+        # Generate with retries (now with cognitive feedback loop)
         for attempt in range(1, self.max_retries + 1):
             try:
                 logger.info(
@@ -109,9 +129,50 @@ class CodeGenerationService:
                     extra={
                         "task_id": str(task_id),
                         "attempt": attempt,
-                        "max_retries": self.max_retries
+                        "max_retries": self.max_retries,
+                        "feedback_loop": self.enable_feedback_loop and attempt > 1
                     }
                 )
+
+                # On retry attempts, consult cognitive feedback loop
+                if attempt > 1 and self.enable_feedback_loop and self.pattern_store and last_error:
+                    logger.info(
+                        "Consulting cognitive feedback loop for retry",
+                        extra={"task_id": str(task_id), "attempt": attempt}
+                    )
+
+                    # Search for similar errors in history
+                    similar_errors = await self.pattern_store.search_similar_errors(
+                        task_description=task.description,
+                        error_message=str(last_error),
+                        top_k=3
+                    )
+
+                    # Search for successful patterns
+                    successful_patterns = await self.pattern_store.search_successful_patterns(
+                        task_description=task.description,
+                        top_k=5
+                    )
+
+                    logger.info(
+                        "RAG feedback retrieved",
+                        extra={
+                            "task_id": str(task_id),
+                            "similar_errors_found": len(similar_errors),
+                            "successful_patterns_found": len(successful_patterns)
+                        }
+                    )
+
+                    # Build enhanced prompt with feedback
+                    prompt = self._build_prompt_with_feedback(
+                        task,
+                        similar_errors,
+                        successful_patterns,
+                        str(last_error)
+                    )
+                else:
+                    # First attempt - use standard prompt
+                    prompt = self._build_prompt(task)
 
                 # Call LLM
                 response = await self.llm_client.generate_with_caching(
@@ -154,19 +215,52 @@ class CodeGenerationService:
                         "code_length": len(code),
                         "tokens_input": task.llm_tokens_input,
                         "tokens_output": task.llm_tokens_output,
-                        "cost_usd": task.llm_cost_usd
+                        "cost_usd": task.llm_cost_usd,
+                        "attempt": attempt
                     }
                 )
+
+                # Store successful pattern in cognitive feedback loop
+                if self.enable_feedback_loop and self.pattern_store:
+                    try:
+                        success_pattern = SuccessPattern(
+                            success_id=str(uuid.uuid4()),
+                            task_id=str(task_id),
+                            task_description=task.description,
+                            generated_code=code,
+                            quality_score=1.0,  # Will be updated by quality analyzer
+                            timestamp=datetime.now(),
+                            metadata={
+                                "task_name": task.name,
+                                "complexity": task.complexity,
+                                "attempt": attempt,
+                                "used_feedback": attempt > 1
+                            }
+                        )
+                        await self.pattern_store.store_success(success_pattern)
+                        logger.info(
+                            "Stored successful pattern in feedback loop",
+                            extra={"task_id": str(task_id)}
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to store success pattern",
+                            extra={"task_id": str(task_id), "error": str(e)}
+                        )
 
                 return {
                     "success": True,
                     "code_length": len(code),
                     "tokens": task.llm_tokens_input + task.llm_tokens_output,
                     "cost_usd": task.llm_cost_usd,
-                    "attempt": attempt
+                    "attempt": attempt,
+                    "used_feedback_loop": attempt > 1 and self.enable_feedback_loop
                 }
 
             except Exception as e:
+                last_error = e
+                last_code = None
+
                 logger.error(
                     "Code generation attempt failed",
                     extra={
@@ -176,6 +270,34 @@ class CodeGenerationService:
                     },
                     exc_info=True
                 )
+
+                # Store error pattern in cognitive feedback loop
+                if self.enable_feedback_loop and self.pattern_store:
+                    try:
+                        error_pattern = ErrorPattern(
+                            error_id=str(uuid.uuid4()),
+                            task_id=str(task_id),
+                            task_description=task.description,
+                            error_type="syntax_error" if "syntax" in str(e).lower() else "validation_error",
+                            error_message=str(e),
+                            failed_code=last_code or "",
+                            attempt=attempt,
+                            timestamp=datetime.now(),
+                            metadata={
+                                "task_name": task.name,
+                                "complexity": task.complexity
+                            }
+                        )
+                        await self.pattern_store.store_error(error_pattern)
+                        logger.info(
+                            "Stored error pattern in feedback loop",
+                            extra={"task_id": str(task_id), "attempt": attempt}
+                        )
+                    except Exception as store_error:
+                        logger.warning(
+                            "Failed to store error pattern",
+                            extra={"task_id": str(task_id), "error": str(store_error)}
+                        )
 
                 if attempt == self.max_retries:
                     # Final attempt failed, save error
@@ -221,6 +343,85 @@ class CodeGenerationService:
 - Follow best practices for {language}
 
 **Complexity**: {task.complexity}
+
+Generate ONLY the code, wrapped in a code block with the language specified.
+Do not include explanations or additional text outside the code block."""
+
+        return prompt
+
+    def _build_prompt_with_feedback(
+        self,
+        task: MasterPlanTask,
+        similar_errors: list,
+        successful_patterns: list,
+        last_error: str
+    ) -> str:
+        """
+        Build enhanced prompt with RAG feedback from error patterns.
+
+        Args:
+            task: MasterPlan task
+            similar_errors: List of similar historical errors
+            successful_patterns: List of successful code patterns
+            last_error: Error from previous attempt
+
+        Returns:
+            Enhanced prompt with learning feedback
+        """
+        language = self._detect_language(task)
+
+        # Build base prompt
+        prompt = f"""Generate production-ready code for the following task:
+
+**Task #{task.task_number}: {task.name}**
+
+**Description**: {task.description}
+
+**Requirements**:
+- Language: {language}
+- Target LOC: 50-100 lines
+- Include proper imports
+- Add type hints/annotations
+- Include docstrings
+- Follow best practices for {language}
+
+**Complexity**: {task.complexity}
+
+---
+
+**IMPORTANT - LEARN FROM PREVIOUS MISTAKES**:
+
+**Previous Attempt Failed With**: {last_error}
+"""
+
+        # Add similar error patterns if available
+        if similar_errors:
+            prompt += "\n**⚠️ Similar Errors Found in History**:\n"
+            for i, err in enumerate(similar_errors[:3], 1):
+                prompt += f"\n{i}. Task: '{err.task_description}'\n"
+                prompt += f"   Error: {err.error_message}\n"
+                prompt += f"   Similarity: {err.similarity_score:.2%}\n"
+                if err.failed_code:
+                    prompt += f"   Failed Code Pattern: {err.failed_code[:200]}...\n"
+
+        # Add successful patterns if available
+        if successful_patterns:
+            prompt += "\n**✅ Successful Patterns for Similar Tasks**:\n"
+            for i, pattern in enumerate(successful_patterns[:3], 1):
+                prompt += f"\n{i}. Task: '{pattern['task_description']}'\n"
+                prompt += f"   Similarity: {pattern['similarity_score']:.2%}\n"
+                prompt += f"   Quality Score: {pattern['quality_score']:.2f}/1.0\n"
+                if pattern.get('generated_code'):
+                    prompt += f"   Code Pattern:\n```{language}\n{pattern['generated_code'][:400]}\n```\n"
+
+        prompt += """
+---
+
+**ACTION REQUIRED**:
+1. Analyze the error from the previous attempt
+2. Review similar historical errors to avoid the same mistakes
+3. Study the successful patterns provided above
+4. Generate CORRECT code that avoids these known pitfalls
 
 Generate ONLY the code, wrapped in a code block with the language specified.
 Do not include explanations or additional text outside the code block."""

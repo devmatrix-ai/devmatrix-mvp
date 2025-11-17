@@ -182,41 +182,64 @@ class MasterPlanCalculator:
         """
         Calculate task breakdown based on complexity metrics.
 
-        Formula:
-        - Setup (1 task): Initial repo, Docker, configuration
-        - Modeling (BC × 2 + Agg × 1): DDD modeling tasks
-        - Persistence (Agg × 1): Database/ORM setup per aggregate
-        - Implementation (Agg × 1 + Services × 1): Feature implementation
-        - Integration (Services × 0.5): Cross-service integration
-        - Testing (Agg × 1): Unit/integration tests
-        - Deployment (2 tasks): Docker, CI/CD, deployment
-        - Optimization (1 task): Monitoring, performance tuning
+        ULTRA-ATOMIC PHILOSOPHY: Each task = 1 file operation
+        More tasks = More detailed and deterministic plan
+
+        Formula (per file):
+        - Setup: 8+ files (pyproject.toml, Dockerfile, docker-compose, .env, README, etc.)
+        - Modeling: 2 files per aggregate (model.py + schema.py)
+        - Persistence: 3 files per aggregate (repository.py + migration.py + db_model.py)
+        - Implementation: 2-3 files per service/aggregate (service.py + router.py + deps.py)
+        - Integration: 5+ files (main.py, config.py, middleware/*, dependencies.py)
+        - Testing: 4+ files per aggregate (test_model, test_repo, test_api, test_service)
+        - Deployment: 8+ files (CI/CD, Docker prod, k8s, nginx, scripts)
+        - Optimization: 6+ files (logging, metrics, tracing, dashboards, monitoring)
         """
         breakdown = TaskBreakdown()
 
-        # Setup: 1 task (repo, docker, config)
-        breakdown.setup_tasks = 1
+        # Setup: Core infrastructure files + per BC configs
+        # Files: pyproject.toml, Dockerfile, docker-compose.yml, .env.example, README,
+        #        alembic.ini, src/__init__, tests/__init__ + BC-specific configs
+        breakdown.setup_tasks = max(8, 6 + metrics.bounded_contexts * 3)
 
-        # Modeling: 2 per BC + 1 per Aggregate
-        breakdown.modeling_tasks = (metrics.bounded_contexts * 2) + metrics.aggregates
+        # Modeling: 2 files per Aggregate (Pydantic model + Schema)
+        # Files: src/models/{aggregate}.py + src/schemas/{aggregate}_schema.py
+        breakdown.modeling_tasks = metrics.aggregates * 2
 
-        # Persistence: 1 per Aggregate
-        breakdown.persistence_tasks = metrics.aggregates
+        # Persistence: 3 files per Aggregate (Repository + Migration + ORM model)
+        # Files: repositories/{agg}_repository.py + migrations/00X_create_{agg}.py
+        #        + database/models/{agg}_db.py
+        breakdown.persistence_tasks = metrics.aggregates * 3
 
-        # Implementation: 1 per Aggregate + 1 per Service
-        breakdown.implementation_tasks = metrics.aggregates + metrics.services
+        # Implementation: Service files + Router files + Dependencies
+        # Files: services/{svc}_service.py + api/routers/{agg}.py + api/dependencies/{svc}_deps.py
+        breakdown.implementation_tasks = metrics.services * 2 + metrics.aggregates
 
-        # Integration: 0.5 per Service (rounded up)
-        breakdown.integration_tasks = (metrics.services + 1) // 2
+        # Integration: Core app files + middleware + per-service integration
+        # Files: api/main.py, core/config.py, core/dependencies.py, middleware/*.py
+        breakdown.integration_tasks = max(5, 4 + metrics.services + (metrics.services // 3))
 
-        # Testing: 1 per Aggregate + 1 general
-        breakdown.testing_tasks = metrics.aggregates + 1
+        # Testing: ULTRA-ATOMIC - 4 test files per aggregate + general + E2E + contracts
+        # Files per aggregate: tests/models/test_{agg}.py, tests/repositories/test_{agg}_repository.py,
+        #                      tests/api/test_{agg}_router.py, tests/services/test_{agg}_service.py
+        # General: test_config.py, test_main.py, e2e/test_*_flow.py, contracts/test_*_schema.py,
+        #          performance/test_load.py, security/test_auth.py
+        breakdown.testing_tasks = max(
+            12,  # ABSOLUTE MINIMUM - always at least 12 test files
+            metrics.aggregates * 4 +  # 4 test files per aggregate
+            max(3, metrics.aggregates // 3) +  # E2E flow tests (1 per 3 aggregates)
+            4  # General: config, main, performance, security
+        )
 
-        # Deployment: 2 tasks (CI/CD + deployment)
-        breakdown.deployment_tasks = 2
+        # Deployment: Multi-environment, multi-stage deployment files
+        # Files: .github/workflows/ci.yml, .github/workflows/deploy.yml, Dockerfile.prod,
+        #        docker-compose.prod.yml, kubernetes/*, terraform/*, scripts/deploy.sh, nginx.conf
+        breakdown.deployment_tasks = max(8, 7 + metrics.bounded_contexts * 2)
 
-        # Optimization: 1 task (monitoring, perf tuning)
-        breakdown.optimization_tasks = 1
+        # Optimization: Observability stack + monitoring per BC
+        # Files: observability/logging.py, observability/metrics.py, observability/tracing.py,
+        #        grafana/dashboards/*.json, prometheus/prometheus.yml, scripts/performance_test.sh
+        breakdown.optimization_tasks = max(6, 5 + (metrics.aggregates // 4))
 
         return breakdown
 
@@ -261,13 +284,18 @@ class MasterPlanCalculator:
     def _generate_rationale(self, metrics: ComplexityMetrics, breakdown: TaskBreakdown) -> str:
         """
         Generate human-readable rationale for calculated task count.
+        ULTRA-ATOMIC: Each task = 1 file operation
         """
         return (
-            f"Calculated {breakdown.total_tasks} tasks from: "
-            f"{metrics.bounded_contexts} bounded contexts × 2 = {metrics.bounded_contexts * 2} modeling tasks; "
-            f"{metrics.aggregates} aggregates × 3 (model+persist+test) = {metrics.aggregates * 3} tasks; "
-            f"{metrics.services} services × 1.5 = {int(metrics.services * 1.5)} tasks; "
-            f"+ {breakdown.setup_tasks + breakdown.deployment_tasks} setup/deployment tasks. "
+            f"Calculated {breakdown.total_tasks} ULTRA-ATOMIC tasks (1 task = 1 file) from: "
+            f"{breakdown.setup_tasks} setup files (config, docker, infra); "
+            f"{breakdown.modeling_tasks} model files ({metrics.aggregates} agg × 2 files); "
+            f"{breakdown.persistence_tasks} persistence files ({metrics.aggregates} agg × 3 files); "
+            f"{breakdown.implementation_tasks} implementation files ({metrics.services} svc × 2 + {metrics.aggregates} routers); "
+            f"{breakdown.integration_tasks} integration files (main, middleware, config); "
+            f"{breakdown.testing_tasks} test files ({metrics.aggregates} agg × 4 + E2E + contracts + general); "
+            f"{breakdown.deployment_tasks} deployment files (CI/CD, k8s, nginx, scripts); "
+            f"{breakdown.optimization_tasks} optimization files (observability, monitoring). "
             f"Max parallelization: {self._determine_parallelization(metrics, breakdown)} concurrent tasks."
         )
 

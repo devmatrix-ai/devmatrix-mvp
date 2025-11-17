@@ -17,8 +17,10 @@ Cost: ~$0.32 per MasterPlan (with prompt caching)
 
 import json
 import asyncio
+import uuid
 from typing import Dict, Any, List, Optional
 from uuid import UUID
+from datetime import datetime
 
 from src.llm import EnhancedAnthropicClient, TaskType, TaskComplexity
 from src.models.masterplan import (
@@ -39,6 +41,7 @@ from src.observability import get_logger
 from src.observability.metrics_collector import MetricsCollector
 from src.websocket import WebSocketManager
 from src.services.masterplan_calculator import MasterPlanCalculator
+from src.services.error_pattern_store import get_error_pattern_store, ErrorPattern, SuccessPattern
 from src.utils.retry_decorator import retry, create_retryable_config
 
 logger = get_logger("masterplan_generator")
@@ -68,12 +71,63 @@ The MasterPlan consists of **3 Phases** with **120 ULTRA-ATOMIC tasks** (complet
 - Key integrations between bounded contexts
 - Main API endpoints
 
-### Phase 3: Polish (20-30 tasks)
-- Testing (focus on critical paths)
-- Error handling and validation
-- Performance optimization (key areas)
-- Essential documentation
-- Deployment preparation
+### Phase 3: Polish & Quality (25-35 tasks)
+
+#### 🧪 Testing (12-18 tasks) - **MANDATORY**
+
+**CRITICAL REQUIREMENT**: Generate SPECIFIC test files, NOT generic "testing strategy" tasks.
+
+**Testing Task Breakdown**:
+
+1. **Unit Tests** (6-8 tasks):
+   - 1 test task per domain model (User, Product, Order, etc.)
+   - File: `tests/models/test_*.py`
+   - Example: "Generate unit tests for User model"
+
+2. **Integration Tests** (3-5 tasks):
+   - 1 test task per API router group (auth, products, orders, etc.)
+   - File: `tests/api/test_*.py`
+   - Example: "Generate integration tests for auth endpoints"
+
+3. **E2E Tests** (2-3 tasks):
+   - 1 test task per critical user flow (signup, checkout, etc.)
+   - File: `tests/e2e/test_*.py`
+   - Example: "Generate E2E tests for checkout flow"
+
+4. **Contract Tests** (1-2 tasks):
+   - 1 test task per aggregate boundary
+   - File: `tests/contracts/test_*.py`
+   - Example: "Generate contract tests for Order API schema"
+
+**Testing Task Template Example**:
+{
+  "task_number": X,
+  "name": "Generate unit tests for [ModelName] model",
+  "description": "Create tests/models/test_[model].py with pytest tests for [ModelName] model covering CRUD operations, validation rules, business logic, and edge cases",
+  "complexity": "low",
+  "depends_on_tasks": [Y],
+  "target_files": ["tests/models/test_[model].py"],
+  "estimated_tokens": 600,
+  "subtasks": [
+    {"subtask_number": 1, "name": "Import test dependencies", "description": "import pytest; from src.models.[model] import [ModelName]"},
+    {"subtask_number": 2, "name": "Test model creation with valid data", "description": "def test_create_[model]_valid(): assert model.field == expected"},
+    {"subtask_number": 3, "name": "Test field validation", "description": "def test_validation(): with pytest.raises(ValidationError)"},
+    {"subtask_number": 4, "name": "Test business logic", "description": "def test_method(): assert model.method() == expected"},
+    {"subtask_number": 5, "name": "Test edge cases", "description": "def test_edge_case(): [specific edge case test]"}
+  ]
+}
+
+#### ✅ Quality & Deployment (8-12 tasks):
+- Error handling middleware and validation layers
+- Performance optimization (caching, indexing, query optimization)
+- API documentation (OpenAPI/Swagger specs)
+- Deployment configuration (Docker, environment variables)
+
+**IMPORTANT**:
+- Testing tasks are MANDATORY - MUST generate 12-18 specific test file creation tasks
+- Each testing task MUST specify exact file path in `target_files`
+- Each testing task MUST have 4-6 specific subtasks describing test cases
+- Testing tasks MUST depend on implementation tasks (use `depends_on_tasks`)
 
 ## ULTRA-ATOMIC Task Philosophy:
 
@@ -210,9 +264,15 @@ Each subtask is a SPECIFIC action:
 - Return ONLY valid JSON, no markdown, no explanations outside the JSON
 - Generate EXACTLY 120 tasks total (complete production-ready implementation)
 - Cover ALL aspects: Auth, RBAC, Users, Organizations, Projects, Boards, Issues, Sprints, Comments, Attachments, Notifications, Search, Reporting, Real-time, API/Webhooks
+- **🧪 TESTING IS MANDATORY**: MUST include 12-18 SPECIFIC test generation tasks in Phase 3
+  * Unit tests for ALL domain models (tests/models/test_*.py)
+  * Integration tests for ALL API routers (tests/api/test_*.py)
+  * E2E tests for critical user flows (tests/e2e/test_*.py)
+  * Contract tests for aggregate boundaries (tests/contracts/test_*.py)
 - All task_numbers must be sequential starting from 1
 - Dependencies must reference valid task_numbers
-- EVERY task MUST include a "subtasks" array with 3-5 items (concise)
+- Testing tasks MUST depend on implementation tasks (use depends_on_tasks)
+- EVERY task MUST include a "subtasks" array with 3-6 items
 - Keep descriptions concise to reduce token count
 """
 
@@ -264,6 +324,14 @@ class MasterPlanGenerator:
                 self.retriever = None
         else:
             self.retriever = None
+
+        # Initialize Error Pattern Store for cognitive feedback loop
+        try:
+            self.error_pattern_store = get_error_pattern_store()
+            logger.info("🧠 Cognitive feedback loop initialized for MasterPlan generation")
+        except Exception as e:
+            logger.warning(f"Failed to initialize error pattern store: {e}. Continuing without cognitive feedback.")
+            self.error_pattern_store = None
 
         logger.info("MasterPlanGenerator initialized", use_rag=self.use_rag, has_websocket=bool(websocket_manager))
 
@@ -346,17 +414,180 @@ class MasterPlanGenerator:
             # Retrieve similar examples from RAG
             rag_examples = await self._retrieve_rag_examples(discovery)
 
-            # Generate MasterPlan with LLM (with progress updates)
-            masterplan_json = await self._generate_masterplan_llm_with_progress(
-                discovery=discovery,
-                rag_examples=rag_examples,
-                session_id=session_id,
-                calculated_task_count=calculated_task_count,
-                calculation_rationale=calculation_rationale
-            )
+            # Generate MasterPlan with LLM (with RETRY LOGIC to prevent cascade failures)
+            MAX_RETRIES = 3
+            masterplan_data = None
+            last_error = None
+            previous_error_context = None
 
-            # Parse MasterPlan
-            masterplan_data = self._parse_masterplan(masterplan_json)
+            for attempt in range(1, MAX_RETRIES + 1):
+                try:
+                    logger.info(
+                        f"🔄 MasterPlan generation attempt {attempt}/{MAX_RETRIES}",
+                        session_id=session_id,
+                        previous_error=str(last_error) if last_error else None
+                    )
+
+                    # Generate with error context from previous attempt
+                    masterplan_json = await self._generate_masterplan_llm_with_progress(
+                        discovery=discovery,
+                        rag_examples=rag_examples,
+                        session_id=session_id,
+                        calculated_task_count=calculated_task_count,
+                        calculation_rationale=calculation_rationale,
+                        retry_context=previous_error_context
+                    )
+
+                    # Parse MasterPlan
+                    masterplan_data = self._parse_masterplan(masterplan_json)
+
+                    # SUCCESS - break out of retry loop
+                    logger.info(
+                        f"✅ MasterPlan generated successfully on attempt {attempt}",
+                        session_id=session_id
+                    )
+
+                    # 🧠 COGNITIVE FEEDBACK LOOP - Store successful MasterPlan pattern
+                    if self.error_pattern_store:
+                        try:
+                            success_pattern = SuccessPattern(
+                                success_id=str(uuid.uuid4()),
+                                task_id=str(session_id),
+                                task_description=f"MasterPlan generation for {discovery.domain}",
+                                generated_code=masterplan_json,  # Store the generated MasterPlan JSON
+                                quality_score=1.0,  # Perfect score for successful generation
+                                timestamp=datetime.now(),
+                                metadata={
+                                    "calculated_task_count": calculated_task_count or 120,
+                                    "attempt": attempt,
+                                    "domain": discovery.domain,
+                                    "calculation_rationale": calculation_rationale[:200] if calculation_rationale else None
+                                }
+                            )
+                            await self.error_pattern_store.store_success(success_pattern)
+                            logger.info(
+                                f"🧠 Stored MasterPlan success pattern in cognitive feedback loop",
+                                session_id=session_id,
+                                pattern_id=success_pattern.success_id
+                            )
+                        except Exception as storage_error:
+                            logger.warning(
+                                f"Failed to store success pattern: {storage_error}",
+                                session_id=session_id
+                            )
+
+                    break
+
+                except (ValueError, json.JSONDecodeError) as e:
+                    last_error = e
+                    error_msg = str(e)
+
+                    logger.warning(
+                        f"⚠️  MasterPlan attempt {attempt} failed: {error_msg[:200]}",
+                        session_id=session_id,
+                        attempt=attempt,
+                        max_retries=MAX_RETRIES
+                    )
+
+                    # 🧠 COGNITIVE FEEDBACK LOOP - Query RAG for similar errors and successful patterns
+                    similar_errors = []
+                    successful_patterns = []
+
+                    if attempt > 1 and self.error_pattern_store:
+                        logger.info(
+                            f"🧠 Consulting cognitive feedback loop for MasterPlan retry",
+                            session_id=session_id,
+                            attempt=attempt
+                        )
+
+                        try:
+                            # Query RAG for similar MasterPlan generation errors
+                            similar_errors = await self.error_pattern_store.search_similar_errors(
+                                task_description=f"MasterPlan generation for {discovery.domain}",
+                                error_message=error_msg,
+                                top_k=3
+                            )
+
+                            # Query RAG for successful MasterPlans of similar complexity
+                            successful_patterns = await self.error_pattern_store.search_successful_patterns(
+                                task_description=f"MasterPlan generation (complexity: {calculated_task_count or 120} tasks)",
+                                top_k=5
+                            )
+
+                            logger.info(
+                                f"🧠 RAG feedback retrieved",
+                                similar_errors_found=len(similar_errors),
+                                successful_patterns_found=len(successful_patterns),
+                                session_id=session_id
+                            )
+                        except Exception as rag_error:
+                            logger.warning(
+                                f"Failed to retrieve RAG feedback: {rag_error}",
+                                session_id=session_id
+                            )
+
+                    # Build error context for next retry
+                    previous_error_context = {
+                        "attempt": attempt,
+                        "error_type": type(e).__name__,
+                        "error_message": error_msg[:500],  # Limit error message length
+                        "guidance": (
+                            f"Previous attempt {attempt} failed with JSON parsing error. "
+                            f"Please ensure: 1) All strings are properly closed with quotes, "
+                            f"2) All brackets/braces are balanced, 3) No trailing commas, "
+                            f"4) JSON is complete and valid. Error was: {error_msg[:200]}"
+                        ),
+                        "similar_errors": similar_errors,  # 🧠 RAG feedback
+                        "successful_patterns": successful_patterns  # 🧠 RAG feedback
+                    }
+
+                    # If this was the last attempt, re-raise
+                    if attempt == MAX_RETRIES:
+                        logger.error(
+                            f"❌ MasterPlan generation failed after {MAX_RETRIES} attempts",
+                            session_id=session_id,
+                            final_error=error_msg
+                        )
+
+                        # 🧠 COGNITIVE FEEDBACK LOOP - Store failed MasterPlan error pattern
+                        if self.error_pattern_store:
+                            try:
+                                error_pattern = ErrorPattern(
+                                    error_id=str(uuid.uuid4()),
+                                    task_id=str(session_id),
+                                    task_description=f"MasterPlan generation for {discovery.domain}",
+                                    error_type=type(e).__name__,
+                                    error_message=error_msg[:1000],  # Limit to 1000 chars
+                                    failed_code="",  # No partial code available for MasterPlan
+                                    attempt=attempt,
+                                    timestamp=datetime.now(),
+                                    metadata={
+                                        "calculated_task_count": calculated_task_count or 120,
+                                        "domain": discovery.domain,
+                                        "calculation_rationale": calculation_rationale[:200] if calculation_rationale else None,
+                                        "retry_context": {
+                                            "similar_errors_consulted": len(similar_errors),
+                                            "successful_patterns_consulted": len(successful_patterns)
+                                        }
+                                    }
+                                )
+                                await self.error_pattern_store.store_error(error_pattern)
+                                logger.info(
+                                    f"🧠 Stored MasterPlan error pattern in cognitive feedback loop",
+                                    session_id=session_id,
+                                    pattern_id=error_pattern.error_id
+                                )
+                            except Exception as storage_error:
+                                logger.warning(
+                                    f"Failed to store error pattern: {storage_error}",
+                                    session_id=session_id
+                                )
+
+                        raise
+
+            # Safety check (should never happen due to re-raise above)
+            if masterplan_data is None:
+                raise RuntimeError("MasterPlan generation failed - no data returned")
 
             # Emit parsing complete event
             if self.ws_manager:
@@ -624,7 +855,8 @@ class MasterPlanGenerator:
         rag_examples: List[Dict],
         session_id: str,
         calculated_task_count: int,
-        calculation_rationale: str
+        calculation_rationale: str,
+        retry_context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Generate MasterPlan with simulated progress updates.
@@ -643,7 +875,7 @@ class MasterPlanGenerator:
 
         # Start generation in background
         generation_task = asyncio.create_task(
-            self._generate_masterplan_llm(discovery, rag_examples, calculated_task_count, calculation_rationale)
+            self._generate_masterplan_llm(discovery, rag_examples, calculated_task_count, calculation_rationale, retry_context)
         )
 
         # Simulate progress updates while waiting
@@ -713,7 +945,8 @@ class MasterPlanGenerator:
         discovery: DiscoveryDocument,
         rag_examples: List[Dict],
         calculated_task_count: int = None,
-        calculation_rationale: str = None
+        calculation_rationale: str = None,
+        retry_context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Generate MasterPlan using LLM.
@@ -759,8 +992,52 @@ class MasterPlanGenerator:
         task_count = calculated_task_count or 120  # Fallback to 120 if not calculated
         rationale = calculation_rationale or "Default 120 tasks (legacy calculation)"
 
-        variable_prompt = f"""Generate a complete MasterPlan ({task_count} atomic tasks) for the following project:
+        # Add retry context if this is a retry attempt
+        retry_guidance = ""
+        if retry_context:
+            # Build cognitive feedback section from RAG
+            cognitive_feedback = ""
+            similar_errors = retry_context.get('similar_errors', [])
+            successful_patterns = retry_context.get('successful_patterns', [])
 
+            if similar_errors or successful_patterns:
+                cognitive_feedback = "\n\n🧠 **COGNITIVE FEEDBACK FROM RAG (Learn from past experience)**:\n"
+
+                if similar_errors:
+                    cognitive_feedback += f"\n**Similar MasterPlan Errors Found** ({len(similar_errors)} patterns):\n"
+                    for i, error in enumerate(similar_errors[:3], 1):
+                        cognitive_feedback += f"""
+{i}. Task: {error.task_description[:100]}...
+   Error: {error.error_message[:150]}...
+   Similarity: {error.similarity_score:.2%}
+"""
+                    cognitive_feedback += "**LESSON**: Avoid these same JSON formatting mistakes.\n"
+
+                if successful_patterns:
+                    cognitive_feedback += f"\n**Successful MasterPlan Patterns** ({len(successful_patterns)} examples):\n"
+                    for i, pattern in enumerate(successful_patterns[:3], 1):
+                        cognitive_feedback += f"""
+{i}. Task: {pattern.get('task_description', 'N/A')[:100]}...
+   Quality: {pattern.get('quality_score', 0.0):.1%}
+   Similarity: {pattern.get('similarity_score', 0.0):.2%}
+"""
+                    cognitive_feedback += "**LESSON**: Follow these successful structural patterns.\n"
+
+            retry_guidance = f"""
+
+⚠️ RETRY CONTEXT - PREVIOUS ATTEMPT FAILED:
+**Attempt Number**: {retry_context.get('attempt', 'unknown')}
+**Error Type**: {retry_context.get('error_type', 'unknown')}
+**Error Message**: {retry_context.get('error_message', 'unknown')}
+
+**CRITICAL GUIDANCE TO FIX ERROR**:
+{retry_context.get('guidance', 'Please generate valid JSON')}
+{cognitive_feedback}
+PLEASE CAREFULLY REVIEW THE ERROR ABOVE AND ENSURE YOUR JSON OUTPUT IS VALID.
+"""
+
+        variable_prompt = f"""Generate a complete MasterPlan ({task_count} atomic tasks) for the following project:
+{retry_guidance}
 ## Task Calculation:
 **Calculated Task Count**: {task_count} tasks
 **Calculation Rationale**: {rationale}

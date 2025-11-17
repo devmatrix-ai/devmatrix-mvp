@@ -10,8 +10,10 @@ def test_dispatcher_initialization():
     commands = dispatcher.list_commands()
 
     assert "help" in commands
-    assert "run" in commands
+    assert "spec" in commands
     assert "plan" in commands
+    assert "execute" in commands
+    assert "validate" in commands
     assert "test" in commands
     assert "exit" in commands
 
@@ -62,7 +64,7 @@ def test_execute_help_command():
 
     result = dispatcher.execute("help")
     assert result.success is True
-    assert "run" in result.output
+    assert "spec" in result.output or "plan" in result.output
     assert "Available commands" in result.output
 
 
@@ -75,27 +77,28 @@ def test_execute_unknown_command():
     assert "Unknown command" in result.error
 
 
-def test_execute_run_command():
-    """Test executing run command."""
+def test_execute_spec_command():
+    """Test executing spec command."""
     dispatcher = CommandDispatcher()
 
-    result = dispatcher.execute("/run my_task")
+    result = dispatcher.execute("/spec build a REST API")
     assert result.success is True
-    assert "my_task" in result.output
+    assert "REST API" in result.output
 
 
 def test_execute_plan_command():
     """Test executing plan command."""
     dispatcher = CommandDispatcher()
 
-    result = dispatcher.execute("/plan feature")
+    result = dispatcher.execute("/plan show")
     assert result.success is True
+    assert "masterplan" in result.output.lower()
 
 
-def test_execute_plan_invalid_type():
-    """Test plan command with invalid type."""
+def test_execute_plan_invalid_action():
+    """Test plan command with invalid action."""
     dispatcher = CommandDispatcher()
 
-    result = dispatcher.execute("/plan invalid_type")
+    result = dispatcher.execute("/plan invalid_action")
     assert result.success is False
-    assert "Invalid plan type" in result.error
+    assert "Invalid plan action" in result.error

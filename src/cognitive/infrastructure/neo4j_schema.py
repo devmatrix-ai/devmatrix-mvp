@@ -13,6 +13,13 @@ New Schema (Task 0.3.3):
 - AtomicTask node type for generated tasks
 - DEPENDS_ON relationship for task dependencies
 - Constraints for AtomicTask uniqueness
+
+New Schema (Cognitive Feedback Loop):
+- CodeGenerationError node type for failed code generation attempts
+- SuccessfulCode node type for successful code generation
+- HAD_ERROR relationship: (Task)-[:HAD_ERROR]->(CodeGenerationError)
+- GENERATED relationship: (Task)-[:GENERATED]->(SuccessfulCode)
+- SIMILAR_TO relationship: (CodeGenerationError)-[:SIMILAR_TO]->(CodeGenerationError)
 """
 
 from typing import Dict, Any
@@ -92,6 +99,94 @@ class Neo4jSchemaSetup:
             except Exception as e:
                 logger.warning(f"Index creation skipped: {e}")
 
+    def create_feedback_loop_constraints(self) -> None:
+        """
+        Create constraints for Cognitive Feedback Loop nodes.
+
+        Constraints:
+        - CodeGenerationError.error_id must be unique
+        - SuccessfulCode.success_id must be unique
+        """
+        with self.driver.session(database=settings.neo4j_database) as session:
+            # CodeGenerationError unique constraint
+            try:
+                session.run("""
+                    CREATE CONSTRAINT code_gen_error_unique_id IF NOT EXISTS
+                    FOR (e:CodeGenerationError) REQUIRE e.error_id IS UNIQUE
+                """)
+                logger.info("Created CodeGenerationError unique constraint on error_id")
+            except Exception as e:
+                logger.warning(f"Constraint creation skipped (may already exist): {e}")
+
+            # SuccessfulCode unique constraint
+            try:
+                session.run("""
+                    CREATE CONSTRAINT successful_code_unique_id IF NOT EXISTS
+                    FOR (s:SuccessfulCode) REQUIRE s.success_id IS UNIQUE
+                """)
+                logger.info("Created SuccessfulCode unique constraint on success_id")
+            except Exception as e:
+                logger.warning(f"Constraint creation skipped (may already exist): {e}")
+
+    def create_feedback_loop_indexes(self) -> None:
+        """
+        Create indexes for efficient error pattern querying.
+
+        Indexes:
+        - CodeGenerationError.error_type for filtering by error type
+        - CodeGenerationError.timestamp for time-based queries
+        - CodeGenerationError.task_id for linking to tasks
+        - SuccessfulCode.timestamp for time-based queries
+        - SuccessfulCode.task_id for linking to tasks
+        """
+        with self.driver.session(database=settings.neo4j_database) as session:
+            # CodeGenerationError indexes
+            try:
+                session.run("""
+                    CREATE INDEX code_gen_error_type_idx IF NOT EXISTS
+                    FOR (e:CodeGenerationError) ON (e.error_type)
+                """)
+                logger.info("Created index on CodeGenerationError.error_type")
+            except Exception as e:
+                logger.warning(f"Index creation skipped: {e}")
+
+            try:
+                session.run("""
+                    CREATE INDEX code_gen_error_timestamp_idx IF NOT EXISTS
+                    FOR (e:CodeGenerationError) ON (e.timestamp)
+                """)
+                logger.info("Created index on CodeGenerationError.timestamp")
+            except Exception as e:
+                logger.warning(f"Index creation skipped: {e}")
+
+            try:
+                session.run("""
+                    CREATE INDEX code_gen_error_task_id_idx IF NOT EXISTS
+                    FOR (e:CodeGenerationError) ON (e.task_id)
+                """)
+                logger.info("Created index on CodeGenerationError.task_id")
+            except Exception as e:
+                logger.warning(f"Index creation skipped: {e}")
+
+            # SuccessfulCode indexes
+            try:
+                session.run("""
+                    CREATE INDEX successful_code_timestamp_idx IF NOT EXISTS
+                    FOR (s:SuccessfulCode) ON (s.timestamp)
+                """)
+                logger.info("Created index on SuccessfulCode.timestamp")
+            except Exception as e:
+                logger.warning(f"Index creation skipped: {e}")
+
+            try:
+                session.run("""
+                    CREATE INDEX successful_code_task_id_idx IF NOT EXISTS
+                    FOR (s:SuccessfulCode) ON (s.task_id)
+                """)
+                logger.info("Created index on SuccessfulCode.task_id")
+            except Exception as e:
+                logger.warning(f"Index creation skipped: {e}")
+
     def verify_existing_schema(self) -> Dict[str, Any]:
         """
         Verify existing Pattern nodes are intact.
@@ -129,6 +224,8 @@ class Neo4jSchemaSetup:
         1. Verify existing schema (30K+ Pattern nodes)
         2. Create AtomicTask constraints
         3. Create indexes
+        4. Create Cognitive Feedback Loop constraints
+        5. Create Cognitive Feedback Loop indexes
         """
         logger.info("Starting Neo4j schema setup for cognitive architecture")
 
@@ -141,24 +238,47 @@ class Neo4jSchemaSetup:
         self.create_atomic_task_constraints()
         self.create_indexes()
 
+        # Create Cognitive Feedback Loop schema
+        self.create_feedback_loop_constraints()
+        self.create_feedback_loop_indexes()
+
         logger.info("Neo4j schema setup complete")
 
     def rollback_schema(self) -> None:
         """
         Rollback cognitive architecture schema changes.
 
-        WARNING: Only removes AtomicTask nodes and constraints.
+        WARNING: Only removes AtomicTask, CodeGenerationError, SuccessfulCode nodes and constraints.
         Does NOT touch existing Pattern nodes (30K+).
         """
         with self.driver.session(database=settings.neo4j_database) as session:
-            # Drop constraints
+            # Drop Cognitive Feedback Loop constraints
+            try:
+                session.run("DROP CONSTRAINT code_gen_error_unique_id IF EXISTS")
+                session.run("DROP CONSTRAINT successful_code_unique_id IF EXISTS")
+                logger.info("Dropped Cognitive Feedback Loop constraints")
+            except Exception as e:
+                logger.warning(f"Feedback Loop constraint drop failed: {e}")
+
+            # Drop Cognitive Feedback Loop indexes
+            try:
+                session.run("DROP INDEX code_gen_error_type_idx IF EXISTS")
+                session.run("DROP INDEX code_gen_error_timestamp_idx IF EXISTS")
+                session.run("DROP INDEX code_gen_error_task_id_idx IF EXISTS")
+                session.run("DROP INDEX successful_code_timestamp_idx IF EXISTS")
+                session.run("DROP INDEX successful_code_task_id_idx IF EXISTS")
+                logger.info("Dropped Cognitive Feedback Loop indexes")
+            except Exception as e:
+                logger.warning(f"Feedback Loop index drop failed: {e}")
+
+            # Drop AtomicTask constraints
             try:
                 session.run("DROP CONSTRAINT atomic_task_unique_id IF EXISTS")
                 logger.info("Dropped AtomicTask constraint")
             except Exception as e:
                 logger.warning(f"Constraint drop failed: {e}")
 
-            # Drop indexes
+            # Drop AtomicTask indexes
             try:
                 session.run("DROP INDEX atomic_task_status_idx IF EXISTS")
                 session.run("DROP INDEX atomic_task_created_at_idx IF EXISTS")
@@ -166,10 +286,19 @@ class Neo4jSchemaSetup:
             except Exception as e:
                 logger.warning(f"Index drop failed: {e}")
 
+            # Delete all Cognitive Feedback Loop nodes (but NOT Pattern nodes)
+            result = session.run("MATCH (e:CodeGenerationError) DETACH DELETE e RETURN count(e) AS deleted")
+            error_count = result.single()["deleted"]
+            logger.info(f"Deleted {error_count} CodeGenerationError nodes")
+
+            result = session.run("MATCH (s:SuccessfulCode) DETACH DELETE s RETURN count(s) AS deleted")
+            success_count = result.single()["deleted"]
+            logger.info(f"Deleted {success_count} SuccessfulCode nodes")
+
             # Delete all AtomicTask nodes (but NOT Pattern nodes)
             result = session.run("MATCH (t:AtomicTask) DETACH DELETE t RETURN count(t) AS deleted")
-            deleted_count = result.single()["deleted"]
-            logger.info(f"Deleted {deleted_count} AtomicTask nodes")
+            task_count = result.single()["deleted"]
+            logger.info(f"Deleted {task_count} AtomicTask nodes")
 
         logger.info("Schema rollback complete")
 

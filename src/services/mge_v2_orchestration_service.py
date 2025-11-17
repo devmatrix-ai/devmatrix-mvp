@@ -63,7 +63,8 @@ class MGE_V2_OrchestrationService:
         db: Session,
         api_key: Optional[str] = None,
         enable_caching: bool = True,
-        enable_rag: bool = True
+        enable_rag: bool = True,
+        websocket_manager: Optional[Any] = None
     ):
         """
         Initialize MGE V2 Orchestration Service.
@@ -73,8 +74,10 @@ class MGE_V2_OrchestrationService:
             api_key: Anthropic API key (uses env var if not provided)
             enable_caching: Enable MGE V2 LLM caching (default: True)
             enable_rag: Enable RAG for masterplan generation (default: True)
+            websocket_manager: WebSocket manager for progress events (optional)
         """
         self.db = db
+        self.ws_manager = websocket_manager
 
         # Initialize LLM client
         self.llm_client = EnhancedAnthropicClient(
@@ -110,6 +113,52 @@ class MGE_V2_OrchestrationService:
                 "enable_rag": enable_rag
             }
         )
+
+    def _build_phases_structure(self, tasks: List[MasterPlanTask]) -> List[Dict[str, Any]]:
+        """
+        Build phases structure from masterplan tasks.
+
+        Returns:
+            List of phase dictionaries with task counts
+        """
+        # Phase mapping (adjust based on your task categorization)
+        phase_names = {
+            0: "Discovery",
+            1: "Analysis",
+            2: "Planning",
+            3: "Execution",
+            4: "Validation"
+        }
+
+        # Count tasks per phase
+        phase_counts = {}
+        for task in tasks:
+            # Try to infer phase from task attributes or use default
+            phase_num = getattr(task, 'phase', 3)  # Default to Execution
+            phase_counts[phase_num] = phase_counts.get(phase_num, 0) + 1
+
+        # Build phases list
+        phases = []
+        for phase_num in sorted(phase_counts.keys()):
+            phases.append({
+                "phase": phase_num,
+                "name": phase_names.get(phase_num, f"Phase {phase_num}"),
+                "task_count": phase_counts[phase_num],
+                "status": "pending"
+            })
+
+        return phases
+
+    def _get_phase_name(self, phase_num: int) -> str:
+        """Get phase name from phase number."""
+        phase_names = {
+            0: "Discovery",
+            1: "Analysis",
+            2: "Planning",
+            3: "Execution",
+            4: "Validation"
+        }
+        return phase_names.get(phase_num, f"Phase {phase_num}")
 
     async def orchestrate_from_discovery(
         self,
@@ -164,6 +213,18 @@ class MGE_V2_OrchestrationService:
                 MasterPlanTask.masterplan_id == masterplan_id
             ).all()
 
+            # Emit execution_started WebSocket event
+            if self.ws_manager:
+                import time
+                execution_start_time = time.time()
+                phases = self._build_phases_structure(tasks)
+                await self.ws_manager.emit_execution_started(
+                    session_id=session_id,
+                    execution_id=str(masterplan_id),
+                    total_tasks=len(tasks),
+                    phases=phases
+                )
+
             # Step 2: Code Generation (NEW - missing step!)
             yield {
                 "type": "status",
@@ -180,6 +241,7 @@ class MGE_V2_OrchestrationService:
 
             # Parallel code generation - process 5 tasks simultaneously
             batch_size = 5
+            completed_tasks_count = 0
             for batch_start in range(0, len(tasks), batch_size):
                 batch_tasks = tasks[batch_start:batch_start + batch_size]
 
@@ -191,6 +253,9 @@ class MGE_V2_OrchestrationService:
 
                 # Process results and yield progress
                 for idx, (task, result) in enumerate(zip(batch_tasks, batch_results)):
+                    import time
+                    task_start = time.time()
+
                     # Handle exceptions
                     if isinstance(result, Exception):
                         logger.error(f"Code generation failed for task {task.task_id}: {result}")
@@ -199,6 +264,27 @@ class MGE_V2_OrchestrationService:
                     if result.get("success"):
                         total_code_length += result.get("code_length", 0)
                         total_cost += result.get("cost_usd", 0.0)
+                        completed_tasks_count += 1
+
+                    task_duration_ms = (time.time() - task_start) * 1000
+
+                    # Emit WebSocket progress_update event (Opción 2 - 1 evento por TASK)
+                    if self.ws_manager:
+                        await self.ws_manager.emit_progress_update(
+                            session_id=session_id,
+                            task_id=f"task_{task.task_number:03d}",
+                            task_name=task.name or f"Task {task.task_number}",
+                            phase=getattr(task, 'phase', 3),
+                            phase_name=self._get_phase_name(getattr(task, 'phase', 3)),
+                            status="completed" if result.get("success") else "failed",
+                            progress=completed_tasks_count,
+                            progress_percent=(completed_tasks_count / len(tasks)) * 100,
+                            completed_tasks=completed_tasks_count,
+                            total_tasks=len(tasks),
+                            current_wave=1,  # Code generation is wave 1
+                            duration_ms=task_duration_ms,
+                            subtask_status={}
+                        )
 
                     yield {
                         "type": "progress",
@@ -411,6 +497,91 @@ class MGE_V2_OrchestrationService:
             precision = 0.9  # Placeholder - would come from actual execution metrics
             execution_time = 0.0  # Placeholder
 
+            # COGNITIVE FEEDBACK LOOP: Quality scoring and pattern analysis
+            yield {
+                "type": "status",
+                "phase": "quality_analysis",
+                "message": "Analyzing error patterns and learning effectiveness...",
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
+            learning_metrics = None
+            recurring_errors = []
+            problematic_tasks = []
+
+            try:
+                from src.services.error_pattern_analyzer import get_error_pattern_analyzer
+
+                analyzer = get_error_pattern_analyzer()
+
+                # Analyze recurring errors
+                recurring_errors = await analyzer.analyze_recurring_errors(
+                    time_window_hours=1,  # Analyze last hour for this run
+                    min_occurrences=2
+                )
+
+                # Identify problematic tasks
+                problematic_tasks = await analyzer.identify_problematic_tasks(
+                    failure_rate_threshold=0.5,
+                    min_attempts=2
+                )
+
+                # Calculate learning effectiveness
+                learning_metrics = await analyzer.calculate_learning_effectiveness(
+                    time_window_hours=1
+                )
+
+                logger.info(
+                    "Quality analysis complete",
+                    extra={
+                        "recurring_errors": len(recurring_errors),
+                        "problematic_tasks": len(problematic_tasks),
+                        "learning_improvement": f"{learning_metrics.improvement_percentage:.1f}%"
+                    }
+                )
+
+                # Log insights if learning is working
+                if learning_metrics.improvement_percentage > 10:
+                    logger.info(
+                        "✅ Cognitive feedback loop is effective!",
+                        extra={
+                            "success_rate_improvement": f"{learning_metrics.improvement_percentage:.1f}%",
+                            "success_with_feedback": f"{learning_metrics.success_rate_with_feedback:.2%}",
+                            "success_without_feedback": f"{learning_metrics.success_rate_without_feedback:.2%}"
+                        }
+                    )
+                elif learning_metrics.total_errors > 5:
+                    logger.warning(
+                        "⚠️ Low learning effectiveness detected",
+                        extra={
+                            "improvement": f"{learning_metrics.improvement_percentage:.1f}%",
+                            "total_errors": learning_metrics.total_errors,
+                            "recommendation": "Consider enriching error patterns with more context"
+                        }
+                    )
+
+                # Yield quality metrics
+                yield {
+                    "type": "quality_metrics",
+                    "recurring_errors": len(recurring_errors),
+                    "problematic_tasks": len(problematic_tasks),
+                    "learning_effectiveness": {
+                        "total_errors": learning_metrics.total_errors,
+                        "errors_with_feedback": learning_metrics.errors_with_feedback,
+                        "success_rate_improvement": f"{learning_metrics.improvement_percentage:.1f}%",
+                        "success_with_feedback": f"{learning_metrics.success_rate_with_feedback:.2%}",
+                        "success_without_feedback": f"{learning_metrics.success_rate_without_feedback:.2%}",
+                        "is_learning": learning_metrics.improvement_percentage > 10
+                    },
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+
+            except Exception as e:
+                logger.warning(
+                    "Quality analysis failed (non-critical)",
+                    extra={"error": str(e)}
+                )
+
             # Update MasterPlan status to completed
             masterplan.status = MasterPlanStatus.COMPLETED
             self.db.commit()
@@ -426,8 +597,8 @@ class MGE_V2_OrchestrationService:
                 }
             )
 
-            # Final status
-            yield {
+            # Final status with learning metrics
+            complete_event = {
                 "type": "complete",
                 "masterplan_id": str(masterplan_id),
                 "execution_id": str(execution_id),
@@ -438,6 +609,16 @@ class MGE_V2_OrchestrationService:
                 "execution_time": execution_time,
                 "timestamp": datetime.utcnow().isoformat()
             }
+
+            # Add learning metrics if available
+            if learning_metrics:
+                complete_event["learning_metrics"] = {
+                    "improvement": f"{learning_metrics.improvement_percentage:.1f}%",
+                    "is_effective": learning_metrics.improvement_percentage > 10,
+                    "total_errors": learning_metrics.total_errors
+                }
+
+            yield complete_event
 
         except Exception as e:
             logger.error(

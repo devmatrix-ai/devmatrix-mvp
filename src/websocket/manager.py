@@ -875,3 +875,321 @@ class WebSocketManager:
                 logger.error(f"Error emitting streaming progress sync: {e}", exc_info=True)
         except Exception as e:
             logger.error(f"Error emitting streaming progress sync: {e}", exc_info=True)
+
+    # =========================================================================
+    # MGE V2 Execution Progress Events (Opción 2)
+    # =========================================================================
+
+    async def emit_execution_started(
+        self,
+        session_id: str,
+        execution_id: str,
+        total_tasks: int,
+        phases: list
+    ):
+        """
+        Emit execution started event.
+
+        Args:
+            session_id: Session ID
+            execution_id: Execution ID (masterplan_id)
+            total_tasks: Total number of tasks to execute
+            phases: List of phase objects with structure:
+                    [{"phase": 1, "name": "Discovery", "task_count": 5, "status": "pending"}, ...]
+        """
+        from datetime import datetime, timezone
+
+        await self.emit_to_session(
+            session_id=session_id,
+            event="execution_started",
+            data={
+                "type": "execution_started",
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+                "data": {
+                    "execution_id": execution_id,
+                    "total_tasks": total_tasks,
+                    "phases": phases
+                }
+            }
+        )
+        logger.info(
+            f"✅ Emitted execution_started for {execution_id}: {total_tasks} tasks across {len(phases)} phases"
+        )
+
+    async def emit_progress_update(
+        self,
+        session_id: str,
+        task_id: str,
+        task_name: str,
+        phase: int,
+        phase_name: str,
+        status: str,
+        progress: int,
+        progress_percent: float,
+        completed_tasks: int,
+        total_tasks: int,
+        current_wave: int,
+        duration_ms: float,
+        subtask_status: dict = None
+    ):
+        """
+        Emit progress update event (main event - 120 total).
+
+        Args:
+            session_id: Session ID
+            task_id: Task ID (e.g., "task_001")
+            task_name: Task name
+            phase: Phase number (0-4)
+            phase_name: Phase name (Discovery, Analysis, Planning, Execution, Validation)
+            status: Task status (pending, in_progress, completed, failed)
+            progress: Number of completed tasks
+            progress_percent: Progress percentage (0-100)
+            completed_tasks: Number of completed tasks
+            total_tasks: Total number of tasks
+            current_wave: Current execution wave number
+            duration_ms: Task duration in milliseconds
+            subtask_status: Optional subtask status dict
+        """
+        from datetime import datetime, timezone
+
+        data = {
+            "type": "progress_update",
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+            "data": {
+                "task_id": task_id,
+                "task_name": task_name,
+                "phase": phase,
+                "phase_name": phase_name,
+                "status": status,
+                "progress": progress,
+                "progress_percent": round(progress_percent, 2),
+                "completed_tasks": completed_tasks,
+                "total_tasks": total_tasks,
+                "current_wave": current_wave,
+                "duration_ms": round(duration_ms, 2)
+            }
+        }
+
+        if subtask_status:
+            data["data"]["subtask_status"] = subtask_status
+
+        await self.emit_to_session(
+            session_id=session_id,
+            event="progress_update",
+            data=data
+        )
+        logger.debug(
+            f"📊 Progress: {task_id} ({status}) - {progress_percent:.1f}% ({completed_tasks}/{total_tasks})"
+        )
+
+    async def emit_artifact_created(
+        self,
+        session_id: str,
+        artifact_id: str,
+        artifact_name: str,
+        artifact_type: str,
+        file_path: str,
+        size_bytes: int,
+        task_id: str = None,
+        metadata: dict = None
+    ):
+        """
+        Emit artifact created event (~45 events total).
+
+        Args:
+            session_id: Session ID
+            artifact_id: Artifact ID (UUID)
+            artifact_name: Artifact name (e.g., "auth.py")
+            artifact_type: Artifact type (file, directory, config, test, etc.)
+            file_path: Relative file path
+            size_bytes: File size in bytes
+            task_id: Associated task ID (optional)
+            metadata: Additional metadata (optional)
+        """
+        from datetime import datetime, timezone
+
+        data = {
+            "type": "artifact_created",
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+            "data": {
+                "artifact_id": artifact_id,
+                "artifact_name": artifact_name,
+                "artifact_type": artifact_type,
+                "file_path": file_path,
+                "size_bytes": size_bytes
+            }
+        }
+
+        if task_id:
+            data["data"]["task_id"] = task_id
+        if metadata:
+            data["data"]["metadata"] = metadata
+
+        await self.emit_to_session(
+            session_id=session_id,
+            event="artifact_created",
+            data=data
+        )
+        logger.info(
+            f"📦 Artifact created: {artifact_name} ({artifact_type}) - {size_bytes} bytes"
+        )
+
+    async def emit_wave_completed(
+        self,
+        session_id: str,
+        wave_number: int,
+        tasks_in_wave: int,
+        successful_tasks: int,
+        failed_tasks: int,
+        duration_ms: float,
+        artifacts_created: int
+    ):
+        """
+        Emit wave completed event (8-10 events total).
+
+        Args:
+            session_id: Session ID
+            wave_number: Wave number
+            tasks_in_wave: Number of tasks in this wave
+            successful_tasks: Number of successful tasks
+            failed_tasks: Number of failed tasks
+            duration_ms: Wave duration in milliseconds
+            artifacts_created: Number of artifacts created in this wave
+        """
+        from datetime import datetime, timezone
+
+        await self.emit_to_session(
+            session_id=session_id,
+            event="wave_completed",
+            data={
+                "type": "wave_completed",
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+                "data": {
+                    "wave_number": wave_number,
+                    "tasks_in_wave": tasks_in_wave,
+                    "successful_tasks": successful_tasks,
+                    "failed_tasks": failed_tasks,
+                    "duration_ms": round(duration_ms, 2),
+                    "artifacts_created": artifacts_created
+                }
+            }
+        )
+        logger.info(
+            f"🌊 Wave {wave_number} completed: {successful_tasks}/{tasks_in_wave} tasks successful, "
+            f"{artifacts_created} artifacts created"
+        )
+
+    async def emit_error(
+        self,
+        session_id: str,
+        error_id: str,
+        task_id: str,
+        task_name: str,
+        error_type: str,
+        error_message: str,
+        stack_trace: str = None,
+        retry_count: int = 0,
+        max_retries: int = 3,
+        recoverable: bool = True
+    ):
+        """
+        Emit error event (0-20 events total, only on failures).
+
+        Args:
+            session_id: Session ID
+            error_id: Error ID (UUID)
+            task_id: Task ID where error occurred
+            task_name: Task name
+            error_type: Error type (validation_error, generation_error, etc.)
+            error_message: Error message
+            stack_trace: Stack trace (optional)
+            retry_count: Current retry count
+            max_retries: Maximum retry attempts
+            recoverable: Whether error is recoverable
+        """
+        from datetime import datetime, timezone
+
+        data = {
+            "type": "error",
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+            "data": {
+                "error_id": error_id,
+                "task_id": task_id,
+                "task_name": task_name,
+                "error_type": error_type,
+                "error_message": error_message,
+                "retry_count": retry_count,
+                "max_retries": max_retries,
+                "recoverable": recoverable
+            }
+        }
+
+        if stack_trace:
+            data["data"]["stack_trace"] = stack_trace
+
+        await self.emit_to_session(
+            session_id=session_id,
+            event="error",
+            data=data
+        )
+        logger.error(
+            f"❌ Error in {task_id}: {error_message} (retry {retry_count}/{max_retries})"
+        )
+
+    async def emit_execution_completed(
+        self,
+        session_id: str,
+        execution_id: str,
+        status: str,
+        total_tasks: int,
+        completed_tasks: int,
+        failed_tasks: int,
+        skipped_tasks: int,
+        total_duration_ms: float,
+        artifacts_created: int,
+        final_stats: dict = None
+    ):
+        """
+        Emit execution completed event (1 event at end).
+
+        Args:
+            session_id: Session ID
+            execution_id: Execution ID (masterplan_id)
+            status: Final status (completed, failed, partial_success)
+            total_tasks: Total number of tasks
+            completed_tasks: Number of completed tasks
+            failed_tasks: Number of failed tasks
+            skipped_tasks: Number of skipped tasks
+            total_duration_ms: Total execution duration in milliseconds
+            artifacts_created: Total artifacts created
+            final_stats: Additional final statistics (optional)
+        """
+        from datetime import datetime, timezone
+
+        data = {
+            "type": "execution_completed",
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+            "data": {
+                "execution_id": execution_id,
+                "status": status,
+                "total_tasks": total_tasks,
+                "completed_tasks": completed_tasks,
+                "failed_tasks": failed_tasks,
+                "skipped_tasks": skipped_tasks,
+                "total_duration_ms": round(total_duration_ms, 2),
+                "artifacts_created": artifacts_created
+            }
+        }
+
+        if final_stats:
+            data["data"]["final_stats"] = final_stats
+
+        await self.emit_to_session(
+            session_id=session_id,
+            event="execution_completed",
+            data=data
+        )
+        logger.info(
+            f"🎉 Execution {execution_id} completed: {status} - "
+            f"{completed_tasks}/{total_tasks} tasks successful, {artifacts_created} artifacts created"
+        )

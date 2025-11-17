@@ -217,6 +217,22 @@ class GeneratedCodeValidator:
                 with open(results_file) as f:
                     data = json.load(f)
 
+                # FIX 1: Detect pytest collection errors
+                collectors = data.get("collectors", [])
+                for collector in collectors:
+                    if collector.get("outcome") == "failed":
+                        # Collection failed - add error
+                        error_details = collector.get("longrepr", "Collection failed")
+                        test_results.append(
+                            TestResult(
+                                test_name="pytest_collection_error",
+                                status="error",
+                                duration=0.0,
+                                error_message=f"Pytest collection failed: {error_details}",
+                            )
+                        )
+                        print(f"    ❌ Collection error detected: {error_details[:100]}")
+
                 for test in data.get("tests", []):
                     test_results.append(self._parse_test_result(test))
 
@@ -369,6 +385,21 @@ class GeneratedCodeValidator:
         error_tests = sum(1 for t in test_results if t.status == "error")
         timeout_tests = sum(1 for t in test_results if t.status == "timeout")
 
+        # FIX 2: Reject 0 tests as error (not success)
+        if total_tests == 0:
+            # No tests found or executed - this is a failure
+            test_results.append(
+                TestResult(
+                    test_name="no_tests_found",
+                    status="error",
+                    duration=0.0,
+                    error_message="Validation failed: 0 tests were discovered or executed",
+                )
+            )
+            total_tests = 1
+            error_tests = 1
+            print("    ❌ VALIDATION FAILURE: 0 tests found (treating as error)")
+
         # Calculate precision
         precision = passed_tests / total_tests if total_tests > 0 else 0.0
 
@@ -382,13 +413,16 @@ class GeneratedCodeValidator:
         should_tests_total = len(should_tests)
         should_tests_passed = sum(1 for t in should_tests if t.status == "passed")
 
-        # Gate enforcement
+        # FIX 3: Gate enforcement (reject vacuous truth)
+        # If 0 MUST tests, we already added a "no_tests_found" error above
+        # So this will never be 0, but keeping it defensive
         must_gate_passed = (
-            must_tests_passed == must_tests_total if must_tests_total > 0 else True
+            must_tests_passed == must_tests_total if must_tests_total > 0 else False
         )
 
+        # SHOULD tests: if 0 tests, require explicit tests (not vacuous pass)
         should_rate = (
-            should_tests_passed / should_tests_total if should_tests_total > 0 else 1.0
+            should_tests_passed / should_tests_total if should_tests_total > 0 else 0.0
         )
         should_gate_passed = should_rate >= self.should_gate_threshold
 

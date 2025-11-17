@@ -194,8 +194,8 @@ class TestCommandAutocomplete:
         dispatcher = CommandDispatcher()
         autocomplete = CommandAutocomplete(dispatcher)
 
-        suggestions, prefix = autocomplete.complete("ru")
-        assert "run" in suggestions
+        suggestions, prefix = autocomplete.complete("sp")
+        assert "spec" in suggestions
 
     def test_autocomplete_empty(self):
         """Test autocomplete with empty input."""
@@ -203,7 +203,7 @@ class TestCommandAutocomplete:
         autocomplete = CommandAutocomplete(dispatcher)
 
         suggestions, prefix = autocomplete.complete("")
-        assert "run" in suggestions
+        assert "spec" in suggestions or "execute" in suggestions
         assert "help" in suggestions
 
     def test_history_export(self):

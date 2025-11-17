@@ -279,13 +279,15 @@ Generate a COMPLETE pytest test function that:
 **Guidelines:**
 - Function name: test_requirement_{requirement['id']:03d}_contract_validation
 - Use proper pytest fixtures if needed (e.g., @pytest.fixture)
-- Import necessary modules (typing, datetime, etc.)
+- **IMPORTANT**: Import ONLY standard library modules (typing, datetime, uuid, etc.)
+- **DO NOT import**: docker, psycopg2, redis, fastapi, sqlalchemy, or any external dependencies
+- Tests will be executed in isolated pytest environment without external dependencies
 - Add clear docstring explaining what's being tested
 - Use descriptive variable names
 - Add comments for each contract validation
 - Use assert statements with clear error messages
 - Handle edge cases (None values, empty lists, etc.)
-- Make test executable (assume API/models are imported)
+- Make test executable with ONLY standard library imports
 
 **Example Structure:**
 ```python
