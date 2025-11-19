@@ -146,6 +146,62 @@ class ErrorPatternStore:
         except Exception as e:
             self.logger.warning(f"Could not ensure collection exists: {e}")
 
+    def _sanitize_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Sanitize metadata to ensure all keys and values are serializable.
+
+        Handles problematic types like slice objects that can't be used as dict keys
+        or stored in vector databases.
+
+        Args:
+            metadata: Original metadata dictionary
+
+        Returns:
+            Sanitized metadata with all serializable values
+        """
+        if not metadata:
+            return {}
+
+        sanitized = {}
+        for key, value in metadata.items():
+            # Ensure key is string (not slice or other non-hashable)
+            if isinstance(key, slice):
+                sanitized_key = f"slice_{key.start}_{key.stop}_{key.step}"
+            elif not isinstance(key, str):
+                sanitized_key = str(key)
+            else:
+                sanitized_key = key
+
+            # Sanitize value
+            if isinstance(value, slice):
+                sanitized[sanitized_key] = f"slice({value.start}, {value.stop}, {value.step})"
+            elif isinstance(value, (str, int, float, bool, type(None))):
+                sanitized[sanitized_key] = value
+            elif isinstance(value, dict):
+                # Recursively sanitize nested dicts
+                sanitized[sanitized_key] = self._sanitize_metadata(value)
+            elif isinstance(value, (list, tuple)):
+                # Sanitize list/tuple elements
+                sanitized[sanitized_key] = [self._sanitize_value(item) for item in value]
+            else:
+                # Convert any other type to string
+                sanitized[sanitized_key] = str(value)
+
+        return sanitized
+
+    def _sanitize_value(self, value: Any) -> Any:
+        """Helper to sanitize individual values in lists/tuples."""
+        if isinstance(value, slice):
+            return f"slice({value.start}, {value.stop}, {value.step})"
+        elif isinstance(value, (str, int, float, bool, type(None))):
+            return value
+        elif isinstance(value, dict):
+            return self._sanitize_metadata(value)
+        elif isinstance(value, (list, tuple)):
+            return [self._sanitize_value(item) for item in value]
+        else:
+            return str(value)
+
     def close(self) -> None:
         """Close connections."""
         if self.neo4j_driver:
@@ -163,6 +219,9 @@ class ErrorPatternStore:
             True if successful, False otherwise
         """
         try:
+            # Sanitize metadata to prevent unhashable type errors
+            sanitized_metadata = self._sanitize_metadata(error.metadata)
+
             # Create embedding from error context
             error_context = f"""
 Task: {error.task_description}
@@ -175,20 +234,25 @@ Failed Code:
             embedding = self.embedding_model.encode(error_context).tolist()
 
             # Store in Qdrant with metadata
+            payload = {
+                "error_id": error.error_id,
+                "task_id": error.task_id,
+                "task_description": error.task_description,
+                "error_type": error.error_type,
+                "error_message": error.error_message,
+                "failed_code": error.failed_code[:500],  # Truncate for storage
+                "attempt": error.attempt,
+                "timestamp": error.timestamp.isoformat(),
+                "type": "error"
+            }
+            # Add sanitized metadata if present
+            if sanitized_metadata:
+                payload["metadata"] = sanitized_metadata
+
             point = PointStruct(
                 id=str(uuid.uuid4()),
                 vector=embedding,
-                payload={
-                    "error_id": error.error_id,
-                    "task_id": error.task_id,
-                    "task_description": error.task_description,
-                    "error_type": error.error_type,
-                    "error_message": error.error_message,
-                    "failed_code": error.failed_code[:500],  # Truncate for storage
-                    "attempt": error.attempt,
-                    "timestamp": error.timestamp.isoformat(),
-                    "type": "error"
-                }
+                payload=payload
             )
 
             self.qdrant.upsert(
@@ -238,6 +302,9 @@ Failed Code:
             True if successful, False otherwise
         """
         try:
+            # Sanitize metadata to prevent unhashable type errors
+            sanitized_metadata = self._sanitize_metadata(success.metadata)
+
             # Create embedding from success context
             success_context = f"""
 Task: {success.task_description}
@@ -248,18 +315,23 @@ Generated Code:
             embedding = self.embedding_model.encode(success_context).tolist()
 
             # Store in Qdrant
+            payload = {
+                "success_id": success.success_id,
+                "task_id": success.task_id,
+                "task_description": success.task_description,
+                "generated_code": success.generated_code[:1000],  # Truncate
+                "quality_score": success.quality_score,
+                "timestamp": success.timestamp.isoformat(),
+                "type": "success"
+            }
+            # Add sanitized metadata if present
+            if sanitized_metadata:
+                payload["metadata"] = sanitized_metadata
+
             point = PointStruct(
                 id=str(uuid.uuid4()),
                 vector=embedding,
-                payload={
-                    "success_id": success.success_id,
-                    "task_id": success.task_id,
-                    "task_description": success.task_description,
-                    "generated_code": success.generated_code[:1000],  # Truncate
-                    "quality_score": success.quality_score,
-                    "timestamp": success.timestamp.isoformat(),
-                    "type": "success"
-                }
+                payload=payload
             )
 
             self.qdrant.upsert(
