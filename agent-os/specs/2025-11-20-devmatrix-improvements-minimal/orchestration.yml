@@ -1,5 +1,32 @@
 # Orchestration Configuration: DevMatrix Production-Ready Code Generation
 
+# Subagent Assignment (for /agent-os:orchestrate-tasks command)
+task_group_assignments:
+  - name: database_and_configuration
+    claude_code_subagent: backend-architect
+    rationale: Database design, SQLAlchemy async setup, configuration management
+  - name: modular_architecture
+    claude_code_subagent: system-architect
+    rationale: Modular system design, separation of concerns, architectural patterns
+  - name: observability_infrastructure
+    claude_code_subagent: devops-architect
+    rationale: Infrastructure components (logging, metrics, health checks, middleware)
+  - name: test_suite_generation
+    claude_code_subagent: quality-engineer
+    rationale: Testing strategy, test suite design, coverage optimization
+  - name: security_hardening
+    claude_code_subagent: security-engineer
+    rationale: Security vulnerabilities, hardening strategies, OWASP compliance
+  - name: docker_infrastructure
+    claude_code_subagent: devops-architect
+    rationale: Containerization, orchestration, monitoring stack setup
+  - name: ci_cd_and_documentation
+    claude_code_subagent: devops-architect
+    rationale: CI/CD pipelines, automation workflows, infrastructure documentation
+  - name: template_system
+    claude_code_subagent: python-expert
+    rationale: Production-ready Python code, Jinja2 templates, code generation service
+
 metadata:
   spec_name: devmatrix-improvements-minimal
   version: 1.0.0
