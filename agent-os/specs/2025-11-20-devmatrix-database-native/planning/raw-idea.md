@@ -84,28 +84,38 @@ PHASE (1-5)
 
 ## Architecture Decisions
 
-### 1. Context Strategy: Minimal vs Full Markdown
+### 1. Context Strategy: Enriched Optimized Context
 
-**Decision**: MINIMAL/OPTIMIZED Context (30-50% token reduction)
+**Decision**: ENRICHED/OPTIMIZED Context (balanced for agent comprehension)
 
-Agent-OS passes full markdown files to agents, resulting in high token usage and redundancy. DevMatrix database-native uses targeted queries to provide only essential context:
+Agent-OS passes full markdown files to agents (15-70KB), resulting in high token usage and redundancy. DevMatrix database-native uses targeted queries to provide enriched but optimized context that agents (especially Haiku) can fully understand:
 
 ```python
 class DatabaseContext:
-    def get_minimal_context(self, task_id: UUID) -> str:
-        """Returns only necessary information for task execution"""
-        # - Task details (name, type, description)
-        # - Top 3 similar patterns from Qdrant (>0.8 similarity)
-        # - Completed dependencies only
-        # - Required skills for this task
-        # Result: 30-50% fewer tokens vs full markdown approach
+    def get_enriched_context(self, task_id: UUID, context_level: str = 'standard') -> str:
+        """Returns enriched context for agent comprehension"""
+        # Context Levels:
+        # - 'minimal': 2-3KB - Simple tasks only
+        # - 'standard': 5-8KB - Default, comprehensive
+        # - 'extended': 10-15KB - Complex tasks
+
+        # Standard includes:
+        # - Complete task details with acceptance criteria
+        # - Top 5 similar patterns with full code examples
+        # - All dependencies (completed and pending)
+        # - Required skills with guidelines
+        # - Parent and sibling task context
+        # - Spec requirements and tech stack
+
+        # Result: 5-8KB standard (vs 15-70KB full markdown)
 ```
 
 **Benefits**:
-- Faster database queries (<100ms)
+- Agents have sufficient context to understand tasks fully
+- Haiku can leverage its large context window effectively
+- Still optimized vs full markdown (50-80% reduction)
 - Cacheable contexts (Redis integration)
-- Reduced LLM costs
-- More focused agent execution
+- Better task success rates with richer context
 
 ### 2. Code Generation: Hybrid Approach
 

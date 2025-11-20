@@ -4,6 +4,26 @@
 
 Transform DevMatrix into a database-native system that behaves like agent-os, replacing markdown file storage with enterprise databases (PostgreSQL, Neo4j, Qdrant) while maintaining the same workflow patterns and task hierarchy.
 
+## ⚠️ IMPORTANT: Development Branch Strategy
+
+**ALL DEVELOPMENT MUST BE IN A FEATURE BRANCH:**
+```bash
+# Create and work in feature branch
+git checkout main
+git pull origin main
+git checkout -b feature/devmatrix-database-native
+
+# Regular commits during development
+git add .
+git commit -m "feat: implement DatabaseContext with enriched context"
+
+# When ready, create PR to merge to main
+git push origin feature/devmatrix-database-native
+# Then create PR in GitHub/GitLab
+```
+
+**NEVER commit directly to main branch**
+
 ## Goals
 
 1. **Database-Native Architecture**: Replace all markdown storage with databases
@@ -184,11 +204,13 @@ Subtask (Implementation detail)
 
 ### 1. DatabaseContext (Foundation Layer)
 
-**Purpose**: Efficient, minimal context retrieval from databases (30-50% token reduction vs markdown)
+**Purpose**: Enriched context retrieval from databases optimized for agent understanding
+
+**IMPORTANT**: Context should be rich enough for agents (especially Haiku) to understand the full task requirements. Haiku can handle significant context, so we optimize for clarity over extreme minimization.
 
 ```python
 class DatabaseContext:
-    """Optimized context provider from PostgreSQL, Neo4j, Qdrant"""
+    """Enriched context provider from PostgreSQL, Neo4j, Qdrant"""
 
     def __init__(self, spec_id: UUID):
         self.spec_id = spec_id
@@ -197,49 +219,95 @@ class DatabaseContext:
         self.qdrant_conn = QdrantConnection()
         self.cache = RedisCache()
 
-    def get_minimal_context(self, task_id: UUID) -> str:
+    def get_enriched_context(self, task_id: UUID, context_level: str = 'standard') -> str:
         """
-        Returns minimal context optimized for LLM consumption.
+        Returns enriched context optimized for agent comprehension.
 
-        Includes:
-        - Task details (name, type, description)
-        - Top 3 similar patterns from Qdrant (>0.8 similarity)
-        - Completed dependencies only
-        - Required skills for this task
+        Context Levels:
+        - 'minimal': 2-3KB - Only for simple, well-defined tasks
+        - 'standard': 5-8KB - Default, includes patterns, examples, and clear requirements
+        - 'extended': 10-15KB - For complex tasks needing full context
 
-        Result: 2-3KB vs 15-70KB full markdown approach
-        Token reduction: 30-50%
-        Query time: <100ms (with Redis caching)
+        Includes (standard level):
+        - Complete task details with acceptance criteria
+        - Top 5 similar patterns with full code examples
+        - All dependencies (completed and pending status)
+        - Required skills with application guidelines
+        - Parent task context for understanding bigger picture
+        - Related tasks in same wave for coherence
+        - Spec-level requirements and constraints
+        - Tech stack and framework preferences
+
+        Result: 5-8KB standard (vs 15-70KB full markdown)
+        Token usage: Optimized but comprehensive
+        Query time: <150ms (with Redis caching)
         """
         # Check cache first
-        cache_key = f"context:{task_id}"
+        cache_key = f"context:{task_id}:{context_level}"
         if cached := self.cache.get(cache_key):
             return cached
 
-        # Fetch from databases
+        # Fetch comprehensive data from databases
         task = self.pg_conn.get_task(task_id)
-        patterns = self.qdrant_conn.find_top_patterns(task_id, limit=3, threshold=0.8)
-        dependencies = self.neo4j_conn.get_completed_dependencies(task_id)
+        spec = self.pg_conn.get_spec(task.spec_id)
+        patterns = self.qdrant_conn.find_top_patterns(task_id, limit=5, threshold=0.75)
+        all_dependencies = self.neo4j_conn.get_all_dependencies(task_id)
+        related_tasks = self.neo4j_conn.get_wave_siblings(task_id)
         skills = self.pg_conn.get_required_skills(task_id)
+        parent_task = self.pg_conn.get_parent_task(task_id)
 
-        # Build minimal context
+        # Build enriched context
         context = f"""
-        Task: {task.name}
+        ## Task Information
+        Name: {task.name}
         Type: {task.type}
-        Description: {task.description}
+        Phase: {task.phase}
+        Priority: {task.priority}
 
-        Required Skills: {', '.join(s.name for s in skills)}
+        ## Description
+        {task.description}
 
-        Similar Successful Patterns (top 3):
-        {self._format_patterns(patterns)}
+        ## Acceptance Criteria
+        {task.acceptance_criteria}
 
-        Completed Dependencies: {', '.join(d.name for d in dependencies)}
+        ## Parent Context
+        Parent Task: {parent_task.name if parent_task else 'Root level task'}
+        Parent Goal: {parent_task.description[:200] if parent_task else 'N/A'}
 
-        Expected Output: {task.expected_output}
+        ## Spec Requirements
+        Project: {spec.title}
+        Tech Stack: {spec.tech_stack}
+        Constraints: {', '.join(spec.constraints)}
+
+        ## Required Skills and Standards
+        {self._format_skills_with_guidelines(skills)}
+
+        ## Dependencies Status
+        Completed:
+        {self._format_dependencies(all_dependencies['completed'])}
+
+        Pending (for awareness):
+        {self._format_dependencies(all_dependencies['pending'])}
+
+        ## Related Tasks in Current Wave
+        {self._format_related_tasks(related_tasks)}
+
+        ## Similar Successful Patterns (Top 5)
+        {self._format_patterns_detailed(patterns)}
+
+        ## Expected Output Format
+        {task.expected_output}
+
+        ## Implementation Guidelines
+        - Follow the patterns from similar successful tasks
+        - Apply all required skills and standards
+        - Ensure compatibility with completed dependencies
+        - Consider impact on pending dependencies
+        - Maintain consistency with related tasks in wave
         """
 
-        # Cache for 5 minutes
-        self.cache.set(cache_key, context, ttl=300)
+        # Cache for 10 minutes (longer for richer context)
+        self.cache.set(cache_key, context, ttl=600)
         return context
 
     def get_task_with_dependencies(self, task_id: UUID) -> Dict:
