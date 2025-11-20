@@ -2,6 +2,21 @@
 
 **Updated**: 2025-11-20 - Revised based on blueprint with implementation options
 
+## ⚠️ IMPORTANT: Branch Strategy
+
+**BEFORE STARTING ANY IMPLEMENTATION:**
+1. Create a new branch from main:
+   ```bash
+   git checkout main
+   git pull origin main
+   git checkout -b feature/devmatrix-database-native
+   ```
+
+2. All development happens in this feature branch
+3. Regular commits with clear messages
+4. When complete and tested, create PR to merge back to main
+5. DO NOT work directly on main branch
+
 ## Implementation Strategy
 
 Following the blueprint's recommended approach:
