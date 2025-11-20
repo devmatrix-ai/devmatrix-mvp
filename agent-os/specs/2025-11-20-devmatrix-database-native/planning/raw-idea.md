@@ -314,6 +314,7 @@ class SkillsFramework:
 **Focus**: Core database layer and context optimization
 
 Components:
+
 - DatabaseContext with enriched context queries
 - DatabaseTaskManager (PostgreSQL CRUD)
 - Database schemas for all 3 databases
@@ -400,7 +401,7 @@ health = HealthChecker.verify(deployment_path)
 PatternFeedbackIntegration.learn_from_execution(spec_id)
 ```
 
-## Context Comparison: Minimal vs Full
+## Context Comparison: Enriched vs Full
 
 ### Agent-OS Approach (Full Markdown)
 ```python
