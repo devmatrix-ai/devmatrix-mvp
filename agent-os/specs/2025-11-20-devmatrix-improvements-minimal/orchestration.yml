@@ -1,0 +1,538 @@
+# Orchestration Configuration: DevMatrix Production-Ready Code Generation
+
+metadata:
+  spec_name: devmatrix-improvements-minimal
+  version: 1.0.0
+  date: 2025-11-20
+  status: ready_for_implementation
+  priority: P0
+  estimated_effort_hours: 90
+  estimated_duration_days: 11.5
+
+project:
+  name: DevMatrix Production-Ready Code Generation
+  goal: Transform DevMatrix from MVP Generator to Production App Generator
+  description: |
+    Enhance DevMatrix code generation to output production-ready applications with:
+    - 80%+ test coverage (pytest)
+    - Full observability (structlog, health checks, Prometheus metrics)
+    - Real database (SQLAlchemy async + Alembic migrations)
+    - Modular architecture (models/repos/services/routes)
+    - Security hardening (sanitization, rate limiting, strict mode)
+    - Complete Docker infrastructure (docker-compose with full stack)
+    - CI/CD pipeline templates
+
+  impact:
+    current_state:
+      semantic_compliance: 100%
+      production_readiness: 25%
+      test_coverage: 0%
+      observability: 0%
+      security_score_owasp: 3/10
+
+    target_state:
+      semantic_compliance: 100%
+      production_readiness: 95%
+      test_coverage: 80%+
+      observability: 100%
+      security_score_owasp: 8/10
+
+    business_value:
+      time_saved_per_app: 80-120 hours
+      roi_after_10_apps: 9-13x
+      competitive_positioning: On par with GitHub Copilot Workspace + v0.dev
+
+phases:
+  - id: phase_1
+    name: Core Infrastructure
+    priority: P0
+    estimated_hours: 40
+    estimated_days: 5
+    dependencies: []
+    task_groups:
+      - database_and_configuration
+      - modular_architecture
+      - observability_infrastructure
+
+    deliverables:
+      - SQLAlchemy async engine with connection pooling
+      - Pydantic-settings configuration management
+      - Alembic migrations setup
+      - Modular directory structure (models/repos/services/routes)
+      - structlog structured logging
+      - Health check and metrics endpoints
+      - RequestIDMiddleware and MetricsMiddleware
+
+    validation_criteria:
+      - Database connection working
+      - All modules importable
+      - Logging outputs JSON format
+      - Health checks return 200
+      - Metrics endpoint accessible
+
+  - id: phase_2
+    name: Testing & Security
+    priority: P1
+    estimated_hours: 30
+    estimated_days: 4
+    dependencies: [phase_1]
+    task_groups:
+      - test_suite_generation
+      - security_hardening
+
+    deliverables:
+      - pytest configuration with 80%+ coverage requirement
+      - Unit tests (models, repositories, services)
+      - Integration tests (API endpoints)
+      - Test fixtures and factories
+      - Pydantic strict mode enabled
+      - HTML sanitization implemented
+      - Rate limiting configured
+      - Security headers middleware
+      - Timezone-aware datetimes
+
+    validation_criteria:
+      - All tests passing
+      - Coverage ≥80%
+      - Type coercion rejected (strict mode)
+      - XSS prevention working
+      - Rate limiting enforced
+      - Security headers present
+
+  - id: phase_3
+    name: Docker & CI/CD
+    priority: P2
+    estimated_hours: 20
+    estimated_days: 2.5
+    dependencies: [phase_1, phase_2]
+    task_groups:
+      - docker_infrastructure
+      - ci_cd_and_documentation
+
+    deliverables:
+      - Multi-stage Dockerfile
+      - docker-compose.yml with full stack (app/postgres/redis/prometheus/grafana)
+      - docker-compose.test.yml for isolated testing
+      - GitHub Actions CI/CD workflow
+      - Pre-commit hooks configuration
+      - Comprehensive README.md
+      - Makefile with common commands
+
+    validation_criteria:
+      - Docker image builds successfully
+      - All containers start and stay healthy
+      - Tests run in Docker environment
+      - CI/CD pipeline passing
+      - Documentation complete
+
+  - id: template_system
+    name: Template System Implementation
+    priority: P0
+    estimated_hours: 20
+    estimated_days: 2.5
+    dependencies: []  # Can run in parallel with Phase 1
+    parallel_with: [phase_1]
+    task_groups:
+      - template_generation
+
+    deliverables:
+      - Jinja2 templates for all components (core/models/repos/services/api)
+      - Test templates (pytest/conftest/factories/unit/integration)
+      - Docker templates (Dockerfile/docker-compose)
+      - Config templates (.env/pyproject.toml/Makefile/README)
+      - Modified code_generation_service.py with generate_modular_app()
+
+    validation_criteria:
+      - All templates render without errors
+      - Generated files have correct structure
+      - Template variables substituted properly
+      - Feature flag for production/legacy mode working
+
+task_groups:
+  database_and_configuration:
+    phase: phase_1
+    estimated_hours: 10
+    tasks:
+      - Setup SQLAlchemy Async Engine (2h)
+      - Implement pydantic-settings Configuration (2h)
+      - Setup Alembic Migrations (3h)
+      - Create Initial Migrations for Entities (3h)
+
+  modular_architecture:
+    phase: phase_1
+    estimated_hours: 15
+    tasks:
+      - Create Directory Structure (1h)
+      - Split Pydantic Schemas (2h)
+      - Define SQLAlchemy Entities (2h)
+      - Implement Repository Pattern (4h)
+      - Implement Service Layer (3h)
+      - Setup FastAPI Dependencies (1h)
+      - Refactor Routes to Use Services (2h)
+
+  observability_infrastructure:
+    phase: phase_1
+    estimated_hours: 15
+    tasks:
+      - Configure structlog (2h)
+      - Implement RequestIDMiddleware (2h)
+      - Create Health Check Endpoints (2h)
+      - Implement Prometheus Metrics (4h)
+      - Add MetricsMiddleware (2h)
+      - Setup Global Exception Handler (2h)
+      - Update Main Application Setup (1h)
+
+  test_suite_generation:
+    phase: phase_2
+    estimated_hours: 20
+    tasks:
+      - Setup pytest Configuration (2h)
+      - Create conftest.py with Fixtures (3h)
+      - Implement Test Data Factories (2h)
+      - Write Model Unit Tests (3h)
+      - Write Repository Unit Tests (4h)
+      - Write Service Unit Tests (4h)
+      - Write API Integration Tests (6h)
+
+  security_hardening:
+    phase: phase_2
+    estimated_hours: 10
+    tasks:
+      - Enable Pydantic Strict Mode (1h)
+      - Implement HTML Sanitization (2h)
+      - Add Rate Limiting (2h)
+      - Configure CORS Properly (1h)
+      - Add Security Headers Middleware (2h)
+      - Fix Timezone-Aware Datetimes (1h)
+      - Implement Consistent Error Responses (1h)
+
+  docker_infrastructure:
+    phase: phase_3
+    estimated_hours: 15
+    tasks:
+      - Create Multi-Stage Dockerfile (3h)
+      - Create docker-compose.yml (4h)
+      - Configure Prometheus (2h)
+      - Setup Grafana Dashboards (3h)
+      - Create docker-compose.test.yml (2h)
+      - Test Docker Setup (1h)
+
+  ci_cd_and_documentation:
+    phase: phase_3
+    estimated_hours: 5
+    tasks:
+      - Create GitHub Actions Workflow (2h)
+      - Setup Pre-commit Hooks (1h)
+      - Create .gitignore (0.25h)
+      - Create Comprehensive README.md (1h)
+      - Create Makefile (0.75h)
+
+  template_generation:
+    phase: template_system
+    estimated_hours: 20
+    tasks:
+      - Create Template Directory Structure (1h)
+      - Create Core Templates (3h)
+      - Create Model Templates (2h)
+      - Create Repository Templates (2h)
+      - Create Service Templates (2h)
+      - Create API Templates (2h)
+      - Create Test Templates (4h)
+      - Create Docker Templates (2h)
+      - Create Config Templates (1h)
+      - Modify Code Generation Service (3h)
+
+timeline:
+  start_date: TBD
+  estimated_end_date: "+11.5 days from start"
+
+  milestones:
+    - name: Phase 1 Complete - Core Infrastructure
+      estimated_day: 5
+      deliverables:
+        - Database and config working
+        - Modular architecture implemented
+        - Observability infrastructure functional
+
+    - name: Phase 2 Complete - Testing & Security
+      estimated_day: 9
+      deliverables:
+        - 80%+ test coverage achieved
+        - All security hardening complete
+        - QA/CTO security score 8/10
+
+    - name: Phase 3 Complete - Docker & CI/CD
+      estimated_day: 11.5
+      deliverables:
+        - Docker infrastructure working
+        - CI/CD pipeline passing
+        - Documentation complete
+
+    - name: Production Deployment
+      estimated_day: 12
+      deliverables:
+        - Feature flag enabled for production mode
+        - E2E validation passing
+        - QA/CTO score ≥19/20 (95%+ production-ready)
+
+validation:
+  functional_requirements:
+    - Generated app has 80%+ test coverage
+    - Structured logging with structlog
+    - Health and metrics endpoints working
+    - SQLAlchemy async with Alembic migrations
+    - Modular architecture (models/repos/services/routes)
+    - Security hardening (sanitization, rate limiting, strict mode)
+    - Complete Docker setup (docker-compose with full stack)
+    - CI/CD pipeline template
+    - Comprehensive README and documentation
+    - Immediately deployable to production
+
+  quality_metrics:
+    test_coverage:
+      target: "≥80%"
+      validation: "pytest --cov"
+
+    semantic_compliance:
+      target: "100%"
+      validation: "E2E compliance validator"
+
+    production_readiness:
+      target: "≥95%"
+      validation: "QA/CTO checklist"
+
+    security_score:
+      target: "≥8/10"
+      validation: "OWASP security audit"
+
+    docker_health:
+      target: "100%"
+      validation: "docker-compose ps"
+
+    documentation_completeness:
+      target: "100%"
+      validation: "README checklist"
+
+  performance_targets:
+    code_generation_time: "<3 minutes"
+    docker_build_time: "<5 minutes"
+    test_execution_time: "<2 minutes"
+    application_startup_time: "<10 seconds"
+
+risks:
+  high:
+    - id: risk_001
+      title: Template Complexity Explosion
+      description: Too many templates hard to maintain
+      impact: high
+      probability: medium
+      mitigation: Use inheritance and composition in Jinja2 templates
+
+    - id: risk_002
+      title: Breaking Changes to Existing Pipeline
+      description: New templates break current code generation
+      impact: high
+      probability: medium
+      mitigation: Feature flag for production mode, keep legacy path
+
+    - id: risk_003
+      title: Performance Degradation
+      description: Generating more files slows down pipeline
+      impact: medium
+      probability: medium
+      mitigation: Parallel file generation, optimize template rendering
+
+  medium:
+    - id: risk_004
+      title: Test Generation Accuracy
+      description: Generated tests don't cover edge cases
+      impact: medium
+      probability: medium
+      mitigation: Test template validation, E2E test of generated tests
+
+    - id: risk_005
+      title: Docker Configuration Complexity
+      description: docker-compose too complex for users
+      impact: low
+      probability: medium
+      mitigation: Comprehensive README, Makefile shortcuts
+
+  low:
+    - id: risk_006
+      title: Documentation Drift
+      description: Generated README doesn't match code
+      impact: low
+      probability: low
+      mitigation: README template synced with code templates
+
+rollout:
+  strategy: phased_rollout
+
+  phases:
+    - name: Preparation
+      duration: 1 week
+      activities:
+        - Set up development environment
+        - Create feature branch (feature/production-ready-generation)
+        - Design template architecture
+        - Create sample generated app manually (validation)
+
+    - name: Core Implementation
+      duration: 2 weeks
+      activities:
+        - Implement all templates
+        - Modify code generation service
+        - Add template rendering logic
+        - Create integration tests for generator
+
+    - name: Testing & Validation
+      duration: 1 week
+      activities:
+        - Generate simple_task_api with new system
+        - Generate ecommerce_api with new system
+        - Run QA/CTO evaluation on generated apps
+        - Verify 95% production readiness target
+
+    - name: Rollout
+      duration: 1 week
+      activities:
+        - Merge to develop branch
+        - Run full E2E test suite
+        - Update documentation
+        - Deploy to production
+
+success_criteria:
+  must_have:
+    - QA/CTO production readiness score ≥19/20 (95%+)
+    - Test coverage ≥80%
+    - All validation checklists passing
+    - Zero critical bugs
+    - Documentation complete
+
+  should_have:
+    - Code generation time <3 minutes
+    - Docker build time <5 minutes
+    - Security score ≥8/10 OWASP
+    - All containers healthy
+
+  nice_to_have:
+    - Grafana dashboards functional
+    - Pre-commit hooks working
+    - CI/CD pipeline green
+
+team:
+  roles:
+    - role: Tech Lead
+      responsibilities:
+        - Architecture decisions
+        - Code review
+        - Risk mitigation
+      estimated_hours: 30
+
+    - role: Backend Developer
+      responsibilities:
+        - Phase 1 & 2 implementation
+        - Template creation
+        - Service modification
+      estimated_hours: 60
+
+    - role: DevOps Engineer
+      responsibilities:
+        - Phase 3 implementation
+        - Docker setup
+        - CI/CD pipeline
+      estimated_hours: 20
+
+    - role: QA Engineer
+      responsibilities:
+        - Test template creation
+        - Validation execution
+        - Bug reporting
+      estimated_hours: 15
+
+resources:
+  documentation:
+    - name: FastAPI Documentation
+      url: https://fastapi.tiangolo.com/
+      relevance: Main framework used
+
+    - name: SQLAlchemy 2.0 Async
+      url: https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html
+      relevance: Database layer
+
+    - name: Alembic Documentation
+      url: https://alembic.sqlalchemy.org/
+      relevance: Database migrations
+
+    - name: structlog Documentation
+      url: https://www.structlog.org/
+      relevance: Structured logging
+
+    - name: pytest Documentation
+      url: https://docs.pytest.org/
+      relevance: Testing framework
+
+    - name: Docker Compose Documentation
+      url: https://docs.docker.com/compose/
+      relevance: Container orchestration
+
+  tools:
+    - Poetry (dependency management)
+    - pytest (testing)
+    - Docker & Docker Compose (containerization)
+    - GitHub Actions (CI/CD)
+    - Prometheus & Grafana (monitoring)
+    - pre-commit (code quality)
+
+notes:
+  - This spec transforms DevMatrix from MVP generator to Production App Generator
+  - Expected ROI: 9-13x after 10 apps generated (saves 80-120h per app)
+  - Maintains 100% semantic compliance while achieving 95% production readiness
+  - Can run Template System (20h) in parallel with Phase 1 to reduce timeline
+  - Feature flag allows gradual rollout without breaking existing functionality
+  - QA/CTO evaluation checklist provides objective production readiness measurement
+
+dependencies:
+  external:
+    - PostgreSQL 16+ (database)
+    - Redis 7+ (optional, for caching)
+    - Docker & Docker Compose (containerization)
+    - GitHub (for CI/CD)
+
+  python_packages:
+    core:
+      - fastapi >=0.104.0
+      - uvicorn[standard] >=0.24.0
+      - sqlalchemy[asyncio] >=2.0.0
+      - asyncpg >=0.29.0
+      - pydantic-settings >=2.0.0
+      - alembic >=1.12.0
+
+    observability:
+      - structlog >=23.2.0
+      - prometheus-client >=0.19.0
+
+    security:
+      - bleach >=6.1.0
+      - slowapi >=0.1.9
+
+    testing:
+      - pytest >=7.4.0
+      - pytest-asyncio >=0.21.0
+      - pytest-cov >=4.1.0
+      - httpx >=0.25.0
+
+    development:
+      - pre-commit >=3.5.0
+      - black >=23.11.0
+      - isort >=5.12.0
+      - flake8 >=6.1.0
+
+contact:
+  product_owner: TBD
+  tech_lead: TBD
+  stakeholders:
+    - DevMatrix development team
+    - QA team
+    - DevOps team
+    - End users (developers using generated apps)
