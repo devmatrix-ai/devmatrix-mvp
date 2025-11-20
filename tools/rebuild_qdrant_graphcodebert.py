@@ -34,7 +34,12 @@ def load_graphcodebert() -> SentenceTransformer:
     """Load GraphCodeBERT model."""
     print(f"\n🤖 Loading GraphCodeBERT model...")
     start = time.time()
-    model = SentenceTransformer('microsoft/graphcodebert-base')
+    # Suppress pooler weights warning (cosmetic only, doesn't affect embeddings)
+    import warnings
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*pooler.*")
+        warnings.filterwarnings("ignore", message=".*Some weights.*not initialized.*")
+        model = SentenceTransformer('microsoft/graphcodebert-base')
     elapsed = time.time() - start
     print(f"   ✓ Model loaded in {elapsed:.2f}s")
 

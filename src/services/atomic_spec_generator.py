@@ -294,7 +294,7 @@ class AtomicSpecGenerator:
 
         # Generate with Fase 1 params (temp=0, seed=42)
         response = await self.llm.generate_with_caching(
-            task_type="atomic_spec_generation",
+            task_type="task_execution",  # Valid TaskType
             complexity=self._map_task_complexity(task.complexity),
             cacheable_context={
                 "system_prompt": ATOMIC_SPEC_SYSTEM_PROMPT,

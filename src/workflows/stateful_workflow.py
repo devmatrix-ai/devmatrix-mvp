@@ -72,7 +72,7 @@ class StatefulWorkflow:
                 task_id = self.postgres.create_task(
                     project_id=project_uuid,
                     agent_name=agent_name,
-                    task_type="greeting",
+                    task_type="summary",  # Valid TaskType for greetings/summaries
                     input_data={"user_request": state.get("user_request", "")},
                 )
             else:

@@ -240,7 +240,7 @@ Return ONLY the JSON structure specified in the system prompt."""
         try:
             # Generate with LLM
             response = await self.llm_client.generate_with_caching(
-                task_type="discovery_analysis",
+                task_type="discovery",  # Valid TaskType
                 complexity="medium",
                 cacheable_context={
                     "system_prompt": DISCOVERY_SYSTEM_PROMPT

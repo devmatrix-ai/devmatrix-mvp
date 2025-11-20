@@ -11,6 +11,7 @@ Purpose: Enable ML-driven learning from code generation failures
 
 import asyncio
 import uuid
+import warnings
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from dataclasses import dataclass, field
@@ -100,7 +101,11 @@ class ErrorPatternStore:
 
         # Initialize GraphCodeBERT for code-aware embeddings
         try:
-            self.embedding_model = SentenceTransformer('microsoft/graphcodebert-base')
+            # Suppress pooler weights warning (cosmetic only, doesn't affect embeddings)
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*pooler.*")
+                warnings.filterwarnings("ignore", message=".*Some weights.*not initialized.*")
+                self.embedding_model = SentenceTransformer('microsoft/graphcodebert-base')
             self.logger.info("Loaded GraphCodeBERT for error pattern embeddings (768-dim)")
         except Exception as e:
             self.logger.error(f"Failed to load GraphCodeBERT: {e}")

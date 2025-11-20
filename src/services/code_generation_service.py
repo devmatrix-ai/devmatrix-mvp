@@ -179,12 +179,12 @@ class CodeGenerationService:
         try:
             response = await asyncio.wait_for(
                 self.llm_client.generate_with_caching(
-                    task_type="code_generation_from_spec",
+                    task_type="task_execution",  # Valid TaskType for code generation
                     complexity="high",
                     cacheable_context={"system_prompt": self._get_requirements_system_prompt()},
                     variable_prompt=prompt,
                     temperature=0.0,  # Deterministic for reproducibility
-                    max_tokens=4000,  # Larger for complete apps
+                    max_tokens=10000,  # Increased for complex apps (e-commerce with 17+ endpoints)
                 ),
                 timeout=120.0,
             )
@@ -586,7 +586,7 @@ Generate code that is ready to run with `uvicorn main:app --reload` without any 
                 try:
                     response = await asyncio.wait_for(
                         self.llm_client.generate_with_caching(
-                            task_type="code_generation",
+                            task_type="task_execution",  # Valid TaskType
                             complexity="medium",
                             cacheable_context={"system_prompt": self._get_system_prompt()},
                             variable_prompt=prompt,
@@ -702,7 +702,7 @@ Generate code that is ready to run with `uvicorn main:app --reload` without any 
                         execution_metrics = ExecutionMetrics(
                             task_id=str(task_id),
                             name=task.name,
-                            task_type="code_generation",
+                            task_type="task_execution",  # Valid TaskType
                             duration_ms=0.0,  # Will be populated by orchestrator
                             resources={"memory_mb": 0.0, "cpu_percent": 0.0},
                             success=True,

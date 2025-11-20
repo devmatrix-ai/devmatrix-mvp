@@ -248,7 +248,7 @@ class RetryOrchestrator:
 
         # Call LLM with caching
         response = await self.llm_client.generate_with_caching(
-            task_type="atom_code_generation",
+            task_type="task_execution",  # Valid TaskType
             complexity=atom_spec.complexity if hasattr(atom_spec, "complexity") else "medium",
             cacheable_context=cacheable_context,
             variable_prompt=prompt,

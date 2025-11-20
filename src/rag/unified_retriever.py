@@ -8,6 +8,7 @@ Combines three retrieval sources for comprehensive code pattern matching:
 """
 
 import asyncio
+import warnings
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 
@@ -82,7 +83,11 @@ class UnifiedRAGRetriever:
         try:
             from sentence_transformers import SentenceTransformer
             # Use GraphCodeBERT for code-aware embeddings (768-dim)
-            self.qdrant_embeddings = SentenceTransformer('microsoft/graphcodebert-base')
+            # Suppress pooler weights warning (cosmetic only, doesn't affect embeddings)
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*pooler.*")
+                warnings.filterwarnings("ignore", message=".*Some weights.*not initialized.*")
+                self.qdrant_embeddings = SentenceTransformer('microsoft/graphcodebert-base')
             self.logger.info("Loaded GraphCodeBERT model for Qdrant (768-dim, code-aware)")
         except Exception as e:
             self.logger.warning(f"Could not load GraphCodeBERT for Qdrant: {e}")

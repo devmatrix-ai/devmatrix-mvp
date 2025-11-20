@@ -558,7 +558,7 @@ Be specific and actionable."""
             task_id = self.postgres.create_task(
                 project_id=project_id,
                 agent_name="CodeGenerationAgent",
-                task_type="code_generation",
+                task_type="task_execution",  # Valid TaskType
                 input_data=state["user_request"],
                 output_data=str(output_data),
                 status="completed" if state["approval_status"] == "approved" else "rejected"

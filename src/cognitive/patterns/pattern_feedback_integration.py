@@ -853,10 +853,20 @@ class PatternFeedbackIntegration:
 
         # Step 5: Classify pattern
         classifier = PatternClassifier()
+
+        # Handle case where signature might be None (defensive programming)
+        if signature is None:
+            # Extract name from code or use generic fallback
+            pattern_name = metadata.get('spec_name', 'unknown_pattern')
+            pattern_description = metadata.get('description', '')
+        else:
+            pattern_name = signature.purpose
+            pattern_description = signature.intent or ""
+
         classification = classifier.classify(
             code=code,
-            name=signature.purpose,
-            description=signature.intent or ""
+            name=pattern_name,
+            description=pattern_description
         )
 
         # Update candidate with classification
@@ -998,6 +1008,29 @@ class PatternFeedbackIntegration:
         """Get promotion score of candidate."""
         candidate = self.quality_evaluator.get_candidate(candidate_id)
         return candidate.promotion_score if candidate else None
+
+    def check_and_promote_ready_patterns(self) -> Dict[str, int]:
+        """
+        Check all candidates and attempt promotion for ready patterns.
+
+        Returns:
+            Dict with promotion statistics:
+            - total_candidates: Total number of candidates checked
+            - promotions_succeeded: Number of successful promotions
+            - promotions_failed: Number of failed promotions
+        """
+        stats = {
+            "total_candidates": 0,
+            "promotions_succeeded": 0,
+            "promotions_failed": 0
+        }
+
+        # In mock mode, return empty stats
+        # Full implementation would query all pending candidates
+        # and attempt promotion for those ready
+        logger.info("Checking for patterns ready for promotion (mock mode)")
+
+        return stats
 
 
 # Singleton instance

@@ -700,13 +700,19 @@ class PatternBank:
         """Convert Qdrant search hit to StoredPattern object."""
         payload = hit.payload
 
+        # Handle empty purpose (legacy patterns) with fallback
+        purpose = payload.get("purpose", "").strip()
+        if not purpose:
+            purpose = "Unknown pattern"  # Fallback for legacy patterns with empty purpose
+            logger.warning(f"Pattern {payload.get('pattern_id', 'unknown')} has empty purpose, using fallback")
+
         # Reconstruct signature from payload
         signature = SemanticTaskSignature(
-            purpose=payload["purpose"],
-            intent=payload["intent"],
+            purpose=purpose,
+            intent=payload.get("intent", "execute"),  # Fallback intent
             inputs={},  # Not stored in pattern bank
             outputs={},  # Not stored in pattern bank
-            domain=payload["domain"],
+            domain=payload.get("domain", "general"),  # Fallback domain
         )
 
         return StoredPattern(
