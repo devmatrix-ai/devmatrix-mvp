@@ -560,6 +560,81 @@ class PatternBank:
 
         return patterns
 
+    def _extract_keywords(self, text: str) -> List[str]:
+        """
+        Extract meaningful keywords from text by removing stopwords (TG5).
+
+        Args:
+            text: Input text to extract keywords from
+
+        Returns:
+            List of lowercase keywords without stopwords
+
+        Example:
+            >>> bank._extract_keywords("Create a new user in the database")
+            ['create', 'new', 'user', 'database']
+        """
+        # Common stopwords to filter out
+        stopwords = {
+            'a', 'an', 'the', 'in', 'on', 'at', 'to', 'for', 'of', 'and', 'or',
+            'but', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have',
+            'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could',
+            'may', 'might', 'must', 'can', 'this', 'that', 'these', 'those', 'it',
+            'its', 'by', 'from', 'with', 'without', 'into', 'through', 'during',
+            'before', 'after', 'above', 'below', 'between', 'among', 'under', 'over'
+        }
+
+        # Convert to lowercase and split into words
+        words = text.lower().split()
+
+        # Filter out stopwords and keep meaningful keywords
+        keywords = [word for word in words if word not in stopwords and len(word) > 2]
+
+        return keywords
+
+    def _keyword_to_pattern_type(self, keyword: str) -> Optional[str]:
+        """
+        Map keyword to pattern type for fallback matching (TG5).
+
+        Args:
+            keyword: Lowercase keyword
+
+        Returns:
+            Pattern type or None if no mapping exists
+
+        Example:
+            >>> bank._keyword_to_pattern_type("create")
+            'crud_create'
+            >>> bank._keyword_to_pattern_type("checkout")
+            'payment_workflow'
+        """
+        keyword_mappings = {
+            # CRUD operations
+            'create': 'crud_create',
+            'add': 'crud_create',
+            'new': 'crud_create',
+            'list': 'crud_list',
+            'all': 'crud_list',
+            'filter': 'crud_list',
+            'get': 'crud_read',
+            'read': 'crud_read',
+            'fetch': 'crud_read',
+            'update': 'crud_update',
+            'edit': 'crud_update',
+            'modify': 'crud_update',
+            'delete': 'crud_delete',
+            'remove': 'crud_delete',
+            # Workflow operations
+            'checkout': 'payment_workflow',
+            'pay': 'payment_workflow',
+            'payment': 'payment_workflow',
+            'order': 'payment_workflow',
+            'cart': 'cart_workflow',
+            'basket': 'cart_workflow',
+        }
+
+        return keyword_mappings.get(keyword.lower())
+
     def hybrid_search(
         self,
         signature: SemanticTaskSignature,

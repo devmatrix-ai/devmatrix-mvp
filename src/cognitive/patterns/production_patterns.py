@@ -51,7 +51,7 @@ PRODUCTION_PATTERN_CATEGORIES: Dict[str, Dict[str, Any]] = {
             "metrics_middleware"
         ],
         "success_threshold": 0.95,
-        "domain": "infrastructure",
+        "domain": "observability",
         "description": "Structured logging, health checks, and metrics collection",
         "priority": 1,
     },

@@ -1544,11 +1544,29 @@ Code MUST pass Python compile() without SyntaxError."""
         """
         files = {}
 
+        # Log patterns for this category
+        logger.info(
+            f"🔧 Composing {category}",
+            extra={
+                "category": category,
+                "pattern_count": len(category_patterns),
+                "purposes": [p.signature.purpose[:70] for p in category_patterns]
+            }
+        )
+
         # Helper function to find pattern by purpose keyword
         def find_pattern_by_keyword(patterns, *keywords):
             for p in patterns:
                 if any(kw.lower() in p.signature.purpose.lower() for kw in keywords):
+                    logger.debug(
+                        f"✅ Pattern matched: {p.signature.purpose[:60]}",
+                        extra={"keywords": keywords}
+                    )
                     return p
+            logger.warning(
+                f"❌ No pattern matched keywords: {keywords}",
+                extra={"category": category, "available": len(patterns)}
+            )
             return None
 
         # Core infrastructure patterns
@@ -1556,6 +1574,7 @@ Code MUST pass Python compile() without SyntaxError."""
             for p in category_patterns:
                 if "pydantic" in p.signature.purpose.lower() or "configuration" in p.signature.purpose.lower():
                     files["src/core/config.py"] = self._adapt_pattern(p.code, spec_requirements)
+                    logger.info(f"✅ Mapped: src/core/config.py", extra={"purpose": p.signature.purpose[:60]})
 
         elif category == "database_async":
             for p in category_patterns:
@@ -1742,6 +1761,15 @@ File: src/api/routes/{entity.snake_name}.py
                     files[".pre-commit-config.yaml"] = self._adapt_pattern(p.code, spec_requirements)
                 elif "readme" in purpose_lower:
                     files["README.md"] = self._adapt_pattern(p.code, spec_requirements)
+
+        # Log summary for this category
+        logger.info(
+            f"📦 Category {category} composed",
+            extra={
+                "files_generated": len(files),
+                "file_list": list(files.keys())
+            }
+        )
 
         return files
 
