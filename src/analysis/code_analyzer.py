@@ -185,59 +185,87 @@ class CodeAnalyzer:
         - Calculations: total = sum(items * quantity)
         - Stock checks: if stock < quantity
         - Field validators: Field(gt=0), Field(ge=0)
+        - Custom validators: @field_validator decorators
 
         Args:
             code: Python source code string
 
         Returns:
-            List of business logic descriptions
+            List of business logic descriptions (ALL instances, not deduplicated)
         """
         validations = []
 
         try:
             tree = ast.parse(code)
 
-            # 1. Extract Pydantic Field validators
+            # 1. Extract ALL Pydantic Field constraint instances (not just unique types)
+            field_constraint_count = 0
             for node in ast.walk(tree):
                 # Check for Field(gt=0), Field(ge=0), etc.
                 if isinstance(node, ast.Call):
                     if isinstance(node.func, ast.Name) and node.func.id == "Field":
                         for keyword in node.keywords:
-                            if keyword.arg in ["gt", "ge", "lt", "le", "min_length", "max_length"]:
-                                validations.append(f"field_constraint_{keyword.arg}")
+                            if keyword.arg in ["gt", "ge", "lt", "le", "min_length", "max_length", "decimal_places"]:
+                                # Count each instance separately, not just type
+                                field_constraint_count += 1
+                                validations.append(f"field_constraint_{keyword.arg}_{field_constraint_count}")
 
-            # 2. Extract comparison validations from code
+            # 2. Extract @field_validator decorators
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef):
+                    for decorator in node.decorator_list:
+                        # Handle @field_validator('field_name')
+                        if isinstance(decorator, ast.Call):
+                            if hasattr(decorator.func, 'id') and decorator.func.id == 'field_validator':
+                                validations.append(f"field_validator_{node.name}")
+                        # Handle @field_validator without parentheses (rare)
+                        elif isinstance(decorator, ast.Name) and decorator.id == 'field_validator':
+                            validations.append(f"field_validator_{node.name}")
+
+            # 3. Extract type validators (EmailStr, etc.)
+            if 'EmailStr' in code or 'emailstr' in code.lower():
+                # Count each EmailStr field
+                email_count = code.count('EmailStr') + code.lower().count('emailstr')
+                for i in range(email_count):
+                    validations.append(f"email_validation_{i+1}")
+
+            # 4. Extract comparison validations from code (each occurrence)
             code_lower = code.lower()
 
-            # Price validations
-            if re.search(r'price\s*[<>]=?\s*0', code_lower):
-                validations.append("price_validation")
+            # Price validations (count occurrences)
+            price_matches = len(re.findall(r'price\s*[<>]=?\s*0', code_lower))
+            for i in range(price_matches):
+                validations.append(f"price_validation_{i+1}")
 
-            # Stock validations
-            if re.search(r'stock\s*[<>]=?\s*0', code_lower) or \
-               re.search(r'stock\s*[<>]=?\s*quantity', code_lower):
-                validations.append("stock_validation")
+            # Stock validations (count occurrences)
+            stock_matches = len(re.findall(r'stock\s*[<>]=?\s*0', code_lower)) + \
+                           len(re.findall(r'stock\s*[<>]=?\s*quantity', code_lower))
+            for i in range(stock_matches):
+                validations.append(f"stock_validation_{i+1}")
 
-            # Email validations
-            if 'emailstr' in code_lower or 'email' in code_lower and 'str' in code_lower:
-                validations.append("email_validation")
+            # Quantity validations (count occurrences)
+            quantity_matches = len(re.findall(r'quantity\s*[<>]=?\s*0', code_lower))
+            for i in range(quantity_matches):
+                validations.append(f"quantity_validation_{i+1}")
 
-            # Quantity validations
-            if re.search(r'quantity\s*[<>]=?\s*0', code_lower):
-                validations.append("quantity_validation")
+            # HTTPException for validation errors (count 400 errors)
+            if 'httpexception' in code_lower:
+                error_400_count = code.count('400')
+                for i in range(error_400_count):
+                    validations.append(f"validation_error_handling_{i+1}")
 
-            # HTTPException for validation errors
-            if 'httpexception' in code_lower and '400' in code:
-                validations.append("validation_error_handling")
+            # is_active checks
+            is_active_checks = code_lower.count('is_active')
+            if is_active_checks > 0:
+                for i in range(is_active_checks):
+                    validations.append(f"is_active_validation_{i+1}")
 
             # Calculate/sum patterns
             if 'total' in code_lower and ('sum' in code_lower or 'calculate' in code_lower):
                 validations.append("calculate_total")
 
-            # Unique validations
-            validations = list(set(validations))
-
-            logger.info(f"Extracted {len(validations)} validation signatures")
+            # DON'T deduplicate - return ALL instances
+            logger.info(f"Extracted {len(validations)} validation instances (all occurrences counted)")
             return validations
 
         except Exception as e:
