@@ -1,0 +1,11 @@
+task_groups:
+  - name: Task Group 1 - Pattern Classifier Implementation
+    claude_code_subagent: python-expert
+  - name: Task Group 2 - File Type Detector Implementation
+    claude_code_subagent: python-expert
+  - name: Task Group 3 - Prompt Strategies Implementation
+    claude_code_subagent: python-expert
+  - name: Task Group 4 - Validation Strategies Implementation
+    claude_code_subagent: python-expert
+  - name: Task Group 5 - Pattern Feedback Integration
+    claude_code_subagent: backend-architect

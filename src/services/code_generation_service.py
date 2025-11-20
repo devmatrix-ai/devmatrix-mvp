@@ -469,13 +469,19 @@ CRITICAL RULES:
    - Docstrings for clarity
 
 7. **Output Format**:
-   - Single complete Python file
+   - Organize code logically based on complexity
    - All imports at top
    - Models section
    - Storage initialization
    - Route handlers
    - Main app initialization
    - Wrap in ```python code blocks
+
+8. **Structure Guidelines** (will be specified in user prompt based on spec complexity):
+   - Follow the output structure specified in the user prompt
+   - Simple specs: Single file is acceptable
+   - Complex specs: May use modular structure or multiple sections
+   - ALWAYS implement ALL specified features regardless of structure choice
 
 Generate code that is ready to run with `uvicorn main:app --reload` without any modifications."""
 
@@ -807,7 +813,7 @@ Generate code that is ready to run with `uvicorn main:app --reload` without any 
                 "task_id": str(task.task_id),
                 "file_type": file_type_detection.file_type.value,
                 "confidence": file_type_detection.confidence,
-                "detected_from": file_type_detection.detected_from,
+                "reasoning": file_type_detection.reasoning,
             },
         )
 
