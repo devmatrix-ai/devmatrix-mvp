@@ -1,0 +1,47 @@
+"""
+Database Configuration
+
+Async SQLAlchemy setup with connection pooling.
+"""
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import declarative_base
+from src.core.config import get_settings
+
+settings = get_settings()
+
+# Create async engine with connection pool
+engine = create_async_engine(
+    settings.database_url,
+    echo=settings.db_echo,
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
+    pool_pre_ping=True  # Verify connections before use
+)
+
+# Session factory for creating async sessions
+async_session_maker = async_sessionmaker(
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False
+)
+
+# Base class for SQLAlchemy models
+Base = declarative_base()
+
+
+async def get_db() -> AsyncSession:
+    """
+    FastAPI dependency for database sessions.
+
+    Yields:
+        AsyncSession: Database session with automatic commit/rollback
+    """
+    async with async_session_maker() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
