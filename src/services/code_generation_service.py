@@ -1997,7 +1997,10 @@ File: src/api/routes/{entity.snake_name}.py
 
         Replace placeholder variables with actual spec values:
         - {APP_NAME} → spec.metadata.get("spec_name", "API")
+        - {APP_NAME_SNAKE} → app_name in snake_case
         - {DATABASE_URL} → spec.config.get("database_url", "")
+        - {ENTITY_IMPORTS} → generated entity router imports
+        - {ENTITY_ROUTERS} → generated entity router includes
         - {ENTITY_NAME} → entity.name (for entity-specific patterns)
 
         Args:
@@ -2013,13 +2016,32 @@ File: src/api/routes/{entity.snake_name}.py
         app_name = spec_requirements.metadata.get("spec_name", "API")
         adapted = adapted.replace("{APP_NAME}", app_name)
 
+        # App name in snake_case
+        app_name_snake = app_name.replace("-", "_").replace(" ", "_").lower()
+        adapted = adapted.replace("{APP_NAME_SNAKE}", app_name_snake)
+
         # Database URL (from metadata or default)
         database_url = spec_requirements.metadata.get(
             "database_url", "postgresql+asyncpg://user:password@localhost:5432/app"
         )
         adapted = adapted.replace("{DATABASE_URL}", database_url)
 
-        # Additional adaptations can be added here as needed
+        # Generate entity imports and routers (for main.py)
+        if "{ENTITY_IMPORTS}" in adapted or "{ENTITY_ROUTERS}" in adapted:
+            entity_imports = []
+            entity_routers = []
+
+            for entity in spec_requirements.entities:
+                entity_snake = entity.name.lower().replace(" ", "_")
+                entity_imports.append(f"from src.api.routes import {entity_snake}")
+                entity_routers.append(f"app.include_router({entity_snake}.router)")
+
+            # Join with newlines
+            imports_str = "\n".join(entity_imports) if entity_imports else ""
+            routers_str = "\n".join(entity_routers) if entity_routers else ""
+
+            adapted = adapted.replace("{ENTITY_IMPORTS}", imports_str)
+            adapted = adapted.replace("{ENTITY_ROUTERS}", routers_str)
 
         return adapted
 
