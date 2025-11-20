@@ -1327,8 +1327,8 @@ Code MUST pass Python compile() without SyntaxError."""
         """
         Retrieve production-ready patterns for all categories (Task Group 8).
 
-        Uses PatternBank.hybrid_search() with production_ready filter to retrieve
-        golden patterns from Qdrant vector database.
+        Uses SPECIFIC purpose strings from populate_production_patterns.py to ensure
+        correct pattern retrieval via PatternBank.hybrid_search().
 
         Args:
             spec_requirements: SpecRequirements object
@@ -1341,25 +1341,116 @@ Code MUST pass Python compile() without SyntaxError."""
                 ...
             }
         """
+        # Exact purpose strings from populate_production_patterns.py
+        # This ensures semantic search returns the CORRECT patterns
+        SPECIFIC_PURPOSES = {
+            "core_config": [
+                "Pydantic settings configuration with environment variable support",
+            ],
+            "database_async": [
+                "Async SQLAlchemy database connection and session management",
+            ],
+            "observability": [
+                "Structured logging configuration with structlog and JSON output",
+                "Request ID middleware for distributed tracing",
+                "Global exception handler with structured logging",
+                "Health check and readiness endpoints",
+                "Prometheus metrics endpoint with business metrics",
+            ],
+            "models_pydantic": [
+                "Pydantic schemas for request/response validation",
+            ],
+            "models_sqlalchemy": [
+                "SQLAlchemy ORM models with timezone-aware timestamps",
+            ],
+            "repository_pattern": [
+                "Repository pattern implementation for data access",
+            ],
+            "business_logic": [
+                "Service layer for business logic",
+            ],
+            "api_routes": [
+                # Entity-specific CRUD routes pattern
+                "FastAPI CRUD endpoints with repository pattern",
+            ],
+            "security_hardening": [
+                "Security utilities for HTML sanitization and rate limiting",
+            ],
+            "test_infrastructure": [
+                "Pytest fixtures for database and client testing",
+                "Test data factories for entities",
+                "Unit tests for Pydantic schemas",
+                "Unit tests for repository CRUD operations",
+                "Unit tests for service business logic",
+                "Integration tests for API endpoints",
+                "Tests for logging, metrics, and health checks",
+            ],
+            "docker_infrastructure": [
+                "Multi-stage Docker image with security best practices",
+                "Full stack docker-compose with app, database, monitoring",
+                "Isolated test environment with docker-compose",
+                "Prometheus scrape configuration",
+            ],
+            "project_config": [
+                # Config files typically generated without patterns
+            ],
+        }
+
         patterns = {}
 
         for category, config in PRODUCTION_PATTERN_CATEGORIES.items():
-            # Create query signature for category
-            query_sig = SemanticTaskSignature(
-                purpose=f"production ready {category} implementation",
-                intent="implement",
-                inputs={},
-                outputs={},
-                domain=config["domain"],
-            )
+            category_patterns = []
+            specific_purposes = SPECIFIC_PURPOSES.get(category, [])
 
-            # Hybrid search with production_ready filter
-            category_patterns = self.pattern_bank.hybrid_search(
-                signature=query_sig,
-                domain=config["domain"],
-                production_ready=True,
-                top_k=3,
-            )
+            if not specific_purposes:
+                # Fallback: Use generic search for categories without specific purposes
+                logger.warning(
+                    f"No specific purposes for {category}, using generic search",
+                    extra={"category": category}
+                )
+                query_sig = SemanticTaskSignature(
+                    purpose=f"production ready {category} implementation",
+                    intent="implement",
+                    inputs={},
+                    outputs={},
+                    domain=config["domain"],
+                )
+                results = self.pattern_bank.hybrid_search(
+                    signature=query_sig,
+                    domain=config["domain"],
+                    production_ready=True,
+                    top_k=3,
+                )
+                category_patterns.extend(results)
+            else:
+                # Search for EACH specific purpose string
+                for purpose in specific_purposes:
+                    query_sig = SemanticTaskSignature(
+                        purpose=purpose,
+                        intent="implement",
+                        inputs={},
+                        outputs={},
+                        domain=config["domain"],
+                    )
+
+                    results = self.pattern_bank.hybrid_search(
+                        signature=query_sig,
+                        domain=config["domain"],
+                        production_ready=True,
+                        top_k=1,  # Only need 1 per specific purpose
+                    )
+
+                    if results:
+                        category_patterns.append(results[0])
+                        logger.debug(
+                            f"✅ Found pattern: {purpose[:60]}",
+                            extra={"category": category}
+                        )
+                    else:
+                        logger.warning(
+                            f"❌ Missing pattern: {purpose[:60]}",
+                            extra={"category": category, "purpose": purpose}
+                        )
 
             # Filter by success threshold
             patterns[category] = [
@@ -1368,8 +1459,9 @@ Code MUST pass Python compile() without SyntaxError."""
                 if p.success_rate >= config["success_threshold"]
             ]
 
-            logger.debug(
-                f"Retrieved {len(patterns[category])} patterns for category: {category}"
+            logger.info(
+                f"Retrieved {len(patterns[category])} patterns for {category}",
+                extra={"category": category, "count": len(patterns[category])}
             )
 
         return patterns
@@ -1526,12 +1618,59 @@ Code MUST pass Python compile() without SyntaxError."""
             # Generate API route for each entity
             route_pattern = find_pattern_by_keyword(category_patterns, "fastapi", "crud", "endpoint")
             if route_pattern and spec_requirements.entities:
+                # Use pattern if available
                 for entity in spec_requirements.entities:
                     adapted = self._adapt_pattern(route_pattern.code, spec_requirements)
                     # Replace entity placeholder
                     adapted = adapted.replace("{ENTITY_NAME}", entity.name)
                     adapted = adapted.replace("{entity_name}", entity.snake_name)
                     files[f"src/api/routes/{entity.snake_name}.py"] = adapted
+            elif spec_requirements.entities:
+                # LLM FALLBACK: No pattern found, generate with LLM
+                logger.warning(
+                    "No pattern found for api_routes - using LLM fallback",
+                    extra={"entity_count": len(spec_requirements.entities)}
+                )
+
+                # Generate CRUD routes for each entity using LLM
+                for entity in spec_requirements.entities:
+                    # Create context for LLM
+                    entity_context = {
+                        "entity_name": entity.name,
+                        "snake_name": entity.snake_name,
+                        "fields": [{"name": f.name, "type": f.type, "required": f.required} for f in entity.fields] if hasattr(entity, 'fields') else [],
+                        "endpoints": [e for e in spec_requirements.endpoints if entity.snake_name in e.path.lower()]
+                    }
+
+                    # Use LLM to generate FastAPI CRUD routes
+                    prompt = f"""Generate FastAPI CRUD routes for entity {entity.name}.
+
+Entity Information:
+- Name: {entity.name}
+- Snake case: {entity.snake_name}
+- Fields: {entity_context['fields']}
+- Endpoints needed: {len(entity_context['endpoints'])}
+
+Generate complete FastAPI route file with:
+1. Import statements (FastAPI, Depends, HTTPException)
+2. APIRouter instance
+3. CRUD operations: GET all, GET by id, POST create, PUT update, DELETE
+4. Dependency injection for service and database
+5. Proper HTTP status codes and error handling
+6. Pydantic schema validation
+
+Use repository pattern and service layer architecture.
+File: src/api/routes/{entity.snake_name}.py
+"""
+
+                    # TODO: Call LLM here (for now, use placeholder)
+                    # generated_code = await self._generate_with_llm(prompt, entity_context)
+
+                    # Placeholder until LLM integration
+                    logger.info(
+                        f"LLM fallback would generate: src/api/routes/{entity.snake_name}.py",
+                        extra={"prompt_length": len(prompt)}
+                    )
 
         # Security patterns
         elif category == "security_hardening":

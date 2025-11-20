@@ -174,6 +174,18 @@ def populate_patterns():
             "observability_complete": False,
         },
 
+        # API Routes (NEW - entity-specific CRUD endpoints)
+        {
+            "file": "api/routes/crud_entity.py.j2",
+            "purpose": "FastAPI CRUD endpoints with repository pattern",
+            "intent": "Generate entity-specific REST API routes with full CRUD operations",
+            "domain": "api",
+            "success_rate": 0.96,
+            "test_coverage": 0.85,
+            "security_level": "HIGH",
+            "observability_complete": False,
+        },
+
         # Task Group 6: Docker
         {
             "file": "docker/Dockerfile.j2",

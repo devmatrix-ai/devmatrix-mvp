@@ -23,6 +23,46 @@ from src.cognitive.patterns.pattern_bank import PatternBank, StoredPattern
 logger = logging.getLogger(__name__)
 
 
+# Adaptive threshold configuration (TG4)
+DOMAIN_THRESHOLDS = {
+    "crud": 0.75,      # Simple CRUD patterns - lower threshold
+    "custom": 0.80,    # Custom logic - medium threshold
+    "payment": 0.85,   # Complex payment patterns - higher threshold
+    "workflow": 0.80,  # Workflow patterns - medium threshold
+}
+DEFAULT_THRESHOLD = 0.80  # Fallback for unknown domains
+
+
+def get_adaptive_threshold(domain: Optional[str]) -> float:
+    """
+    Get adaptive similarity threshold based on requirement domain (TG4).
+
+    Different domains require different similarity thresholds:
+    - CRUD (0.75): Simple patterns, lower threshold for more matches
+    - Payment (0.85): Complex patterns, higher threshold for precision
+    - Custom/Workflow (0.80): Medium complexity, balanced threshold
+    - Unknown (0.80): Default threshold for safety
+
+    Args:
+        domain: Requirement domain (crud, custom, payment, workflow, etc.)
+
+    Returns:
+        Similarity threshold (0.75-0.85)
+
+    Example:
+        >>> get_adaptive_threshold("crud")
+        0.75
+        >>> get_adaptive_threshold("payment")
+        0.85
+        >>> get_adaptive_threshold("unknown")
+        0.80
+    """
+    if not domain:
+        return DEFAULT_THRESHOLD
+
+    return DOMAIN_THRESHOLDS.get(domain.lower(), DEFAULT_THRESHOLD)
+
+
 class CPIE:
     """
     Cognitive Pattern Inference Engine.
@@ -159,22 +199,24 @@ def infer_from_pattern(
     signature: SemanticTaskSignature,
     pattern_bank: PatternBank,
     co_reasoning_system: Any,
-    similarity_threshold: float = 0.85,
+    similarity_threshold: Optional[float] = None,
 ) -> Optional[str]:
     """
     Infer code by adapting similar pattern from Pattern Bank.
 
     Strategy:
-    1. Search Pattern Bank for similar patterns (≥85% similarity)
-    2. If found, extract pattern code and strategy
-    3. Call Claude to generate adaptation strategy
-    4. Call DeepSeek to implement adapted code
+    1. Calculate adaptive threshold based on domain (TG4)
+    2. Search Pattern Bank for similar patterns (threshold varies by domain)
+    3. If found, extract pattern code and strategy
+    4. Call Claude to generate adaptation strategy
+    5. Call DeepSeek to implement adapted code
 
     Args:
         signature: Semantic task signature
         pattern_bank: PatternBank instance
         co_reasoning_system: Co-reasoning system
-        similarity_threshold: Minimum similarity score (default: 0.85)
+        similarity_threshold: Optional override for similarity score
+            (if None, uses adaptive threshold based on domain)
 
     Returns:
         Generated code or None if no pattern matches
@@ -185,6 +227,13 @@ def infer_from_pattern(
     # Returns adapted code if pattern found, None otherwise
     ```
     """
+    # TG4: Use adaptive threshold based on domain if not explicitly provided
+    if similarity_threshold is None:
+        similarity_threshold = get_adaptive_threshold(signature.domain)
+        logger.debug(
+            f"Using adaptive threshold {similarity_threshold} for domain '{signature.domain}'"
+        )
+
     logger.debug(f"Searching patterns for: {signature.purpose}")
 
     # Search for similar patterns

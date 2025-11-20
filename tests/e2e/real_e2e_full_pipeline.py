@@ -1923,6 +1923,7 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
 
         # Save metrics
         metrics_file = f"tests/e2e/metrics/real_e2e_{self.spec_name}_{self.timestamp}.json"
+        Path(metrics_file).parent.mkdir(parents=True, exist_ok=True)
         with open(metrics_file, 'w') as f:
             json.dump(final_metrics, f, indent=2, default=str)
 
