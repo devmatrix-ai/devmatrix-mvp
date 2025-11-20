@@ -33,6 +33,22 @@ from src.cognitive.signatures.semantic_signature import (
     SemanticTaskSignature,
     compute_semantic_hash,
 )
+from src.cognitive.patterns.pattern_classifier import PatternClassifier
+
+# Import DAG synchronizer for execution-based ranking (Milestone 3)
+try:
+    from src.cognitive.services.dag_synchronizer import DAGSynchronizer
+    from src.cognitive.infrastructure.neo4j_client import Neo4jPatternClient
+    DAG_RANKING_AVAILABLE = True
+except ImportError:
+    DAG_RANKING_AVAILABLE = False
+
+# Import DualEmbeddingGenerator for automatic dual embedding generation
+try:
+    from src.cognitive.embeddings.dual_embedding_generator import DualEmbeddingGenerator
+    DUAL_EMBEDDINGS_AVAILABLE = True
+except ImportError:
+    DUAL_EMBEDDINGS_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +128,8 @@ class PatternBank:
         self,
         collection_name: Optional[str] = None,
         embedding_model: Optional[str] = None,
+        enable_dag_ranking: bool = True,
+        enable_dual_embeddings: bool = True,
     ):
         """
         Initialize Pattern Bank.
@@ -119,6 +137,8 @@ class PatternBank:
         Args:
             collection_name: Qdrant collection name (default: from settings)
             embedding_model: Embedding model name (default: from settings)
+            enable_dag_ranking: Enable DAG-based ranking (Milestone 3)
+            enable_dual_embeddings: Enable automatic dual embedding generation
         """
         self.collection_name = collection_name or settings.qdrant_collection_semantic
         self.embedding_dimension = settings.embedding_dimension
@@ -129,7 +149,32 @@ class PatternBank:
         self.client: Optional[QdrantClient] = None
         self.is_connected = False
 
-        # Initialize embedding encoder
+        # Initialize pattern classifier for auto-categorization
+        self.classifier = PatternClassifier()
+
+        # DAG-based ranking (Milestone 3)
+        self.enable_dag_ranking = enable_dag_ranking and DAG_RANKING_AVAILABLE
+        self.neo4j_client: Optional[Neo4jPatternClient] = None
+        if self.enable_dag_ranking:
+            try:
+                self.neo4j_client = Neo4jPatternClient()
+                logger.info("DAG-based pattern ranking enabled")
+            except Exception as e:
+                logger.warning(f"Failed to enable DAG ranking: {e}")
+                self.enable_dag_ranking = False
+
+        # Dual embeddings (automatic code + semantic embeddings)
+        self.enable_dual_embeddings = enable_dual_embeddings and DUAL_EMBEDDINGS_AVAILABLE
+        self.dual_generator: Optional[DualEmbeddingGenerator] = None
+        if self.enable_dual_embeddings:
+            try:
+                self.dual_generator = DualEmbeddingGenerator()
+                logger.info("Dual embedding generation enabled (GraphCodeBERT 768d + Sentence-BERT 384d)")
+            except Exception as e:
+                logger.warning(f"Failed to enable dual embeddings: {e}")
+                self.enable_dual_embeddings = False
+
+        # Initialize embedding encoder (fallback if dual embeddings disabled)
         if self.use_sentence_transformers:
             # SentenceTransformers wrapper (e.g., all-MiniLM-L6-v2)
             self.encoder = SentenceTransformer(self.embedding_model_name)
@@ -147,7 +192,8 @@ class PatternBank:
         logger.info(
             f"Initialized PatternBank with collection '{self.collection_name}', "
             f"model '{self.embedding_model_name}' "
-            f"(SentenceTransformers: {self.use_sentence_transformers})"
+            f"(SentenceTransformers: {self.use_sentence_transformers}, "
+            f"DualEmbeddings: {self.enable_dual_embeddings})"
         )
 
     def connect(self) -> None:
@@ -225,18 +271,23 @@ class PatternBank:
         Generate embedding vector from text.
 
         Supports both SentenceTransformers and direct Transformers models.
+        Automatically uses correct embedding dimension for semantic_patterns collection.
 
         Args:
             text: Text to encode (code + purpose)
 
         Returns:
-            Embedding vector as list of floats
+            Embedding vector as list of floats (384-dim for semantic_patterns, 768-dim otherwise)
         """
-        if self.use_sentence_transformers:
-            # SentenceTransformers path
+        # FIX: Use semantic embedding (384-dim) for semantic_patterns collection
+        if self.enable_dual_embeddings and self.collection_name == "semantic_patterns":
+            # Use Sentence-BERT for semantic understanding (384-dim)
+            return self.dual_generator._generate_semantic_embedding(text)
+        elif self.use_sentence_transformers:
+            # SentenceTransformers path (legacy)
             return self.encoder.encode(text).tolist()
         else:
-            # Direct transformers path (GraphCodeBERT)
+            # Direct transformers path (GraphCodeBERT 768-dim)
             inputs = self.tokenizer(
                 text,
                 return_tensors="pt",
@@ -293,16 +344,38 @@ class PatternBank:
         # Compute semantic hash
         semantic_hash = compute_semantic_hash(signature)
 
-        # Create embedding from signature purpose + code
-        embedding_text = f"{signature.purpose}\n\n{code}"
-        embedding = self._encode(embedding_text)
+        # Auto-categorize pattern using PatternClassifier
+        classification_result = self.classifier.classify(
+            code=code,
+            name=signature.purpose,
+            description=signature.intent
+        )
 
-        # Create metadata
+        # Generate dual embeddings if enabled, otherwise use fallback
+        if self.enable_dual_embeddings and self.dual_generator:
+            # Generate dual embeddings (code + semantic)
+            pattern_dict = {
+                'code': code,
+                'description': signature.purpose,
+                'pattern_id': pattern_id
+            }
+            dual_emb = self.dual_generator.generate_batch([pattern_dict])[0]
+            code_embedding = dual_emb.code_embedding
+            semantic_embedding = dual_emb.semantic_embedding
+        else:
+            # Fallback to single embedding
+            embedding_text = f"{signature.purpose}\n\n{code}"
+            code_embedding = self._encode(embedding_text)
+            semantic_embedding = code_embedding  # Same for both if dual disabled
+
+        # Create metadata with auto-categorization
         metadata = {
             "pattern_id": pattern_id,
             "purpose": signature.purpose,
             "intent": signature.intent,
-            "domain": signature.domain,
+            "domain": signature.domain,  # Original domain from signature
+            "category": classification_result.category,  # Auto-categorized domain
+            "classification_confidence": classification_result.confidence,
             "code": code,
             "success_rate": success_rate,
             "usage_count": 0,
@@ -310,8 +383,13 @@ class PatternBank:
             "semantic_hash": semantic_hash,
         }
 
-        # Store in Qdrant
-        self._store_in_qdrant(embedding, metadata, pattern_id)
+        # Store in Qdrant (both collections if dual embeddings enabled)
+        self._store_in_qdrant(
+            code_embedding=code_embedding,
+            semantic_embedding=semantic_embedding,
+            metadata=metadata,
+            pattern_id=pattern_id
+        )
 
         logger.info(
             f"Stored pattern {pattern_id}: {signature.purpose[:50]} "
@@ -321,21 +399,62 @@ class PatternBank:
         return pattern_id
 
     def _store_in_qdrant(
-        self, embedding: List[float], metadata: Dict[str, Any], pattern_id: str
+        self,
+        code_embedding: List[float],
+        semantic_embedding: List[float],
+        metadata: Dict[str, Any],
+        pattern_id: str
     ) -> None:
-        """Internal method to store vector in Qdrant."""
+        """
+        Store pattern in Qdrant collections.
+
+        If dual embeddings enabled, stores in both:
+        - devmatrix_patterns (code embeddings - GraphCodeBERT 768d)
+        - semantic_patterns (semantic embeddings - Sentence-BERT 384d)
+
+        Otherwise, stores semantic_embedding only in the primary collection.
+        """
         if not self.is_connected:
             self.connect()
 
-        point = PointStruct(id=pattern_id, vector=embedding, payload=metadata)
+        if self.enable_dual_embeddings:
+            # Store code embedding in devmatrix_patterns
+            code_point = PointStruct(
+                id=hash(pattern_id) % (2**63),  # Deterministic ID for consistency
+                vector=code_embedding,
+                payload=metadata
+            )
+            try:
+                self.client.upsert(
+                    collection_name="devmatrix_patterns",
+                    points=[code_point]
+                )
+            except Exception as e:
+                logger.warning(f"Failed to store code embedding for {pattern_id}: {e}")
 
-        self.client.upsert(collection_name=self.collection_name, points=[point])
+            # Store semantic embedding in semantic_patterns
+            semantic_point = PointStruct(
+                id=hash(pattern_id) % (2**63),  # Same ID for consistency
+                vector=semantic_embedding,
+                payload=metadata
+            )
+            try:
+                self.client.upsert(
+                    collection_name="semantic_patterns",
+                    points=[semantic_point]
+                )
+            except Exception as e:
+                logger.warning(f"Failed to store semantic embedding for {pattern_id}: {e}")
+        else:
+            # Fallback: store only in primary collection
+            point = PointStruct(id=pattern_id, vector=semantic_embedding, payload=metadata)
+            self.client.upsert(collection_name=self.collection_name, points=[point])
 
     def search_patterns(
         self,
         signature: SemanticTaskSignature,
         top_k: int = 5,
-        similarity_threshold: float = 0.85,
+        similarity_threshold: float = 0.48,  # LOWERED from 0.55 to match best pattern similarity (~0.495)
     ) -> List[StoredPattern]:
         """
         Search for similar patterns using semantic similarity.
@@ -363,16 +482,44 @@ class PatternBank:
         if not self.is_connected:
             self.connect()
 
+        # DIAGNOSTIC: Check collection size
+        try:
+            collection_info = self.client.get_collection(self.collection_name)
+            total_patterns = collection_info.points_count if collection_info else 0
+            logger.debug(f"🔍 DIAGNOSTIC: Collection '{self.collection_name}' has {total_patterns} patterns")
+        except Exception as e:
+            logger.warning(f"⚠️  DIAGNOSTIC: Failed to get collection info: {e}")
+            total_patterns = "unknown"
+
         # Create query embedding
         query_text = f"{signature.purpose}"
         query_embedding = self._encode(query_text)
 
-        # Search Qdrant
+        # DIAGNOSTIC: Search WITHOUT threshold first to see all similarities
+        all_results = self.client.search(
+            collection_name=self.collection_name,
+            query_vector=query_embedding,
+            limit=top_k,
+            score_threshold=0.0,  # Get ALL results for diagnostics
+        )
+
+        logger.debug(
+            f"🔍 DIAGNOSTIC: Top {min(5, len(all_results))} similarities (no threshold): "
+            f"{[round(r.score, 3) for r in all_results[:5]]}"
+        )
+
+        # Search Qdrant with threshold
         search_result = self.client.search(
             collection_name=self.collection_name,
             query_vector=query_embedding,
             limit=top_k,
             score_threshold=similarity_threshold,
+        )
+
+        # DIAGNOSTIC: Compare results
+        logger.debug(
+            f"🔍 DIAGNOSTIC: Threshold {similarity_threshold} filtered: "
+            f"{len(all_results)} → {len(search_result)} results"
         )
 
         # Convert to StoredPattern objects
@@ -386,8 +533,16 @@ class PatternBank:
 
         logger.info(
             f"Found {len(patterns)} patterns for '{signature.purpose[:50]}' "
-            f"(threshold={similarity_threshold})"
+            f"(threshold={similarity_threshold}, collection_size={total_patterns})"
         )
+
+        if len(patterns) == 0 and len(all_results) > 0:
+            logger.warning(
+                f"⚠️  PATTERN BANK: 0 results with threshold {similarity_threshold}, "
+                f"but {len(all_results)} results exist. "
+                f"Best similarity: {all_results[0].score:.3f}. "
+                f"Consider lowering threshold to {max(0.5, all_results[0].score - 0.1):.2f}"
+            )
 
         return patterns
 
@@ -483,28 +638,37 @@ class PatternBank:
         self, payload: Dict, signature: SemanticTaskSignature, domain: Optional[str]
     ) -> float:
         """
-        Calculate metadata relevance score.
+        Calculate metadata relevance score with optional DAG-based ranking.
 
         Factors:
         - Domain match (if specified)
         - Intent match
         - Success rate
+        - DAG execution success (if enabled) - Milestone 3
 
         Returns:
             Score in range [0.0, 1.0]
         """
         score = 0.0
 
-        # Domain match (40%)
+        # Domain match (30%)
         if domain and payload.get("domain") == domain:
-            score += 0.4
-
-        # Intent match (30%)
-        if payload.get("intent") == signature.intent:
             score += 0.3
 
-        # Success rate contribution (30%)
-        score += 0.3 * payload.get("success_rate", 0.0)
+        # Intent match (20%)
+        if payload.get("intent") == signature.intent:
+            score += 0.2
+
+        # Success rate contribution (20%)
+        score += 0.2 * payload.get("success_rate", 0.0)
+
+        # DAG execution-based ranking (30%) - Milestone 3
+        if self.enable_dag_ranking:
+            dag_score = self._get_dag_ranking_score(payload.get("pattern_id"))
+            score += 0.3 * dag_score
+        else:
+            # Fallback: use success_rate again
+            score += 0.3 * payload.get("success_rate", 0.0)
 
         return min(score, 1.0)
 
@@ -684,3 +848,103 @@ class PatternBank:
         )
 
         return metrics
+
+    def _get_dag_ranking_score(self, pattern_id: Optional[str]) -> float:
+        """
+        Get DAG-based ranking score for a pattern (Milestone 3).
+
+        Formula:
+        - Base: Pattern's Neo4j ranking_score (0.0-1.0)
+        - Boost: Recent successful executions (+0.10 if within 7 days)
+        - Penalty: Failed executions (-0.05 per failure in last 10 executions)
+        - Efficiency: Resource-efficient executions (+0.03 if <5s and <256MB)
+
+        Returns:
+            Score in range [0.0, 1.0]
+        """
+        if not pattern_id or not self.enable_dag_ranking or not self.neo4j_client:
+            return 0.5  # Neutral score if DAG ranking disabled
+
+        try:
+            # Ensure Neo4j connection
+            if not self.neo4j_client._driver:
+                self.neo4j_client.connect()
+
+            # Query Neo4j for pattern's ranking score and execution stats
+            query = """
+            MATCH (p:Pattern {pattern_id: $pattern_id})
+            OPTIONAL MATCH (t:AtomicTask)-[u:USES_PATTERN]->(p)
+            OPTIONAL MATCH (t)-[e:EXECUTED_WITH_METRICS]->(:ExecutionTrace)
+            WITH p,
+                 coalesce(p.ranking_score, 0.5) AS base_score,
+                 collect(DISTINCT {
+                     success: e.success,
+                     timestamp: e.timestamp,
+                     duration_ms: e.duration_ms,
+                     memory_mb: e.memory_mb
+                 }) AS executions
+            RETURN base_score,
+                   size(executions) AS execution_count,
+                   executions
+            LIMIT 1
+            """
+
+            result = self.neo4j_client._execute_query(query, {"pattern_id": pattern_id})
+
+            if not result:
+                return 0.5  # Pattern not in DAG yet
+
+            data = result[0]
+            base_score = data["base_score"]
+            executions = data.get("executions", [])
+
+            # Filter out empty executions (OPTIONAL MATCH returns nulls)
+            executions = [e for e in executions if e.get("success") is not None]
+
+            if not executions:
+                return base_score  # No execution history, use base score
+
+            # Calculate adjustments
+            adjustment = 0.0
+
+            # Recent success boost (within 7 days)
+            from datetime import datetime, timedelta
+            now_ts = int(datetime.now().timestamp() * 1000)
+            seven_days_ago = now_ts - (7 * 24 * 60 * 60 * 1000)
+
+            recent_successes = [
+                e for e in executions
+                if e.get("success") and e.get("timestamp", 0) > seven_days_ago
+            ]
+            if recent_successes:
+                adjustment += 0.10
+
+            # Failure penalty (last 10 executions)
+            last_10 = sorted(executions, key=lambda e: e.get("timestamp", 0), reverse=True)[:10]
+            failures = sum(1 for e in last_10 if not e.get("success", True))
+            adjustment -= 0.05 * failures
+
+            # Efficiency bonus (fast and low memory)
+            efficient_execs = [
+                e for e in executions
+                if e.get("success") and
+                   e.get("duration_ms", float('inf')) < 5000 and
+                   e.get("memory_mb", float('inf')) < 256
+            ]
+            if efficient_execs and len(efficient_execs) / max(len(executions), 1) > 0.5:
+                adjustment += 0.03
+
+            # Final score
+            final_score = base_score + adjustment
+            final_score = max(0.0, min(1.0, final_score))  # Clamp to [0.0, 1.0]
+
+            logger.debug(
+                f"DAG ranking for {pattern_id}: base={base_score:.3f}, "
+                f"adjustment={adjustment:+.3f}, final={final_score:.3f}"
+            )
+
+            return final_score
+
+        except Exception as e:
+            logger.warning(f"Failed to get DAG ranking for {pattern_id}: {e}")
+            return 0.5  # Fallback to neutral score on error

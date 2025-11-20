@@ -25,11 +25,28 @@ from src.models import MasterPlanTask
 from src.llm import EnhancedAnthropicClient
 from src.observability import StructuredLogger
 from src.services.error_pattern_store import (
-    ErrorPatternStore,
     ErrorPattern,
     SuccessPattern,
-    get_error_pattern_store
+    get_error_pattern_store,
 )
+from src.services.file_type_detector import get_file_type_detector
+from src.services.prompt_strategies import PromptStrategyFactory, PromptContext
+from src.services.validation_strategies import ValidationStrategyFactory
+
+# Cognitive Feedback Loop - Pattern Promotion Pipeline (Milestone 4)
+from src.cognitive.patterns.pattern_feedback_integration import (
+    get_pattern_feedback_integration,
+    PatternFeedbackIntegration,
+)
+from src.cognitive.signatures.semantic_signature import SemanticTaskSignature
+
+# DAG Synchronizer - Execution Metrics (Milestone 3)
+try:
+    from src.cognitive.services.dag_synchronizer import DAGSynchronizer, ExecutionMetrics
+
+    DAG_SYNC_AVAILABLE = True
+except ImportError:
+    DAG_SYNC_AVAILABLE = False
 
 logger = StructuredLogger("code_generation_service", output_json=True)
 
@@ -51,7 +68,9 @@ class CodeGenerationService:
         db: Session,
         llm_client: Optional[EnhancedAnthropicClient] = None,
         max_retries: int = 3,
-        enable_feedback_loop: bool = True
+        enable_feedback_loop: bool = True,
+        enable_pattern_promotion: bool = True,
+        enable_dag_sync: bool = True,
     ):
         """
         Initialize code generation service.
@@ -60,27 +79,423 @@ class CodeGenerationService:
             db: Database session
             llm_client: LLM client (creates new if not provided)
             max_retries: Maximum retry attempts per task
-            enable_feedback_loop: Enable cognitive feedback loop for learning
+            enable_feedback_loop: Enable cognitive feedback loop for learning (legacy)
+            enable_pattern_promotion: Enable pattern promotion pipeline (Milestone 4)
+            enable_dag_sync: Enable DAG synchronization for execution metrics (Milestone 3)
         """
         self.db = db
         self.llm_client = llm_client or EnhancedAnthropicClient()
         self.max_retries = max_retries
         self.enable_feedback_loop = enable_feedback_loop
+        self.enable_pattern_promotion = enable_pattern_promotion
+        self.enable_dag_sync = enable_dag_sync
 
-        # Initialize error pattern store for cognitive feedback loop
+        # Initialize error pattern store for cognitive feedback loop (legacy)
         self.pattern_store = None
         if enable_feedback_loop:
             try:
                 self.pattern_store = get_error_pattern_store()
-                logger.info("Cognitive feedback loop enabled")
+                logger.info("Cognitive feedback loop enabled (legacy)")
             except Exception as e:
-                logger.warning(f"Could not initialize feedback loop: {e}")
+                logger.warning(f"Could not initialize legacy feedback loop: {e}")
                 self.enable_feedback_loop = False
+
+        # Initialize pattern promotion pipeline (Milestone 4)
+        self.pattern_feedback: Optional[PatternFeedbackIntegration] = None
+        if enable_pattern_promotion:
+            try:
+                self.pattern_feedback = get_pattern_feedback_integration(enable_auto_promotion=True)
+                logger.info("Pattern promotion pipeline enabled (Milestone 4)")
+            except Exception as e:
+                logger.warning(f"Could not initialize pattern promotion: {e}")
+                self.enable_pattern_promotion = False
+
+        # Initialize DAG synchronizer for execution metrics (Milestone 3)
+        self.dag_synchronizer = None
+        if enable_dag_sync and DAG_SYNC_AVAILABLE:
+            try:
+                self.dag_synchronizer = DAGSynchronizer()
+                logger.info("DAG synchronization enabled (Milestone 3)")
+            except Exception as e:
+                logger.warning(f"Could not initialize DAG sync: {e}")
+                self.enable_dag_sync = False
+        else:
+            self.enable_dag_sync = False
 
         logger.info(
             "CodeGenerationService initialized",
-            extra={"max_retries": max_retries, "feedback_loop": self.enable_feedback_loop}
+            extra={
+                "max_retries": max_retries,
+                "feedback_loop": self.enable_feedback_loop,
+                "pattern_promotion": self.enable_pattern_promotion,
+                "dag_sync": self.enable_dag_sync,
+            },
         )
+
+    async def generate_from_requirements(
+        self,
+        spec_requirements,
+        allow_syntax_errors: bool = False,
+        repair_context: Optional[str] = None
+    ) -> str:
+        """
+        Generate code from SpecRequirements (Task Group 3.1.3)
+
+        This is the core fix for Bug #3: The Generator Bug.
+        Instead of returning hardcoded templates, we generate code based on
+        the actual requirements, entities, and endpoints from the spec.
+
+        ENHANCED for Phase 6.5: Now accepts optional repair_context to guide
+        code repair iterations with detailed failure analysis.
+
+        Args:
+            spec_requirements: SpecRequirements object from SpecParser
+            allow_syntax_errors: If True, return code even with syntax errors.
+                                Useful when repair loop will fix errors post-generation.
+            repair_context: Optional repair context with compliance failures and
+                           instructions for fixing the code. Used in Phase 6.5 repair loop.
+
+        Returns:
+            Complete generated code as string (models + routes + main)
+        """
+        logger.info(
+            "Generating code from requirements",
+            extra={
+                "requirements_count": len(spec_requirements.requirements),
+                "entities_count": len(spec_requirements.entities),
+                "endpoints_count": len(spec_requirements.endpoints),
+                "is_repair": repair_context is not None,
+            },
+        )
+
+        # Build comprehensive prompt from requirements
+        prompt = self._build_requirements_prompt(spec_requirements)
+
+        # If repair context provided, prepend it to guide the LLM
+        if repair_context:
+            prompt = repair_context + "\n\n" + prompt
+
+        # Call LLM with requirements context
+        try:
+            response = await asyncio.wait_for(
+                self.llm_client.generate_with_caching(
+                    task_type="code_generation_from_spec",
+                    complexity="high",
+                    cacheable_context={"system_prompt": self._get_requirements_system_prompt()},
+                    variable_prompt=prompt,
+                    temperature=0.0,  # Deterministic for reproducibility
+                    max_tokens=4000,  # Larger for complete apps
+                ),
+                timeout=120.0,
+            )
+        except asyncio.TimeoutError:
+            logger.error("LLM call timed out for requirements generation")
+            raise ValueError("Code generation from requirements timed out after 120 seconds")
+
+        # Extract code from response
+        generated_code = self._extract_code(response.get("content", ""))
+
+        if not generated_code:
+            raise ValueError("No code generated from requirements")
+
+        # Validate syntax
+        is_valid, syntax_error = self._validate_generated_code_syntax(generated_code)
+        if not is_valid:
+            if allow_syntax_errors:
+                # Log warning but continue - repair loop will fix it
+                logger.warning(
+                    f"Generated code has syntax errors (will be repaired): {syntax_error}",
+                    extra={"syntax_error": syntax_error}
+                )
+            else:
+                # Strict mode - fail immediately
+                raise ValueError(f"Generated code has syntax errors: {syntax_error}")
+
+        logger.info(
+            "Code generation from requirements successful",
+            extra={
+                "code_length": len(generated_code),
+                "entities_expected": len(spec_requirements.entities),
+                "endpoints_expected": len(spec_requirements.endpoints),
+            },
+        )
+
+        return generated_code
+
+    def _get_adaptive_output_instructions(self, spec_requirements) -> str:
+        """
+        Calculate adaptive output instructions based on spec complexity.
+
+        Removes hard-coded 100-300 line limit to allow proper implementation
+        of complex specs like e-commerce with multiple features.
+        """
+        entity_count = len(spec_requirements.entities)
+        endpoint_count = len(spec_requirements.endpoints)
+        business_logic_count = len(spec_requirements.business_logic) if spec_requirements.business_logic else 0
+
+        # Calculate complexity score
+        complexity_score = (entity_count * 50) + (endpoint_count * 30) + (business_logic_count * 20)
+
+        if complexity_score < 300:
+            # Simple spec: Single file is fine
+            return """Output: Single Python file with complete FastAPI application.
+Structure: Models → Storage → Routes → App initialization"""
+        elif complexity_score < 800:
+            # Medium spec: Allow modular structure
+            return """Output: Modular structure with multiple sections or files as needed.
+Suggested structure:
+- Enums and constants
+- Pydantic models (entities)
+- Request/Response schemas
+- Storage layer
+- Route handlers
+- App initialization
+All in a single well-organized file or logically separated."""
+        else:
+            # Complex spec: Full project structure
+            return """Output: Complete application structure matching spec complexity.
+For complex specs (e-commerce, multi-feature):
+- Generate ALL entities, endpoints, and business logic
+- Organize code logically (models → routes → services)
+- Include all specified features
+- No artificial line limits - implement everything specified
+Structure as needed to maintain clarity while implementing ALL requirements."""
+
+    def _build_requirements_prompt(self, spec_requirements) -> str:
+        """
+        Build LLM prompt from SpecRequirements (Task Group 3.1.3)
+
+        Constructs comprehensive prompt with:
+        - Entity specifications with fields, types, constraints
+        - Endpoint specifications with methods, paths, parameters
+        - Business logic requirements (validations, calculations)
+        - All functional requirements context
+        """
+        prompt_parts = []
+
+        prompt_parts.append("# CODE GENERATION FROM SPECIFICATION")
+        prompt_parts.append("")
+        prompt_parts.append(
+            f"Generate a complete FastAPI application for: {spec_requirements.metadata.get('spec_name', 'API')}"
+        )
+        prompt_parts.append("")
+
+        # ENTITIES
+        if spec_requirements.entities:
+            prompt_parts.append("## ENTITIES")
+            prompt_parts.append("")
+            for entity in spec_requirements.entities:
+                prompt_parts.append(f"### {entity.name}")
+                if entity.description:
+                    prompt_parts.append(f"Description: {entity.description}")
+                prompt_parts.append("Fields:")
+                for field in entity.fields:
+                    field_spec = f"- {field.name}: {field.type}"
+                    if not field.required:
+                        field_spec += " (optional)"
+                    if field.primary_key:
+                        field_spec += " [PRIMARY KEY]"
+                    if field.unique:
+                        field_spec += " [UNIQUE]"
+                    if field.default:
+                        field_spec += f" (default: {field.default})"
+                    if field.constraints:
+                        field_spec += f" | Constraints: {', '.join(field.constraints)}"
+                    prompt_parts.append(field_spec)
+
+                if entity.validations:
+                    prompt_parts.append("Validations:")
+                    for validation in entity.validations:
+                        prompt_parts.append(f"- {validation.field}: {validation.rule}")
+                        if validation.error_message:
+                            prompt_parts.append(f"  Error: {validation.error_message}")
+
+                if entity.relationships:
+                    prompt_parts.append("Relationships:")
+                    for rel in entity.relationships:
+                        prompt_parts.append(
+                            f"- {rel.field_name} → {rel.target_entity} ({rel.type})"
+                        )
+
+                prompt_parts.append("")
+
+        # ENDPOINTS
+        if spec_requirements.endpoints:
+            prompt_parts.append("## ENDPOINTS")
+            prompt_parts.append("")
+            for endpoint in spec_requirements.endpoints:
+                endpoint_spec = f"### {endpoint.method} {endpoint.path}"
+                prompt_parts.append(endpoint_spec)
+                if endpoint.description:
+                    prompt_parts.append(f"Description: {endpoint.description}")
+                prompt_parts.append(f"Operation: {endpoint.operation}")
+                prompt_parts.append(f"Entity: {endpoint.entity}")
+
+                if endpoint.params:
+                    prompt_parts.append("Parameters:")
+                    for param in endpoint.params:
+                        param_spec = f"- {param.name} ({param.type}) in {param.location}"
+                        if not param.required:
+                            param_spec += " [optional]"
+                        if param.default:
+                            param_spec += f" = {param.default}"
+                        prompt_parts.append(param_spec)
+
+                if endpoint.business_logic:
+                    prompt_parts.append("Business Logic:")
+                    for logic in endpoint.business_logic:
+                        prompt_parts.append(f"- {logic}")
+
+                if endpoint.response:
+                    prompt_parts.append(
+                        f"Response: {endpoint.response.status_code} - {endpoint.response.description}"
+                    )
+                    if endpoint.response.schema:
+                        prompt_parts.append(f"  Schema: {endpoint.response.schema}")
+
+                prompt_parts.append("")
+
+        # BUSINESS LOGIC
+        if spec_requirements.business_logic:
+            prompt_parts.append("## BUSINESS LOGIC")
+            prompt_parts.append("")
+            for logic in spec_requirements.business_logic:
+                prompt_parts.append(f"### {logic.type}: {logic.description}")
+                if logic.conditions:
+                    prompt_parts.append(f"Conditions: {', '.join(logic.conditions)}")
+                if logic.actions:
+                    prompt_parts.append(f"Actions: {', '.join(logic.actions)}")
+                prompt_parts.append("")
+
+        # FUNCTIONAL REQUIREMENTS
+        if spec_requirements.requirements:
+            prompt_parts.append("## FUNCTIONAL REQUIREMENTS")
+            prompt_parts.append("")
+            for req in spec_requirements.requirements:
+                if req.type == "functional":
+                    prompt_parts.append(f"**{req.id}. {req.description}**")
+            prompt_parts.append("")
+
+        # GENERATION INSTRUCTIONS
+        prompt_parts.append("## GENERATION INSTRUCTIONS")
+        prompt_parts.append("")
+        prompt_parts.append("Generate a COMPLETE, PRODUCTION-READY FastAPI application:")
+        prompt_parts.append("")
+        prompt_parts.append(
+            "1. **Pydantic Models**: Generate complete models for ALL entities with:"
+        )
+        prompt_parts.append("   - All fields with correct types")
+        prompt_parts.append("   - Field validators for constraints (gt, ge, email, max_length)")
+        prompt_parts.append("   - Proper Optional/default handling")
+        prompt_parts.append("")
+        prompt_parts.append(
+            "2. **FastAPI Routes**: Generate complete endpoints for ALL operations:"
+        )
+        prompt_parts.append("   - Correct HTTP methods (GET, POST, PUT, DELETE)")
+        prompt_parts.append("   - Path parameters with type hints")
+        prompt_parts.append("   - Request/response models")
+        prompt_parts.append("   - Storage layer (in-memory dicts for simple specs, can use database patterns for complex specs)")
+        prompt_parts.append("")
+        prompt_parts.append("3. **Business Logic**: Implement ALL validations and rules:")
+        prompt_parts.append("   - Field validations (price > 0, stock >= 0, email format)")
+        prompt_parts.append("   - Business rules (stock checks, calculations)")
+        prompt_parts.append("   - Error handling with HTTPException (404, 400, 422)")
+        prompt_parts.append("")
+        prompt_parts.append("4. **Error Handling**: Include proper error responses:")
+        prompt_parts.append("   - 404 for not found")
+        prompt_parts.append("   - 400 for business rule violations")
+        prompt_parts.append("   - 422 for validation errors")
+        prompt_parts.append("")
+        prompt_parts.append("5. **Code Quality**:")
+        prompt_parts.append("   - NO TODO comments or placeholders")
+        prompt_parts.append("   - Complete implementations only")
+        prompt_parts.append("   - Type hints throughout")
+        prompt_parts.append("   - Docstrings for classes and functions")
+        prompt_parts.append("")
+
+        # Add adaptive output instructions based on spec complexity
+        adaptive_instructions = self._get_adaptive_output_instructions(spec_requirements)
+        prompt_parts.append(adaptive_instructions)
+        prompt_parts.append("")
+
+        prompt_parts.append("CRITICAL: Implement ALL specified entities, endpoints, and business logic.")
+        prompt_parts.append("Do NOT truncate or simplify - generate complete implementation matching the spec.")
+
+        return "\n".join(prompt_parts)
+
+    def _get_requirements_system_prompt(self) -> str:
+        """System prompt for requirements-based generation (Task Group 3.1.3)"""
+        return """You are an expert FastAPI backend engineer specialized in generating
+production-ready APIs from specifications.
+
+Your task is to generate COMPLETE, WORKING code that EXACTLY matches the specification requirements.
+
+CRITICAL RULES:
+1. **Specification Compliance**: ONLY generate entities, endpoints, and logic specified in the requirements
+   - If spec says Product/Cart/Order → generate Product/Cart/Order (NOT Task)
+   - If spec says /products endpoint → generate /products (NOT /tasks)
+   - NEVER generate code from templates or examples - use ONLY the provided spec
+
+2. **Pydantic Models**: Generate complete models with:
+   - All fields with exact types from spec (UUID, str, Decimal, int, bool, datetime)
+   - Field validators for constraints (Field(gt=0), Field(ge=0), EmailStr)
+   - Optional fields marked correctly (Optional[str] or str | None)
+   - Default values where specified
+
+3. **FastAPI Routes**: Implement ALL endpoints with:
+   - Correct HTTP methods matching spec
+   - Path parameters with type hints
+   - Request/response models from Pydantic
+   - Appropriate storage layer (in-memory dicts for simple specs)
+   - Complete CRUD logic (not placeholders)
+
+4. **Business Logic**: Implement ALL rules:
+   - Validations: price > 0, stock >= 0, email format, max_length
+   - Calculations: totals, sums, aggregations
+   - Stock management: checks and updates
+   - State machines: status transitions
+
+5. **Error Handling**: Include proper errors:
+   - HTTPException(status_code=404, detail="Not found")
+   - HTTPException(status_code=400, detail="Business rule violation")
+   - HTTPException(status_code=422) for validation (automatic with Pydantic)
+
+6. **Code Quality**:
+   - NO TODO comments
+   - NO NotImplementedError
+   - NO placeholders or stubs
+   - Complete implementations only
+   - Type hints throughout
+   - Docstrings for clarity
+
+7. **Output Format**:
+   - Single complete Python file
+   - All imports at top
+   - Models section
+   - Storage initialization
+   - Route handlers
+   - Main app initialization
+   - Wrap in ```python code blocks
+
+Generate code that is ready to run with `uvicorn main:app --reload` without any modifications."""
+
+    def _validate_generated_code_syntax(self, code: str) -> tuple[bool, str]:
+        """
+        Validate generated code syntax (simplified for requirements generation)
+
+        Args:
+            code: Generated code string
+
+        Returns:
+            (is_valid, error_message) tuple
+        """
+        try:
+            compile(code, "<generated>", "exec")
+            return True, ""
+        except SyntaxError as e:
+            return False, f"SyntaxError at line {e.lineno}: {e.msg}"
+        except Exception as e:
+            return False, f"Compilation error: {str(e)}"
 
     async def generate_code_for_task(self, task_id: uuid.UUID) -> Dict[str, Any]:
         """
@@ -92,29 +507,21 @@ class CodeGenerationService:
         Returns:
             Dict with generation results
         """
-        logger.info(
-            "Starting code generation",
-            extra={"task_id": str(task_id)}
-        )
+        logger.info("Starting code generation", extra={"task_id": str(task_id)})
 
         # Load task
-        task = self.db.query(MasterPlanTask).filter(
-            MasterPlanTask.task_id == task_id
-        ).first()
+        task = self.db.query(MasterPlanTask).filter(MasterPlanTask.task_id == task_id).first()
 
         if not task:
             raise ValueError(f"Task {task_id} not found")
 
         # Check if already generated
         if task.llm_response:
-            logger.info(
-                "Task already has generated code",
-                extra={"task_id": str(task_id)}
-            )
+            logger.info("Task already has generated code", extra={"task_id": str(task_id)})
             return {
                 "success": True,
                 "already_generated": True,
-                "code_length": len(task.llm_response)
+                "code_length": len(task.llm_response),
             }
 
         # Track errors and code for feedback loop
@@ -130,28 +537,25 @@ class CodeGenerationService:
                         "task_id": str(task_id),
                         "attempt": attempt,
                         "max_retries": self.max_retries,
-                        "feedback_loop": self.enable_feedback_loop and attempt > 1
-                    }
+                        "feedback_loop": self.enable_feedback_loop and attempt > 1,
+                    },
                 )
 
                 # On retry attempts, consult cognitive feedback loop
                 if attempt > 1 and self.enable_feedback_loop and self.pattern_store and last_error:
                     logger.info(
                         "Consulting cognitive feedback loop for retry",
-                        extra={"task_id": str(task_id), "attempt": attempt}
+                        extra={"task_id": str(task_id), "attempt": attempt},
                     )
 
                     # Search for similar errors in history
                     similar_errors = await self.pattern_store.search_similar_errors(
-                        task_description=task.description,
-                        error_message=str(last_error),
-                        top_k=3
+                        task_description=task.description, error_message=str(last_error), top_k=3
                     )
 
                     # Search for successful patterns
                     successful_patterns = await self.pattern_store.search_successful_patterns(
-                        task_description=task.description,
-                        top_k=5
+                        task_description=task.description, top_k=5
                     )
 
                     logger.info(
@@ -159,32 +563,38 @@ class CodeGenerationService:
                         extra={
                             "task_id": str(task_id),
                             "similar_errors_found": len(similar_errors),
-                            "successful_patterns_found": len(successful_patterns)
-                        }
+                            "successful_patterns_found": len(successful_patterns),
+                        },
                     )
 
                     # Build enhanced prompt with feedback
                     prompt = self._build_prompt_with_feedback(
-                        task,
-                        similar_errors,
-                        successful_patterns,
-                        str(last_error)
+                        task, similar_errors, successful_patterns, str(last_error)
                     )
                 else:
                     # First attempt - use standard prompt
                     prompt = self._build_prompt(task)
 
-                # Call LLM
-                response = await self.llm_client.generate_with_caching(
-                    task_type="code_generation",
-                    complexity="medium",
-                    cacheable_context={
-                        "system_prompt": self._get_system_prompt()
-                    },
-                    variable_prompt=prompt,
-                    temperature=0.0,  # Deterministic mode for reproducible precision
-                    max_tokens=2000
-                )
+                # Call LLM with timeout (FIX 1: Add 120s timeout to prevent hangs)
+                # Using asyncio.wait_for() for Python 3.10 compatibility (asyncio.timeout() requires 3.11+)
+                try:
+                    response = await asyncio.wait_for(
+                        self.llm_client.generate_with_caching(
+                            task_type="code_generation",
+                            complexity="medium",
+                            cacheable_context={"system_prompt": self._get_system_prompt()},
+                            variable_prompt=prompt,
+                            temperature=0.0,  # Deterministic mode for reproducible precision
+                            max_tokens=2000,
+                        ),
+                        timeout=120.0,  # 120 second timeout
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(
+                        "LLM call timed out after 120 seconds",
+                        extra={"task_id": str(task_id), "attempt": attempt},
+                    )
+                    raise ValueError("LLM generation timed out after 120 seconds")
 
                 # Extract code from response
                 code = self._extract_code(response.get("content", ""))
@@ -192,9 +602,11 @@ class CodeGenerationService:
                 if not code:
                     raise ValueError("No code found in LLM response")
 
-                # Validate code syntax (basic check)
-                if not self._validate_code_syntax(code, task):
-                    raise ValueError("Generated code has invalid syntax")
+                # Validate code syntax with detailed error feedback (OPTION A: Validation + Retry)
+                is_valid, syntax_error = self._validate_code_syntax(code, task)
+                if not is_valid:
+                    # Raise with SPECIFIC syntax error for retry feedback loop
+                    raise ValueError(f"Syntax validation failed: {syntax_error}")
 
                 # Update task in database
                 task.llm_prompt = prompt
@@ -216,11 +628,11 @@ class CodeGenerationService:
                         "tokens_input": task.llm_tokens_input,
                         "tokens_output": task.llm_tokens_output,
                         "cost_usd": task.llm_cost_usd,
-                        "attempt": attempt
-                    }
+                        "attempt": attempt,
+                    },
                 )
 
-                # Store successful pattern in cognitive feedback loop
+                # Store successful pattern in cognitive feedback loop (legacy)
                 if self.enable_feedback_loop and self.pattern_store:
                     try:
                         success_pattern = SuccessPattern(
@@ -234,18 +646,83 @@ class CodeGenerationService:
                                 "task_name": task.name,
                                 "complexity": task.complexity,
                                 "attempt": attempt,
-                                "used_feedback": attempt > 1
-                            }
+                                "used_feedback": attempt > 1,
+                            },
                         )
                         await self.pattern_store.store_success(success_pattern)
                         logger.info(
-                            "Stored successful pattern in feedback loop",
-                            extra={"task_id": str(task_id)}
+                            "Stored successful pattern in legacy feedback loop",
+                            extra={"task_id": str(task_id)},
                         )
                     except Exception as e:
                         logger.warning(
                             "Failed to store success pattern",
-                            extra={"task_id": str(task_id), "error": str(e)}
+                            extra={"task_id": str(task_id), "error": str(e)},
+                        )
+
+                # Register with pattern promotion pipeline (Milestone 4)
+                if self.enable_pattern_promotion and self.pattern_feedback:
+                    try:
+                        # Create semantic signature from task metadata
+                        signature = self._create_signature_from_task(task)
+
+                        # Register successful code for pattern promotion
+                        candidate_id = self.pattern_feedback.register_successful_generation(
+                            code=code,
+                            signature=signature,
+                            execution_result=None,  # Will be populated after execution
+                            task_id=task_id,
+                            metadata={
+                                "task_name": task.name,
+                                "complexity": task.complexity,
+                                "attempt": attempt,
+                                "tokens_used": task.llm_tokens_input + task.llm_tokens_output,
+                                "cost_usd": task.llm_cost_usd,
+                            },
+                        )
+                        logger.info(
+                            "Registered code with pattern promotion pipeline",
+                            extra={"task_id": str(task_id), "candidate_id": candidate_id},
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to register with pattern promotion",
+                            extra={"task_id": str(task_id), "error": str(e)},
+                        )
+
+                # Sync execution metrics to DAG (Milestone 3)
+                if self.enable_dag_sync and self.dag_synchronizer:
+                    try:
+                        execution_metrics = ExecutionMetrics(
+                            task_id=str(task_id),
+                            name=task.name,
+                            task_type="code_generation",
+                            duration_ms=0.0,  # Will be populated by orchestrator
+                            resources={"memory_mb": 0.0, "cpu_percent": 0.0},
+                            success=True,
+                            success_rate=1.0 if attempt == 1 else (1.0 / attempt),
+                            output_tokens=task.llm_tokens_output,
+                            timestamp=datetime.now(),
+                            error_message=None,
+                            pattern_ids=[],  # Will be populated if patterns were used
+                            metadata={
+                                "attempt": attempt,
+                                "used_feedback": attempt > 1,
+                                "cost_usd": task.llm_cost_usd,
+                            },
+                        )
+
+                        self.dag_synchronizer.sync_execution_metrics(
+                            task_id=str(task_id), execution_metrics=execution_metrics
+                        )
+
+                        logger.info(
+                            "Synced execution metrics to DAG", extra={"task_id": str(task_id)}
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to sync DAG metrics",
+                            extra={"task_id": str(task_id), "error": str(e)},
                         )
 
                 return {
@@ -254,7 +731,7 @@ class CodeGenerationService:
                     "tokens": task.llm_tokens_input + task.llm_tokens_output,
                     "cost_usd": task.llm_cost_usd,
                     "attempt": attempt,
-                    "used_feedback_loop": attempt > 1 and self.enable_feedback_loop
+                    "used_feedback_loop": attempt > 1 and self.enable_feedback_loop,
                 }
 
             except Exception as e:
@@ -263,12 +740,8 @@ class CodeGenerationService:
 
                 logger.error(
                     "Code generation attempt failed",
-                    extra={
-                        "task_id": str(task_id),
-                        "attempt": attempt,
-                        "error": str(e)
-                    },
-                    exc_info=True
+                    extra={"task_id": str(task_id), "attempt": attempt, "error": str(e)},
+                    exc_info=True,
                 )
 
                 # Store error pattern in cognitive feedback loop
@@ -278,86 +751,86 @@ class CodeGenerationService:
                             error_id=str(uuid.uuid4()),
                             task_id=str(task_id),
                             task_description=task.description,
-                            error_type="syntax_error" if "syntax" in str(e).lower() else "validation_error",
+                            error_type=(
+                                "syntax_error" if "syntax" in str(e).lower() else "validation_error"
+                            ),
                             error_message=str(e),
                             failed_code=last_code or "",
                             attempt=attempt,
                             timestamp=datetime.now(),
-                            metadata={
-                                "task_name": task.name,
-                                "complexity": task.complexity
-                            }
+                            metadata={"task_name": task.name, "complexity": task.complexity},
                         )
                         await self.pattern_store.store_error(error_pattern)
                         logger.info(
                             "Stored error pattern in feedback loop",
-                            extra={"task_id": str(task_id), "attempt": attempt}
+                            extra={"task_id": str(task_id), "attempt": attempt},
                         )
                     except Exception as store_error:
                         logger.warning(
                             "Failed to store error pattern",
-                            extra={"task_id": str(task_id), "error": str(store_error)}
+                            extra={"task_id": str(task_id), "error": str(store_error)},
                         )
 
                 if attempt == self.max_retries:
                     # Final attempt failed, save error
-                    task.last_error = f"Code generation failed after {self.max_retries} attempts: {str(e)}"
+                    task.last_error = (
+                        f"Code generation failed after {self.max_retries} attempts: {str(e)}"
+                    )
                     self.db.commit()
 
-                    return {
-                        "success": False,
-                        "error": str(e),
-                        "attempts": attempt
-                    }
+                    return {"success": False, "error": str(e), "attempts": attempt}
 
                 # Exponential backoff
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(2**attempt)
 
         return {"success": False, "error": "Max retries exceeded"}
 
     def _build_prompt(self, task: MasterPlanTask) -> str:
         """
-        Build task-specific prompt for code generation.
+        Build file-type-specific prompt for code generation using Strategy Pattern.
 
         Args:
             task: MasterPlan task
 
         Returns:
-            Formatted prompt string
+            Formatted prompt string optimized for the detected file type
         """
-        # Get target language
-        language = self._detect_language(task)
+        # Detect file type with confidence scoring
+        detector = get_file_type_detector()
+        file_type_detection = detector.detect(
+            task_name=task.name, task_description=task.description, target_files=task.target_files
+        )
 
-        prompt = f"""Generate production-ready code for the following task:
+        logger.info(
+            "File type detected for prompt generation",
+            extra={
+                "task_id": str(task.task_id),
+                "file_type": file_type_detection.file_type.value,
+                "confidence": file_type_detection.confidence,
+                "detected_from": file_type_detection.detected_from,
+            },
+        )
 
-**Task #{task.task_number}: {task.name}**
+        # Create prompt context
+        context = PromptContext(
+            task_number=task.task_number,
+            task_name=task.name,
+            task_description=task.description,
+            complexity=task.complexity,
+            file_type_detection=file_type_detection,
+        )
 
-**Description**: {task.description}
-
-**Requirements**:
-- Language: {language}
-- Target LOC: 50-100 lines
-- Include proper imports
-- Add type hints/annotations
-- Include docstrings
-- Follow best practices for {language}
-
-**Complexity**: {task.complexity}
-
-Generate ONLY the code, wrapped in a code block with the language specified.
-Do not include explanations or additional text outside the code block."""
+        # Get appropriate strategy and generate prompt
+        strategy = PromptStrategyFactory.get_strategy(file_type_detection.file_type)
+        prompt = strategy.generate_prompt(context)
 
         return prompt
 
     def _build_prompt_with_feedback(
-        self,
-        task: MasterPlanTask,
-        similar_errors: list,
-        successful_patterns: list,
-        last_error: str
+        self, task: MasterPlanTask, similar_errors: list, successful_patterns: list, last_error: str
     ) -> str:
         """
-        Build enhanced prompt with RAG feedback from error patterns.
+        Build enhanced prompt with file-type-specific feedback using Strategy Pattern.
 
         Args:
             task: MasterPlan task
@@ -366,65 +839,39 @@ Do not include explanations or additional text outside the code block."""
             last_error: Error from previous attempt
 
         Returns:
-            Enhanced prompt with learning feedback
+            Enhanced prompt with explicit corrective instructions
         """
-        language = self._detect_language(task)
+        # Detect file type with confidence scoring
+        detector = get_file_type_detector()
+        file_type_detection = detector.detect(
+            task_name=task.name, task_description=task.description, target_files=task.target_files
+        )
 
-        # Build base prompt
-        prompt = f"""Generate production-ready code for the following task:
+        logger.info(
+            "File type detected for feedback prompt generation",
+            extra={
+                "task_id": str(task.task_id),
+                "file_type": file_type_detection.file_type.value,
+                "confidence": file_type_detection.confidence,
+                "last_error": last_error[:200],
+            },
+        )
 
-**Task #{task.task_number}: {task.name}**
+        # Create prompt context with feedback
+        context = PromptContext(
+            task_number=task.task_number,
+            task_name=task.name,
+            task_description=task.description,
+            complexity=task.complexity,
+            file_type_detection=file_type_detection,
+            last_error=last_error,
+            similar_errors=similar_errors,
+            successful_patterns=successful_patterns,
+        )
 
-**Description**: {task.description}
-
-**Requirements**:
-- Language: {language}
-- Target LOC: 50-100 lines
-- Include proper imports
-- Add type hints/annotations
-- Include docstrings
-- Follow best practices for {language}
-
-**Complexity**: {task.complexity}
-
----
-
-**IMPORTANT - LEARN FROM PREVIOUS MISTAKES**:
-
-**Previous Attempt Failed With**: {last_error}
-"""
-
-        # Add similar error patterns if available
-        if similar_errors:
-            prompt += "\n**⚠️ Similar Errors Found in History**:\n"
-            for i, err in enumerate(similar_errors[:3], 1):
-                prompt += f"\n{i}. Task: '{err.task_description}'\n"
-                prompt += f"   Error: {err.error_message}\n"
-                prompt += f"   Similarity: {err.similarity_score:.2%}\n"
-                if err.failed_code:
-                    prompt += f"   Failed Code Pattern: {err.failed_code[:200]}...\n"
-
-        # Add successful patterns if available
-        if successful_patterns:
-            prompt += "\n**✅ Successful Patterns for Similar Tasks**:\n"
-            for i, pattern in enumerate(successful_patterns[:3], 1):
-                prompt += f"\n{i}. Task: '{pattern['task_description']}'\n"
-                prompt += f"   Similarity: {pattern['similarity_score']:.2%}\n"
-                prompt += f"   Quality Score: {pattern['quality_score']:.2f}/1.0\n"
-                if pattern.get('generated_code'):
-                    prompt += f"   Code Pattern:\n```{language}\n{pattern['generated_code'][:400]}\n```\n"
-
-        prompt += """
----
-
-**ACTION REQUIRED**:
-1. Analyze the error from the previous attempt
-2. Review similar historical errors to avoid the same mistakes
-3. Study the successful patterns provided above
-4. Generate CORRECT code that avoids these known pitfalls
-
-Generate ONLY the code, wrapped in a code block with the language specified.
-Do not include explanations or additional text outside the code block."""
+        # Get appropriate strategy and generate prompt with feedback
+        strategy = PromptStrategyFactory.get_strategy(file_type_detection.file_type)
+        prompt = strategy.generate_prompt_with_feedback(context)
 
         return prompt
 
@@ -442,69 +889,106 @@ Your task is to generate complete, working code based on task descriptions. Foll
 
 2. **Structure**:
    - Include all necessary imports
+   - **CRITICAL**: All internal imports MUST use 'code.' prefix
+     ✅ Correct: from code.src.models.order import Order
+     ❌ Wrong: from src.models.order import Order
    - Add type hints/annotations
    - Include docstrings for functions and classes
    - Handle errors appropriately
 
-3. **Output Format**:
+3. **Syntax Validation**:
+   - **CRITICAL**: Code MUST compile with Python compile() without errors
+   - ALWAYS include complete class declarations with 'class Name:'
+   - NEVER generate methods without parent class
+   - NEVER generate incomplete code fragments
+   - Example of CORRECT structure:
+     class Order:  # ✅ Complete class declaration
+         def __init__(self, ...):
+             ...
+   - Example of WRONG structure:
+     def __init__(self, ...):  # ❌ Missing class declaration
+         ...
+
+4. **Output Format**:
    - Wrap code in markdown code blocks with language specified
    - Example: ```python\\ncode here\\n```
    - Do not include explanations outside code blocks
 
-4. **Scope**:
-   - Generate 50-100 lines of code per task
+5. **Scope**:
+   - Generate 50-150 lines of COMPLETE, syntactically valid code per task
    - Focus on the specific task requirements
    - Create complete, runnable code units
+   - NEVER truncate classes or functions to meet line limits
+   - If code is too long, prioritize completeness over brevity
 
-Generate code that is ready to be parsed and executed without modifications."""
+Generate code that is ready to be parsed and executed without modifications.
+Code MUST pass Python compile() without SyntaxError."""
 
     def _extract_code(self, content: str) -> str:
         """
         Extract code from LLM response (handles markdown code blocks).
+        FIX 2: Enhanced to properly remove markdown fences and language specifiers.
 
         Args:
             content: LLM response content
 
         Returns:
-            Extracted code
+            Extracted code without markdown formatting
         """
-        # Pattern for markdown code blocks
-        pattern = r'```(?:\w+)?\n(.*?)```'
+        # Pattern for markdown code blocks with optional language specifier
+        # Matches: ```python\ncode\n``` or ```\ncode\n```
+        pattern = r"```(?:\w+)?\n(.*?)```"
         matches = re.findall(pattern, content, re.DOTALL)
 
         if matches:
-            # Return first code block
-            return matches[0].strip()
+            # Return first code block, stripped of whitespace
+            extracted = matches[0].strip()
 
-        # If no code block found, return entire content
-        return content.strip()
+            # Additional cleanup: remove any remaining markdown artifacts
+            # Remove leading/trailing backticks that might remain
+            extracted = extracted.strip("`").strip()
 
-    def _validate_code_syntax(self, code: str, task: MasterPlanTask) -> bool:
+            return extracted
+
+        # If no code block found, return entire content stripped
+        # Remove any stray backticks
+        cleaned = content.strip().strip("`").strip()
+        return cleaned
+
+    def _validate_code_syntax(self, code: str, task: MasterPlanTask) -> tuple[bool, str]:
         """
-        Basic syntax validation.
+        File-type-specific validation using Strategy Pattern.
 
         Args:
-            code: Generated code
+            code: Generated code/content
             task: Task for context
 
         Returns:
-            True if code appears valid
+            (is_valid, error_message) tuple - OPTION A: Returns detailed error for retry feedback
         """
-        # Basic checks
-        if len(code) < 10:
-            return False
+        # Detect file type for appropriate validation
+        detector = get_file_type_detector()
+        file_type_detection = detector.detect(
+            task_name=task.name, task_description=task.description, target_files=task.target_files
+        )
 
-        # Check for common code patterns
-        has_structure = any([
-            'def ' in code,      # Python function
-            'class ' in code,    # Python/Java class
-            'function ' in code, # JavaScript
-            'const ' in code,    # JavaScript/TypeScript
-            'import ' in code,   # Import statement
-            'from ' in code,     # Python import
-        ])
+        # Get appropriate validation strategy
+        validator = ValidationStrategyFactory.get_strategy(file_type_detection.file_type)
+        is_valid, error_message = validator.validate(code)
 
-        return has_structure
+        if not is_valid:
+            logger.warning(
+                "Code validation failed",
+                extra={
+                    "task_id": str(task.task_id),
+                    "file_type": file_type_detection.file_type.value,
+                    "error": error_message,
+                    "code_preview": str(code[:200]),  # Fix: hashable string instead of slice
+                },
+            )
+
+        # OPTION A: Return full tuple for detailed error feedback in retry loop
+        return is_valid, error_message
 
     def _detect_language(self, task: MasterPlanTask) -> str:
         """
@@ -520,30 +1004,30 @@ Generate code that is ready to be parsed and executed without modifications."""
         if task.target_files:
             file_path = task.target_files[0].lower()
 
-            if file_path.endswith('.py'):
-                return 'python'
-            elif file_path.endswith(('.js', '.jsx')):
-                return 'javascript'
-            elif file_path.endswith(('.ts', '.tsx')):
-                return 'typescript'
-            elif file_path.endswith('.java'):
-                return 'java'
-            elif file_path.endswith('.go'):
-                return 'go'
+            if file_path.endswith(".py"):
+                return "python"
+            elif file_path.endswith((".js", ".jsx")):
+                return "javascript"
+            elif file_path.endswith((".ts", ".tsx")):
+                return "typescript"
+            elif file_path.endswith(".java"):
+                return "java"
+            elif file_path.endswith(".go"):
+                return "go"
 
         # Check task name/description for language hints
         name_lower = task.name.lower()
         desc_lower = task.description.lower()
 
-        if 'fastapi' in desc_lower or 'pydantic' in desc_lower or 'sqlalchemy' in name_lower:
-            return 'python'
-        elif 'react' in desc_lower or 'jsx' in desc_lower:
-            return 'javascript'
-        elif 'typescript' in desc_lower or 'tsx' in desc_lower:
-            return 'typescript'
+        if "fastapi" in desc_lower or "pydantic" in desc_lower or "sqlalchemy" in name_lower:
+            return "python"
+        elif "react" in desc_lower or "jsx" in desc_lower:
+            return "javascript"
+        elif "typescript" in desc_lower or "tsx" in desc_lower:
+            return "typescript"
 
         # Default to python
-        return 'python'
+        return "python"
 
     def _calculate_cost(self, response: Dict[str, Any]) -> float:
         """
@@ -566,3 +1050,48 @@ Generate code that is ready to be parsed and executed without modifications."""
         cache_cost = (cached_tokens / 1_000_000) * 0.3  # Cache reads are cheaper
 
         return round(input_cost + output_cost + cache_cost, 4)
+
+    def _create_signature_from_task(self, task: MasterPlanTask) -> SemanticTaskSignature:
+        """
+        Create semantic signature from task metadata.
+
+        Args:
+            task: MasterPlan task
+
+        Returns:
+            Semantic task signature for pattern matching
+        """
+        # Detect file type for domain inference
+        detector = get_file_type_detector()
+        file_type_detection = detector.detect(
+            task_name=task.name, task_description=task.description, target_files=task.target_files
+        )
+
+        # Infer intent from task name/description
+        description_lower = task.description.lower()
+
+        if any(word in description_lower for word in ["create", "implement", "add"]):
+            intent = "create"
+        elif any(word in description_lower for word in ["update", "modify", "refactor"]):
+            intent = "update"
+        elif any(word in description_lower for word in ["delete", "remove"]):
+            intent = "delete"
+        elif any(word in description_lower for word in ["validate", "check", "verify"]):
+            intent = "validate"
+        elif any(word in description_lower for word in ["transform", "convert", "parse"]):
+            intent = "transform"
+        else:
+            intent = "process"
+
+        # Create signature
+        signature = SemanticTaskSignature(
+            purpose=task.description[:200],  # Truncate to reasonable length
+            intent=intent,
+            inputs={},  # Could be inferred from description
+            outputs={},  # Could be inferred from description
+            domain=file_type_detection.file_type.value,
+            constraints=[],
+            security_level="standard",
+        )
+
+        return signature

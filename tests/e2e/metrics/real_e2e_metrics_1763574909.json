@@ -1,0 +1,246 @@
+{
+  "pipeline_id": "real_pipeline_e2e",
+  "spec_name": "real_spec.md",
+  "start_time": 1763574886.5784945,
+  "end_time": 1763574909.4594972,
+  "total_duration_ms": 22881,
+  "phases": {
+    "spec_ingestion": {
+      "phase_name": "spec_ingestion",
+      "status": "PhaseStatus.COMPLETED",
+      "start_time": 1763574891.028029,
+      "end_time": 1763574891.528889,
+      "duration_ms": 500,
+      "checkpoints_total": 4,
+      "checkpoints_completed": 4,
+      "errors": [],
+      "retries": 0,
+      "custom_metrics": {
+        "spec_format": true,
+        "file_size": 5350,
+        "requirement_count": 10,
+        "context_loaded": true,
+        "complexity_score": 1.0
+      },
+      "memory_usage_mb": null,
+      "cpu_percent": null
+    },
+    "requirements_analysis": {
+      "phase_name": "requirements_analysis",
+      "status": "PhaseStatus.COMPLETED",
+      "start_time": 1763574891.5288954,
+      "end_time": 1763574891.8296177,
+      "duration_ms": 300,
+      "checkpoints_total": 5,
+      "checkpoints_completed": 4,
+      "errors": [
+        {
+          "neo4j_error": "'PatternBank' object has no attribute 'get_pattern_count'"
+        }
+      ],
+      "retries": 0,
+      "custom_metrics": {
+        "patterns_matched": 3,
+        "qdrant_query_time_ms": 300.6608486175537,
+        "functional_count": 0,
+        "non_functional_count": 0,
+        "dependency_count": 9,
+        "total_patterns": 0,
+        "search_results": 3
+      },
+      "memory_usage_mb": null,
+      "cpu_percent": null
+    },
+    "multi_pass_planning": {
+      "phase_name": "multi_pass_planning",
+      "status": "PhaseStatus.COMPLETED",
+      "start_time": 1763574891.8296254,
+      "end_time": 1763574895.1344538,
+      "duration_ms": 3304,
+      "checkpoints_total": 5,
+      "checkpoints_completed": 5,
+      "errors": [],
+      "retries": 0,
+      "custom_metrics": {
+        "node_count": 10,
+        "pass": 1,
+        "refinement_iterations": 2,
+        "max_parallel_paths": 3,
+        "cycles_found": 0,
+        "is_acyclic": true,
+        "planning_time_ms": 3304.8183917999268,
+        "critical_path_length": 5
+      },
+      "memory_usage_mb": null,
+      "cpu_percent": null
+    },
+    "atomization": {
+      "phase_name": "atomization",
+      "status": "PhaseStatus.COMPLETED",
+      "start_time": 1763574895.13446,
+      "end_time": 1763574897.63796,
+      "duration_ms": 2503,
+      "checkpoints_total": 5,
+      "checkpoints_completed": 5,
+      "errors": [],
+      "retries": 0,
+      "custom_metrics": {
+        "task_count": 10,
+        "strategy": "hierarchical_decomposition",
+        "atomic_units": 10,
+        "validation_passed": true,
+        "persisted_count": 10
+      },
+      "memory_usage_mb": null,
+      "cpu_percent": null
+    },
+    "dag_construction": {
+      "phase_name": "dag_construction",
+      "status": "PhaseStatus.COMPLETED",
+      "start_time": 1763574897.6379673,
+      "end_time": 1763574899.7404692,
+      "duration_ms": 2102,
+      "checkpoints_total": 5,
+      "checkpoints_completed": 5,
+      "errors": [],
+      "retries": 0,
+      "custom_metrics": {
+        "node_count": 10,
+        "edge_count": 9,
+        "wave_count": 3,
+        "nodes_per_wave": [
+          3,
+          4,
+          3
+        ],
+        "naming_valid": true,
+        "dag_construction_time_ms": 2102.4880409240723
+      },
+      "memory_usage_mb": null,
+      "cpu_percent": null
+    },
+    "wave_execution": {
+      "phase_name": "wave_execution",
+      "status": "PhaseStatus.COMPLETED",
+      "start_time": 1763574899.7404754,
+      "end_time": 1763574902.7463949,
+      "duration_ms": 3005,
+      "checkpoints_total": 5,
+      "checkpoints_completed": 5,
+      "errors": [],
+      "retries": 0,
+      "custom_metrics": {
+        "wave_0_atoms": 3,
+        "wave_1_atoms": 4,
+        "wave_2_atoms": 3,
+        "total_atoms": 10,
+        "succeeded": 10,
+        "failed": 0
+      },
+      "memory_usage_mb": null,
+      "cpu_percent": null
+    },
+    "validation": {
+      "phase_name": "validation",
+      "status": "PhaseStatus.COMPLETED",
+      "start_time": 1763574902.746401,
+      "end_time": 1763574906.2539115,
+      "duration_ms": 3507,
+      "checkpoints_total": 5,
+      "checkpoints_completed": 5,
+      "errors": [],
+      "retries": 0,
+      "custom_metrics": {
+        "lint_violations": 0,
+        "tests_passed": 5,
+        "criteria_met": 8,
+        "criteria_total": 8,
+        "pattern_feedback": 10
+      },
+      "memory_usage_mb": null,
+      "cpu_percent": null
+    },
+    "deployment": {
+      "phase_name": "deployment",
+      "status": "PhaseStatus.COMPLETED",
+      "start_time": 1763574906.2539191,
+      "end_time": 1763574908.257679,
+      "duration_ms": 2003,
+      "checkpoints_total": 5,
+      "checkpoints_completed": 5,
+      "errors": [],
+      "retries": 0,
+      "custom_metrics": {
+        "dry_run": true
+      },
+      "memory_usage_mb": null,
+      "cpu_percent": null
+    },
+    "health_verification": {
+      "phase_name": "health_verification",
+      "status": "PhaseStatus.COMPLETED",
+      "start_time": 1763574908.257697,
+      "end_time": 1763574909.4594727,
+      "duration_ms": 1201,
+      "checkpoints_total": 5,
+      "checkpoints_completed": 5,
+      "errors": [],
+      "retries": 0,
+      "custom_metrics": {
+        "neo4j_healthy": false
+      },
+      "memory_usage_mb": null,
+      "cpu_percent": null
+    },
+    "learning": {
+      "phase_name": "learning",
+      "status": "PhaseStatus.PENDING",
+      "start_time": null,
+      "end_time": null,
+      "duration_ms": null,
+      "checkpoints_total": 5,
+      "checkpoints_completed": 0,
+      "errors": [],
+      "retries": 0,
+      "custom_metrics": {},
+      "memory_usage_mb": null,
+      "cpu_percent": null
+    }
+  },
+  "overall_status": "success",
+  "overall_progress": 0.9590000000000001,
+  "pattern_reuse_rate": 0.6,
+  "patterns_matched": 3,
+  "new_patterns_learned": 2,
+  "patterns_stored": 0,
+  "patterns_promoted": 0,
+  "patterns_reused": 0,
+  "learning_time_ms": 0.0,
+  "candidates_created": 0,
+  "test_coverage": 0.85,
+  "code_quality_score": 0.9,
+  "acceptance_criteria_met": 8,
+  "acceptance_criteria_total": 8,
+  "peak_memory_mb": 1722.01953125,
+  "avg_memory_mb": 1722.01953125,
+  "peak_cpu_percent": 0.0,
+  "avg_cpu_percent": 0.0,
+  "neo4j_queries": 0,
+  "neo4j_avg_query_ms": 0.0,
+  "qdrant_queries": 1,
+  "qdrant_avg_query_ms": 300.6608486175537,
+  "total_errors": 1,
+  "recovered_errors": 0,
+  "critical_errors": 0,
+  "recovery_success_rate": 0.0,
+  "overall_accuracy": 0.0,
+  "pipeline_precision": 0.0,
+  "pattern_precision": 0.0,
+  "pattern_recall": 0.0,
+  "pattern_f1": 0.0,
+  "classification_accuracy": 0.0,
+  "execution_success_rate": 0.0,
+  "test_pass_rate": 0.0,
+  "contract_violations": 0,
+  "timestamp": "2025-11-19T18:55:09.460052"
+}

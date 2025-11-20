@@ -104,18 +104,23 @@ class DAGBuilder:
 
         Args:
             atomic_tasks: List of atomic task dictionaries with keys:
-                - id: Task identifier
-                - purpose: Task purpose/description
-                - domain: Task domain
-                - depends_on: List of task IDs this task depends on
+                - id: Task identifier (required)
+                - name: Meaningful task name (required, prevents name=None)
+                - purpose: Task purpose/description (required)
+                - domain: Task domain (optional, default: "general")
+                - intent: Task intent/action type (optional)
+                - max_loc: Maximum lines of code (optional, default: 10)
+                - depends_on: List of task IDs this task depends on (optional, default: [])
 
         Returns:
             dag_id: Unique identifier for this DAG
 
         Example:
             >>> tasks = [
-            ...     {"id": "atom_1", "purpose": "Validate", "domain": "validation", "depends_on": []},
-            ...     {"id": "atom_2", "purpose": "Process", "domain": "processing", "depends_on": ["atom_1"]}
+            ...     {"id": "atom_1", "name": "validation_validate_input", "purpose": "Validate",
+            ...      "domain": "validation", "intent": "validate", "depends_on": []},
+            ...     {"id": "atom_2", "name": "processing_transform_data", "purpose": "Process",
+            ...      "domain": "processing", "intent": "transform", "depends_on": ["atom_1"]}
             ... ]
             >>> dag_id = builder.build_dag(tasks)
         """
@@ -126,20 +131,28 @@ class DAGBuilder:
             # Create nodes for each atomic task
             for task in atomic_tasks:
                 task_id = task.get("id", "")
+                task_name = task.get("name", "")  # Extract name from task dictionary
                 purpose = task.get("purpose", "")
                 domain = task.get("domain", "general")
                 intent = task.get("intent", "")
                 max_loc = task.get("max_loc", 10)
 
+                # CRITICAL FIX: Always persist task name to prevent name=None nodes
+                # If name is missing from task dict, generate one from id as fallback
+                if not task_name:
+                    task_name = task_id.replace("atom_", "unnamed_task_")
+                    logger.warning(f"Task {task_id} missing 'name' field, generated fallback: {task_name}")
+
                 session.run("""
                     MERGE (t:AtomicTask {id: $task_id})
                     SET t.dag_id = $dag_id,
+                        t.name = $task_name,
                         t.purpose = $purpose,
                         t.domain = $domain,
                         t.intent = $intent,
                         t.max_loc = $max_loc,
                         t.created_at = $timestamp
-                """, task_id=task_id, dag_id=dag_id, purpose=purpose, domain=domain,
+                """, task_id=task_id, dag_id=dag_id, task_name=task_name, purpose=purpose, domain=domain,
                     intent=intent, max_loc=max_loc, timestamp=timestamp)
 
             # Create DEPENDS_ON relationships

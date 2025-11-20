@@ -166,6 +166,26 @@ Each subtask is a SPECIFIC action:
 6. "Add password_hash field as String(255)"
 7. "Add created_at and updated_at timestamp fields"
 
+## CRITICAL - JSON STRING FORMATTING RULES:
+
+**MANDATORY - Every string value MUST follow these rules**:
+1. **Escape quotes**: Use `\"` for quotes inside strings
+2. **Escape backslashes**: Use `\\` for backslashes
+3. **No line breaks**: Keep strings on single lines
+4. **Close all strings**: Every `"` must have matching closing `"`
+5. **No trailing commas**: Last item in arrays/objects has NO comma
+
+**Examples of CORRECT JSON strings**:
+- `"description": "Create User model with \"email\" and \"password\" fields"`
+- `"name": "Implement Auth\\Login flow"`
+- `"subtask": "Add validation with try/except block"`
+
+**Examples of INCORRECT JSON strings** (WILL CAUSE PARSE ERRORS):
+- `"description": "Create User model with "email" field"` ❌ Unescaped quotes
+- `"name": "Multi-line
+  string"` ❌ Line break in string
+- `"subtask": "Do something,` ❌ Unclosed string
+
 ## Output Format (JSON):
 
 ```json
@@ -245,6 +265,16 @@ Each subtask is a SPECIFIC action:
 ```
 
 ## Guidelines:
+
+**⚠️ CRITICAL REMINDER - JSON FORMAT VALIDATION**:
+Before generating output, VERIFY that ALL string values:
+- Have escaped quotes: `\"` for quotes inside strings
+- Have escaped backslashes: `\\` for backslashes
+- Are on single lines (no line breaks mid-string)
+- Have matching opening and closing quotes
+- Follow valid JSON syntax (no trailing commas)
+
+**If you detect ANY unescaped quotes or invalid JSON in your output, FIX IT immediately.**
 
 1. **ULTRA-ATOMIC Principle**: Each task = ONE file operation OR ONE specific function. Break everything down to the smallest possible autonomous unit.
 2. **Subtasks are MANDATORY**: Every task MUST have 3-7 subtasks describing the exact micro-steps for autonomous execution.

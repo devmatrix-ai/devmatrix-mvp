@@ -15,8 +15,8 @@ os.environ.setdefault('JWT_SECRET', 'test-secret-key-for-testing-only-minimum-32
 os.environ.setdefault('DATABASE_URL', 'postgresql://test:test@localhost:5432/test')
 os.environ.setdefault('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5173')
 
-# Load test environment
-load_dotenv('.env.test')
+# Load test environment (override=True ensures .env.test takes precedence)
+load_dotenv('.env.test', override=True)
 
 from src.llm.anthropic_client import AnthropicClient
 from src.state.postgres_manager import PostgresManager

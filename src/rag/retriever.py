@@ -149,7 +149,7 @@ class Retriever:
         vector_store: Optional[VectorStore] = None,
         config: Optional[RetrievalConfig] = None,
         enable_v2_caching: bool = True,
-        redis_url: str = "redis://redis:6379",
+        redis_url: str = "redis://localhost:6379",
         multi_collection_manager: Optional[Any] = None,
         enable_query_expansion: bool = True,
         enable_cross_encoder_reranking: bool = True,
@@ -161,7 +161,7 @@ class Retriever:
             vector_store: VectorStore instance
             config: Optional retrieval configuration
             enable_v2_caching: Enable MGE V2 RAG query caching (default: True)
-            redis_url: Redis connection URL for V2 caching (default: redis://redis:6379 for Docker)
+            redis_url: Redis connection URL for V2 caching (default: redis://localhost:6379 for Docker)
             enable_query_expansion: Enable query expansion for better coverage (default: True)
             enable_cross_encoder_reranking: Enable cross-encoder semantic re-ranking (default: True)
         """

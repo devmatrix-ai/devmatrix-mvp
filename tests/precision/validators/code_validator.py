@@ -16,9 +16,12 @@ Features:
 
 import subprocess
 import json
+import os
 import re
+import sys
+import importlib
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple, Set
 from dataclasses import dataclass
 from datetime import datetime
 import tempfile
@@ -60,10 +63,20 @@ class ValidationResult:
     should_gate_passed: bool  # ≥95% should requirements
     gate_passed: bool  # Overall gate status
 
-    # Detailed results
+    # Detailed results (fields WITHOUT defaults)
     test_results: List[TestResult]
     execution_time: float  # Total execution time
     timestamp: datetime
+
+    # Fields WITH defaults must come AFTER fields without defaults
+    # OPTION 2: Multi-phase validation metrics
+    total_files: int = 0  # Total Python files
+    syntax_valid_files: int = 0  # Files that compile without syntax errors
+    import_valid_files: int = 0  # Files that can be imported
+    syntax_precision: float = 0.0  # syntax_valid / total * 100
+    import_precision: float = 0.0  # import_valid / total * 100
+    contract_precision: float = 0.0  # passed_tests / total_files * 100
+    workspace_path: Optional[Path] = None  # Path to workspace where tests were executed
 
 
 class GeneratedCodeValidator:
@@ -117,17 +130,25 @@ class GeneratedCodeValidator:
         # Create isolated workspace
         workspace = self._create_workspace(code_dir, test_file)
 
+        # OPTION 2: Multi-phase validation (syntax → import)
+        syntax_valid, import_valid, total_files = self._validate_syntax_and_imports(
+            workspace
+        )
+
         try:
             # Execute pytest with JSON reporting
             test_results = self._execute_pytest(workspace, test_file.name)
 
-            # Calculate precision and gates
-            validation_result = self._calculate_results(test_results)
+            # Calculate precision and gates (with multi-phase metrics)
+            validation_result = self._calculate_results(
+                test_results, syntax_valid, import_valid, total_files
+            )
 
-            # Add execution time
+            # Add execution time and workspace path
             execution_time = (datetime.now() - start_time).total_seconds()
             validation_result.execution_time = execution_time
             validation_result.timestamp = start_time
+            validation_result.workspace_path = workspace
 
             # Report results
             self._report_results(validation_result, module_name)
@@ -135,8 +156,9 @@ class GeneratedCodeValidator:
             return validation_result
 
         finally:
-            # Cleanup workspace
-            self._cleanup_workspace(workspace)
+            # Cleanup workspace - DISABLED to allow manual inspection
+            # self._cleanup_workspace(workspace)
+            print(f"\n📁 Workspace preserved for inspection: {workspace}")
 
     def _create_workspace(self, code_dir: Path, test_file: Path) -> Path:
         """
@@ -159,6 +181,12 @@ class GeneratedCodeValidator:
         if code_dir.exists():
             shutil.copytree(code_dir, code_workspace, dirs_exist_ok=True)
 
+            # FIX 3.2b-v4: Create __init__.py in all subdirectories
+            # This makes all Python packages importable with "code." prefix
+            for subdir in code_workspace.rglob("*"):
+                if subdir.is_dir() and not (subdir / "__init__.py").exists():
+                    (subdir / "__init__.py").touch()
+
         # Copy test file
         test_dir = workspace / "tests"
         test_dir.mkdir(exist_ok=True)
@@ -170,6 +198,105 @@ class GeneratedCodeValidator:
 
         print(f"  📁 Workspace: {workspace}")
         return workspace
+
+    def _validate_syntax_and_imports(
+        self, workspace: Path
+    ) -> Tuple[Set[str], Set[str], int]:
+        """
+        OPTION 2: Multi-phase validation (syntax → import).
+
+        Phase 1: Syntax validation using compile()
+        Phase 2: Import validation using importlib
+
+        Args:
+            workspace: Temporary workspace with code/ directory
+
+        Returns:
+            Tuple of (syntax_valid_files, import_valid_files, total_files)
+        """
+        code_workspace = workspace / "code"
+        if not code_workspace.exists():
+            return set(), set(), 0
+
+        print("\n  🔍 OPTION 2: Multi-phase validation")
+        print("  " + "=" * 58)
+
+        syntax_valid = set()
+        import_valid = set()
+        py_files = list(code_workspace.rglob("*.py"))
+        total_files = len(py_files)
+
+        # Filter out __init__.py files for cleaner reporting
+        py_files = [f for f in py_files if f.name != "__init__.py"]
+
+        print(f"  📦 Total Python files (excluding __init__.py): {len(py_files)}")
+
+        # Phase 1: Syntax validation
+        print(f"\n  📝 Phase 1: Syntax Validation (compile())")
+        for py_file in py_files:
+            try:
+                source = py_file.read_text(encoding="utf-8")
+                compile(source, str(py_file), "exec")
+                syntax_valid.add(py_file.name)
+                print(f"    ✅ {py_file.name}: syntax valid")
+            except SyntaxError as e:
+                print(f"    ❌ {py_file.name}: SyntaxError at line {e.lineno}")
+            except Exception as e:
+                print(f"    ⚠️  {py_file.name}: {type(e).__name__}: {e}")
+
+        syntax_precision = (len(syntax_valid) / len(py_files) * 100) if py_files else 0.0
+        print(f"\n  📊 Syntax Precision: {syntax_precision:.1f}% ({len(syntax_valid)}/{len(py_files)})")
+
+        # Phase 2: Import validation (only for syntax-valid files)
+        print(f"\n  🔗 Phase 2: Import Validation (importlib)")
+
+        if not syntax_valid:
+            print(f"    ⚠️  No files passed syntax validation - skipping import phase")
+        else:
+            # Add workspace to sys.path for imports
+            workspace_str = str(workspace)
+            if workspace_str not in sys.path:
+                sys.path.insert(0, workspace_str)
+
+            try:
+                for filename in syntax_valid:
+                    # Find the actual file path
+                    matching_files = [f for f in py_files if f.name == filename]
+                    if not matching_files:
+                        continue
+
+                    py_file = matching_files[0]
+
+                    # Convert to module name: code.src.models.order
+                    rel_path = py_file.relative_to(workspace)
+                    module_parts = list(rel_path.parts[:-1]) + [rel_path.stem]
+                    module_name = ".".join(module_parts)
+
+                    try:
+                        # Clear any previous imports
+                        if module_name in sys.modules:
+                            del sys.modules[module_name]
+
+                        importlib.import_module(module_name)
+                        import_valid.add(filename)
+                        print(f"    ✅ {filename}: import successful")
+                    except ModuleNotFoundError as e:
+                        print(f"    ❌ {filename}: ModuleNotFoundError: {e}")
+                    except ImportError as e:
+                        print(f"    ❌ {filename}: ImportError: {e}")
+                    except Exception as e:
+                        print(f"    ⚠️  {filename}: {type(e).__name__}: {str(e)[:60]}")
+
+            finally:
+                # Clean up sys.path
+                if workspace_str in sys.path:
+                    sys.path.remove(workspace_str)
+
+        import_precision = (len(import_valid) / len(py_files) * 100) if py_files else 0.0
+        print(f"\n  📊 Import Precision: {import_precision:.1f}% ({len(import_valid)}/{len(py_files)})")
+        print("  " + "=" * 58)
+
+        return syntax_valid, import_valid, len(py_files)
 
     def _cleanup_workspace(self, workspace: Path) -> None:
         """Remove temporary workspace."""
@@ -193,6 +320,8 @@ class GeneratedCodeValidator:
         results_file = workspace / "test-results.json"
 
         # Run pytest with JSON report plugin
+        # Note: Not using --timeout flag as pytest-timeout may not be installed in test workspace
+        # subprocess.run() timeout provides overall protection
         cmd = [
             "pytest",
             f"tests/{test_filename}",
@@ -200,13 +329,17 @@ class GeneratedCodeValidator:
             f"--json-report-file={results_file}",
             "-v",
             "--tb=short",
-            f"--timeout={self.timeout_per_test}",
         ]
 
         try:
+            # FIX 3.2b-v5: Add PYTHONPATH so pytest can import from workspace/code/
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(workspace)
+
             result = subprocess.run(
                 cmd,
                 cwd=workspace,
+                env=env,
                 capture_output=True,
                 text=True,
                 timeout=self.total_timeout,
@@ -369,16 +502,29 @@ class GeneratedCodeValidator:
 
         return test_results
 
-    def _calculate_results(self, test_results: List[TestResult]) -> ValidationResult:
+    def _calculate_results(
+        self,
+        test_results: List[TestResult],
+        syntax_valid: Set[str] = None,
+        import_valid: Set[str] = None,
+        total_files: int = 0,
+    ) -> ValidationResult:
         """
         Calculate validation results and precision metrics.
 
         Args:
             test_results: List of individual test results
+            syntax_valid: Set of filenames that passed syntax validation
+            import_valid: Set of filenames that passed import validation
+            total_files: Total number of Python files in code/
 
         Returns:
             ValidationResult with all metrics
         """
+        # Default empty sets if not provided
+        syntax_valid = syntax_valid or set()
+        import_valid = import_valid or set()
+
         total_tests = len(test_results)
         passed_tests = sum(1 for t in test_results if t.status == "passed")
         failed_tests = sum(1 for t in test_results if t.status == "failed")
@@ -428,6 +574,17 @@ class GeneratedCodeValidator:
 
         gate_passed = must_gate_passed and should_gate_passed
 
+        # OPTION 2: Calculate multi-phase precision metrics
+        syntax_precision = (
+            (len(syntax_valid) / total_files * 100) if total_files > 0 else 0.0
+        )
+        import_precision = (
+            (len(import_valid) / total_files * 100) if total_files > 0 else 0.0
+        )
+        contract_precision = (
+            (passed_tests / total_files * 100) if total_files > 0 else 0.0
+        )
+
         return ValidationResult(
             precision=precision,
             total_tests=total_tests,
@@ -442,6 +599,14 @@ class GeneratedCodeValidator:
             must_gate_passed=must_gate_passed,
             should_gate_passed=should_gate_passed,
             gate_passed=gate_passed,
+            # OPTION 2: Multi-phase validation metrics
+            total_files=total_files,
+            syntax_valid_files=len(syntax_valid),
+            import_valid_files=len(import_valid),
+            syntax_precision=syntax_precision,
+            import_precision=import_precision,
+            contract_precision=contract_precision,
+            # Standard fields
             test_results=test_results,
             execution_time=0.0,  # Will be set by validate()
             timestamp=datetime.now(),
@@ -461,6 +626,17 @@ class GeneratedCodeValidator:
         print(f"  Module: {module_name}")
         print(f"  Precision: {result.precision:.1%}")
         print(f"  Tests: {result.passed_tests}/{result.total_tests} passed")
+
+        # OPTION 2: Multi-phase validation metrics
+        if result.total_files > 0:
+            print(f"\n📊 Multi-Phase Validation (OPTION 2):")
+            print(
+                f"  📝 Syntax:   {result.syntax_precision:.1f}% ({result.syntax_valid_files}/{result.total_files} files)"
+            )
+            print(
+                f"  🔗 Import:   {result.import_precision:.1f}% ({result.import_valid_files}/{result.total_files} files)"
+            )
+            print(f"  ✅ Contract: {result.contract_precision:.1f}%")
 
         if result.failed_tests > 0:
             print(f"  ❌ Failed: {result.failed_tests}")

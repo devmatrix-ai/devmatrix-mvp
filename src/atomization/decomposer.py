@@ -62,7 +62,7 @@ class RecursiveDecomposer:
     Target: ~10 LOC per atom, complexity <3.0
     """
 
-    def __init__(self, target_loc: int = 10, max_loc: int = 15, max_complexity: float = 3.0) -> None:
+    def __init__(self, target_loc: int = 10, max_loc: int = 15, max_complexity: float = 3.0, max_loc_for_classes: int = 100) -> None:
         """
         Initialize decomposer
 
@@ -70,13 +70,15 @@ class RecursiveDecomposer:
             target_loc: Target lines of code per atom (default: 10)
             max_loc: Maximum lines of code per atom (default: 15)
             max_complexity: Maximum cyclomatic complexity (default: 3.0)
+            max_loc_for_classes: Maximum LOC for classes before splitting (default: 100)
         """
         self.target_loc = target_loc
         self.max_loc = max_loc
         self.max_complexity = max_complexity
+        self.max_loc_for_classes = max_loc_for_classes
         self.parser = MultiLanguageParser()
 
-        logger.info(f"RecursiveDecomposer initialized (target_loc={target_loc}, max_loc={max_loc}, max_complexity={max_complexity})")
+        logger.info(f"RecursiveDecomposer initialized (target_loc={target_loc}, max_loc={max_loc}, max_complexity={max_complexity}, max_loc_for_classes={max_loc_for_classes})")
 
     def decompose(self, code: str, language: str, description: str = "") -> DecompositionResult:
         """
@@ -205,7 +207,7 @@ class RecursiveDecomposer:
             cls_loc = cls['end_line'] - cls['start_line'] + 1
 
             # Class is already atomic
-            if cls_loc <= self.max_loc:
+            if cls_loc <= self.max_loc_for_classes:
                 atoms.append(AtomCandidate(
                     code=cls_code,
                     start_line=cls['start_line'],

@@ -274,7 +274,7 @@ class EnhancedAnthropicClient:
         metrics_collector: Optional[MetricsCollector] = None,
         enable_v2_caching: bool = True,  # NEW: Enable MGE V2 caching
         enable_v2_batching: bool = False,  # NEW: Enable MGE V2 request batching (disabled by default)
-        redis_url: str = "redis://redis:6379"  # Redis URL for V2 caching (Docker service name)
+        redis_url: str = "redis://localhost:6379"  # Redis URL for V2 caching (Docker service name)
     ):
         """
         Initialize enhanced client.

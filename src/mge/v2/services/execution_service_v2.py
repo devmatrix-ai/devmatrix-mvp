@@ -2,6 +2,8 @@
 Execution Service V2 for MGE
 
 State management and orchestration for execution pipeline.
+
+DEPRECATED: This module is deprecated. Use CognitivePipeline via PipelineDispatcher instead.
 """
 
 import asyncio
@@ -19,6 +21,7 @@ from src.mge.v2.execution.metrics import (
     EXECUTION_TIME_SECONDS,
     EXECUTION_COST_USD_TOTAL,
 )
+from src.decorators.deprecation import deprecated_class
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +58,15 @@ class ExecutionState(BaseModel):
         }
 
 
+@deprecated_class(
+    message="Use CognitivePipeline via PipelineDispatcher",
+    alternative="CognitivePipeline"
+)
 class ExecutionServiceV2:
     """
     Service for managing execution state and orchestration.
+
+    DEPRECATED: This class is deprecated. Use CognitivePipeline via PipelineDispatcher instead.
 
     Features:
     - Execution state tracking (pending, running, completed, failed)

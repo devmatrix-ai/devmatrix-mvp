@@ -1,6 +1,8 @@
 """
 Execution V2 API Router - MGE V2 Execution Endpoints
 
+DEPRECATED: This API is deprecated. Use /api/v1/orchestrate endpoints with cognitive pipeline instead.
+
 REST API endpoints for wave-based parallel execution with intelligent retry orchestration.
 
 Endpoints:
@@ -13,14 +15,17 @@ Endpoints:
 - POST /api/v2/execution/{execution_id}/resume - Resume execution
 - GET /api/v2/execution/{execution_id}/metrics - Get execution metrics
 
+All endpoints return X-Deprecated header with migration information.
+
 Author: DevMatrix Team
 Date: 2025-10-25
 """
 
 from typing import Dict, Any, Optional, List
 from uuid import UUID
+import warnings
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Response
 from pydantic import BaseModel, Field
 
 from src.mge.v2.services.execution_service_v2 import (
@@ -35,6 +40,35 @@ from src.observability import StructuredLogger
 logger = StructuredLogger("execution_v2_api", output_json=True)
 
 router = APIRouter(prefix="/api/v2/execution", tags=["execution-v2"])
+
+
+# ============================================================================
+# Deprecation Helper
+# ============================================================================
+
+DEPRECATION_MESSAGE = (
+    "This API endpoint is deprecated. "
+    "Use POST /api/v1/orchestrate with pipeline=cognitive instead. "
+    "MGE V2 execution service will be removed in a future release."
+)
+
+def add_deprecation_warning(response: Response):
+    """
+    Add deprecation headers to response.
+
+    Args:
+        response: FastAPI Response object to add headers to
+    """
+    response.headers["X-Deprecated"] = "true"
+    response.headers["X-Deprecation-Message"] = DEPRECATION_MESSAGE
+    response.headers["X-Alternative-Endpoint"] = "/api/v1/orchestrate"
+
+    # Also emit Python deprecation warning
+    warnings.warn(
+        DEPRECATION_MESSAGE,
+        category=DeprecationWarning,
+        stacklevel=2
+    )
 
 
 # ============================================================================
@@ -215,9 +249,11 @@ def execution_v2_health() -> Dict[str, Any]:
 
 
 @router.post("/start", response_model=StartExecutionResponse, status_code=status.HTTP_202_ACCEPTED)
-async def start_execution(request: StartExecutionRequest) -> StartExecutionResponse:
+async def start_execution(request: StartExecutionRequest, response: Response) -> StartExecutionResponse:
     """
     Start execution for a masterplan.
+
+    DEPRECATED: Use POST /api/v1/orchestrate with pipeline=cognitive instead.
 
     Starts background execution and returns immediately with execution_id.
     Use GET /{execution_id} to track progress.
@@ -231,6 +267,9 @@ async def start_execution(request: StartExecutionRequest) -> StartExecutionRespo
     Raises:
         HTTPException: 400 for invalid request, 500 for internal errors
     """
+    # Add deprecation headers
+    add_deprecation_warning(response)
+
     try:
         masterplan_id = UUID(request.masterplan_id)
 

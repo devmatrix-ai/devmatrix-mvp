@@ -102,7 +102,7 @@ class MGE_V2_OrchestrationService:
         )
         wave_executor = WaveExecutor(
             retry_orchestrator=retry_orchestrator,
-            max_concurrency=100
+            max_concurrency=3  # FIX 3: Limit concurrent LLM calls to prevent rate limiting and timeouts
         )
         self.execution_service = ExecutionServiceV2(wave_executor)
 

@@ -5,6 +5,7 @@ Manages conversational interactions with agents, supporting commands,
 context management, and streaming responses.
 """
 
+import os
 import uuid
 import asyncio
 from typing import Dict, Any, Optional, List, AsyncIterator
@@ -17,6 +18,9 @@ from src.agents.implementation_agent import ImplementationAgent
 from src.agents.testing_agent import TestingAgent
 from src.agents.documentation_agent import DocumentationAgent
 from src.observability import StructuredLogger
+from src.services.pipeline_dispatcher import PipelineDispatcher
+from src.services.event_translator import EventTranslator
+from src.decorators.deprecation import deprecated
 
 
 class MessageRole(str, Enum):
@@ -187,6 +191,9 @@ class ChatService:
 
         # Create shared LLM client for conversational mode
         self.llm = AnthropicClient(api_key=api_key, metrics_collector=metrics_collector)
+
+        # Initialize PipelineDispatcher for cognitive architecture integration
+        self.dispatcher = PipelineDispatcher()
 
     def _register_agents(self):
         """Register all specialized agents in the registry."""
@@ -708,284 +715,129 @@ Respondé de manera natural, amigable y útil. Si es una pregunta de diseño o p
         request: str,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Execute orchestration and stream progress.
-
-        Uses MGE V2 pipeline if MGE_V2_ENABLED=true, otherwise uses legacy OrchestratorAgent.
+        Execute orchestration through cognitive pipeline and stream progress.
 
         Yields:
             Progress updates and final result
         """
-        from src.config.constants import MGE_V2_ENABLED
+        # Use cognitive architecture via PipelineDispatcher
+        async for event in self._execute_cognitive_pipeline(conversation, request):
+            yield event
 
-        if MGE_V2_ENABLED:
-            # Use MGE V2 execution pipeline
-            async for event in self._execute_mge_v2(conversation, request):
-                yield event
-        else:
-            # Use legacy OrchestratorAgent (V1)
-            async for event in self._execute_legacy_orchestration(conversation, request):
-                yield event
-
-    async def _execute_mge_v2(
+    async def _execute_cognitive_pipeline(
         self,
         conversation: Conversation,
         request: str,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Execute MGE V2 pipeline and stream progress.
+        Execute cognitive pipeline via PipelineDispatcher and stream progress.
+
+        This method:
+        1. Creates unique execution_id
+        2. Routes through PipelineDispatcher
+        3. Translates cognitive pipeline events to WebSocket format
+        4. Streams events to client
+        5. Logs execution lifecycle
 
         Yields:
-            Progress updates and final result
+            Progress updates and final result in WebSocket format
         """
+        execution_id = str(uuid.uuid4())
+
         try:
-            # Check if SQLAlchemy session is available
-            if not self.sqlalchemy_session:
-                yield {
-                    "type": "error",
-                    "content": "MGE V2 requires database session. Please initialize ChatService with sqlalchemy_session parameter.",
-                    "done": True,
+            self.logger.info(
+                "Cognitive pipeline execution started",
+                extra={
+                    "execution_id": execution_id,
+                    "conversation_id": conversation.conversation_id,
+                    "workspace_id": conversation.workspace_id,
+                    "pipeline": "cognitive"
                 }
-                return
-
-            # Import MGE V2 orchestration service
-            from src.services.mge_v2_orchestration_service import MGE_V2_OrchestrationService
-            from src.config.constants import MGE_V2_ENABLE_CACHING, MGE_V2_ENABLE_RAG
-
-            # Create a database session from the sessionmaker
-            db_session = self.sqlalchemy_session()
-
-            # Initialize MGE V2 service
-            mge_v2_service = MGE_V2_OrchestrationService(
-                db=db_session,
-                api_key=self.api_key,
-                enable_caching=MGE_V2_ENABLE_CACHING,
-                enable_rag=MGE_V2_ENABLE_RAG
             )
 
             # Send initial status
             yield {
                 "type": "status",
-                "content": "🚀 Iniciando MGE V2 pipeline...",
+                "content": "Starting cognitive pipeline orchestration...",
                 "done": False,
             }
 
-            # Stream MGE V2 pipeline events
-            completion_event = None
-            async for event in mge_v2_service.orchestrate_from_request(
-                user_request=request,
-                workspace_id=conversation.workspace_id,
-                session_id=conversation.conversation_id,
-                user_id=conversation.user_id
+            # Execute through dispatcher
+            async for pipeline_result_dict in self.dispatcher.execute(
+                spec=request,
+                execution_id=execution_id
             ):
-                # Translate MGE V2 events to chat service format
-                event_type = event.get("type")
+                # Convert dict back to PipelineResult object
+                from src.cognitive.pipeline.result import PipelineResult, PipelinePhase
 
-                if event_type == "status":
-                    yield {
-                        "type": "status",
-                        "content": event.get("message", ""),
-                        "done": False,
-                    }
-                elif event_type == "progress":
-                    phase = event.get("phase", "")
-                    message = event.get("message", "")
-                    yield {
-                        "type": "progress",
-                        "event": phase,
-                        "data": event,
-                        "content": message,
-                        "done": False,
-                    }
-                elif event_type == "complete":
-                    completion_event = event
-                elif event_type == "error":
-                    yield {
-                        "type": "error",
-                        "content": event.get("message", "Unknown error"),
-                        "done": True,
-                    }
-                    return
-
-            # Format completion message
-            if completion_event:
-                response = self._format_mge_v2_completion(completion_event)
-
-                # Add assistant response to conversation
-                assistant_message = Message(
-                    content=response,
-                    role=MessageRole.ASSISTANT,
-                    metadata={"mge_v2_result": completion_event},
-                )
-                conversation.add_message(assistant_message)
-
-                # Save to database
-                self._save_message_to_db(
-                    conversation_id=conversation.conversation_id,
-                    role=MessageRole.ASSISTANT.value,
-                    content=response,
-                    metadata={"mge_v2_result": completion_event}
+                pipeline_result = PipelineResult(
+                    execution_id=pipeline_result_dict["execution_id"],
+                    status=pipeline_result_dict["status"],
+                    phase=PipelinePhase(pipeline_result_dict["phase"]),
+                    artifacts=pipeline_result_dict.get("artifacts", {}),
+                    metrics=pipeline_result_dict.get("metrics", {}),
+                    errors=pipeline_result_dict.get("errors"),
+                    timestamp=pipeline_result_dict["timestamp"]
                 )
 
-                # Yield final response
+                # Translate to console/WebSocket format
+                ui_event = EventTranslator.translate_cognitive_to_stream(
+                    pipeline_result=pipeline_result,
+                    conversation_id=conversation.conversation_id
+                )
+
+                # Log phase transitions
+                if ui_event.get("type") in ["phase_started", "phase_completed"]:
+                    self.logger.info(
+                        f"Phase transition: {ui_event.get('phase')}",
+                        extra={
+                            "execution_id": execution_id,
+                            "phase": ui_event.get("phase"),
+                            "status": ui_event.get("status")
+                        }
+                    )
+
+                # Yield for streaming
                 yield {
-                    "type": "message",
-                    "role": MessageRole.ASSISTANT.value,
-                    "content": response,
-                    "metadata": completion_event,
-                    "done": True,
+                    "type": "progress",
+                    "event": ui_event.get("type"),
+                    "data": ui_event,
+                    "content": ui_event.get("message", ""),
+                    "done": False,
                 }
 
-            # Always close the database session
-            db_session.close()
+                # Collect metrics if available
+                if self.metrics_collector and ui_event.get("metrics"):
+                    try:
+                        self.metrics_collector.record_event(ui_event)
+                    except Exception as e:
+                        self.logger.warning(f"Failed to record metrics: {e}")
 
-        except Exception as e:
-            error_message = f"Error durante MGE V2 orchestration: {str(e)}"
-            self.logger.error(error_message, exc_info=True)
-
-            yield {
-                "type": "error",
-                "content": error_message,
-                "done": True,
-            }
-
-    def _format_mge_v2_completion(self, event: Dict[str, Any]) -> str:
-        """Format MGE V2 completion event as markdown message."""
-        lines = [
-            "## ✅ MGE V2 Generation Complete",
-            "",
-            f"**MasterPlan ID**: `{event.get('masterplan_id', 'N/A')}`",
-            f"**Total Tasks**: {event.get('total_tasks', 0)}",
-            f"**Total Atoms**: {event.get('total_atoms', 0)}",
-            f"**Precision**: {event.get('precision', 0) * 100:.1f}%",
-            f"**Execution Time**: {event.get('execution_time', 0):.1f}s",
-            "",
-            "The code has been generated successfully using the MGE V2 pipeline. Check your workspace for the results.",
-            "",
-            "### Next Steps",
-            "- Review the generated code",
-            "- Run tests to validate functionality",
-            "- Deploy to your environment",
-        ]
-        return "\n".join(lines)
-
-    async def _execute_legacy_orchestration(
-        self,
-        conversation: Conversation,
-        request: str,
-    ) -> AsyncIterator[Dict[str, Any]]:
-        """
-        Execute legacy orchestration (V1) and stream progress.
-
-        Yields:
-            Progress updates and final result
-        """
-        try:
-            # Send initial status
-            yield {
-                "type": "status",
-                "content": "Iniciando orquestación...",
-                "done": False,
-            }
-
-            # Create a queue for progress events (using thread-safe queue)
-            import queue
-            progress_queue_sync = queue.Queue()
-
-            # Create progress callback that puts events in queue
-            def progress_callback(event_type: str, data: dict):
-                """Callback to capture progress events from orchestrator."""
-                try:
-                    # Use thread-safe queue since this is called from thread pool
-                    progress_queue_sync.put({
-                        "event_type": event_type,
-                        "data": data
-                    })
-                except Exception as e:
-                    self.logger.error(f"Error in progress callback: {e}")
-
-            # Create orchestrator with progress callback
-            orchestrator = OrchestratorAgent(
-                api_key=self.api_key,
-                agent_registry=self.registry,
-                progress_callback=progress_callback
+            # Log completion
+            self.logger.info(
+                "Cognitive pipeline execution completed",
+                extra={"execution_id": execution_id}
             )
 
-            # Execute orchestration in thread pool to avoid blocking
-            loop = asyncio.get_event_loop()
+            # Format final completion message
+            response = f"""## Cognitive Pipeline Complete
 
-            # Start orchestration task
-            orchestration_task = loop.run_in_executor(
-                None,
-                orchestrator.orchestrate,
-                request,
-                conversation.workspace_id,
-                None,
-            )
+**Execution ID**: `{execution_id}`
 
-            # Stream progress events while orchestration runs
-            result = None
-            orchestration_done = False
+The orchestration has been completed using the cognitive architecture pipeline.
+Check your workspace for the results.
 
-            while not orchestration_done:
-                # Check for progress events (non-blocking)
-                try:
-                    event = progress_queue_sync.get(block=False)
-                    yield {
-                        "type": "progress",
-                        "event": event["event_type"],
-                        "data": event["data"],
-                        "done": False,
-                    }
-                except:
-                    # No progress events, check if orchestration is done
-                    pass
-
-                # Check if orchestration task is done
-                if orchestration_task.done():
-                    result = await orchestration_task
-                    orchestration_done = True
-                else:
-                    # Small delay to avoid busy waiting
-                    await asyncio.sleep(0.1)
-
-            # Drain any remaining progress events
-            while not progress_queue_sync.empty():
-                try:
-                    event = progress_queue_sync.get(block=False)
-                    yield {
-                        "type": "progress",
-                        "event": event["event_type"],
-                        "data": event["data"],
-                        "done": False,
-                    }
-                except:
-                    break
-
-            # Format result as message
-            response_lines = [
-                f"## Orchestration Complete",
-                f"",
-                f"**Workspace**: `{result['workspace_id']}`",
-                f"**Project Type**: {result['project_type']}",
-                f"**Complexity**: {result['complexity']:.1f}",
-                f"**Tasks**: {len(result['tasks'])}",
-                f"",
-                f"### Task Breakdown:",
-            ]
-
-            for task in result['tasks']:
-                deps = f" (depends on: {', '.join(task['dependencies'])})" if task['dependencies'] else ""
-                response_lines.append(
-                    f"- **{task['id']}**: {task['description']}{deps}"
-                )
-
-            response = "\n".join(response_lines)
+### Next Steps
+- Review generated code
+- Run tests to validate functionality
+- Deploy to your environment
+"""
 
             # Add assistant response to conversation
             assistant_message = Message(
                 content=response,
                 role=MessageRole.ASSISTANT,
-                metadata={"orchestration_result": result},
+                metadata={"execution_id": execution_id, "pipeline": "cognitive"},
             )
             conversation.add_message(assistant_message)
 
@@ -994,7 +846,7 @@ Respondé de manera natural, amigable y útil. Si es una pregunta de diseño o p
                 conversation_id=conversation.conversation_id,
                 role=MessageRole.ASSISTANT.value,
                 content=response,
-                metadata={"orchestration_result": result}
+                metadata={"execution_id": execution_id, "pipeline": "cognitive"}
             )
 
             # Yield final response
@@ -1002,19 +854,33 @@ Respondé de manera natural, amigable y útil. Si es una pregunta de diseño o p
                 "type": "message",
                 "role": MessageRole.ASSISTANT.value,
                 "content": response,
-                "metadata": result,
+                "metadata": {"execution_id": execution_id},
                 "done": True,
             }
 
         except Exception as e:
-            error_message = f"Error during orchestration: {str(e)}"
-            self.logger.error(error_message, exc_info=True)
+            error_message = f"Error during cognitive pipeline execution: {str(e)}"
+            self.logger.error(
+                error_message,
+                exc_info=True,
+                extra={"execution_id": execution_id}
+            )
+
+            # Translate error to stream format
+            error_event = EventTranslator.translate_error_to_stream(
+                execution_id=execution_id,
+                conversation_id=conversation.conversation_id,
+                error=e,
+                phase="unknown"
+            )
 
             yield {
                 "type": "error",
                 "content": error_message,
+                "data": error_event,
                 "done": True,
             }
+
 
     async def _execute_masterplan_generation(
         self,

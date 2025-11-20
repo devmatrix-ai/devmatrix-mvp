@@ -66,6 +66,62 @@ class ContractTestGenerator:
         self.client = anthropic.Anthropic(api_key=self.api_key)
         self.model = "claude-sonnet-4-20250514"
 
+    def _analyze_code_structure(self, code_dir: Path) -> Dict[str, str]:
+        """
+        Analyze generated code structure to build import map.
+
+        Args:
+            code_dir: Directory containing generated code
+
+        Returns:
+            Dict mapping class/function names to their import paths
+            Example: {
+                "OrderService": "from code.src.services.order_service import OrderService",
+                "Customer": "from code.src.models.customer import Customer",
+                ...
+            }
+        """
+        import_map = {}
+
+        if not code_dir.exists():
+            return import_map
+
+        # Find all Python files in code directory (directly in code_dir, not in code_dir/code)
+        for py_file in code_dir.rglob("*.py"):
+            if py_file.name == "__init__.py":
+                continue
+
+            try:
+                content = py_file.read_text()
+
+                # Extract class definitions
+                class_matches = re.finditer(r"^class\s+(\w+)", content, re.MULTILINE)
+                for match in class_matches:
+                    class_name = match.group(1)
+                    # Build import path relative to code_dir
+                    rel_path = py_file.relative_to(code_dir)
+                    # Convert path to import: src/models/order.py → code.src.models.order
+                    # NOTE: Validator copies code to workspace/code/, so we need "code." prefix
+                    import_path = "code." + str(rel_path.with_suffix("")).replace("/", ".")
+                    import_map[class_name] = f"from {import_path} import {class_name}"
+
+                # Extract function definitions (top-level only, not methods)
+                # Look for functions with no indentation
+                func_matches = re.finditer(r"^def\s+(\w+)\s*\(", content, re.MULTILINE)
+                for match in func_matches:
+                    func_name = match.group(1)
+                    if not func_name.startswith("_"):  # Skip private functions
+                        rel_path = py_file.relative_to(code_dir)
+                        # NOTE: Validator copies code to workspace/code/, so we need "code." prefix
+                        import_path = "code." + str(rel_path.with_suffix("")).replace("/", ".")
+                        import_map[func_name] = f"from {import_path} import {func_name}"
+
+            except Exception as e:
+                # Skip files that can't be read
+                continue
+
+        return import_map
+
     def parse_requirements(self, discovery_doc: str) -> List[Dict[str, Any]]:
         """
         Parse requirements from discovery document.
@@ -238,7 +294,10 @@ Return ONLY valid JSON, no markdown or explanation.
         return contracts
 
     def generate_test_code(
-        self, requirement: Dict[str, Any], contracts: List[Contract]
+        self,
+        requirement: Dict[str, Any],
+        contracts: List[Contract],
+        import_map: Optional[Dict[str, str]] = None
     ) -> str:
         """
         Generate pytest test code for contracts using Claude API.
@@ -246,6 +305,7 @@ Return ONLY valid JSON, no markdown or explanation.
         Args:
             requirement: Requirement dict
             contracts: List of extracted contracts
+            import_map: Optional dict mapping symbols to import statements
 
         Returns:
             Complete pytest test function as string
@@ -256,6 +316,15 @@ Return ONLY valid JSON, no markdown or explanation.
                 for c in contracts
             ]
         )
+
+        # Build import examples from actual code structure
+        import_examples = ""
+        if import_map:
+            # Take up to 5 example imports
+            example_imports = list(import_map.values())[:5]
+            import_examples = "\n**Available Imports from Generated Code:**\n"
+            import_examples += "\n".join(f"  {imp}" for imp in example_imports)
+            import_examples += "\n  (Use these actual imports from the generated code)\n"
 
         prompt = f"""Generate a pytest test function to validate these contracts.
 
@@ -279,36 +348,48 @@ Generate a COMPLETE pytest test function that:
 **Guidelines:**
 - Function name: test_requirement_{requirement['id']:03d}_contract_validation
 - Use proper pytest fixtures if needed (e.g., @pytest.fixture)
-- **IMPORTANT**: Import ONLY standard library modules (typing, datetime, uuid, etc.)
-- **DO NOT import**: docker, psycopg2, redis, fastapi, sqlalchemy, or any external dependencies
-- Tests will be executed in isolated pytest environment without external dependencies
+- **IMPORTS ALLOWED**:
+  - Standard library modules: typing, datetime, uuid, pathlib, etc.
+  - Generated code from `code/` directory: import classes/functions to test
+- **IMPORTS PROHIBITED**:
+  - External dependencies: docker, psycopg2, redis, fastapi, sqlalchemy
+  - System dependencies that require running services
+- Tests validate implementation contracts WITHOUT requiring external services
 - Add clear docstring explaining what's being tested
 - Use descriptive variable names
 - Add comments for each contract validation
 - Use assert statements with clear error messages
 - Handle edge cases (None values, empty lists, etc.)
-- Make test executable with ONLY standard library imports
-
+{import_examples}
 **Example Structure:**
 ```python
+# Import from actual generated code structure
+from code.src.models.order import Order, OrderStatus
+from code.src.models.order_item import OrderItem
+
 def test_requirement_001_contract_validation():
     \"\"\"
-    Test: Create Project model
+    Test: Create Order model with validation
     Validates: preconditions, postconditions, invariants
+
+    Fix 3.2b: Imports now match actual code structure.
     \"\"\"
-    # Precondition: Database connection available
-    assert db.is_connected(), "Database must be connected"
+    # Precondition: Valid order data provided
+    order_id = "ORD-001"
+    items = [OrderItem(product_id="P1", quantity=2, price=10.0)]
+    total = 20.0
 
-    # Execute: Create project
-    project = create_project(name="Test", description="Test project", owner_id=1)
+    # Execute: Create order
+    order = Order(order_id, items, total, OrderStatus.PENDING)
 
-    # Postcondition: Project created with all fields
-    assert project is not None, "Project must be created"
-    assert project.id is not None, "Project must have ID"
-    assert project.created_at is not None, "Project must have created_at timestamp"
+    # Postcondition: Order created with all required fields
+    assert order is not None, "Order must be created"
+    assert order.order_id == order_id, "Order ID must match"
+    assert len(order.items) == 1, "Order must have items"
+    assert order.total == total, "Order total must match"
 
-    # Invariant: owner_id must be positive
-    assert project.owner_id > 0, "owner_id must be positive integer"
+    # Invariant: total must be positive
+    assert order.total > 0, "Order total must be positive"
 ```
 
 Return ONLY the test function code (Python), no markdown or explanation.
@@ -330,12 +411,15 @@ Return ONLY the test function code (Python), no markdown or explanation.
 
         return test_code
 
-    def generate_tests(self, discovery_doc: str) -> List[ContractTest]:
+    def generate_tests(
+        self, discovery_doc: str, import_map: Optional[Dict[str, str]] = None
+    ) -> List[ContractTest]:
         """
         Generate all contract tests from discovery document.
 
         Args:
             discovery_doc: Markdown discovery document
+            import_map: Optional dict mapping symbols to import statements
 
         Returns:
             List of ContractTest objects with executable test code
@@ -359,7 +443,7 @@ Return ONLY the test function code (Python), no markdown or explanation.
                 continue
 
             # Generate test code
-            test_code = self.generate_test_code(req, contracts)
+            test_code = self.generate_test_code(req, contracts, import_map=import_map)
             test_name = f"test_requirement_{req['id']:03d}_contract_validation"
 
             contract_tests.append(
@@ -415,7 +499,11 @@ from datetime import datetime
         print(f"📝 Written {len(contract_tests)} tests to {test_file}")
 
     def generate_from_discovery(
-        self, discovery_doc: str, output_dir: Path, module_name: str
+        self,
+        discovery_doc: str,
+        output_dir: Path,
+        module_name: str,
+        code_dir: Optional[Path] = None
     ) -> Dict[str, Any]:
         """
         Complete pipeline: Discovery → Contract Tests → File.
@@ -424,6 +512,7 @@ from datetime import datetime
             discovery_doc: Markdown discovery document
             output_dir: Where to write test files
             module_name: Module name (e.g., "ecommerce", "auth")
+            code_dir: Optional path to generated code for import analysis
 
         Returns:
             Statistics:
@@ -439,8 +528,15 @@ from datetime import datetime
         print(f"\n🔬 Generating contract tests for: {module_name}")
         print("=" * 60)
 
+        # Analyze code structure if code_dir provided
+        import_map = {}
+        if code_dir:
+            print("  🔍 Analyzing code structure for accurate imports...")
+            import_map = self._analyze_code_structure(code_dir)
+            print(f"  ✓ Found {len(import_map)} importable symbols")
+
         # Generate tests
-        contract_tests = self.generate_tests(discovery_doc)
+        contract_tests = self.generate_tests(discovery_doc, import_map=import_map)
 
         # Count contract types
         all_contracts = [c for ct in contract_tests for c in ct.contracts]

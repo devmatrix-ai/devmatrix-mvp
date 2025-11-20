@@ -20,6 +20,7 @@ Performance:
 import hashlib
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Tuple
@@ -66,7 +67,7 @@ class RAGQueryCache:
 
     def __init__(
         self,
-        redis_url: str = "redis://redis:6379",
+        redis_url: str = None,
         l1_cache_size: int = 100
     ):
         """
@@ -76,9 +77,13 @@ class RAGQueryCache:
         L2: Redis cache (persistent, larger capacity)
 
         Args:
-            redis_url: Redis connection URL (default: redis://redis:6379 for Docker)
+            redis_url: Redis connection URL (default: from REDIS_URL env or redis://localhost:6379)
             l1_cache_size: L1 cache size (default: 100 entries)
         """
+        # Use environment variable or default to localhost (for tests outside Docker)
+        # Docker environments should set REDIS_URL=redis://localhost:6379
+        if redis_url is None:
+            redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
         self.redis_url = redis_url
         self.redis_client: Optional[redis.Redis] = None
         self.default_ttl = 3600  # 1 hour (shorter than LLM cache due to code changes)

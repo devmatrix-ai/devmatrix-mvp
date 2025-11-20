@@ -48,6 +48,12 @@ class CommandDispatcher:
         self.register("session", self._cmd_session, "Manage sessions")
         self.register("config", self._cmd_config, "Manage configuration")
 
+        # Phase 4: Context tracking
+        self.register("context", self._cmd_context, "Show context stack and usage")
+
+        # Phase 1: Snapshot management
+        self.register("snapshot", self._cmd_snapshot, "Manage workspace snapshots")
+
         # Exit
         self.register("exit", self._cmd_exit, "Exit the console")
         self.register("quit", self._cmd_exit, "Exit the console")
@@ -58,6 +64,8 @@ class CommandDispatcher:
         self.aliases["?"] = "help"
         self.aliases["p"] = "plan"
         self.aliases["s"] = "show"
+        self.aliases["ctx"] = "context"
+        self.aliases["snap"] = "snapshot"
 
     def register(self, name: str, handler: Callable, description: str = "") -> None:
         """Register a command.
@@ -451,19 +459,32 @@ class CommandDispatcher:
           --parallel: Use parallel execution
           --max-workers: Number of parallel workers
           --dry-run: Show what would be executed without running
+          --auto-approve: Auto-approve all file changes
         """
         parallel = options.get("parallel", True)
         max_workers = options.get("max-workers", "4")
         dry_run = options.get("dry-run", False)
+        auto_approve = options.get("auto-approve", False)
 
         output = "🚀 Executing masterplan...\n"
         if dry_run:
             output += "🔍 Dry-run mode: No changes will be made\n"
+        if auto_approve:
+            output += "⚡ Auto-approve mode: All changes will be accepted automatically\n"
         output += f"⚙️  Parallel execution: {'Yes' if parallel else 'No'}\n"
         output += f"👷 Max workers: {max_workers}\n"
         output += f"⏳ Starting execution waves...\n"
 
-        return CommandResult(success=True, output=output, data={"parallel": parallel, "max_workers": max_workers, "dry_run": dry_run})
+        return CommandResult(
+            success=True,
+            output=output,
+            data={
+                "parallel": parallel,
+                "max_workers": max_workers,
+                "dry_run": dry_run,
+                "auto_approve": auto_approve,
+            },
+        )
 
     def _cmd_validate(self, args: list[str], options: Dict[str, Any]) -> CommandResult:
         """Validate execution results.
@@ -482,6 +503,253 @@ class CommandDispatcher:
         output += f"📊 Generating validation report...\n"
 
         return CommandResult(success=True, output=output, data={"strict": strict, "check_type": check_type})
+
+    def _cmd_context(self, args: list[str], options: Dict[str, Any]) -> CommandResult:
+        """Show context stack and usage.
+
+        Subcommands:
+          /context show       - Show current context stack
+          /context clear      - Clear context stack
+          /context stats      - Show context usage statistics
+
+        Options:
+          --verbose: Show detailed context information
+
+        Examples:
+          /context show
+          /context stats --verbose
+        """
+        from src.cli.context_tracker import ContextTracker
+
+        action = args[0] if args else "show"
+        verbose = options.get("verbose", False)
+
+        tracker = ContextTracker()
+
+        if action == "show":
+            # Show context stack
+            stack = tracker.get_context_stack()
+            usage_pct = tracker.get_usage_percentage()
+
+            output = f"📊 Context Stack ({usage_pct:.1f}% used)\n\n"
+
+            if not stack:
+                output += "  [Empty stack]\n"
+            else:
+                for i, item in enumerate(stack, 1):
+                    output += f"  {i}. {item['type']}: {item['name']}\n"
+                    output += f"     Tokens: {item['tokens']:,}\n"
+
+                    if verbose:
+                        output += f"     Timestamp: {item['timestamp']}\n"
+                        if item.get('metadata'):
+                            output += f"     Metadata: {item['metadata']}\n"
+
+                    output += "\n"
+
+            # Usage summary
+            total_tokens = tracker.total_tokens
+            limit_tokens = tracker.token_limit
+            output += f"Total: {total_tokens:,} / {limit_tokens:,} tokens\n"
+
+            # Warning if high usage
+            if usage_pct > 75:
+                output += "\n⚠️  Warning: High context usage! Consider clearing stack.\n"
+
+            return CommandResult(success=True, output=output, data={"stack": stack, "usage": usage_pct})
+
+        elif action == "clear":
+            # Clear context stack
+            tracker.clear_stack()
+            output = "🗑️  Context stack cleared\n"
+            return CommandResult(success=True, output=output)
+
+        elif action == "stats":
+            # Show statistics
+            stats = tracker.get_statistics()
+
+            output = "📈 Context Statistics\n\n"
+            output += f"  Total items pushed: {stats['total_pushes']}\n"
+            output += f"  Total items popped: {stats['total_pops']}\n"
+            output += f"  Current stack size: {stats['current_size']}\n"
+            output += f"  Peak usage: {stats['peak_usage']:.1f}%\n"
+            output += f"  Average usage: {stats['avg_usage']:.1f}%\n"
+
+            if verbose:
+                output += f"\n  Usage history (last 10):\n"
+                for entry in stats['history'][-10:]:
+                    output += f"    {entry['timestamp']}: {entry['usage']:.1f}%\n"
+
+            return CommandResult(success=True, output=output, data={"stats": stats})
+
+        else:
+            return CommandResult(
+                success=False,
+                output="",
+                error=f"Unknown context action: {action}"
+            )
+
+
+    def _cmd_snapshot(self, args: list[str], options: Dict[str, Any]) -> CommandResult:
+        """Manage workspace snapshots.
+
+        Subcommands:
+          /snapshot create [name]     - Create snapshot with optional description
+          /snapshot list              - List all available snapshots
+          /snapshot rollback <id>     - Rollback to a previous snapshot
+          /snapshot delete <id>       - Delete a snapshot
+          /snapshot show <id>         - Show snapshot details
+
+        Examples:
+          /snapshot create pre-refactor
+          /snapshot list
+          /snap rollback 20251119_143025_123456
+        """
+        from src.cli.snapshot_manager import SnapshotManager
+        from pathlib import Path
+
+        if not args:
+            return CommandResult(
+                success=False,
+                output="",
+                error="Usage: /snapshot <create|list|rollback|delete|show> [args]\n"
+                      "Type /help snapshot for more information"
+            )
+
+        action = args[0].lower()
+        manager = SnapshotManager(workspace_path=Path.cwd())
+
+        if action == "create":
+            # Create snapshot with optional description
+            description = " ".join(args[1:]) if len(args) > 1 else None
+
+            output = "📸 Creating workspace snapshot...\n"
+            try:
+                snapshot_id = manager.create_snapshot(description=description)
+                output += f"✅ Snapshot created: {snapshot_id}\n"
+                if description:
+                    output += f"   Description: {description}\n"
+                return CommandResult(success=True, output=output, data={"snapshot_id": snapshot_id})
+            except Exception as e:
+                return CommandResult(success=False, output="", error=f"Snapshot creation failed: {e}")
+
+        elif action == "list":
+            # List all snapshots
+            try:
+                snapshots = manager.list_snapshots()
+
+                if not snapshots:
+                    return CommandResult(success=True, output="No snapshots found.\n")
+
+                output = "📋 Available Snapshots:\n\n"
+                for snap in snapshots:
+                    output += f"  ID: {snap.id}\n"
+                    output += f"  Created: {snap.timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    if snap.description:
+                        output += f"  Description: {snap.description}\n"
+                    output += f"  Size: {snap.total_size / (1024*1024):.1f} MB\n"
+                    output += f"  Files: {snap.file_count}\n"
+                    output += "\n"
+
+                return CommandResult(success=True, output=output, data={"snapshots": [vars(s) for s in snapshots]})
+            except Exception as e:
+                return CommandResult(success=False, output="", error=f"Failed to list snapshots: {e}")
+
+        elif action == "rollback":
+            # Rollback to snapshot
+            if len(args) < 2:
+                return CommandResult(
+                    success=False,
+                    output="",
+                    error="Usage: /snapshot rollback <snapshot_id>\n"
+                          "Use /snapshot list to see available snapshots"
+                )
+
+            snapshot_id = args[1]
+
+            output = f"⏮️  Rolling back to snapshot: {snapshot_id}...\n"
+
+            try:
+                success = manager.rollback(snapshot_id, force=True)
+                if success:
+                    output += "✅ Rollback successful!\n"
+                    return CommandResult(success=True, output=output)
+                else:
+                    return CommandResult(
+                        success=False,
+                        output="",
+                        error=f"Snapshot not found: {snapshot_id}\n"
+                              f"Use /snapshot list to see available snapshots"
+                    )
+            except Exception as e:
+                return CommandResult(success=False, output="", error=f"Rollback failed: {e}")
+
+        elif action == "delete":
+            # Delete snapshot
+            if len(args) < 2:
+                return CommandResult(
+                    success=False,
+                    output="",
+                    error="Usage: /snapshot delete <snapshot_id>"
+                )
+
+            snapshot_id = args[1]
+
+            try:
+                success = manager.delete_snapshot(snapshot_id)
+                if success:
+                    output = f"🗑️  Deleted snapshot: {snapshot_id}\n"
+                    return CommandResult(success=True, output=output)
+                else:
+                    return CommandResult(
+                        success=False,
+                        output="",
+                        error=f"Snapshot not found: {snapshot_id}\n"
+                              f"Use /snapshot list to see available snapshots"
+                    )
+            except Exception as e:
+                return CommandResult(success=False, output="", error=f"Delete failed: {e}")
+
+        elif action == "show":
+            # Show snapshot details
+            if len(args) < 2:
+                return CommandResult(
+                    success=False,
+                    output="",
+                    error="Usage: /snapshot show <snapshot_id>"
+                )
+
+            snapshot_id = args[1]
+
+            try:
+                snapshots = manager.list_snapshots()
+                snapshot = next((s for s in snapshots if s.id == snapshot_id), None)
+
+                if not snapshot:
+                    return CommandResult(
+                        success=False,
+                        output="",
+                        error=f"Snapshot not found: {snapshot_id}"
+                    )
+
+                output = f"📸 Snapshot Details: {snapshot_id}\n\n"
+                output += f"  Created: {snapshot.timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                output += f"  Description: {snapshot.description or 'N/A'}\n"
+                output += f"  Size: {snapshot.total_size / (1024*1024):.1f} MB\n"
+                output += f"  Files: {snapshot.file_count}\n"
+                output += f"  Auto-generated: {'Yes' if snapshot.auto else 'No'}\n"
+
+                return CommandResult(success=True, output=output, data={"snapshot": vars(snapshot)})
+            except Exception as e:
+                return CommandResult(success=False, output="", error=f"Failed to show snapshot: {e}")
+
+        else:
+            return CommandResult(
+                success=False,
+                output="",
+                error=f"Unknown snapshot action: {action}\n"
+                      f"Valid actions: create, list, rollback, delete, show"
+            )
 
     def _cmd_exit(self, args: list[str], options: Dict[str, Any]) -> CommandResult:
         """Exit console."""

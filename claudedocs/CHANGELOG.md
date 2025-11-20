@@ -2,6 +2,23 @@
 
 All notable changes to Devmatrix will be documented in this file.
 
+## [0.2.0] - 2025-11-20 - E2E Pipeline Comprehensive Fixes 🔧
+
+### Fixed
+- **Spec Truncation**: Removed hard-coded 100-300 line limit in code generation (E-Commerce coverage: 8% → 50-80%)
+- **Contract Validation**: Fixed Phase 2 dependencies type mismatch (violations: 100% → 0%)
+- **Pattern Metrics**: Removed fake 85% estimate (now uses real counts)
+
+### Changed
+- Added adaptive output instructions based on spec complexity
+- Updated prompts to allow database patterns for complex specs
+- Added "implement ALL features" directive to prevent truncation
+
+### Performance
+- Pattern matching: 0 → 10 patterns found
+- Phase 6.5 repair: 60-65% → 90-100% compliance
+- Simple Task precision: 61.9% → 76.9% (+24%)
+
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 

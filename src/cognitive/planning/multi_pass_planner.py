@@ -397,17 +397,26 @@ def pass_5_atomic_breakdown(integration: Dict[str, Any]) -> List[Dict[str, Any]]
     - Assign semantic signatures to each atom
     - Ensure 50-120 total atoms for proper granularity
 
+    CRITICAL FIX (2025-11-19): Added 'name' field generation to all atoms.
+    - Previous issue: 100% of atoms had name=None in Neo4j DAG
+    - Root cause: No 'name' field in atom dictionaries
+    - Solution: Generate meaningful names: {domain}_{intent}_{simplified_purpose}
+    - Example: "user_validate_input", "infrastructure_create_component_1"
+    - Impact: Enables DAG node tracking, dependency visualization, pattern linking
+
     Args:
         integration: Output from Pass 4 with modules, dependencies
 
     Returns:
-        List of atom dictionaries or dict with "atoms" key
+        List of atom dictionaries with 'name' field populated
 
     Example:
         >>> integration = {"modules": [{"name": "UserModule", "functions": ["register"]}]}
         >>> result = pass_5_atomic_breakdown(integration)
         >>> len(result)
         >>> # 50-120 atoms
+        >>> result[0]["name"]
+        >>> # "user_validate_validate_input"
     """
     logger.info("Pass 5: Atomic Breakdown starting")
 
@@ -445,8 +454,18 @@ def pass_5_atomic_breakdown(integration: Dict[str, Any]) -> List[Dict[str, Any]]
             ]
 
             for atom_data in base_atoms:
+                # Generate meaningful task name from domain, intent, and purpose
+                # Format: {domain}_{intent}_{simplified_purpose}
+                domain = module_name.lower().replace("module", "")
+                intent = atom_data["intent"]
+                # Simplify purpose: extract key action words (first 3 words max)
+                purpose_words = atom_data["purpose"].split()[:3]
+                simplified_purpose = "_".join(w.lower().strip(",.") for w in purpose_words if w.lower() not in ["for", "the", "and", "a", "an"])
+                task_name = f"{domain}_{intent}_{simplified_purpose}"
+
                 atoms.append({
                     "id": f"atom_{atom_id}",
+                    "name": task_name,  # Add meaningful name
                     "module": module_name,
                     "function": func,
                     "purpose": atom_data["purpose"],
@@ -456,7 +475,7 @@ def pass_5_atomic_breakdown(integration: Dict[str, Any]) -> List[Dict[str, Any]]
                     "signature": {
                         "purpose": atom_data["purpose"],
                         "intent": atom_data["intent"],
-                        "domain": module_name.lower().replace("module", ""),
+                        "domain": domain,
                     },
                     "depends_on": [f"atom_{atom_id - 1}"] if atom_id > 1 else [],
                 })
@@ -464,8 +483,12 @@ def pass_5_atomic_breakdown(integration: Dict[str, Any]) -> List[Dict[str, Any]]
 
     # Ensure we have at least 50 atoms by adding infrastructure atoms if needed
     while len(atoms) < 50:
+        # Generate meaningful name for infrastructure tasks
+        task_name = f"infrastructure_create_component_{atom_id}"
+
         atoms.append({
             "id": f"atom_{atom_id}",
+            "name": task_name,  # Add meaningful name for infrastructure
             "module": "Infrastructure",
             "function": "setup",
             "purpose": f"Initialize infrastructure component {atom_id}",

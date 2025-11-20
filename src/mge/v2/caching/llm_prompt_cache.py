@@ -19,6 +19,7 @@ Performance:
 import hashlib
 import json
 import logging
+import os
 import time
 import re
 from dataclasses import dataclass, asdict
@@ -63,13 +64,17 @@ class LLMPromptCache:
         await cache.set("Write a function", "gpt-4", 0.7, response.text, ...)
     """
 
-    def __init__(self, redis_url: str = "redis://redis:6379"):
+    def __init__(self, redis_url: str = None):
         """
         Initialize LLM prompt cache
 
         Args:
-            redis_url: Redis connection URL (default: redis://redis:6379 for Docker)
+            redis_url: Redis connection URL (default: from REDIS_URL env or redis://localhost:6379)
         """
+        # Use environment variable or default to localhost (for tests outside Docker)
+        # Docker environments should set REDIS_URL=redis://localhost:6379
+        if redis_url is None:
+            redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
         self.redis_url = redis_url
         self.redis_client: Optional[redis.Redis] = None
         self.default_ttl = 86400  # 24 hours

@@ -172,3 +172,15 @@ backups/*.sql
 *_output.log
 test_results/
 validation_output*.txt
+
+# Qdrant storage (runtime data)
+qdrant_storage/
+
+# Classification results
+classification_results/
+
+# Migration reports  
+migration_reports/
+
+# Pattern migration reports
+pattern_migration_report_*.txt

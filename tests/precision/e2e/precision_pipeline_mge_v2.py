@@ -78,6 +78,12 @@ class MGE_V2_PipelineResult:
     total_time: float
     timestamp: datetime
 
+    # Repair loop (STEP 5 - NEW)
+    repair_applied: bool = False
+    repair_iterations: int = 0
+    repair_improvement: float = 0.0
+    repair_metrics: Optional[Dict[str, Any]] = None
+
 
 class E2EPrecisionPipelineMGE_V2:
     """
@@ -153,9 +159,17 @@ class E2EPrecisionPipelineMGE_V2:
         start_time = datetime.now()
         session_id = session_id or str(uuid.uuid4())
 
-        # Create output directory
+        # Create output directory - PERSISTENT in workspace_tests (not /tmp)
         if output_dir is None:
-            output_dir = Path(tempfile.mkdtemp(prefix="e2e_precision_mge_v2_"))
+            # Use persistent workspace_tests directory instead of tempfile
+            workspace_base = Path(__file__).parent.parent.parent.parent / "workspace_tests"
+            workspace_base.mkdir(parents=True, exist_ok=True)
+
+            # Create unique subdirectory for this test run
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            run_id = str(uuid.uuid4())[:8]
+            output_dir = workspace_base / f"e2e_precision_mge_v2_{timestamp}_{run_id}"
+            output_dir.mkdir(parents=True, exist_ok=True)
         else:
             output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -269,6 +283,7 @@ class E2EPrecisionPipelineMGE_V2:
                 discovery_doc=discovery_doc,
                 output_dir=test_dir,
                 module_name=module_name,
+                code_dir=Path(workspace_path),  # Fix 3.2b: Pass code_dir for import analysis
             )
 
             test_file = test_dir / f"test_{module_name}_contracts.py"
@@ -292,17 +307,89 @@ class E2EPrecisionPipelineMGE_V2:
             print(f"  Initial Precision: {initial_precision:.1%}")
             print(f"  Tests Passed: {validation_result.passed_tests}/{validation_result.total_tests}")
 
-            # STEP 5: Auto-Correction (if enabled and needed)
+            # STEP 5: Iterative Repair Loop (NEW - Code Repair with Learning)
+            repair_applied = False
+            repair_iterations = 0
+            repair_improvement = 0.0
+            repair_metrics_dict = None
+            final_validation = validation_result
+
+            if validation_result.precision < self.target_precision:
+                print("\n" + "-" * 80)
+                print("STEP 5: Iterative Repair Loop")
+                print("-" * 80)
+                print(f"  Precision {validation_result.precision:.1%} < Target {self.target_precision:.1%}")
+
+                try:
+                    # Import CodeRepairAgent
+                    from src.mge.v2.agents.code_repair_agent import CodeRepairAgent
+                    from src.services.error_pattern_store import get_error_pattern_store
+                    from src.llm.enhanced_anthropic_client import EnhancedAnthropicClient
+
+                    # Initialize repair agent
+                    error_store = get_error_pattern_store()
+                    repair_llm = EnhancedAnthropicClient()
+
+                    repair_agent = CodeRepairAgent(
+                        error_pattern_store=error_store,
+                        code_validator=self.code_validator,
+                        llm_client=repair_llm,
+                        max_iterations=3,
+                        precision_target=self.target_precision,
+                    )
+
+                    print(f"  🔧 Initialized CodeRepairAgent (max_iterations=3)")
+
+                    # Execute repair loop
+                    repair_result = await repair_agent.repair_failures(
+                        validation_result=validation_result,
+                        code_dir=code_dir,
+                        test_file=test_file,
+                        module_name=module_name,
+                        masterplan_id=str(masterplan_id),
+                    )
+
+                    # Log repair metrics
+                    print(f"\n✅ Repair Loop Complete")
+                    print(f"  Iterations: {repair_result.iterations_executed}/{repair_result.max_iterations}")
+                    print(f"  Tests Fixed: {repair_result.tests_fixed}")
+                    print(f"  Improvement: {validation_result.precision:.1%} → {repair_result.final_precision:.1%} (+{repair_result.final_precision - validation_result.precision:.1%})")
+                    print(f"  Gate Passed: {repair_result.gate_passed}")
+
+                    # Update tracking variables
+                    repair_applied = True
+                    repair_iterations = repair_result.iterations_executed
+                    repair_improvement = repair_result.final_precision - validation_result.precision
+                    repair_metrics_dict = repair_result.to_dict()
+
+                    # Re-validate to get final result after repairs
+                    final_validation = self.code_validator.validate(
+                        code_dir=code_dir,
+                        test_file=test_file,
+                        module_name=module_name,
+                    )
+
+                    print(f"  📊 Final Validation: {final_validation.precision:.1%} ({final_validation.passed_tests}/{final_validation.total_tests} tests passed)")
+
+                except ImportError as e:
+                    print(f"  ⚠️  CodeRepairAgent not available (skipping repair): {e}")
+                    # Continue without repair
+                except Exception as e:
+                    print(f"  ⚠️  Repair loop failed (continuing): {e}")
+                    # Continue without repair
+
+            # STEP 6: Auto-Correction (if enabled and needed)
             auto_correction_applied = False
             correction_iterations = 0
             total_improvement = 0.0
-            final_precision = initial_precision
+            final_precision = final_validation.precision  # Use precision after repair (or initial if no repair)
 
-            if self.auto_correct and initial_precision < self.target_precision:
+            # Only apply auto-correction if repair didn't reach target
+            if self.auto_correct and final_validation.precision < self.target_precision:
                 print("\n" + "-" * 80)
-                print("STEP 5: Auto-Correction Loop")
+                print("STEP 6: Auto-Correction Loop (Legacy)")
                 print("-" * 80)
-                print(f"  Precision {initial_precision:.1%} < Target {self.target_precision:.1%}")
+                print(f"  Precision {final_validation.precision:.1%} < Target {self.target_precision:.1%}")
 
                 # Create regeneration function that uses MGE V2's CodeGenerationService
                 from src.llm.enhanced_anthropic_client import EnhancedAnthropicClient
@@ -310,7 +397,7 @@ class E2EPrecisionPipelineMGE_V2:
                 from src.services.atom_service import AtomService
 
                 # Initialize services for regeneration
-                llm_client = EnhancedAnthropicClient(enable_determinism=True)
+                llm_client = EnhancedAnthropicClient()
                 code_gen_service = CodeGenerationService(db=db, llm_client=llm_client)
                 atom_service = AtomService(db=db)
 
@@ -415,16 +502,17 @@ class E2EPrecisionPipelineMGE_V2:
                 print(f"  Improvement: {initial_precision:.1%} → {final_precision:.1%}")
 
             else:
-                final_precision = initial_precision
+                # No auto-correction applied, use precision from repair (or initial)
+                final_precision = final_validation.precision
 
-            # Get final validation results
-            final_validation = validation_result
+            # Update final_validation if auto-correction was applied
             if auto_correction_applied:
                 final_validation = self.code_validator.validate(
                     code_dir=code_dir,
                     test_file=test_file,
                     module_name=module_name,
                 )
+                final_precision = final_validation.precision
 
             # Calculate total time
             total_time = (datetime.now() - start_time).total_seconds()
@@ -456,6 +544,10 @@ class E2EPrecisionPipelineMGE_V2:
                 auto_correction_applied=auto_correction_applied,
                 correction_iterations=correction_iterations,
                 total_improvement=total_improvement,
+                repair_applied=repair_applied,
+                repair_iterations=repair_iterations,
+                repair_improvement=repair_improvement,
+                repair_metrics=repair_metrics_dict,
                 total_time=total_time,
                 timestamp=start_time,
             )
@@ -518,6 +610,12 @@ class E2EPrecisionPipelineMGE_V2:
                 "iterations": result.correction_iterations,
                 "improvement": result.total_improvement,
             },
+            "repair": {
+                "applied": result.repair_applied,
+                "iterations": result.repair_iterations,
+                "improvement": result.repair_improvement,
+                "metrics": result.repair_metrics if result.repair_metrics else {},
+            },
             "quality_gates": {
                 "must_gate_passed": result.must_gate_passed,
                 "should_gate_passed": result.should_gate_passed,
@@ -559,8 +657,18 @@ class E2EPrecisionPipelineMGE_V2:
         print(f"  🎯 Target: {result.target_precision:.1%}")
         print(f"  ✓ Tests Passed: {result.passed_tests}/{result.total_tests}")
 
+        if result.repair_applied:
+            print(f"\n🔧 Repair Loop (STEP 5):")
+            print(f"  ✓ Iterations: {result.repair_iterations}")
+            print(f"  📈 Improvement: {result.initial_precision:.1%} → {result.initial_precision + result.repair_improvement:.1%} (+{result.repair_improvement:.1%})")
+            if result.repair_metrics:
+                learning_metrics = result.repair_metrics.get("learning", {})
+                print(f"  🧠 Patterns Reused: {learning_metrics.get('patterns_reused', 0)}")
+                print(f"  📚 Similar Patterns Found: {learning_metrics.get('similar_patterns_found', 0)}")
+                print(f"  ✅ Tests Fixed: {result.repair_metrics.get('repairs', {}).get('tests_fixed', 0)}")
+
         if result.auto_correction_applied:
-            print(f"\n🔧 Auto-Correction:")
+            print(f"\n🔧 Auto-Correction (STEP 6):")
             print(f"  ✓ Iterations: {result.correction_iterations}")
             print(f"  📈 Improvement: {result.initial_precision:.1%} → {result.final_precision:.1%} (+{result.total_improvement:.1%})")
 

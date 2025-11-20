@@ -98,6 +98,9 @@ class AtomicUnit(Base):
     needs_review = Column(Boolean, nullable=False, default=False, index=True)  # Flagged for human review
     review_priority = Column(Integer, nullable=True)  # 1=critical, 5=low
 
+    # Learning Metadata (for cognitive feedback loop)
+    learning_metadata = Column(JSONB, nullable=True)  # Decomposition strategy, retry info, pattern learning data
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -103,6 +103,7 @@ devmatrix orchestrate "Build your project" --workspace {project_name}
 - `devmatrix workspace` - Manage workspaces
 - `devmatrix files` - File operations
 - `devmatrix git` - Git integration
+- `devmatrix snapshot` - Workspace snapshots and rollback
 - `devmatrix info` - System information
 """
             (project_path / "README.md").write_text(readme_content)
@@ -117,6 +118,7 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+.devmatrix/
 """
             (project_path / ".gitignore").write_text(gitignore_content)
 
@@ -549,143 +551,156 @@ def generate(request: str, workspace: str, context: str, git: bool):
 
 
 @cli.command()
-@click.argument("request")
+@click.argument("spec_file", type=click.Path(exists=True), required=False)
+@click.argument("request", required=False)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Simulate execution without making changes"
+)
+@click.option(
+    "--watch-progress",
+    is_flag=True,
+    help="Stream progress events to stderr"
+)
+@click.option(
+    "--output",
+    type=click.Path(),
+    default=None,
+    help="Save execution results to JSON file"
+)
 @click.option("--workspace", "-w", help="Workspace ID (auto-generated if not provided)")
 @click.option("--max-workers", default=4, help="Maximum concurrent workers (default: 4)")
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed execution messages")
-def orchestrate(request: str, workspace: str, max_workers: int, verbose: bool):
+@click.option("--auto-approve", is_flag=True, help="Auto-approve all file changes without prompting")
+def orchestrate(
+    spec_file: str,
+    request: str,
+    dry_run: bool,
+    watch_progress: bool,
+    output: str,
+    workspace: str,
+    max_workers: int,
+    verbose: bool,
+    auto_approve: bool
+):
     """
-    Orchestrate multi-agent workflow for complex projects.
+    Orchestrate multi-phase execution through cognitive pipeline.
 
-    Uses specialized agents (Implementation, Testing, Documentation) to
-    build complete projects with parallel task execution.
+    Supports dry-run mode, progress streaming, and result persistence.
 
-    Example:
-        devmatrix orchestrate "Build a calculator with tests and docs"
-        devmatrix orchestrate "Create REST API with authentication" -w my-api-project
+    \b
+    Examples:
+      # Orchestrate from spec file
+      devmatrix orchestrate spec.md
+
+      # Orchestrate from request text
+      devmatrix orchestrate "Build a calculator"
+
+      # Dry-run with progress streaming
+      devmatrix orchestrate spec.md --dry-run --watch-progress
+
+      # Auto-approve all file changes without prompting
+      devmatrix orchestrate spec.md --auto-approve
+
+      # Save results to file
+      devmatrix orchestrate spec.md --output results.json
     """
     try:
-        from src.workflows.multi_agent_workflow import MultiAgentWorkflow
-        from rich.tree import Tree
-        from rich.table import Table
+        import json
+        import uuid
+        import asyncio
+        from datetime import datetime
+        from src.services.pipeline_dispatcher import PipelineDispatcher
 
-        console.print(f"\n[bold cyan]Multi-Agent Orchestration:[/bold cyan] {request}\n")
+        # Validate arguments
+        if not spec_file and not request:
+            console.print("[red]Error: Either spec_file or request text is required[/red]")
+            sys.exit(1)
 
-        # Generate workspace ID if not provided
-        if not workspace:
-            from datetime import datetime
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            workspace = f"project-{timestamp}"
-            console.print(f"[dim]Using auto-generated workspace: {workspace}[/dim]\n")
-
-        # Create workflow
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            init_task = progress.add_task("Initializing multi-agent workflow...", total=None)
-
-            workflow = MultiAgentWorkflow(
-                workspace_id=workspace,
-                max_workers=max_workers
-            )
-
-            progress.update(init_task, description="Running workflow...", completed=True)
-
-            # Run workflow
-            exec_task = progress.add_task("Executing multi-agent tasks...", total=None)
-            result = workflow.run(request)
-            progress.update(exec_task, completed=True)
-
-        console.print("\n")
-
-        # Display results
-        if result['success']:
-            # Success panel
-            status_text = (
-                f"[bold green]✓ Workflow Completed Successfully[/bold green]\n\n"
-                f"Workspace: [cyan]{workspace}[/cyan]\n"
-                f"Status: [green]{result['status']}[/green]\n"
-                f"Tasks: {len(result.get('completed_tasks', []))} completed, "
-                f"{len(result.get('failed_tasks', []))} failed"
-            )
-
-            panel = Panel(status_text, title="✓ Success", border_style="green")
-            console.print(panel)
-
-            # Show tasks if verbose
-            if verbose and result['tasks']:
-                console.print("\n")
-                table = Table(title="📋 Task Execution Details", show_header=True)
-                table.add_column("Task ID", style="cyan")
-                table.add_column("Type", style="magenta")
-                table.add_column("Description", style="white")
-                table.add_column("Status", style="green")
-
-                completed = set(result['completed_tasks'])
-                failed = set(result['failed_tasks'])
-
-                for task in result['tasks']:
-                    task_id = task['id']
-                    status = "✅" if task_id in completed else "❌" if task_id in failed else "⏳"
-                    table.add_row(
-                        task_id,
-                        task.get('task_type', 'unknown'),
-                        task['description'][:60] + "..." if len(task['description']) > 60 else task['description'],
-                        status
-                    )
-
-                console.print(table)
-
-            # Show execution stats
-            if result['execution_stats']:
-                console.print("\n")
-                stats = result['execution_stats']
-                stats_table = Table(title="📊 Execution Statistics", show_header=True)
-                stats_table.add_column("Metric", style="cyan")
-                stats_table.add_column("Value", style="yellow")
-
-                stats_table.add_row("Total Tasks", str(stats.get('total_tasks', 0)))
-                stats_table.add_row("Successful", f"[green]{stats.get('successful', 0)}[/green]")
-                stats_table.add_row("Failed", f"[red]{stats.get('failed', 0)}[/red]")
-                stats_table.add_row("Skipped", str(stats.get('skipped', 0)))
-                stats_table.add_row("Total Time", f"{stats.get('total_time', 0):.2f}s")
-
-                if stats.get('parallel_time_saved', 0) > 0:
-                    stats_table.add_row(
-                        "Parallel Time Saved",
-                        f"[green]⚡ {stats['parallel_time_saved']:.2f}s[/green]"
-                    )
-
-                console.print(stats_table)
-
-            # Show messages if verbose
-            if verbose and result['messages']:
-                console.print("\n[bold]Execution Log:[/bold]")
-                for msg in result['messages']:
-                    console.print(f"  {msg}")
-
-            # Next steps
-            console.print("\n[bold]Next steps:[/bold]")
-            console.print(f"  • Check workspace: [cyan]devmatrix files list {workspace}[/cyan]")
-            console.print(f"  • Read files: [cyan]devmatrix files read {workspace} <filename>[/cyan]")
-
+        # Read specification
+        if spec_file:
+            try:
+                with open(spec_file, "r") as f:
+                    spec = f.read()
+                console.print(f"\n[bold cyan]Orchestrating from file:[/bold cyan] {spec_file}\n")
+            except Exception as e:
+                console.print(f"[red]Error reading spec file: {e}[/red]")
+                sys.exit(1)
         else:
-            # Failure panel
-            error_text = (
-                f"[bold red]✗ Workflow Failed[/bold red]\n\n"
-                f"Status: {result['status']}\n"
-                f"Error: {result.get('error', 'Unknown error')}"
-            )
+            spec = request
+            console.print(f"\n[bold cyan]Orchestrating request:[/bold cyan] {request}\n")
 
-            panel = Panel(error_text, title="✗ Failed", border_style="red")
-            console.print(panel)
+        # Execute through cognitive pipeline
+        if dry_run:
+            console.print("[yellow]DRY RUN MODE - No changes will be made[/yellow]")
 
-            if verbose and result['messages']:
-                console.print("\n[bold]Execution Log:[/bold]")
-                for msg in result['messages']:
-                    console.print(f"  {msg}")
+        # Initialize dispatcher
+        dispatcher = PipelineDispatcher()
+
+        # Generate execution ID
+        execution_id = str(uuid.uuid4())
+        execution_id_short = click.style(f"exec_{execution_id[:8]}", fg="cyan")
+        console.print(f"\nExecution ID: {execution_id_short}\n")
+
+        # Execute orchestration
+        async def run_orchestration():
+            # Execute with progress
+            results = []
+
+            try:
+                async for event in dispatcher.execute(
+                    spec=spec,
+                    execution_id=execution_id,
+                    dry_run=dry_run,
+                    metadata={"auto_approve": auto_approve}
+                ):
+                    results.append(event)
+
+                    # Stream progress to stderr if requested
+                    if watch_progress:
+                        phase = event.get('phase', 'unknown')
+                        status = event.get('status', 'running')
+                        console.print(
+                            f"[dim][{phase}][/dim] {status}",
+                            file=sys.stderr
+                        )
+
+                return results, 0
+
+            except Exception as e:
+                console.print(f"\n[bold red]✗ Orchestration failed:[/bold red] {e}", style="red")
+                return None, 1
+
+        # Run async orchestration
+        results, exit_code = asyncio.run(run_orchestration())
+
+        if results is None:
+            sys.exit(exit_code)
+
+        # Output final result as JSON to stdout
+        final_result = results[-1] if results else {"status": "failed", "error": "No results"}
+
+        # Pretty print to console
+        console.print("\n[bold]Final Result:[/bold]")
+        console.print(json.dumps(final_result, indent=2))
+
+        # Save results to file if requested
+        if output:
+            try:
+                with open(output, "w") as f:
+                    json.dump(results, f, indent=2)
+                console.print(f"\n[green]✓ Results saved to: {output}[/green]", file=sys.stderr)
+            except Exception as e:
+                console.print(f"\n[yellow]Warning: Could not save results: {e}[/yellow]", file=sys.stderr)
+
+        # Exit with appropriate code
+        if final_result.get("status") == "success":
+            console.print("\n[bold green]✓ Orchestration completed successfully[/bold green]")
+            sys.exit(0)
+        else:
+            console.print("\n[bold red]✗ Orchestration failed[/bold red]")
+            sys.exit(1)
 
     except ValueError as e:
         console.print(f"[red]Configuration Error: {e}[/red]")
@@ -902,6 +917,184 @@ def plugins_disable(plugin_name: str):
         sys.exit(1)
 
 
+@cli.group()
+def snapshot():
+    """
+    Manage workspace snapshots for rollback/undo functionality.
+
+    Create snapshots before operations, list available snapshots,
+    and rollback to previous states for safe development.
+
+    Sprint 2: Tasks 2.11
+    """
+    pass
+
+
+@snapshot.command("create")
+@click.option("--description", "-d", help="Snapshot description")
+@click.option("--workspace", "-w", default=".", help="Workspace path (default: current directory)")
+def snapshot_create(description: str, workspace: str):
+    """
+    Create workspace snapshot.
+
+    Examples:
+        devmatrix snapshot create -d "Before refactor"
+        devmatrix snapshot create -w /path/to/project -d "Stable version"
+    """
+    try:
+        from src.cli.snapshot_manager import SnapshotManager
+
+        workspace_path = Path(workspace).resolve()
+
+        if not workspace_path.exists():
+            console.print(f"[red]Workspace not found: {workspace_path}[/red]")
+            sys.exit(1)
+
+        mgr = SnapshotManager(workspace_path=workspace_path, console=console)
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Creating snapshot...", total=None)
+
+            snapshot_id = mgr.create_snapshot(description=description, auto=False)
+
+            progress.update(task, completed=True)
+
+        console.print(f"\n[green]✓ Snapshot created: {snapshot_id}[/green]")
+
+        # Show snapshot info
+        snapshots = mgr.list_snapshots()
+        snapshot = next((s for s in snapshots if s.id == snapshot_id), None)
+
+        if snapshot:
+            info_text = (
+                f"ID: [cyan]{snapshot.id}[/cyan]\n"
+                f"Files: [green]{snapshot.file_count}[/green]\n"
+                f"Size: [green]{snapshot.total_size / 1024:.1f} KB[/green]\n"
+                f"Description: {snapshot.description}"
+            )
+            console.print(Panel(info_text, title="Snapshot Info", border_style="green"))
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
+        sys.exit(1)
+
+
+@snapshot.command("list")
+@click.option("--workspace", "-w", default=".", help="Workspace path (default: current directory)")
+def snapshot_list(workspace: str):
+    """
+    List available snapshots.
+
+    Examples:
+        devmatrix snapshot list
+        devmatrix snapshot list -w /path/to/project
+    """
+    try:
+        from src.cli.snapshot_manager import SnapshotManager
+
+        workspace_path = Path(workspace).resolve()
+
+        if not workspace_path.exists():
+            console.print(f"[red]Workspace not found: {workspace_path}[/red]")
+            sys.exit(1)
+
+        mgr = SnapshotManager(workspace_path=workspace_path, console=console)
+        mgr.show_snapshots()
+
+        # Show disk usage
+        disk_usage = mgr.get_disk_usage()
+        console.print(f"\n[dim]Total snapshot disk usage: {disk_usage / (1024*1024):.2f} MB[/dim]")
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
+@snapshot.command("rollback")
+@click.argument("snapshot_id")
+@click.option("--force", is_flag=True, help="Skip confirmation")
+@click.option("--workspace", "-w", default=".", help="Workspace path (default: current directory)")
+def snapshot_rollback(snapshot_id: str, force: bool, workspace: str):
+    """
+    Rollback to snapshot.
+
+    You can specify either a snapshot ID or an index number (1-based).
+
+    Examples:
+        devmatrix snapshot rollback 20251119_143022
+        devmatrix snapshot rollback 1  # Rollback to most recent
+        devmatrix snapshot rollback 2 --force  # Skip confirmation
+    """
+    try:
+        from src.cli.snapshot_manager import SnapshotManager
+
+        workspace_path = Path(workspace).resolve()
+
+        if not workspace_path.exists():
+            console.print(f"[red]Workspace not found: {workspace_path}[/red]")
+            sys.exit(1)
+
+        mgr = SnapshotManager(workspace_path=workspace_path, console=console)
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Rolling back...", total=None)
+
+            success = mgr.rollback(snapshot_id, force=force)
+
+            progress.update(task, completed=True)
+
+        if not success:
+            sys.exit(1)
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
+        sys.exit(1)
+
+
+@snapshot.command("delete")
+@click.argument("snapshot_id")
+@click.option("--workspace", "-w", default=".", help="Workspace path (default: current directory)")
+def snapshot_delete(snapshot_id: str, workspace: str):
+    """
+    Delete a specific snapshot.
+
+    Examples:
+        devmatrix snapshot delete 20251119_143022
+        devmatrix snapshot delete 5  # Delete snapshot at index 5
+    """
+    try:
+        from src.cli.snapshot_manager import SnapshotManager
+
+        workspace_path = Path(workspace).resolve()
+
+        if not workspace_path.exists():
+            console.print(f"[red]Workspace not found: {workspace_path}[/red]")
+            sys.exit(1)
+
+        mgr = SnapshotManager(workspace_path=workspace_path, console=console)
+
+        success = mgr.delete_snapshot(snapshot_id)
+
+        if not success:
+            sys.exit(1)
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
 @cli.command()
 def info():
     """Show Devmatrix system information."""
@@ -921,6 +1114,9 @@ def info():
   • MultiAgentWorkflow: Orchestrated multi-agent execution
   • PluginSystem: Extensible plugin architecture
   • Rich CLI: Beautiful terminal interface
+  • ApprovalManager: Interactive file operation gates
+  • SnapshotManager: Workspace rollback and recovery
+  • ContextTracker: Context stack visibility
 
 [bold]Specialized Agents:[/bold]
   • ImplementationAgent: Python code generation
