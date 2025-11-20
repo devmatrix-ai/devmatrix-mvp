@@ -816,6 +816,52 @@ class MultiPassPlanner:
 
         return 'unknown'
 
+    def _extract_operation(self, req: Any) -> str:
+        """
+        Extract CRUD operation from requirement description
+
+        Uses keyword matching to determine operation type
+
+        Args:
+            req: Requirement object with description field
+
+        Returns:
+            Operation type: 'create', 'read', 'list', 'update', 'delete', or 'unknown'
+
+        Example:
+            >>> req = Requirement(id="F1", description="Create product with price")
+            >>> op = planner._extract_operation(req)
+            >>> # "create"
+        """
+        text = req.description.lower()
+
+        # Check for create operations
+        create_keywords = ['create', 'crear', 'register', 'registrar', 'add']
+        if any(kw in text for kw in create_keywords):
+            return 'create'
+
+        # Check for list operations
+        list_keywords = ['list', 'listar', 'get all', 'obtener todos']
+        if any(kw in text for kw in list_keywords):
+            return 'list'
+
+        # Check for read operations
+        read_keywords = ['get', 'obtener', 'read', 'leer', 'view', 'ver']
+        if any(kw in text for kw in read_keywords):
+            return 'read'
+
+        # Check for update operations
+        update_keywords = ['update', 'actualizar', 'modify', 'modificar', 'edit', 'editar']
+        if any(kw in text for kw in update_keywords):
+            return 'update'
+
+        # Check for delete operations
+        delete_keywords = ['delete', 'eliminar', 'remove', 'remover', 'deactivate', 'desactivar']
+        if any(kw in text for kw in delete_keywords):
+            return 'delete'
+
+        return 'unknown'
+
     def _crud_dependencies(self, requirements: List[Any]) -> List[Any]:
         """
         Infer CRUD dependencies
@@ -854,7 +900,7 @@ class MultiPassPlanner:
         for entity_name, reqs in entities.items():
             # Find create requirement for this entity
             create_req = next(
-                (r for r in reqs if r.operation == 'create'),
+                (r for r in reqs if self._extract_operation(r) == 'create'),
                 None
             )
 
@@ -863,12 +909,13 @@ class MultiPassPlanner:
 
             # Create edges from create to all other operations
             for req in reqs:
-                if req.operation in ['read', 'list', 'update', 'delete']:
+                req_operation = self._extract_operation(req)
+                if req_operation in ['read', 'list', 'update', 'delete']:
                     edges.append(Edge(
                         from_node=create_req.id,
                         to_node=req.id,
                         type='crud_dependency',
-                        reason=f"{entity_name} must be created before {req.operation}"
+                        reason=f"{entity_name} must be created before {req_operation}"
                     ))
 
         return edges
@@ -1096,9 +1143,10 @@ class MultiPassPlanner:
                 if not entity_match:
                     continue
 
-                if req.operation == 'create':
+                req_operation = self._extract_operation(req)
+                if req_operation == 'create':
                     create_req = req
-                elif req.operation in ['read', 'list', 'update', 'delete']:
+                elif req_operation in ['read', 'list', 'update', 'delete']:
                     other_reqs.append(req)
 
             # Skip if no create or no other operations
@@ -1118,12 +1166,13 @@ class MultiPassPlanner:
 
                 # Violation: other operation before create
                 if other_wave <= create_wave:
+                    other_operation = self._extract_operation(other_req)
                     violations.append(OrderingViolation(
                         entity=entity,
                         violation_type="crud",
-                        message=f"{entity.capitalize()} {other_req.operation} (wave {other_wave}) before create (wave {create_wave})",
-                        expected_order=f"create → {other_req.operation}",
-                        actual_order=f"{other_req.operation} → create"
+                        message=f"{entity.capitalize()} {other_operation} (wave {other_wave}) before create (wave {create_wave})",
+                        expected_order=f"create → {other_operation}",
+                        actual_order=f"{other_operation} → create"
                     ))
 
         return violations

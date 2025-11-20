@@ -402,9 +402,6 @@ class RealE2ETest:
             self.precision.classifications_correct = 0
             self.precision.classifications_incorrect = 0
 
-            print(f"\n    DEBUG: Validating {len(self.classified_requirements)} requirements")
-            print(f"    DEBUG: Ground truth has {len(ground_truth)} keys: {list(ground_truth.keys())[:5]}...")
-
             for req in self.classified_requirements:
                 # Get requirement ID (e.g., "F1_create_product")
                 # Try to extract from description or use a generated ID
@@ -414,20 +411,16 @@ class RealE2ETest:
                     # Try to match it with ground truth first
                     if req.id in ground_truth:
                         req_id = req.id  # Direct match
-                        print(f"        DEBUG_ID_PATH: Direct match req.id='{req.id}'")
                     else:
                         # req.id not in ground truth - try to find matching key by prefix
                         import re
                         matching_keys = [key for key in ground_truth.keys() if key.startswith(req.id)]
-                        print(f"        DEBUG_ID_PATH: req.id='{req.id}' not in GT, matching_keys={matching_keys}")
                         if len(matching_keys) >= 1:
                             req_id = matching_keys[0]
-                            print(f"        DEBUG_ID_PATH: ASSIGNED req_id='{req_id}' from prefix match")
                         else:
                             req_id = req.id  # Use original even if not in GT (will be skipped later)
                 elif hasattr(req, 'description') and req.description:
                     # No req.id - extract from description
-                    print(f"        DEBUG_DESC_PATH: Using description-based matching")
                     import re
                     desc = req.description
 
@@ -439,14 +432,8 @@ class RealE2ETest:
 
                         # Find ground truth keys that start with this prefix
                         matching_keys = [key for key in ground_truth.keys() if key.startswith(prefix)]
-                        print(f"        DEBUG_MATCH: prefix='{prefix}', matching_keys={matching_keys}, len={len(matching_keys)}")
                         if len(matching_keys) >= 1:
                             req_id = matching_keys[0]
-                            print(f"        DEBUG_MATCH: ASSIGNED req_id='{req_id}'")
-
-                # Debug logging
-                req_desc = req.description if hasattr(req, 'description') else "NO_DESC"
-                print(f"    DEBUG: req_desc='{req_desc[:50]}...', req_id='{req_id}', in_gt={req_id in ground_truth if req_id else False}")
 
                 # Skip if we can't identify the requirement
                 if not req_id or req_id not in ground_truth:

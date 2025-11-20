@@ -245,13 +245,36 @@ class CodeGenerationService:
                 extra={"pattern_bank_available": self.pattern_bank is not None}
             )
 
-            # FIX: Use ModularArchitectureGenerator (Task Group 2) directly
-            # Root cause: PatternBank has only 1/30K patterns with production_ready=True
-            # Domain mismatch: Qdrant patterns use (utilities, styles, authentication)
-            #                  Production patterns need (configuration, data_access, infrastructure)
-            # Solution: Use Task Group 2 generator until PatternBank is populated (Option B)
-            logger.info("Generating modular app using ModularArchitectureGenerator (Task Group 2)")
-            files_dict = await self.generate_modular_app(spec_requirements)
+            # PRODUCTION MODE: Use ONLY PatternBank (Task Group 8)
+            logger.info("Retrieving production-ready patterns from PatternBank")
+            patterns = await self._retrieve_production_patterns(spec_requirements)
+
+            # Count patterns retrieved
+            total_patterns = sum(len(p) for p in patterns.values())
+            logger.info(
+                "Retrieved patterns from PatternBank",
+                extra={"categories": len(patterns), "total_patterns": total_patterns}
+            )
+
+            # Compose all files from patterns
+            logger.info("Composing production-ready application from patterns")
+            files_dict = await self._compose_patterns(patterns, spec_requirements)
+
+            # Add __init__.py files for Python packages
+            package_dirs = [
+                "src",
+                "src/core",
+                "src/models",
+                "src/repositories",
+                "src/services",
+                "src/api",
+                "src/api/routes",
+                "tests",
+                "tests/unit",
+                "tests/integration",
+            ]
+            for pkg_dir in package_dirs:
+                files_dict[f"{pkg_dir}/__init__.py"] = '"""Package initialization."""\n'
 
             # Check if generation succeeded
             if not files_dict:
@@ -1365,6 +1388,7 @@ Code MUST pass Python compile() without SyntaxError."""
         5. Security patterns
         6. Testing patterns
         7. Docker and config files
+        8. Main application entry point (separate search for domain="application")
 
         Args:
             patterns: Dictionary of patterns by category
@@ -1389,6 +1413,25 @@ Code MUST pass Python compile() without SyntaxError."""
             )
             files.update(category_files)
 
+        # Search for main.py separately (domain="application" not in categories)
+        main_pattern_query = SemanticTaskSignature(
+            purpose="fastapi application entry point",
+            intent="implement",
+            inputs={},
+            outputs={},
+            domain="application",
+        )
+        main_patterns = self.pattern_bank.hybrid_search(
+            signature=main_pattern_query,
+            domain="application",
+            production_ready=True,
+            top_k=1,
+        )
+
+        if main_patterns:
+            files["src/main.py"] = self._adapt_pattern(main_patterns[0].code, spec_requirements)
+            logger.debug("Added main.py from PatternBank")
+
         return files
 
     async def _compose_category_patterns(
@@ -1396,6 +1439,8 @@ Code MUST pass Python compile() without SyntaxError."""
     ) -> Dict[str, str]:
         """
         Compose patterns for a specific category (Task Group 8).
+
+        Maps StoredPattern objects to output files by matching purpose strings.
 
         Args:
             category: Category name (e.g., "core_config", "database_async")
@@ -1407,66 +1452,157 @@ Code MUST pass Python compile() without SyntaxError."""
         """
         files = {}
 
+        # Helper function to find pattern by purpose keyword
+        def find_pattern_by_keyword(patterns, *keywords):
+            for p in patterns:
+                if any(kw.lower() in p.signature.purpose.lower() for kw in keywords):
+                    return p
+            return None
+
         # Core infrastructure patterns
-        if category == "core_config" and category_patterns:
-            files["src/core/config.py"] = self._adapt_pattern(
-                category_patterns[0].code, spec_requirements
-            )
+        if category == "core_config":
+            for p in category_patterns:
+                if "pydantic" in p.signature.purpose.lower() or "configuration" in p.signature.purpose.lower():
+                    files["src/core/config.py"] = self._adapt_pattern(p.code, spec_requirements)
 
-        elif category == "database_async" and len(category_patterns) >= 1:
-            files["src/core/database.py"] = self._adapt_pattern(
-                category_patterns[0].code, spec_requirements
-            )
+        elif category == "database_async":
+            for p in category_patterns:
+                if "sqlalchemy" in p.signature.purpose.lower() or "database" in p.signature.purpose.lower():
+                    files["src/core/database.py"] = self._adapt_pattern(p.code, spec_requirements)
 
-        elif category == "observability" and len(category_patterns) >= 2:
-            files["src/core/logging.py"] = self._adapt_pattern(
-                category_patterns[0].code, spec_requirements  # structlog_setup
-            )
-            files["src/api/routes/health.py"] = self._adapt_pattern(
-                category_patterns[1].code, spec_requirements  # health_checks
-            )
+        elif category == "observability":
+            # Map each observability pattern to its file
+            for p in category_patterns:
+                purpose_lower = p.signature.purpose.lower()
+                if "structured logging" in purpose_lower or "structlog" in purpose_lower:
+                    files["src/core/logging.py"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "request id" in purpose_lower or "middleware" in purpose_lower:
+                    files["src/core/middleware.py"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "exception" in purpose_lower or "global exception" in purpose_lower:
+                    files["src/core/exception_handlers.py"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "health check" in purpose_lower or "readiness" in purpose_lower:
+                    files["src/api/routes/health.py"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "metrics" in purpose_lower or "prometheus" in purpose_lower:
+                    files["src/api/routes/metrics.py"] = self._adapt_pattern(p.code, spec_requirements)
+
+        # Data Layer - Pydantic Models
+        elif category == "models_pydantic":
+            for p in category_patterns:
+                if "pydantic" in p.signature.purpose.lower() or "schema" in p.signature.purpose.lower():
+                    files["src/models/schemas.py"] = self._adapt_pattern(p.code, spec_requirements)
+
+        # Data Layer - SQLAlchemy Models
+        elif category == "models_sqlalchemy":
+            for p in category_patterns:
+                if "sqlalchemy" in p.signature.purpose.lower() or "orm" in p.signature.purpose.lower():
+                    files["src/models/entities.py"] = self._adapt_pattern(p.code, spec_requirements)
+
+        # Repository Pattern
+        elif category == "repository_pattern":
+            # Generate repository for each entity
+            repo_pattern = find_pattern_by_keyword(category_patterns, "repository", "crud")
+            if repo_pattern and spec_requirements.entities:
+                for entity in spec_requirements.entities:
+                    adapted = self._adapt_pattern(repo_pattern.code, spec_requirements)
+                    # Replace entity placeholder
+                    adapted = adapted.replace("{ENTITY_NAME}", entity.name)
+                    adapted = adapted.replace("{entity_name}", entity.snake_name)
+                    files[f"src/repositories/{entity.snake_name}_repository.py"] = adapted
+
+        # Business Logic / Service Layer
+        elif category == "business_logic":
+            # Generate service for each entity
+            service_pattern = find_pattern_by_keyword(category_patterns, "service", "business logic")
+            if service_pattern and spec_requirements.entities:
+                for entity in spec_requirements.entities:
+                    adapted = self._adapt_pattern(service_pattern.code, spec_requirements)
+                    # Replace entity placeholder
+                    adapted = adapted.replace("{ENTITY_NAME}", entity.name)
+                    adapted = adapted.replace("{entity_name}", entity.snake_name)
+                    files[f"src/services/{entity.snake_name}_service.py"] = adapted
+
+        # API Routes
+        elif category == "api_routes":
+            # Generate API route for each entity
+            route_pattern = find_pattern_by_keyword(category_patterns, "fastapi", "crud", "endpoint")
+            if route_pattern and spec_requirements.entities:
+                for entity in spec_requirements.entities:
+                    adapted = self._adapt_pattern(route_pattern.code, spec_requirements)
+                    # Replace entity placeholder
+                    adapted = adapted.replace("{ENTITY_NAME}", entity.name)
+                    adapted = adapted.replace("{entity_name}", entity.snake_name)
+                    files[f"src/api/routes/{entity.snake_name}.py"] = adapted
 
         # Security patterns
-        elif category == "security_hardening" and category_patterns:
-            # Combine all security patterns into single security module
-            security_code_parts = [
-                self._adapt_pattern(p.code, spec_requirements)
-                for p in category_patterns
-            ]
-            files["src/core/security.py"] = "\n\n".join(security_code_parts)
-
-        # Docker infrastructure
-        elif category == "docker_infrastructure" and len(category_patterns) >= 2:
-            files["docker/Dockerfile"] = self._adapt_pattern(
-                category_patterns[0].code, spec_requirements
-            )
-            files["docker/docker-compose.yml"] = self._adapt_pattern(
-                category_patterns[1].code, spec_requirements
-            )
-
-        # Project config
-        elif category == "project_config" and len(category_patterns) >= 4:
-            files["pyproject.toml"] = self._adapt_pattern(
-                category_patterns[0].code, spec_requirements
-            )
-            files[".env.example"] = self._adapt_pattern(
-                category_patterns[1].code, spec_requirements
-            )
-            files[".gitignore"] = self._adapt_pattern(
-                category_patterns[2].code, spec_requirements
-            )
-            files["Makefile"] = self._adapt_pattern(
-                category_patterns[3].code, spec_requirements
-            )
+        elif category == "security_hardening":
+            for p in category_patterns:
+                if "security" in p.signature.purpose.lower() or "sanitization" in p.signature.purpose.lower():
+                    files["src/core/security.py"] = self._adapt_pattern(p.code, spec_requirements)
 
         # Testing patterns
-        elif category == "test_infrastructure" and len(category_patterns) >= 2:
-            files["tests/conftest.py"] = self._adapt_pattern(
-                category_patterns[0].code, spec_requirements  # pytest_config
-            )
-            files["tests/factories.py"] = self._adapt_pattern(
-                category_patterns[1].code, spec_requirements  # test_factories
-            )
+        elif category == "test_infrastructure":
+            for p in category_patterns:
+                purpose_lower = p.signature.purpose.lower()
+                if "pytest fixtures" in purpose_lower or "conftest" in purpose_lower:
+                    files["tests/conftest.py"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "test data factories" in purpose_lower or "factories" in purpose_lower:
+                    files["tests/factories.py"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "unit tests for pydantic" in purpose_lower or "test_models" in purpose_lower:
+                    files["tests/unit/test_models.py"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "unit tests for repository" in purpose_lower or "test_repositories" in purpose_lower:
+                    files["tests/unit/test_repositories.py"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "unit tests for service" in purpose_lower or "test_services" in purpose_lower:
+                    files["tests/unit/test_services.py"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "integration tests" in purpose_lower or "test_api" in purpose_lower:
+                    files["tests/integration/test_api.py"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "tests for logging" in purpose_lower or "observability" in purpose_lower:
+                    files["tests/test_observability.py"] = self._adapt_pattern(p.code, spec_requirements)
+
+        # Docker infrastructure
+        elif category == "docker_infrastructure":
+            for p in category_patterns:
+                purpose_lower = p.signature.purpose.lower()
+                if "multi-stage docker" in purpose_lower or "dockerfile" in purpose_lower:
+                    files["docker/Dockerfile"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "full stack docker-compose" in purpose_lower and "test" not in purpose_lower:
+                    files["docker/docker-compose.yml"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "test environment" in purpose_lower or "docker-compose.test" in purpose_lower:
+                    files["docker/docker-compose.test.yml"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "prometheus scrape" in purpose_lower or "prometheus.yml" in purpose_lower:
+                    files["docker/prometheus.yml"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "docker build exclusions" in purpose_lower or ".dockerignore" in purpose_lower:
+                    files["docker/.dockerignore"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "grafana dashboard" in purpose_lower and "json" in purpose_lower:
+                    files["docker/grafana/dashboards/app-metrics.json"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "dashboard provisioning" in purpose_lower or "dashboard-provider" in purpose_lower:
+                    files["docker/grafana/dashboards/dashboard-provider.yml"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "datasource" in purpose_lower or "prometheus datasource" in purpose_lower:
+                    files["docker/grafana/datasources/prometheus.yml"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "docker setup documentation" in purpose_lower or "readme" in purpose_lower.lower():
+                    files["docker/README.md"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "troubleshooting" in purpose_lower:
+                    files["docker/TROUBLESHOOTING.md"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "validation checklist" in purpose_lower:
+                    files["docker/VALIDATION_CHECKLIST.md"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "validation script" in purpose_lower or ".sh" in purpose_lower:
+                    files["docker/validate-docker-setup.sh"] = self._adapt_pattern(p.code, spec_requirements)
+
+        # Project config
+        elif category == "project_config":
+            for p in category_patterns:
+                purpose_lower = p.signature.purpose.lower()
+                if "pyproject" in purpose_lower or "toml" in purpose_lower:
+                    files["pyproject.toml"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "env" in purpose_lower and "example" in purpose_lower:
+                    files[".env.example"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "gitignore" in purpose_lower:
+                    files[".gitignore"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "makefile" in purpose_lower:
+                    files["Makefile"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "pre-commit" in purpose_lower or "pre_commit" in purpose_lower:
+                    files[".pre-commit-config.yaml"] = self._adapt_pattern(p.code, spec_requirements)
+                elif "readme" in purpose_lower:
+                    files["README.md"] = self._adapt_pattern(p.code, spec_requirements)
 
         return files
 
@@ -1492,8 +1628,8 @@ Code MUST pass Python compile() without SyntaxError."""
         app_name = spec_requirements.metadata.get("spec_name", "API")
         adapted = adapted.replace("{APP_NAME}", app_name)
 
-        # Database URL (from config or default)
-        database_url = spec_requirements.config.get(
+        # Database URL (from metadata or default)
+        database_url = spec_requirements.metadata.get(
             "database_url", "postgresql+asyncpg://user:password@localhost:5432/app"
         )
         adapted = adapted.replace("{DATABASE_URL}", database_url)
