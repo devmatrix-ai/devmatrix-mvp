@@ -410,10 +410,24 @@ class RealE2ETest:
                 # Try to extract from description or use a generated ID
                 req_id = None
                 if hasattr(req, 'id') and req.id:
-                    req_id = req.id
+                    # req.id exists - but it might be just "F1" instead of "F1_create_product"
+                    # Try to match it with ground truth first
+                    if req.id in ground_truth:
+                        req_id = req.id  # Direct match
+                        print(f"        DEBUG_ID_PATH: Direct match req.id='{req.id}'")
+                    else:
+                        # req.id not in ground truth - try to find matching key by prefix
+                        import re
+                        matching_keys = [key for key in ground_truth.keys() if key.startswith(req.id)]
+                        print(f"        DEBUG_ID_PATH: req.id='{req.id}' not in GT, matching_keys={matching_keys}")
+                        if len(matching_keys) >= 1:
+                            req_id = matching_keys[0]
+                            print(f"        DEBUG_ID_PATH: ASSIGNED req_id='{req_id}' from prefix match")
+                        else:
+                            req_id = req.id  # Use original even if not in GT (will be skipped later)
                 elif hasattr(req, 'description') and req.description:
-                    # Try to match full ground truth IDs (e.g., "F1_create_product", "F13_checkout_cart")
-                    # Ground truth keys have format: F<number>_<snake_case_name>
+                    # No req.id - extract from description
+                    print(f"        DEBUG_DESC_PATH: Using description-based matching")
                     import re
                     desc = req.description
 
@@ -425,12 +439,10 @@ class RealE2ETest:
 
                         # Find ground truth keys that start with this prefix
                         matching_keys = [key for key in ground_truth.keys() if key.startswith(prefix)]
-                        if len(matching_keys) == 1:
-                            req_id = matching_keys[0]  # Exact match
-                        elif len(matching_keys) > 1:
-                            # Multiple matches - try to disambiguate by description text
-                            # For now, just use the first match
+                        print(f"        DEBUG_MATCH: prefix='{prefix}', matching_keys={matching_keys}, len={len(matching_keys)}")
+                        if len(matching_keys) >= 1:
                             req_id = matching_keys[0]
+                            print(f"        DEBUG_MATCH: ASSIGNED req_id='{req_id}'")
 
                 # Debug logging
                 req_desc = req.description if hasattr(req, 'description') else "NO_DESC"
