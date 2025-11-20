@@ -21,6 +21,7 @@ import re
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 from datetime import datetime
+from jinja2 import Template
 
 from src.models import MasterPlanTask
 from src.llm import EnhancedAnthropicClient
@@ -1832,10 +1833,8 @@ Generate ONLY the README.md content, no additional explanations."""
             repo_pattern = find_pattern_by_keyword(category_patterns, "repository", "crud")
             if repo_pattern and spec_requirements.entities:
                 for entity in spec_requirements.entities:
-                    adapted = self._adapt_pattern(repo_pattern.code, spec_requirements)
-                    # Replace entity placeholder
-                    adapted = adapted.replace("{ENTITY_NAME}", entity.name)
-                    adapted = adapted.replace("{entity_name}", entity.snake_name)
+                    # Pass current entity to _adapt_pattern so Jinja2 has access to {{ entity.name }}
+                    adapted = self._adapt_pattern(repo_pattern.code, spec_requirements, current_entity=entity)
                     files[f"src/repositories/{entity.snake_name}_repository.py"] = adapted
 
         # Business Logic / Service Layer
@@ -1844,10 +1843,8 @@ Generate ONLY the README.md content, no additional explanations."""
             service_pattern = find_pattern_by_keyword(category_patterns, "service", "business logic")
             if service_pattern and spec_requirements.entities:
                 for entity in spec_requirements.entities:
-                    adapted = self._adapt_pattern(service_pattern.code, spec_requirements)
-                    # Replace entity placeholder
-                    adapted = adapted.replace("{ENTITY_NAME}", entity.name)
-                    adapted = adapted.replace("{entity_name}", entity.snake_name)
+                    # Pass current entity to _adapt_pattern so Jinja2 has access to {{ entity.name }}
+                    adapted = self._adapt_pattern(service_pattern.code, spec_requirements, current_entity=entity)
                     files[f"src/services/{entity.snake_name}_service.py"] = adapted
 
         # API Routes
@@ -1857,10 +1854,8 @@ Generate ONLY the README.md content, no additional explanations."""
             if route_pattern and spec_requirements.entities:
                 # Use pattern if available
                 for entity in spec_requirements.entities:
-                    adapted = self._adapt_pattern(route_pattern.code, spec_requirements)
-                    # Replace entity placeholder
-                    adapted = adapted.replace("{ENTITY_NAME}", entity.name)
-                    adapted = adapted.replace("{entity_name}", entity.snake_name)
+                    # Pass current entity to _adapt_pattern so Jinja2 has access to {{ entity.name }}
+                    adapted = self._adapt_pattern(route_pattern.code, spec_requirements, current_entity=entity)
                     files[f"src/api/routes/{entity.snake_name}.py"] = adapted
             elif spec_requirements.entities:
                 # LLM FALLBACK: No pattern found, generate with LLM
@@ -1991,57 +1986,89 @@ File: src/api/routes/{entity.snake_name}.py
 
         return files
 
-    def _adapt_pattern(self, pattern_code: str, spec_requirements) -> str:
+    def _adapt_pattern(self, pattern_code: str, spec_requirements, current_entity=None) -> str:
         """
         Adapt pattern code to spec requirements (Task Group 8).
 
-        Replace placeholder variables with actual spec values:
-        - {APP_NAME} → spec.metadata.get("spec_name", "API")
-        - {APP_NAME_SNAKE} → app_name in snake_case
-        - {DATABASE_URL} → spec.config.get("database_url", "")
-        - {ENTITY_IMPORTS} → generated entity router imports
-        - {ENTITY_ROUTERS} → generated entity router includes
-        - {ENTITY_NAME} → entity.name (for entity-specific patterns)
+        Supports two placeholder styles:
+        1. Jinja2 templates: {{ app_name }}, {% if entities %}, {% for entity in entities %}
+        2. Simple placeholders: {APP_NAME}, {DATABASE_URL}, {ENTITY_IMPORTS}, {ENTITY_ROUTERS}
 
         Args:
-            pattern_code: Pattern code with placeholders
+            pattern_code: Pattern code with placeholders (Jinja2 or simple style)
             spec_requirements: SpecRequirements object
+            current_entity: Optional entity object for entity-specific patterns
 
         Returns:
             Adapted code with placeholders replaced
         """
-        adapted = pattern_code
-
-        # App name
+        # Prepare context variables
         app_name = spec_requirements.metadata.get("spec_name", "API")
-        adapted = adapted.replace("{APP_NAME}", app_name)
-
-        # App name in snake_case
         app_name_snake = app_name.replace("-", "_").replace(" ", "_").lower()
-        adapted = adapted.replace("{APP_NAME_SNAKE}", app_name_snake)
-
-        # Database URL (from metadata or default)
         database_url = spec_requirements.metadata.get(
             "database_url", "postgresql+asyncpg://user:password@localhost:5432/app"
         )
+
+        # Build entities list with snake_case names for Jinja2
+        entities = []
+        entity_imports = []
+        entity_routers = []
+
+        for entity in spec_requirements.entities:
+            entity_snake = entity.name.lower().replace(" ", "_")
+            entities.append({
+                "name": entity.name,
+                "snake_name": entity_snake,
+            })
+            entity_imports.append(f"from src.api.routes import {entity_snake}")
+            entity_routers.append(f"app.include_router({entity_snake}.router)")
+
+        # Join entity imports and routers
+        imports_str = "\n".join(entity_imports) if entity_imports else ""
+        routers_str = "\n".join(entity_routers) if entity_routers else ""
+
+        # Build Jinja2 context
+        context = {
+            "app_name": app_name,
+            "app_name_snake": app_name_snake,
+            "database_url": database_url,
+            "entities": entities,
+        }
+
+        # Add current entity to context if provided (for entity-specific patterns)
+        if current_entity:
+            entity_snake = current_entity.name.lower().replace(" ", "_")
+            context["entity"] = {
+                "name": current_entity.name,
+                "snake_name": entity_snake,
+            }
+
+        # Render Jinja2 template (handles {{ }} and {% %} syntax)
+        try:
+            template = Template(pattern_code)
+            rendered = template.render(context)
+        except Exception as e:
+            # If Jinja2 rendering fails (e.g., syntax error in template),
+            # fall back to simple string replacement
+            logger.warning(
+                f"Jinja2 template rendering failed: {e}. Falling back to simple replacement.",
+                extra={"error": str(e)}
+            )
+            rendered = pattern_code
+
+        # Backward compatibility: also replace simple placeholder style {APP_NAME}
+        adapted = rendered
+        adapted = adapted.replace("{APP_NAME}", app_name)
+        adapted = adapted.replace("{APP_NAME_SNAKE}", app_name_snake)
         adapted = adapted.replace("{DATABASE_URL}", database_url)
+        adapted = adapted.replace("{ENTITY_IMPORTS}", imports_str)
+        adapted = adapted.replace("{ENTITY_ROUTERS}", routers_str)
 
-        # Generate entity imports and routers (for main.py)
-        if "{ENTITY_IMPORTS}" in adapted or "{ENTITY_ROUTERS}" in adapted:
-            entity_imports = []
-            entity_routers = []
-
-            for entity in spec_requirements.entities:
-                entity_snake = entity.name.lower().replace(" ", "_")
-                entity_imports.append(f"from src.api.routes import {entity_snake}")
-                entity_routers.append(f"app.include_router({entity_snake}.router)")
-
-            # Join with newlines
-            imports_str = "\n".join(entity_imports) if entity_imports else ""
-            routers_str = "\n".join(entity_routers) if entity_routers else ""
-
-            adapted = adapted.replace("{ENTITY_IMPORTS}", imports_str)
-            adapted = adapted.replace("{ENTITY_ROUTERS}", routers_str)
+        # Also replace entity-specific placeholders
+        if current_entity:
+            entity_snake = current_entity.name.lower().replace(" ", "_")
+            adapted = adapted.replace("{ENTITY_NAME}", current_entity.name)
+            adapted = adapted.replace("{entity_name}", entity_snake)
 
         return adapted
 
