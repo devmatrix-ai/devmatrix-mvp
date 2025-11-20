@@ -355,6 +355,20 @@ Structure as needed to maintain clarity while implementing ALL requirements."""
 
                 prompt_parts.append("")
 
+        # CRITICAL: EXACT ENDPOINT SPECIFICATION
+        if spec_requirements.endpoints:
+            prompt_parts.append("## ⚠️  CRITICAL: USE THESE EXACT ENDPOINTS")
+            prompt_parts.append("")
+            prompt_parts.append("YOU MUST implement endpoints with EXACTLY these HTTP methods and paths:")
+            prompt_parts.append("")
+            for endpoint in spec_requirements.endpoints:
+                prompt_parts.append(f"  {endpoint.method:6s} {endpoint.path}")
+            prompt_parts.append("")
+            prompt_parts.append("DO NOT modify the HTTP methods or paths shown above.")
+            prompt_parts.append("DO NOT add path parameters unless shown above.")
+            prompt_parts.append("DO NOT use different HTTP methods (e.g., POST instead of DELETE).")
+            prompt_parts.append("")
+
         # BUSINESS LOGIC
         if spec_requirements.business_logic:
             prompt_parts.append("## BUSINESS LOGIC")

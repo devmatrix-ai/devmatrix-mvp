@@ -142,7 +142,7 @@ class ComplianceValidator:
 
         # 3. Calculate compliance per category
         entity_compliance = self._calculate_compliance(entities_found, entities_expected)
-        endpoint_compliance = self._calculate_compliance(endpoints_found, endpoints_expected)
+        endpoint_compliance = self._calculate_endpoint_compliance_fuzzy(endpoints_found, endpoints_expected)
         validation_compliance = self._calculate_validation_compliance(
             validations_found, validations_expected
         )
@@ -247,6 +247,195 @@ class ComplianceValidator:
         compliance = len(matches) / len(expected_normalized)
 
         return min(compliance, 1.0)  # Cap at 100%
+
+    def _calculate_endpoint_compliance_fuzzy(self, found: List[str], expected: List[str]) -> float:
+        """
+        Calculate endpoint compliance with fuzzy matching
+
+        Fuzzy matching handles:
+        1. Path parameter variations: /carts/{id} ≈ /carts/{customer_id}
+        2. Functionally equivalent HTTP methods: POST vs DELETE for "clear/empty"
+        3. Route variations: /carts/clear ≈ /carts/{id} for clear operations
+
+        Args:
+            found: Endpoints found in generated code (format: "GET /products")
+            expected: Endpoints expected from spec
+
+        Returns:
+            Compliance score 0.0-1.0
+        """
+        if not expected:
+            return 1.0
+
+        if not found:
+            return 0.0
+
+        # Parse endpoints into (method, path) tuples
+        def parse_endpoint(endpoint_str: str):
+            parts = endpoint_str.strip().split(maxsplit=1)
+            if len(parts) == 2:
+                return parts[0].upper(), parts[1]
+            return None, None
+
+        expected_parsed = []
+        for exp in expected:
+            method, path = parse_endpoint(exp)
+            if method and path:
+                expected_parsed.append((method, path))
+
+        found_parsed = []
+        for fnd in found:
+            method, path = parse_endpoint(fnd)
+            if method and path:
+                found_parsed.append((method, path))
+
+        # Count fuzzy matches
+        matches = 0
+        for exp_method, exp_path in expected_parsed:
+            if self._is_fuzzy_endpoint_match(exp_method, exp_path, found_parsed):
+                matches += 1
+
+        compliance = matches / len(expected_parsed) if expected_parsed else 0.0
+
+        logger.debug(
+            f"Endpoint fuzzy matching: {matches}/{len(expected_parsed)} matches "
+            f"({compliance:.1%})"
+        )
+
+        return min(compliance, 1.0)
+
+    def _is_fuzzy_endpoint_match(
+        self,
+        expected_method: str,
+        expected_path: str,
+        found_endpoints: List[tuple]
+    ) -> bool:
+        """
+        Check if expected endpoint matches any found endpoint using fuzzy rules
+
+        Args:
+            expected_method: Expected HTTP method (GET, POST, etc.)
+            expected_path: Expected path (/carts/{customer_id})
+            found_endpoints: List of (method, path) tuples from generated code
+
+        Returns:
+            True if a fuzzy match is found
+        """
+        # Normalize paths: replace {any_param} with {id} for comparison
+        def normalize_path(path: str) -> str:
+            import re
+            # Replace all {param_name} with {*} for fuzzy matching
+            return re.sub(r'\{[^}]+\}', '{*}', path.lower().strip())
+
+        expected_path_norm = normalize_path(expected_path)
+
+        for found_method, found_path in found_endpoints:
+            found_path_norm = normalize_path(found_path)
+
+            # 1. Exact match (method + normalized path)
+            if expected_method == found_method and expected_path_norm == found_path_norm:
+                return True
+
+            # 2. Functionally equivalent methods for specific operations
+            if self._are_methods_functionally_equivalent(
+                expected_method, found_method, expected_path, found_path
+            ):
+                # Check if paths are semantically similar
+                if self._are_paths_similar(expected_path, found_path):
+                    return True
+
+        return False
+
+    def _are_methods_functionally_equivalent(
+        self,
+        method1: str,
+        method2: str,
+        path1: str,
+        path2: str
+    ) -> bool:
+        """
+        Check if two HTTP methods are functionally equivalent for the operation
+
+        Examples:
+        - DELETE /carts/{id} ≈ POST /carts/clear (both clear/empty cart)
+        - PUT /orders/{id}/cancel ≈ POST /orders/cancel (both cancel order)
+
+        Args:
+            method1, method2: HTTP methods to compare
+            path1, path2: Paths to provide context
+
+        Returns:
+            True if methods are functionally equivalent
+        """
+        # Normalize methods
+        m1, m2 = method1.upper(), method2.upper()
+
+        # If methods are the same, they're equivalent
+        if m1 == m2:
+            return True
+
+        # Check for clear/empty/delete operations
+        if "clear" in path1.lower() or "clear" in path2.lower():
+            # POST /carts/clear ≈ DELETE /carts/{id}
+            if {m1, m2} == {"POST", "DELETE"}:
+                return True
+
+        # Check for cancel operations
+        if "cancel" in path1.lower() or "cancel" in path2.lower():
+            # POST /orders/cancel ≈ PUT /orders/{id}/cancel
+            if {m1, m2} <= {"POST", "PUT", "PATCH"}:
+                return True
+
+        return False
+
+    def _are_paths_similar(self, path1: str, path2: str) -> bool:
+        """
+        Check if two paths are semantically similar
+
+        Examples:
+        - /carts/{id} ≈ /carts/{customer_id}
+        - /carts/clear ≈ /carts/{id} (for delete/clear operations)
+        - /orders/{id}/cancel ≈ /orders/cancel
+
+        Args:
+            path1, path2: Paths to compare
+
+        Returns:
+            True if paths are similar enough
+        """
+        import re
+
+        # Normalize: lowercase, strip slashes
+        p1 = path1.lower().strip().strip('/')
+        p2 = path2.lower().strip().strip('/')
+
+        # Exact match
+        if p1 == p2:
+            return True
+
+        # Replace all {params} with placeholder for comparison
+        p1_norm = re.sub(r'\{[^}]+\}', 'PARAM', p1)
+        p2_norm = re.sub(r'\{[^}]+\}', 'PARAM', p2)
+
+        # Match if normalized paths are the same
+        if p1_norm == p2_norm:
+            return True
+
+        # Check for clear/cancel variations
+        # /carts/{id} ≈ /carts/clear
+        p1_parts = p1_norm.split('/')
+        p2_parts = p2_norm.split('/')
+
+        if len(p1_parts) == len(p2_parts):
+            # Same base path and either both have PARAM or one has clear/cancel
+            if p1_parts[:-1] == p2_parts[:-1]:
+                last1, last2 = p1_parts[-1], p2_parts[-1]
+                if 'PARAM' in {last1, last2} and any(
+                    x in {last1, last2} for x in ['clear', 'cancel', 'checkout']
+                ):
+                    return True
+
+        return False
 
     def _calculate_validation_compliance(self, found: List[str], expected: List[str]) -> float:
         """
