@@ -129,7 +129,7 @@ class HybridCodeGenerator:
             code = await self.code_gen_service.generate_from_requirements()
         else:
             # Use direct agent execution for generic tasks
-            code = await self.agent.execute(task, minimal_context)
+            code = await self.agent.execute(task, enriched_context)
 ```
 
 **Benefits**:
@@ -196,8 +196,8 @@ class SkillsFramework:
 class DatabaseContext:
     """Efficient context retrieval from databases"""
 
-    def get_minimal_context(self, task_id: UUID) -> str:
-        """30-50% token reduction vs markdown approach"""
+    def get_enriched_context(self, task_id: UUID, context_level: str = 'standard') -> str:
+        """Balanced context for agent comprehension"""
 
     def get_task_with_dependencies(self, task_id: UUID) -> Dict:
         """Task + completed dependencies + required skills"""
@@ -314,7 +314,7 @@ class SkillsFramework:
 **Focus**: Core database layer and context optimization
 
 Components:
-- DatabaseContext with minimal context queries
+- DatabaseContext with enriched context queries
 - DatabaseTaskManager (PostgreSQL CRUD)
 - Database schemas for all 3 databases
 - Connection pooling and transaction management
