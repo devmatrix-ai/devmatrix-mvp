@@ -582,11 +582,11 @@ class RealE2ETest:
                 domain="api_development"
             )
 
-            # Search for relevant patterns using correct API
-            results = self.pattern_bank.search_patterns(
+            # Search for relevant patterns using TG4+TG5 (adaptive thresholds + keyword fallback)
+            results = self.pattern_bank.search_with_fallback(
                 signature=signature,
                 top_k=10,
-                similarity_threshold=0.45  # Lowered from 0.50 (best similarity: 0.495, now returns results)
+                min_results=3  # Trigger keyword fallback if < 3 results
             )
 
             # Convert StoredPattern objects to dicts

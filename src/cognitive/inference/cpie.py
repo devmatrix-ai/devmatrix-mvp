@@ -24,13 +24,16 @@ logger = logging.getLogger(__name__)
 
 
 # Adaptive threshold configuration (TG4)
+# Adjusted based on real pattern similarities observed (~0.5-0.7 range)
 DOMAIN_THRESHOLDS = {
-    "crud": 0.75,      # Simple CRUD patterns - lower threshold
-    "custom": 0.80,    # Custom logic - medium threshold
-    "payment": 0.85,   # Complex payment patterns - higher threshold
-    "workflow": 0.80,  # Workflow patterns - medium threshold
+    "crud": 0.60,              # Simple CRUD patterns - lower threshold
+    "custom": 0.65,            # Custom logic - medium threshold
+    "payment": 0.70,           # Complex payment patterns - higher threshold
+    "workflow": 0.65,          # Workflow patterns - medium threshold
+    "api_development": 0.60,   # API development - lower threshold
+    "backend": 0.60,           # Backend patterns - lower threshold
 }
-DEFAULT_THRESHOLD = 0.80  # Fallback for unknown domains
+DEFAULT_THRESHOLD = 0.60  # Lowered from 0.80 to match real pattern similarities
 
 
 def get_adaptive_threshold(domain: Optional[str]) -> float:
@@ -227,22 +230,18 @@ def infer_from_pattern(
     # Returns adapted code if pattern found, None otherwise
     ```
     """
-    # TG4: Use adaptive threshold based on domain if not explicitly provided
-    if similarity_threshold is None:
-        similarity_threshold = get_adaptive_threshold(signature.domain)
-        logger.debug(
-            f"Using adaptive threshold {similarity_threshold} for domain '{signature.domain}'"
-        )
-
     logger.debug(f"Searching patterns for: {signature.purpose}")
 
-    # Search for similar patterns
-    patterns = pattern_bank.search_patterns(
-        signature, top_k=1, similarity_threshold=similarity_threshold
+    # TG4+TG5: Search with adaptive thresholds + keyword fallback
+    # The search_with_fallback() method handles:
+    # - TG4: Domain-specific adaptive thresholds
+    # - TG5: Keyword-based fallback when results < min_results
+    patterns = pattern_bank.search_with_fallback(
+        signature, top_k=1, min_results=1
     )
 
-    if not patterns or patterns[0].similarity_score < similarity_threshold:
-        logger.debug("No matching pattern found above threshold")
+    if not patterns:
+        logger.debug("No matching pattern found (even with keyword fallback)")
         return None
 
     matched_pattern = patterns[0]

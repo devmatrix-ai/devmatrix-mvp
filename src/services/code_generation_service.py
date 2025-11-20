@@ -260,6 +260,12 @@ class CodeGenerationService:
             logger.info("Composing production-ready application from patterns")
             files_dict = await self._compose_patterns(patterns, spec_requirements)
 
+            # LLM fallback for missing essential files (Task Group 8 enhancement)
+            # User requirement: "SI NO HAY PATTERNS DEBEMOS PASARLE CONTEXTO NECESARIO PARA Q EL LLM ESCRIBA EL CODIGO"
+            logger.info("Checking for missing essential files (LLM fallback)")
+            llm_generated = await self._generate_with_llm_fallback(files_dict, spec_requirements)
+            files_dict.update(llm_generated)
+
             # Add __init__.py files for Python packages
             package_dirs = [
                 "src",
@@ -1308,6 +1314,11 @@ Code MUST pass Python compile() without SyntaxError."""
         # 2. Compose patterns into modular architecture
         generated_files = await self._compose_patterns(patterns, spec_requirements)
 
+        # 2.5. LLM fallback for missing essential files (no patterns available)
+        # User requirement: "SI NO HAY PATTERNS DEBEMOS PASARLE CONTEXTO NECESARIO PARA Q EL LLM ESCRIBA EL CODIGO"
+        llm_generated = await self._generate_with_llm_fallback(generated_files, spec_requirements)
+        generated_files.update(llm_generated)
+
         # 3. Validate production readiness
         validation_result = self._validate_production_readiness(generated_files)
 
@@ -1423,7 +1434,7 @@ Code MUST pass Python compile() without SyntaxError."""
                 )
                 category_patterns.extend(results)
             else:
-                # Search for EACH specific purpose string
+                # Search for EACH specific purpose string with EXACT matching
                 for purpose in specific_purposes:
                     query_sig = SemanticTaskSignature(
                         purpose=purpose,
@@ -1433,23 +1444,37 @@ Code MUST pass Python compile() without SyntaxError."""
                         domain=config["domain"],
                     )
 
+                    # Get top 10 candidates to ensure exact match is included
                     results = self.pattern_bank.hybrid_search(
                         signature=query_sig,
                         domain=config["domain"],
                         production_ready=True,
-                        top_k=1,  # Only need 1 per specific purpose
+                        top_k=10,  # Increased to capture patterns with lower similarity scores
                     )
 
-                    if results:
-                        category_patterns.append(results[0])
+                    # Find EXACT purpose match (not just semantic similarity)
+                    exact_match = None
+                    for r in results:
+                        if r.signature.purpose.strip() == purpose.strip():
+                            exact_match = r
+                            break
+
+                    if exact_match:
+                        category_patterns.append(exact_match)
                         logger.debug(
-                            f"✅ Found pattern: {purpose[:60]}",
+                            f"✅ Found EXACT pattern: {purpose[:60]}",
                             extra={"category": category}
                         )
                     else:
+                        # Log which patterns we got instead
+                        found_purposes = [r.signature.purpose[:60] for r in results]
                         logger.warning(
-                            f"❌ Missing pattern: {purpose[:60]}",
-                            extra={"category": category, "purpose": purpose}
+                            f"❌ No EXACT match for: {purpose[:60]}",
+                            extra={
+                                "category": category,
+                                "wanted": purpose,
+                                "found": found_purposes
+                            }
                         )
 
             # Filter by success threshold
@@ -1506,8 +1531,9 @@ Code MUST pass Python compile() without SyntaxError."""
             files.update(category_files)
 
         # Search for main.py separately (domain="application" not in categories)
+        # Use exact purpose string from populate_production_patterns.py
         main_pattern_query = SemanticTaskSignature(
-            purpose="fastapi application entry point",
+            purpose="FastAPI application entry point with middleware and routes",
             intent="implement",
             inputs={},
             outputs={},
@@ -1517,14 +1543,200 @@ Code MUST pass Python compile() without SyntaxError."""
             signature=main_pattern_query,
             domain="application",
             production_ready=True,
-            top_k=1,
+            top_k=10,  # Increased for exact matching
         )
 
-        if main_patterns:
-            files["src/main.py"] = self._adapt_pattern(main_patterns[0].code, spec_requirements)
-            logger.debug("Added main.py from PatternBank")
+        # Find EXACT match
+        exact_main = None
+        for p in main_patterns:
+            if p.signature.purpose.strip() == "FastAPI application entry point with middleware and routes":
+                exact_main = p
+                break
+
+        if exact_main:
+            files["src/main.py"] = self._adapt_pattern(exact_main.code, spec_requirements)
+            logger.info("✅ Added main.py from PatternBank")
 
         return files
+
+    async def _generate_with_llm_fallback(
+        self, existing_files: Dict[str, str], spec_requirements
+    ) -> Dict[str, str]:
+        """
+        Generate missing essential files using LLM fallback (no patterns available).
+
+        User requirement: "SI NO HAY PATTERNS DEBEMOS PASARLE CONTEXTO NECESARIO PARA Q EL LLM
+        ESCRIBA EL CODIGO COMO MEJOR CREA, LUEGO ITERAR SI FALLA CON EL REPAIR LOOP LEARNING"
+
+        Args:
+            existing_files: Dictionary of files already generated from patterns
+            spec_requirements: SpecRequirements with project context
+
+        Returns:
+            Dictionary of LLM-generated files for missing essentials
+        """
+        logger.info(
+            "🔍 Checking for missing essential files",
+            extra={"existing_count": len(existing_files)}
+        )
+        llm_files = {}
+
+        # Define essential files that should exist
+        essential_files = {
+            "requirements.txt": self._generate_requirements_txt,
+            "README.md": self._generate_readme_md,
+        }
+
+        # Generate missing files using LLM
+        for file_path, generator_func in essential_files.items():
+            if file_path not in existing_files:
+                logger.info(
+                    f"🤖 LLM fallback: Generating {file_path} (no pattern available)",
+                    extra={"file": file_path}
+                )
+                try:
+                    content = await generator_func(spec_requirements, existing_files)
+                    llm_files[file_path] = content
+                    logger.info(f"✅ LLM generated: {file_path}")
+                except Exception as e:
+                    logger.error(
+                        f"❌ LLM fallback failed for {file_path}: {e}",
+                        extra={"file": file_path, "error": str(e)}
+                    )
+                    # Don't fail the entire generation, continue with other files
+
+        return llm_files
+
+    async def _generate_requirements_txt(
+        self, spec_requirements, existing_files: Dict[str, str]
+    ) -> str:
+        """Generate requirements.txt using LLM with rich context."""
+
+        # Extract metadata safely
+        project_name = spec_requirements.metadata.get("project_name", "FastAPI Application")
+        description = spec_requirements.metadata.get("description", "Production-ready FastAPI application")
+
+        # Build context about the project
+        context = f"""Generate a production-ready requirements.txt for this FastAPI application.
+
+Project: {project_name}
+Description: {description}
+
+Technology Stack:
+- FastAPI (async web framework)
+- SQLAlchemy 2.0+ with asyncpg (async PostgreSQL)
+- Pydantic v2 with pydantic-settings (config management)
+- Alembic (database migrations)
+- structlog (structured logging)
+- prometheus-client (metrics)
+- pytest with pytest-asyncio (testing)
+- httpx (async HTTP client for tests)
+
+Entities: {', '.join(e.name for e in spec_requirements.entities)}
+Endpoints: {len(spec_requirements.endpoints)} REST endpoints
+
+IMPORTANT:
+1. Pin ALL versions (use ==, not >=)
+2. Include production-ready versions (latest stable as of 2024)
+3. Group by category (web, database, config, logging, metrics, testing)
+4. Add comments for each group
+5. Ensure compatibility (FastAPI 0.109+, SQLAlchemy 2.0+, Pydantic 2.5+)
+
+Generate ONLY the requirements.txt content, no explanations."""
+
+        # Use LLM to generate with caching
+        response = await self.llm_client.generate_with_caching(
+            task_type="file_generation",
+            complexity="low",
+            cacheable_context={"system_prompt": "You are a Python dependency management expert."},
+            variable_prompt=context,
+            max_tokens=1000,
+            temperature=0.3  # Lower temperature for more deterministic dependency versions
+        )
+
+        return response["content"].strip()
+
+    async def _generate_readme_md(
+        self, spec_requirements, existing_files: Dict[str, str]
+    ) -> str:
+        """Generate README.md using LLM with rich context."""
+
+        # Extract metadata safely
+        project_name = spec_requirements.metadata.get("project_name", "FastAPI Application")
+        description = spec_requirements.metadata.get("description", "Production-ready FastAPI application")
+        version = spec_requirements.metadata.get("version", "1.0.0")
+
+        # Build context about the project and generated files
+        entity_details = "\n".join([
+            f"- **{e.name}**: {', '.join(f.name for f in e.fields)}"
+            for e in spec_requirements.entities
+        ])
+
+        endpoint_details = "\n".join([
+            f"- `{ep.method} {ep.path}`: {ep.description}"
+            for ep in spec_requirements.endpoints[:10]  # Limit to first 10
+        ])
+
+        file_structure = "\n".join([
+            f"- {path}" for path in sorted(existing_files.keys())[:20]  # Sample of files
+        ])
+
+        context = f"""Generate a production-ready README.md for this FastAPI application.
+
+# Project Details
+Name: {project_name}
+Description: {description}
+Version: {version}
+
+# Entities (Data Models)
+{entity_details}
+
+# API Endpoints
+{endpoint_details}
+{"... and more" if len(spec_requirements.endpoints) > 10 else ""}
+
+# Technology Stack
+- FastAPI with async/await
+- PostgreSQL with SQLAlchemy async
+- Pydantic v2 for validation
+- Alembic for migrations
+- structlog for logging
+- Prometheus metrics
+- pytest for testing
+- Docker support
+
+# Generated Project Structure (sample)
+{file_structure}
+
+Generate a comprehensive README.md that includes:
+
+1. **Project Title and Description**
+2. **Features** (based on entities and endpoints)
+3. **Tech Stack** (list key technologies)
+4. **Prerequisites** (Python 3.11+, PostgreSQL, etc.)
+5. **Installation** (pip install -r requirements.txt, database setup)
+6. **Configuration** (.env file setup with DATABASE_URL, etc.)
+7. **Running the Application** (uvicorn command, Docker option)
+8. **API Documentation** (mention /docs and /redoc)
+9. **Database Migrations** (alembic commands)
+10. **Testing** (pytest commands)
+11. **Project Structure** (brief overview)
+12. **Development** (how to contribute, code style)
+
+Use clear markdown formatting, code blocks, and badges if appropriate.
+Generate ONLY the README.md content, no additional explanations."""
+
+        # Use LLM to generate with caching
+        response = await self.llm_client.generate_with_caching(
+            task_type="file_generation",
+            complexity="medium",
+            cacheable_context={"system_prompt": "You are a technical documentation expert specializing in README files for FastAPI projects."},
+            variable_prompt=context,
+            max_tokens=2500,
+            temperature=0.5  # Balanced creativity for documentation
+        )
+
+        return response["content"].strip()
 
     async def _compose_category_patterns(
         self, category: str, category_patterns: list, spec_requirements
@@ -1583,16 +1795,22 @@ Code MUST pass Python compile() without SyntaxError."""
 
         elif category == "observability":
             # Map each observability pattern to its file
+            # Order matters: most specific patterns first to avoid false matches
             for p in category_patterns:
                 purpose_lower = p.signature.purpose.lower()
-                if "structured logging" in purpose_lower or "structlog" in purpose_lower:
-                    files["src/core/logging.py"] = self._adapt_pattern(p.code, spec_requirements)
-                elif "request id" in purpose_lower or "middleware" in purpose_lower:
-                    files["src/core/middleware.py"] = self._adapt_pattern(p.code, spec_requirements)
-                elif "exception" in purpose_lower or "global exception" in purpose_lower:
+                # Check exception handler BEFORE logging (both contain "structured logging")
+                if "exception" in purpose_lower or "global exception" in purpose_lower:
                     files["src/core/exception_handlers.py"] = self._adapt_pattern(p.code, spec_requirements)
+                # Check request ID middleware specifically
+                elif "request id" in purpose_lower:
+                    files["src/core/middleware.py"] = self._adapt_pattern(p.code, spec_requirements)
+                # Logging configuration (check after exception handler)
+                elif "structlog" in purpose_lower and "configuration" in purpose_lower:
+                    files["src/core/logging.py"] = self._adapt_pattern(p.code, spec_requirements)
+                # Health checks
                 elif "health check" in purpose_lower or "readiness" in purpose_lower:
                     files["src/api/routes/health.py"] = self._adapt_pattern(p.code, spec_requirements)
+                # Prometheus metrics
                 elif "metrics" in purpose_lower or "prometheus" in purpose_lower:
                     files["src/api/routes/metrics.py"] = self._adapt_pattern(p.code, spec_requirements)
 

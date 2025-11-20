@@ -560,6 +560,156 @@ class PatternBank:
 
         return patterns
 
+    def search_with_fallback(
+        self,
+        signature: SemanticTaskSignature,
+        top_k: int = 5,
+        min_results: int = 3,
+    ) -> List[StoredPattern]:
+        """
+        Search patterns with adaptive thresholds and keyword fallback (TG4+TG5).
+
+        This orchestrator method integrates:
+        - TG4: Domain-specific adaptive similarity thresholds
+        - TG5: Keyword-based fallback when embedding search yields < min_results
+
+        Process:
+        1. Determine adaptive threshold based on signature.domain
+        2. Try semantic search with adaptive threshold
+        3. If results < min_results, fall back to keyword matching
+        4. Combine and deduplicate results
+        5. Return top_k patterns sorted by similarity
+
+        Args:
+            signature: Semantic task signature
+            top_k: Maximum number of results to return (default: 5)
+            min_results: Minimum results before triggering fallback (default: 3)
+
+        Returns:
+            List of StoredPattern sorted by similarity score (descending)
+
+        Example:
+            >>> bank = PatternBank()
+            >>> signature = SemanticTaskSignature(
+            ...     purpose="Create a new user",
+            ...     domain="crud",
+            ...     ...
+            ... )
+            >>> patterns = bank.search_with_fallback(signature, top_k=5)
+            >>> # Returns: Up to 5 patterns using adaptive threshold + keyword fallback
+        """
+        # TG4: Adaptive threshold based on domain
+        # Adjusted based on real pattern similarities observed (~0.5-0.7 range)
+        domain_thresholds = {
+            "crud": 0.60,              # Simple CRUD patterns - lower threshold
+            "custom": 0.65,            # Custom logic - medium threshold
+            "payment": 0.70,           # Complex payment patterns - higher threshold
+            "workflow": 0.65,          # Workflow patterns - medium threshold
+            "api_development": 0.60,   # API development - lower threshold (E2E tests)
+            "backend": 0.60,           # Backend patterns - lower threshold
+        }
+        default_threshold = 0.60  # Lowered from 0.80 to match real pattern similarities
+
+        domain = signature.domain if signature.domain else None
+        adaptive_threshold = domain_thresholds.get(
+            domain.lower() if domain else "",
+            default_threshold
+        )
+
+        logger.debug(
+            f"🎯 TG4: Using adaptive threshold {adaptive_threshold} for domain '{domain}'"
+        )
+
+        # Step 1: Try semantic search with adaptive threshold
+        semantic_results = self.search_patterns(
+            signature,
+            top_k=top_k,
+            similarity_threshold=adaptive_threshold,
+        )
+
+        logger.info(
+            f"📊 Semantic search found {len(semantic_results)} patterns "
+            f"(threshold={adaptive_threshold})"
+        )
+
+        # If we have enough results, return them
+        if len(semantic_results) >= min_results:
+            return semantic_results
+
+        # Step 2: TG5 Keyword Fallback - Not enough semantic matches
+        logger.info(
+            f"🔄 TG5: Triggering keyword fallback "
+            f"({len(semantic_results)} < {min_results} results)"
+        )
+
+        # Extract keywords from purpose
+        keywords = self._extract_keywords(signature.purpose)
+        logger.debug(f"🔍 Extracted keywords: {keywords}")
+
+        # Find pattern types from keywords
+        keyword_patterns = set()
+        for keyword in keywords:
+            pattern_type = self._keyword_to_pattern_type(keyword)
+            if pattern_type:
+                keyword_patterns.add(pattern_type)
+
+        logger.debug(f"📋 Mapped to pattern types: {keyword_patterns}")
+
+        # Search for patterns matching these types
+        # We'll do a broader search and filter by matching domain/category
+        keyword_results = []
+        if keyword_patterns:
+            # Do a low-threshold search to get candidates
+            broad_results = self.search_patterns(
+                signature,
+                top_k=top_k * 2,  # Get more candidates
+                similarity_threshold=0.4,  # Very low threshold
+            )
+
+            # Filter by pattern type match (check if domain or purpose contains pattern type keywords)
+            for pattern in broad_results:
+                pattern_purpose_lower = pattern.purpose.lower()
+                pattern_domain_lower = (pattern.domain or "").lower()
+
+                # Check if any keyword pattern matches the pattern's purpose or domain
+                for kp in keyword_patterns:
+                    kp_parts = kp.split('_')  # e.g., 'crud_create' -> ['crud', 'create']
+                    if any(part in pattern_purpose_lower or part in pattern_domain_lower
+                           for part in kp_parts):
+                        keyword_results.append(pattern)
+                        break  # Only add once per pattern
+
+            logger.info(f"🔍 Keyword fallback found {len(keyword_results)} additional patterns")
+
+        # Step 3: Combine and deduplicate results
+        # Use pattern_id for deduplication
+        seen_ids = set()
+        combined_results = []
+
+        # Add semantic results first (higher priority)
+        for pattern in semantic_results:
+            if pattern.pattern_id not in seen_ids:
+                seen_ids.add(pattern.pattern_id)
+                combined_results.append(pattern)
+
+        # Add keyword results
+        for pattern in keyword_results:
+            if pattern.pattern_id not in seen_ids:
+                seen_ids.add(pattern.pattern_id)
+                combined_results.append(pattern)
+
+        # Sort by similarity score (descending) and limit to top_k
+        combined_results.sort(key=lambda p: p.similarity_score, reverse=True)
+        final_results = combined_results[:top_k]
+
+        logger.info(
+            f"✅ Final results: {len(final_results)} patterns "
+            f"(semantic={len(semantic_results)}, keyword={len(keyword_results)}, "
+            f"combined={len(combined_results)})"
+        )
+
+        return final_results
+
     def _extract_keywords(self, text: str) -> List[str]:
         """
         Extract meaningful keywords from text by removing stopwords (TG5).

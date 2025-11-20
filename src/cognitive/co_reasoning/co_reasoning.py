@@ -84,9 +84,9 @@ def estimate_complexity(
     security_impact = security_map.get(signature.security_level, SecurityLevel.LOW.value)
 
     # 3. Domain Novelty (20% weight)
-    # Search pattern bank for similar patterns
+    # Search pattern bank for similar patterns using adaptive thresholds + keyword fallback (TG4+TG5)
     try:
-        patterns = pattern_bank.search_patterns(signature, top_k=1, similarity_threshold=0.7)
+        patterns = pattern_bank.search_with_fallback(signature, top_k=1, min_results=1)
         domain_novelty = 0.1 if patterns else 0.8  # Found=0.1, Not found=0.8
     except Exception as e:
         logger.warning(f"Pattern search failed: {e}, assuming high novelty")

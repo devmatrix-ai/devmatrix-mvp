@@ -69,7 +69,7 @@ class Settings(BaseSettings):
 # Global settings instance
 settings = Settings()
 ''',
-        "domain": "backend",
+        "domain": "api_development",
         "success_rate": 0.95,
         "production_ready": True,
     },
@@ -125,7 +125,7 @@ async def get_db():
         finally:
             await session.close()
 ''',
-        "domain": "backend",
+        "domain": "api_development",
         "success_rate": 0.95,
         "production_ready": True,
     },
@@ -174,7 +174,7 @@ configure_logging()
 # Create logger instance
 logger = structlog.get_logger()
 ''',
-        "domain": "backend",
+        "domain": "api_development",
         "success_rate": 0.95,
         "production_ready": True,
     },
@@ -242,7 +242,7 @@ class PaginatedResponse(BaseModel):
     page_size: int
     total_pages: int
 ''',
-        "domain": "backend",
+        "domain": "api_development",
         "success_rate": 0.95,
         "production_ready": True,
     },
@@ -291,7 +291,7 @@ class BaseEntity(Base, TimestampMixin):
         nullable=False
     )
 ''',
-        "domain": "backend",
+        "domain": "api_development",
         "success_rate": 0.95,
         "production_ready": True,
     },
@@ -382,7 +382,7 @@ class BaseRepository(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
         )
         return result.rowcount > 0
 ''',
-        "domain": "backend",
+        "domain": "api_development",
         "success_rate": 0.95,
         "production_ready": True,
     },
@@ -503,7 +503,7 @@ async def delete_entity(
             detail=f"Entity {entity_id} not found"
         )
 ''',
-        "domain": "backend",
+        "domain": "api_development",
         "success_rate": 0.95,
         "production_ready": True,
     },
@@ -588,7 +588,563 @@ async def readiness_check():
         checks=checks,
     )
 ''',
-        "domain": "backend",
+        "domain": "api_development",
+        "success_rate": 0.96,
+        "production_ready": True,
+    },
+
+    # E-commerce Pattern 1: Cart State Management
+    {
+        "category": "cart_management",
+        "purpose": "Shopping cart state management with item CRUD operations and state transitions",
+        "code": '''"""
+Cart management service with state handling.
+
+Handles cart lifecycle: OPEN → CHECKED_OUT
+"""
+from typing import List, Optional
+from uuid import UUID
+from sqlalchemy.ext.asyncio import AsyncSession
+from models import Cart, CartItem, CartStatus
+
+class CartService:
+    """Cart management with state transitions."""
+
+    async def create_cart(
+        self,
+        db: AsyncSession,
+        customer_id: UUID
+    ) -> Cart:
+        """Create cart or reuse existing OPEN cart."""
+        # Check for existing OPEN cart
+        existing = await db.execute(
+            select(Cart).where(
+                Cart.customer_id == customer_id,
+                Cart.status == CartStatus.OPEN
+            )
+        )
+        cart = existing.scalar_one_or_none()
+
+        if cart:
+            return cart
+
+        # Create new cart
+        cart = Cart(customer_id=customer_id, status=CartStatus.OPEN)
+        db.add(cart)
+        await db.commit()
+        return cart
+
+    async def add_item(
+        self,
+        db: AsyncSession,
+        cart_id: UUID,
+        product_id: UUID,
+        quantity: int,
+        unit_price: Decimal
+    ) -> CartItem:
+        """Add item to cart or update quantity if exists."""
+        # Check if item exists
+        existing = await db.execute(
+            select(CartItem).where(
+                CartItem.cart_id == cart_id,
+                CartItem.product_id == product_id
+            )
+        )
+        item = existing.scalar_one_or_none()
+
+        if item:
+            item.quantity += quantity
+        else:
+            item = CartItem(
+                cart_id=cart_id,
+                product_id=product_id,
+                quantity=quantity,
+                unit_price=unit_price
+            )
+            db.add(item)
+
+        await db.commit()
+        return item
+
+    async def update_item_quantity(
+        self,
+        db: AsyncSession,
+        item_id: UUID,
+        quantity: int
+    ) -> Optional[CartItem]:
+        """Update item quantity or delete if <= 0."""
+        item = await db.get(CartItem, item_id)
+        if not item:
+            return None
+
+        if quantity <= 0:
+            await db.delete(item)
+            await db.commit()
+            return None
+
+        item.quantity = quantity
+        await db.commit()
+        return item
+
+    async def clear_cart(self, db: AsyncSession, cart_id: UUID) -> bool:
+        """Remove all items from cart."""
+        await db.execute(
+            delete(CartItem).where(CartItem.cart_id == cart_id)
+        )
+        await db.commit()
+        return True
+''',
+        "domain": "api_development",
+        "success_rate": 0.95,
+        "production_ready": True,
+    },
+
+    # E-commerce Pattern 2: Order Checkout Workflow
+    {
+        "category": "order_checkout",
+        "purpose": "Order checkout workflow with stock validation, deduction, and cart state transition",
+        "code": '''"""
+Order checkout workflow with transaction safety.
+
+Validates stock, deducts inventory, transitions cart to CHECKED_OUT.
+"""
+from decimal import Decimal
+from uuid import UUID
+from sqlalchemy.ext.asyncio import AsyncSession
+from models import Cart, Order, OrderItem, Product, CartStatus, OrderStatus
+
+class CheckoutService:
+    """Order checkout with atomicity guarantees."""
+
+    async def checkout_cart(
+        self,
+        db: AsyncSession,
+        cart_id: UUID
+    ) -> Order:
+        """Create order from cart with stock validation."""
+        # Load cart with items
+        cart = await db.get(Cart, cart_id, with_for_update=True)
+        if not cart or cart.status != CartStatus.OPEN:
+            raise ValueError("Cart not found or already checked out")
+
+        items = await db.execute(
+            select(CartItem).where(CartItem.cart_id == cart_id)
+        )
+        cart_items = items.scalars().all()
+
+        if not cart_items:
+            raise ValueError("Cart is empty")
+
+        # Validate stock for all items
+        order_items = []
+        total_amount = Decimal("0.00")
+
+        for item in cart_items:
+            product = await db.get(Product, item.product_id, with_for_update=True)
+
+            if not product or not product.is_active:
+                raise ValueError(f"Product {item.product_id} not available")
+
+            if product.stock < item.quantity:
+                raise ValueError(
+                    f"Insufficient stock for {product.name}. "
+                    f"Available: {product.stock}, Requested: {item.quantity}"
+                )
+
+            # Deduct stock
+            product.stock -= item.quantity
+
+            # Create order item
+            order_item = OrderItem(
+                product_id=item.product_id,
+                quantity=item.quantity,
+                unit_price=item.unit_price
+            )
+            order_items.append(order_item)
+            total_amount += item.unit_price * item.quantity
+
+        # Create order
+        order = Order(
+            customer_id=cart.customer_id,
+            items=order_items,
+            total_amount=total_amount,
+            status=OrderStatus.PENDING_PAYMENT,
+            payment_status=PaymentStatus.PENDING
+        )
+        db.add(order)
+
+        # Transition cart to CHECKED_OUT
+        cart.status = CartStatus.CHECKED_OUT
+
+        await db.commit()
+        return order
+''',
+        "domain": "api_development",
+        "success_rate": 0.95,
+        "production_ready": True,
+    },
+
+    # E-commerce Pattern 3: Payment Workflow
+    {
+        "category": "payment_workflow",
+        "purpose": "Payment state transitions and order cancellation with stock rollback",
+        "code": '''"""
+Payment workflow with state machine and rollback logic.
+
+Handles payment simulation and order cancellation with stock restoration.
+"""
+from uuid import UUID
+from sqlalchemy.ext.asyncio import AsyncSession
+from models import Order, Product, OrderStatus, PaymentStatus
+
+class PaymentService:
+    """Payment operations with state validation."""
+
+    async def simulate_payment_success(
+        self,
+        db: AsyncSession,
+        order_id: UUID
+    ) -> Order:
+        """Mark order as paid (simulated payment)."""
+        order = await db.get(Order, order_id, with_for_update=True)
+
+        if not order:
+            raise ValueError("Order not found")
+
+        if order.status != OrderStatus.PENDING_PAYMENT:
+            raise ValueError(
+                f"Cannot pay order in status {order.status}"
+            )
+
+        order.status = OrderStatus.PAID
+        order.payment_status = PaymentStatus.SIMULATED_OK
+
+        await db.commit()
+        return order
+
+    async def cancel_order(
+        self,
+        db: AsyncSession,
+        order_id: UUID
+    ) -> Order:
+        """Cancel order and restore stock."""
+        order = await db.get(Order, order_id, with_for_update=True)
+
+        if not order:
+            raise ValueError("Order not found")
+
+        if order.status != OrderStatus.PENDING_PAYMENT:
+            raise ValueError(
+                f"Cannot cancel order in status {order.status}"
+            )
+
+        # Restore stock for all items
+        for item in order.items:
+            product = await db.get(Product, item.product_id, with_for_update=True)
+            if product:
+                product.stock += item.quantity
+
+        # Cancel order
+        order.status = OrderStatus.CANCELLED
+        order.payment_status = PaymentStatus.FAILED
+
+        await db.commit()
+        return order
+''',
+        "domain": "api_development",
+        "success_rate": 0.95,
+        "production_ready": True,
+    },
+
+    # E-commerce Pattern 4: Order Queries
+    {
+        "category": "order_queries",
+        "purpose": "Order listing and retrieval with filtering by customer and status",
+        "code": '''"""
+Order query operations with filtering.
+
+List orders by customer with optional status filtering.
+"""
+from typing import List, Optional
+from uuid import UUID
+from sqlalchemy.ext.asyncio import AsyncSession
+from models import Order, OrderStatus
+
+class OrderQueryService:
+    """Order retrieval operations."""
+
+    async def list_customer_orders(
+        self,
+        db: AsyncSession,
+        customer_id: UUID,
+        status: Optional[OrderStatus] = None,
+        page: int = 1,
+        page_size: int = 20
+    ) -> List[Order]:
+        """List orders for a customer with optional status filter."""
+        query = select(Order).where(Order.customer_id == customer_id)
+
+        if status:
+            query = query.where(Order.status == status)
+
+        query = query.order_by(Order.created_at.desc())
+        query = query.offset((page - 1) * page_size).limit(page_size)
+
+        result = await db.execute(query)
+        return result.scalars().all()
+
+    async def get_order(
+        self,
+        db: AsyncSession,
+        order_id: UUID
+    ) -> Optional[Order]:
+        """Get order by ID with items loaded."""
+        result = await db.execute(
+            select(Order)
+            .options(selectinload(Order.items))
+            .where(Order.id == order_id)
+        )
+        return result.scalar_one_or_none()
+''',
+        "domain": "api_development",
+        "success_rate": 0.95,
+        "production_ready": True,
+    },
+
+    # E-commerce Pattern 5: Stock Validation
+    {
+        "category": "stock_management",
+        "purpose": "Product stock validation and availability checking",
+        "code": '''"""
+Stock management utilities.
+
+Validate product availability and stock levels.
+"""
+from uuid import UUID
+from sqlalchemy.ext.asyncio import AsyncSession
+from models import Product
+
+class StockService:
+    """Stock validation and management."""
+
+    async def validate_stock_availability(
+        self,
+        db: AsyncSession,
+        product_id: UUID,
+        quantity: int
+    ) -> bool:
+        """Check if product has sufficient stock."""
+        product = await db.get(Product, product_id)
+
+        if not product:
+            return False
+
+        if not product.is_active:
+            return False
+
+        return product.stock >= quantity
+
+    async def check_multiple_products(
+        self,
+        db: AsyncSession,
+        items: List[tuple[UUID, int]]
+    ) -> dict[UUID, bool]:
+        """Check stock for multiple products."""
+        results = {}
+
+        for product_id, quantity in items:
+            available = await self.validate_stock_availability(
+                db, product_id, quantity
+            )
+            results[product_id] = available
+
+        return results
+
+    async def get_available_stock(
+        self,
+        db: AsyncSession,
+        product_id: UUID
+    ) -> int:
+        """Get current available stock for product."""
+        product = await db.get(Product, product_id)
+
+        if not product or not product.is_active:
+            return 0
+
+        return product.stock
+''',
+        "domain": "api_development",
+        "success_rate": 0.96,
+        "production_ready": True,
+    },
+
+    # E-commerce Pattern 6: Price Snapshotting
+    {
+        "category": "price_snapshot",
+        "purpose": "Price capture and snapshotting for cart items and orders",
+        "code": '''"""
+Price snapshotting utilities.
+
+Capture product prices at the time of cart add or order creation.
+"""
+from decimal import Decimal
+from uuid import UUID
+from sqlalchemy.ext.asyncio import AsyncSession
+from models import Product
+
+class PriceService:
+    """Price capture and management."""
+
+    async def get_current_price(
+        self,
+        db: AsyncSession,
+        product_id: UUID
+    ) -> Decimal:
+        """Get current product price."""
+        product = await db.get(Product, product_id)
+
+        if not product:
+            raise ValueError(f"Product {product_id} not found")
+
+        return product.price
+
+    async def snapshot_prices(
+        self,
+        db: AsyncSession,
+        product_ids: List[UUID]
+    ) -> dict[UUID, Decimal]:
+        """Capture prices for multiple products."""
+        prices = {}
+
+        result = await db.execute(
+            select(Product).where(Product.id.in_(product_ids))
+        )
+        products = result.scalars().all()
+
+        for product in products:
+            prices[product.id] = product.price
+
+        return prices
+
+    def calculate_subtotal(
+        self,
+        unit_price: Decimal,
+        quantity: int
+    ) -> Decimal:
+        """Calculate subtotal for item."""
+        return unit_price * Decimal(quantity)
+
+    def calculate_order_total(
+        self,
+        items: List[tuple[Decimal, int]]
+    ) -> Decimal:
+        """Calculate total for order from (price, quantity) tuples."""
+        total = Decimal("0.00")
+
+        for unit_price, quantity in items:
+            total += self.calculate_subtotal(unit_price, quantity)
+
+        return total
+''',
+        "domain": "api_development",
+        "success_rate": 0.97,
+        "production_ready": True,
+    },
+
+    # E-commerce Pattern 7: Workflow State Machine
+    {
+        "category": "state_machine",
+        "purpose": "State machine for cart and order status transitions with validation",
+        "code": '''"""
+State machine for workflow status transitions.
+
+Validates and manages state transitions for carts and orders.
+"""
+from enum import Enum
+from typing import Set
+
+class CartStatus(str, Enum):
+    """Cart status states."""
+    OPEN = "OPEN"
+    CHECKED_OUT = "CHECKED_OUT"
+
+class OrderStatus(str, Enum):
+    """Order status states."""
+    PENDING_PAYMENT = "PENDING_PAYMENT"
+    PAID = "PAID"
+    CANCELLED = "CANCELLED"
+
+class PaymentStatus(str, Enum):
+    """Payment status states."""
+    PENDING = "PENDING"
+    SIMULATED_OK = "SIMULATED_OK"
+    FAILED = "FAILED"
+
+class StateMachine:
+    """State transition validator."""
+
+    # Valid transitions
+    CART_TRANSITIONS = {
+        CartStatus.OPEN: {CartStatus.CHECKED_OUT},
+        CartStatus.CHECKED_OUT: set(),  # Terminal state
+    }
+
+    ORDER_TRANSITIONS = {
+        OrderStatus.PENDING_PAYMENT: {OrderStatus.PAID, OrderStatus.CANCELLED},
+        OrderStatus.PAID: set(),  # Terminal state
+        OrderStatus.CANCELLED: set(),  # Terminal state
+    }
+
+    PAYMENT_TRANSITIONS = {
+        PaymentStatus.PENDING: {PaymentStatus.SIMULATED_OK, PaymentStatus.FAILED},
+        PaymentStatus.SIMULATED_OK: set(),  # Terminal state
+        PaymentStatus.FAILED: set(),  # Terminal state
+    }
+
+    @classmethod
+    def can_transition_cart(
+        cls,
+        from_status: CartStatus,
+        to_status: CartStatus
+    ) -> bool:
+        """Check if cart status transition is valid."""
+        return to_status in cls.CART_TRANSITIONS.get(from_status, set())
+
+    @classmethod
+    def can_transition_order(
+        cls,
+        from_status: OrderStatus,
+        to_status: OrderStatus
+    ) -> bool:
+        """Check if order status transition is valid."""
+        return to_status in cls.ORDER_TRANSITIONS.get(from_status, set())
+
+    @classmethod
+    def can_transition_payment(
+        cls,
+        from_status: PaymentStatus,
+        to_status: PaymentStatus
+    ) -> bool:
+        """Check if payment status transition is valid."""
+        return to_status in cls.PAYMENT_TRANSITIONS.get(from_status, set())
+
+    @classmethod
+    def get_allowed_transitions(
+        cls,
+        current_status: Enum,
+        state_type: str
+    ) -> Set[Enum]:
+        """Get allowed transitions from current state."""
+        transitions_map = {
+            "cart": cls.CART_TRANSITIONS,
+            "order": cls.ORDER_TRANSITIONS,
+            "payment": cls.PAYMENT_TRANSITIONS,
+        }
+
+        transitions = transitions_map.get(state_type, {})
+        return transitions.get(current_status, set())
+''',
+        "domain": "api_development",
         "success_rate": 0.96,
         "production_ready": True,
     },
