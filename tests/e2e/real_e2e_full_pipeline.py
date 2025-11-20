@@ -23,7 +23,11 @@ sys.path.insert(0, str(project_root))
 
 # Test framework
 from tests.e2e.metrics_framework import MetricsCollector, PipelineMetrics
-from tests.e2e.precision_metrics import PrecisionMetrics, ContractValidator
+from tests.e2e.precision_metrics import (
+    PrecisionMetrics,
+    ContractValidator,
+    load_dag_ground_truth  # Task Group 6.4: DAG ground truth loader
+)
 
 # SpecParser for Phase 1 integration (Task Group 1.2)
 from src.parsing.spec_parser import SpecParser, SpecRequirements
@@ -385,6 +389,61 @@ class RealE2ETest:
             print(f"    - Domain distribution: {domain_counts}")
             print(f"    - Dependency graph: {len(self.dependency_graph)} nodes, valid DAG: {is_valid_dag}")
 
+            # Task Group 1.4: Track classification metrics
+            print("\n  📊 Tracking classification metrics against ground truth...")
+            from tests.e2e.precision_metrics import load_classification_ground_truth, validate_classification
+
+            # Load ground truth from spec
+            ground_truth = load_classification_ground_truth(self.spec_file)
+            print(f"    - Loaded ground truth for {len(ground_truth)} requirements")
+
+            # Validate each classified requirement
+            self.precision.classifications_total = len(self.classified_requirements)
+            self.precision.classifications_correct = 0
+            self.precision.classifications_incorrect = 0
+
+            for req in self.classified_requirements:
+                # Get requirement ID (e.g., "F1_create_product")
+                # Try to extract from description or use a generated ID
+                req_id = None
+                if hasattr(req, 'id') and req.id:
+                    req_id = req.id
+                elif hasattr(req, 'description') and req.description:
+                    # Try to extract from description (e.g., "F1. Create product" -> "F1_create_product")
+                    import re
+                    match = re.match(r'([A-Z]\d+)', req.description)
+                    if match:
+                        req_id = match.group(1)
+
+                # Skip if we can't identify the requirement
+                if not req_id or req_id not in ground_truth:
+                    continue
+
+                # Get actual classification
+                actual = {
+                    "domain": getattr(req, 'domain', None),
+                    "risk": getattr(req, 'risk_level', None)
+                }
+
+                # Get expected classification
+                expected = ground_truth.get(req_id)
+
+                # Validate
+                is_correct = validate_classification(actual, expected)
+                if is_correct:
+                    self.precision.classifications_correct += 1
+                else:
+                    self.precision.classifications_incorrect += 1
+
+            # Calculate classification accuracy
+            if self.precision.classifications_total > 0:
+                classification_accuracy = self.precision.classifications_correct / self.precision.classifications_total
+            else:
+                classification_accuracy = 0.0
+
+            print(f"    - Classification accuracy: {classification_accuracy:.1%}")
+            print(f"    - Correct: {self.precision.classifications_correct}/{self.precision.classifications_total}")
+
         else:
             # Fallback to old keyword matching (should not happen)
             print("  ⚠️ Falling back to keyword matching (RequirementsClassifier not available)")
@@ -593,10 +652,22 @@ class RealE2ETest:
         self.metrics_collector.add_checkpoint("multi_pass_planning", "CP-3.5: DAG validated", {})
         print("  ✓ Checkpoint: CP-3.5: DAG validated (5/5)")
 
-        # Precision metrics
-        self.precision.dag_nodes_expected = len(self.requirements)
+        # Task Group 6.4: Load DAG ground truth instead of hardcoded values
+        dag_ground_truth = load_dag_ground_truth(self.spec_file)
+
+        # Precision metrics - use ground truth if available, otherwise fallback
+        if dag_ground_truth and dag_ground_truth.get("nodes", 0) > 0:
+            # Use ground truth values
+            self.precision.dag_nodes_expected = dag_ground_truth["nodes"]
+            self.precision.dag_edges_expected = dag_ground_truth["edges"]
+            print(f"  📋 Using DAG ground truth: {dag_ground_truth['nodes']} nodes, {dag_ground_truth['edges']} edges expected")
+        else:
+            # Fallback to heuristic (old behavior)
+            self.precision.dag_nodes_expected = len(self.requirements)
+            self.precision.dag_edges_expected = len(dag_nodes) - 1
+            print(f"  ⚠️  No DAG ground truth found, using heuristic: {len(self.requirements)} nodes, {len(dag_nodes) - 1} edges expected")
+
         self.precision.dag_nodes_created = len(dag_nodes)
-        self.precision.dag_edges_expected = len(dag_nodes) - 1
         self.precision.dag_edges_created = len(dag_edges)
 
         # Contract validation
@@ -1477,8 +1548,11 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
                     missing_requirements = self.compliance_report.missing_requirements
 
                     print(f"  ✅ Semantic validation PASSED: {compliance_score:.1%} compliance")
-                    print(f"    - Entities: {len(entities_implemented)}/{len(self.compliance_report.entities_expected)}")
-                    print(f"    - Endpoints: {len(endpoints_implemented)}/{len(self.compliance_report.endpoints_expected)}")
+                    # Task Group 2.3: Use enhanced entity report formatting
+                    entity_report = self.compliance_validator._format_entity_report(self.compliance_report)
+                    endpoint_report = self.compliance_validator._format_endpoint_report(self.compliance_report)
+                    print(endpoint_report)
+                    print(entity_report)
 
                 except ComplianceValidationError as e:
                     # Task Group 4.2.3: Compliance below threshold - FAIL the E2E test

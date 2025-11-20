@@ -289,14 +289,20 @@ generated_app/
 
 ### Code Generation Changes Needed
 
-1. **Template System Overhaul**
-   - Crear templates para estructura modularizada
-   - Template para cada archivo (config.py, database.py, etc.)
-   - Template para tests (conftest, factories, unit, integration)
-   - Template para Docker files
-   - Template para Alembic migrations
+1. **Production-Ready Pattern Library** (aprovecha sistema existente)
+   - Crear "golden patterns" production-ready en PatternBank
+   - Patterns para estructura modularizada (config, database, logging, security)
+   - Patterns para tests completos (conftest, factories, unit, integration)
+   - Patterns para Docker infrastructure (Dockerfile, docker-compose)
+   - Patterns para Alembic migrations
+   - **Ventaja**: Usa Qdrant + Neo4j + pattern_bank existente, NO crea sistema duplicado
 
-2. **New Components to Generate**
+2. **Pattern Composition System**
+   - Implementar lógica para combinar múltiples patterns en app completa
+   - Pattern retrieval con filtros: `production_ready=True`, `min_score=90`
+   - Pattern metadata con scores de production readiness, test coverage, security
+
+3. **New Components to Generate** (via patterns)
    - Config manager (pydantic-settings)
    - Database connection manager (SQLAlchemy async)
    - Logging setup (structlog)
@@ -345,8 +351,8 @@ Una app generada debe:
 - **Ahorro**: 80-120 horas de dev time
 
 **Costo de Implementación**:
-- Template creation: ~40 horas
-- Pipeline modifications: ~30 horas
+- Pattern library creation: ~40 horas
+- Pattern composition system: ~30 horas
 - Testing & validation: ~20 horas
 - **Total**: ~90 horas
 

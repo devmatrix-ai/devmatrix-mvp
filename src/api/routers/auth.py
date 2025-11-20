@@ -16,7 +16,7 @@ from typing import Optional, List
 from uuid import UUID
 from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Depends, status, Request
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
 
 from src.services.auth_service import AuthService
 from src.services.email_verification_service import EmailVerificationService
@@ -55,32 +55,38 @@ totp_service = TOTPService()
 
 class RegisterRequest(BaseModel):
     """User registration request"""
-    email: EmailStr
-    username: str = Field(..., min_length=3, max_length=50, pattern="^[a-zA-Z0-9_-]+$")
-    password: str = Field(..., min_length=8, max_length=100)
-
-    class Config:
-        schema_extra = {
+    # Task Group 5.1: Enable strict mode to prevent type coercion
+    model_config = ConfigDict(
+        strict=True,
+        json_schema_extra={
             "example": {
                 "email": "user@example.com",
                 "username": "john_doe",
                 "password": "SecurePassword123!"
             }
         }
+    )
+
+    email: EmailStr
+    username: str = Field(..., min_length=3, max_length=50, pattern="^[a-zA-Z0-9_-]+$")
+    password: str = Field(..., min_length=8, max_length=100)
 
 
 class LoginRequest(BaseModel):
     """User login request"""
-    email: EmailStr
-    password: str
-
-    class Config:
-        schema_extra = {
+    # Task Group 5.1: Enable strict mode to prevent type coercion
+    model_config = ConfigDict(
+        strict=True,
+        json_schema_extra={
             "example": {
                 "email": "user@example.com",
                 "password": "SecurePassword123!"
             }
         }
+    )
+
+    email: EmailStr
+    password: str
 
 
 class RefreshTokenRequest(BaseModel):

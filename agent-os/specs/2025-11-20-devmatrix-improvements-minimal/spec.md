@@ -2068,139 +2068,366 @@ directory = htmlcov
 
 ## Code Generation Pipeline Changes
 
-### Template System Changes
+### Production Pattern Library (Leverages Existing PatternBank)
 
 **Current** (Milestone 4):
 ```python
-# Single template generates monolithic main.py
-templates/
-└── fastapi_basic.py.j2  # 233 lines, everything mixed
+# Single code generation generates monolithic main.py
+# No reusable patterns stored
 ```
 
-**Proposed**:
+**Proposed** - **Leverage Existing PatternBank Infrastructure**:
+
+DevMatrix ALREADY has a powerful pattern system (`PatternBank` + Qdrant + Neo4j). Instead of creating Jinja2 templates (duplicate functionality), we'll create **production-ready golden patterns** stored in PatternBank.
+
+**Existing PatternBank Infrastructure** (`src/cognitive/patterns/pattern_bank.py`):
 ```python
-# Multiple templates for modular architecture
-templates/
-├── project_structure/  # Directory creation
-├── core/
-│   ├── config.py.j2
-│   ├── database.py.j2
-│   ├── logging.py.j2
-│   ├── security.py.j2
-│   └── middleware.py.j2
-├── models/
-│   ├── schemas.py.j2     # Per-entity schemas
-│   └── entities.py.j2    # Per-entity SQLAlchemy models
-├── repositories/
-│   └── repository.py.j2  # Per-entity repository
-├── services/
-│   └── service.py.j2     # Per-entity service
-├── api/
-│   ├── dependencies.py.j2
-│   └── routes.py.j2      # Per-entity routes
-├── tests/
-│   ├── pytest.ini.j2
-│   ├── conftest.py.j2
-│   ├── factories.py.j2
-│   └── test_templates/
-│       ├── test_models.py.j2
-│       ├── test_repositories.py.j2
-│       ├── test_services.py.j2
-│       └── test_api.py.j2
-├── docker/
-│   ├── Dockerfile.j2
-│   ├── docker-compose.yml.j2
-│   ├── docker-compose.test.yml.j2
-│   └── prometheus.yml.j2
-└── configs/
-    ├── .env.example.j2
-    ├── .gitignore.j2
-    ├── pyproject.toml.j2
-    ├── alembic.ini.j2
-    └── Makefile.j2
+@dataclass
+class StoredPattern:
+    pattern_id: str
+    signature: SemanticTaskSignature
+    code: str
+    success_rate: float
+    similarity_score: float
+    usage_count: int
+    created_at: datetime
+    domain: str  # "auth", "crud", "api", "validation", etc.
+
+class PatternBank:
+    """
+    Pattern Bank with Qdrant vector database integration.
+
+    Features:
+    - Pattern storage with ≥95% success rate threshold
+    - Semantic similarity search (Sentence Transformers embeddings)
+    - Hybrid search (vector + metadata filtering)
+    - Auto-classification (PatternClassifier with domain/security/performance)
+    - Usage tracking and auto-evolution
+    """
+
+    def store_pattern(
+        self, signature: SemanticTaskSignature, code: str, success_rate: float
+    ) -> str:
+        """Store pattern with auto-classification"""
+
+    def search_patterns(
+        self,
+        signature: SemanticTaskSignature,
+        top_k: int = 5,
+        similarity_threshold: float = 0.85
+    ) -> List[StoredPattern]:
+        """Semantic similarity search"""
+
+    def hybrid_search(
+        self,
+        signature: SemanticTaskSignature,
+        domain: Optional[str] = None,
+        top_k: int = 5
+    ) -> List[StoredPattern]:
+        """Hybrid search: 70% vector similarity + 30% metadata"""
 ```
 
-### Template Variables
-
-Each template receives:
+**Pattern Categories for Production-Ready Apps**:
 ```python
-{
-    "app_name": "task-api",
-    "entities": [
-        {
-            "name": "Task",
-            "snake_name": "task",
-            "fields": [
-                {"name": "title", "type": "str", "constraints": {"max_length": 200}},
-                {"name": "description", "type": "Optional[str]"},
-                {"name": "completed", "type": "bool", "default": False}
-            ]
-        }
-    ],
-    "endpoints": [
-        {"method": "POST", "path": "/tasks", "operation": "create"},
-        {"method": "GET", "path": "/tasks", "operation": "list"},
-        {"method": "GET", "path": "/tasks/{id}", "operation": "get"},
-        {"method": "PUT", "path": "/tasks/{id}", "operation": "update"},
-        {"method": "DELETE", "path": "/tasks/{id}", "operation": "delete"}
-    ],
-    "validations": [...],
-    "config": {
-        "database": "postgresql",
-        "async": True,
-        "observability": True,
-        "docker": True
+PRODUCTION_PATTERN_CATEGORIES = {
+    # Core Infrastructure
+    'core_config': {
+        'patterns': ['pydantic_settings_config', 'environment_management', 'feature_flags'],
+        'success_threshold': 0.98,
+        'domain': 'configuration'
+    },
+    'database_async': {
+        'patterns': ['sqlalchemy_async_engine', 'connection_pooling', 'alembic_setup'],
+        'success_threshold': 0.98,
+        'domain': 'data_access'
+    },
+    'observability': {
+        'patterns': ['structlog_setup', 'health_checks', 'prometheus_metrics', 'request_id_middleware'],
+        'success_threshold': 0.95,
+        'domain': 'infrastructure'
+    },
+
+    # Data Layer
+    'models_pydantic': {
+        'patterns': ['strict_mode_schemas', 'validation_patterns', 'timezone_aware_datetimes'],
+        'success_threshold': 0.95,
+        'domain': 'data_modeling'
+    },
+    'models_sqlalchemy': {
+        'patterns': ['async_declarative_base', 'entity_relationships', 'database_indexes'],
+        'success_threshold': 0.95,
+        'domain': 'data_modeling'
+    },
+    'repository_pattern': {
+        'patterns': ['generic_repository', 'async_crud_operations', 'transaction_management'],
+        'success_threshold': 0.95,
+        'domain': 'data_access'
+    },
+
+    # Service Layer
+    'business_logic': {
+        'patterns': ['service_layer_pattern', 'dependency_injection', 'error_handling'],
+        'success_threshold': 0.90,
+        'domain': 'business_logic'
+    },
+
+    # API Layer
+    'api_routes': {
+        'patterns': ['fastapi_crud_endpoints', 'pagination', 'api_versioning'],
+        'success_threshold': 0.95,
+        'domain': 'api'
+    },
+
+    # Security
+    'security_hardening': {
+        'patterns': ['html_sanitization', 'rate_limiting', 'security_headers', 'cors_config'],
+        'success_threshold': 0.98,
+        'domain': 'security'
+    },
+
+    # Testing
+    'test_infrastructure': {
+        'patterns': ['pytest_config', 'async_fixtures', 'test_factories', 'integration_tests'],
+        'success_threshold': 0.95,
+        'domain': 'testing'
+    },
+
+    # Docker & Infrastructure
+    'docker_infrastructure': {
+        'patterns': ['multistage_dockerfile', 'docker_compose_full_stack', 'health_checks'],
+        'success_threshold': 0.95,
+        'domain': 'infrastructure'
+    },
+
+    # Configuration Files
+    'project_config': {
+        'patterns': ['pyproject_toml', 'env_example', 'gitignore', 'makefile', 'pre_commit'],
+        'success_threshold': 0.90,
+        'domain': 'configuration'
     }
 }
 ```
 
-### Code Generation Service Changes
+### Pattern Metadata Enhancement
+
+**Add Production Readiness Score** to PatternBank metadata:
+
+```python
+# Extend PatternBank._store_in_qdrant() metadata:
+metadata = {
+    "pattern_id": pattern_id,
+    "purpose": signature.purpose,
+    "intent": signature.intent,
+    "domain": signature.domain,
+    "category": classification_result.category,
+    "code": code,
+    "success_rate": success_rate,
+
+    # NEW: Production readiness metadata
+    "production_ready": True,  # Flag for production patterns
+    "production_readiness_score": 0.95,  # Calculated from quality metrics
+    "test_coverage": 0.85,  # From execution metrics
+    "security_level": "high",  # From PatternClassifier
+    "performance_tier": "medium",  # From PatternClassifier
+    "observability_complete": True,  # Has logging/metrics
+    "docker_ready": True,  # Has Docker support
+
+    "usage_count": 0,
+    "created_at": datetime.utcnow().isoformat(),
+    "semantic_hash": semantic_hash,
+}
+```
+
+### Pattern Composition System
 
 **File**: `src/services/code_generation_service.py`
 
-**New Methods**:
+**New Pattern-Based Methods**:
 ```python
 class CodeGenerationService:
+    def __init__(self):
+        self.pattern_bank = PatternBank()
+        self.pattern_bank.connect()
 
-    async def generate_modular_app(self, spec: SpecRequirements) -> GeneratedApp:
-        """Generate complete modular application"""
+    async def generate_production_app(self, spec: SpecRequirements) -> GeneratedApp:
+        """
+        Generate complete production-ready application using pattern composition.
 
-        # 1. Create directory structure
-        await self._create_directory_structure()
+        Uses existing PatternBank infrastructure instead of Jinja2 templates.
+        """
 
-        # 2. Generate core infrastructure
-        await self._generate_core_files(spec)
+        # 1. Retrieve production-ready patterns by category
+        patterns = await self._retrieve_production_patterns(spec)
 
-        # 3. Generate models (schemas + entities)
+        # 2. Compose patterns into modular architecture
+        generated_files = await self._compose_patterns(patterns, spec)
+
+        # 3. Validate completeness
+        validation_result = await self._validate_production_readiness(generated_files)
+
+        return GeneratedApp(
+            files=generated_files,
+            validation=validation_result,
+            production_ready=validation_result.production_score >= 0.95
+        )
+
+    async def _retrieve_production_patterns(
+        self, spec: SpecRequirements
+    ) -> Dict[str, List[StoredPattern]]:
+        """
+        Retrieve production-ready patterns for all categories.
+
+        Uses PatternBank.hybrid_search() with production_ready filter.
+        """
+        patterns = {}
+
+        for category, config in PRODUCTION_PATTERN_CATEGORIES.items():
+            # Create query signature for category
+            query_sig = SemanticTaskSignature(
+                purpose=f"production ready {category} implementation",
+                intent="implement",
+                inputs={},
+                outputs={},
+                domain=config['domain']
+            )
+
+            # Hybrid search with production_ready filter
+            # NOTE: Need to extend PatternBank.hybrid_search() to support metadata filters
+            category_patterns = self.pattern_bank.hybrid_search(
+                signature=query_sig,
+                domain=config['domain'],
+                top_k=3
+            )
+
+            # Filter by production readiness threshold
+            patterns[category] = [
+                p for p in category_patterns
+                if p.success_rate >= config['success_threshold']
+                # TODO: Add production_ready metadata filter
+            ]
+
+        return patterns
+
+    async def _compose_patterns(
+        self,
+        patterns: Dict[str, List[StoredPattern]],
+        spec: SpecRequirements
+    ) -> Dict[str, str]:
+        """
+        Compose patterns into complete modular application.
+
+        Pattern composition rules:
+        1. Core infrastructure patterns are applied first (config, database, logging)
+        2. Data layer patterns (models, repositories)
+        3. Service layer patterns
+        4. API layer patterns (routes)
+        5. Security patterns (middleware)
+        6. Testing patterns
+        7. Docker and config files
+        """
+        files = {}
+
+        # 1. Core infrastructure
+        if 'core_config' in patterns:
+            files['src/core/config.py'] = self._adapt_pattern(
+                patterns['core_config'][0].code,
+                spec
+            )
+
+        if 'database_async' in patterns:
+            files['src/core/database.py'] = self._adapt_pattern(
+                patterns['database_async'][0].code,
+                spec
+            )
+
+        if 'observability' in patterns:
+            files['src/core/logging.py'] = self._adapt_pattern(
+                patterns['observability'][0].code,  # structlog_setup
+                spec
+            )
+            files['src/api/routes/health.py'] = self._adapt_pattern(
+                patterns['observability'][1].code,  # health_checks
+                spec
+            )
+
+        # 2. Data layer (per entity)
         for entity in spec.entities:
-            await self._generate_entity_schemas(entity)
-            await self._generate_entity_sqlalchemy(entity)
+            # Pydantic schemas
+            if 'models_pydantic' in patterns:
+                files[f'src/models/schemas.py'] = self._generate_entity_schemas(
+                    patterns['models_pydantic'], entity
+                )
 
-        # 4. Generate repositories
-        for entity in spec.entities:
-            await self._generate_repository(entity)
+            # SQLAlchemy models
+            if 'models_sqlalchemy' in patterns:
+                files[f'src/models/entities.py'] = self._generate_entity_models(
+                    patterns['models_sqlalchemy'], entity
+                )
 
-        # 5. Generate services
-        for entity in spec.entities:
-            await self._generate_service(entity)
+            # Repositories
+            if 'repository_pattern' in patterns:
+                files[f'src/repositories/{entity.snake_name}_repository.py'] = (
+                    self._generate_repository(patterns['repository_pattern'], entity)
+                )
 
-        # 6. Generate API routes
-        for entity in spec.entities:
-            await self._generate_routes(entity)
+        # 3. Service layer (per entity)
+        if 'business_logic' in patterns:
+            for entity in spec.entities:
+                files[f'src/services/{entity.snake_name}_service.py'] = (
+                    self._generate_service(patterns['business_logic'], entity)
+                )
 
-        # 7. Generate tests
-        await self._generate_test_suite(spec)
+        # 4. API routes (per entity)
+        if 'api_routes' in patterns:
+            for entity in spec.entities:
+                files[f'src/api/routes/{entity.snake_name}.py'] = (
+                    self._generate_routes(patterns['api_routes'], entity)
+                )
 
-        # 8. Generate Docker infrastructure
-        await self._generate_docker_files(spec)
+        # 5. Security
+        if 'security_hardening' in patterns:
+            files['src/core/security.py'] = self._compose_security_patterns(
+                patterns['security_hardening']
+            )
 
-        # 9. Generate configs (.env, pyproject.toml, etc.)
-        await self._generate_config_files(spec)
+        # 6. Testing
+        if 'test_infrastructure' in patterns:
+            files['tests/conftest.py'] = patterns['test_infrastructure'][0].code  # pytest_config
+            files['tests/factories.py'] = patterns['test_infrastructure'][1].code  # test_factories
 
-        # 10. Generate Alembic migrations
-        await self._generate_migrations(spec)
+            for entity in spec.entities:
+                files[f'tests/integration/test_{entity.snake_name}_api.py'] = (
+                    self._generate_integration_tests(patterns['test_infrastructure'], entity)
+                )
 
-        return GeneratedApp(...)
+        # 7. Docker & Infrastructure
+        if 'docker_infrastructure' in patterns:
+            files['docker/Dockerfile'] = patterns['docker_infrastructure'][0].code
+            files['docker/docker-compose.yml'] = patterns['docker_infrastructure'][1].code
+
+        # 8. Config files
+        if 'project_config' in patterns:
+            files['pyproject.toml'] = patterns['project_config'][0].code
+            files['.env.example'] = patterns['project_config'][1].code
+            files['.gitignore'] = patterns['project_config'][2].code
+            files['Makefile'] = patterns['project_config'][3].code
+
+        return files
+
+    def _adapt_pattern(self, pattern_code: str, spec: SpecRequirements) -> str:
+        """
+        Adapt pattern code to spec requirements.
+
+        Replace placeholder variables with actual spec values:
+        - {APP_NAME} → spec.app_name
+        - {DATABASE_URL} → spec.database_url
+        - {ENTITY_NAME} → entity.name
+        """
+        adapted = pattern_code
+        adapted = adapted.replace("{APP_NAME}", spec.app_name)
+        adapted = adapted.replace("{DATABASE_URL}", spec.config.get("database_url", ""))
+        # ... additional adaptations
+        return adapted
 ```
 
 ---

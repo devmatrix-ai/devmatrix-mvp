@@ -23,9 +23,9 @@ task_group_assignments:
   - name: ci_cd_and_documentation
     claude_code_subagent: devops-architect
     rationale: CI/CD pipelines, automation workflows, infrastructure documentation
-  - name: template_system
+  - name: pattern_library
     claude_code_subagent: python-expert
-    rationale: Production-ready Python code, Jinja2 templates, code generation service
+    rationale: Production-ready Python patterns, PatternBank integration, pattern composition system
 
 metadata:
   spec_name: devmatrix-improvements-minimal

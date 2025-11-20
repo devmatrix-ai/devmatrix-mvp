@@ -1,0 +1,44 @@
+task_groups:
+  - name: Classification Metrics Capture (M1)
+    claude_code_subagent: python-expert
+    rationale: "Backend metrics integration + testing expertise needed"
+
+  - name: Presentation Enhancement (M4)
+    claude_code_subagent: implementer
+    rationale: "Straightforward formatting improvements"
+
+  - name: Pattern Database Cleanup (M2.1)
+    claude_code_subagent: python-expert
+    rationale: "Data cleanup scripting + database manipulation"
+
+  - name: Adaptive Thresholds (M2.2)
+    claude_code_subagent: backend-architect
+    rationale: "System design for adaptive threshold strategy"
+
+  - name: Keyword Fallback (M2.3)
+    claude_code_subagent: python-expert
+    rationale: "Complex pattern matching + NLP heuristics"
+
+  - name: DAG Ground Truth Definition (M3.1)
+    claude_code_subagent: technical-writer
+    rationale: "Technical spec writing + ground truth documentation"
+
+  - name: Enhanced Dependency Inference (M3.2)
+    claude_code_subagent: backend-architect
+    rationale: "Complex graph algorithms + system architecture"
+
+  - name: Execution Order Validation (M3.3)
+    claude_code_subagent: python-expert
+    rationale: "Validation logic + testing implementation"
+
+  - name: Regression Testing
+    claude_code_subagent: quality-engineer
+    rationale: "Comprehensive testing + test automation specialist"
+
+  - name: Documentation Updates
+    claude_code_subagent: technical-writer
+    rationale: "Technical documentation writing expertise"
+
+  - name: Deployment & Monitoring
+    claude_code_subagent: devops-architect
+    rationale: "Infrastructure + deployment + monitoring setup"

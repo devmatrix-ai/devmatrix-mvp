@@ -438,3 +438,303 @@ class ContractValidator:
             print(f"   Message: {v['message']}")
             if 'expected' in v:
                 print(f"   Expected: {v['expected']}, Actual: {v['actual']}")
+
+
+def validate_classification(
+    actual: Dict[str, Any],
+    expected: Dict[str, Any]
+) -> bool:
+    """
+    Validate if requirement classification matches ground truth
+
+    Task Group 1.3: Classification validator method from spec.md lines 175-196
+
+    Args:
+        actual: {domain: str, risk: str, ...} - Actual classification from RequirementsClassifier
+        expected: {domain: str, risk: str} - Expected classification from ground truth
+
+    Returns:
+        True if domain and risk match, False otherwise
+        Returns True if no ground truth is available (graceful handling)
+
+    Examples:
+        >>> validate_classification(
+        ...     {"domain": "crud", "risk": "low"},
+        ...     {"domain": "crud", "risk": "low"}
+        ... )
+        True
+
+        >>> validate_classification(
+        ...     {"domain": "workflow", "risk": "high"},
+        ...     {"domain": "crud", "risk": "low"}
+        ... )
+        False
+
+        >>> validate_classification(
+        ...     {"domain": "crud", "risk": "low"},
+        ...     None
+        ... )
+        True
+    """
+    if not expected:
+        return True  # No ground truth = assume correct
+
+    # Get domain and risk from both dicts
+    actual_domain = actual.get('domain')
+    expected_domain = expected.get('domain')
+    actual_risk = actual.get('risk')
+    expected_risk = expected.get('risk')
+
+    # Both must match
+    return (
+        actual_domain == expected_domain and
+        actual_risk == expected_risk
+    )
+
+
+def load_classification_ground_truth(spec_path: str) -> Dict[str, Dict[str, str]]:
+    """
+    Load classification ground truth from spec file
+
+    Task Group 1.4: Helper to load ground truth from spec metadata
+
+    Parses the "Classification Ground Truth" section in the spec file
+    and extracts domain/risk labels for each requirement.
+
+    Args:
+        spec_path: Path to specification file
+
+    Returns:
+        Dictionary mapping requirement IDs to {domain, risk} dicts
+        Example: {"F1_create_product": {"domain": "crud", "risk": "low"}}
+        Returns empty dict if no ground truth section found
+
+    Example spec format:
+        ## Classification Ground Truth
+
+        **F1_create_product**:
+          - domain: crud
+          - risk: low
+    """
+    import re
+    from pathlib import Path
+
+    ground_truth = {}
+
+    try:
+        spec_path_obj = Path(spec_path)
+        if not spec_path_obj.exists():
+            return ground_truth
+
+        with open(spec_path_obj, 'r') as f:
+            content = f.read()
+
+        # Find Classification Ground Truth section
+        if "## Classification Ground Truth" not in content:
+            return ground_truth
+
+        # Split into lines and parse
+        lines = content.split('\n')
+        in_ground_truth_section = False
+        current_req_id = None
+
+        for line in lines:
+            # Check for start of ground truth section
+            if "## Classification Ground Truth" in line:
+                in_ground_truth_section = True
+                continue
+
+            # Check for end of section (next ## header)
+            if in_ground_truth_section and line.startswith("## ") and "Classification Ground Truth" not in line:
+                break
+
+            if not in_ground_truth_section:
+                continue
+
+            # Parse requirement ID (e.g., **F1_create_product**:)
+            req_match = re.match(r'\*\*([A-Z0-9_]+)\*\*:', line)
+            if req_match:
+                current_req_id = req_match.group(1)
+                ground_truth[current_req_id] = {}
+                continue
+
+            # Parse domain line (e.g., "  - domain: crud")
+            if current_req_id and "- domain:" in line:
+                domain = line.split("domain:")[1].strip()
+                ground_truth[current_req_id]["domain"] = domain
+
+            # Parse risk line (e.g., "  - risk: low")
+            if current_req_id and "- risk:" in line:
+                risk = line.split("risk:")[1].strip()
+                ground_truth[current_req_id]["risk"] = risk
+
+    except Exception as e:
+        print(f"Warning: Failed to load classification ground truth: {e}")
+
+    return ground_truth
+
+
+def load_dag_ground_truth(spec_path: str) -> Dict[str, Any]:
+    """
+    Load DAG ground truth from spec file
+
+    Task Group 6.3: DAG ground truth parser
+
+    Parses the "Expected Dependency Graph (Ground Truth)" section in the spec file
+    and extracts nodes and edges.
+
+    Args:
+        spec_path: Path to specification file
+
+    Returns:
+        Dictionary with:
+        {
+            "nodes": int,              # Expected number of nodes
+            "node_list": List[str],    # List of node names
+            "edges": int,              # Expected number of edges
+            "edge_list": List[tuple]   # List of (from, to) edge tuples
+        }
+        Returns empty dict if no ground truth section found
+
+    Example spec format:
+        ## Expected Dependency Graph (Ground Truth)
+
+        ### Nodes (10 expected)
+
+        ```yaml
+        nodes: 10
+        node_list:
+          - create_product
+          - list_products
+        ```
+
+        ### Edges (12 explicit dependencies)
+
+        ```yaml
+        edges: 12
+        edge_list:
+          - from: create_customer
+            to: create_cart
+            reason: "Cart requires customer to exist"
+        ```
+    """
+    import re
+    from pathlib import Path
+
+    ground_truth = {
+        "nodes": 0,
+        "node_list": [],
+        "edges": 0,
+        "edge_list": []
+    }
+
+    try:
+        spec_path_obj = Path(spec_path)
+        if not spec_path_obj.exists():
+            return ground_truth
+
+        with open(spec_path_obj, 'r') as f:
+            content = f.read()
+
+        # Find DAG Ground Truth section
+        if "## Expected Dependency Graph (Ground Truth)" not in content:
+            return ground_truth
+
+        # Split into lines and parse
+        lines = content.split('\n')
+        in_ground_truth_section = False
+        in_nodes_yaml = False
+        in_edges_yaml = False
+        current_edge_from = None
+
+        for i, line in enumerate(lines):
+            # Check for start of ground truth section
+            if "## Expected Dependency Graph (Ground Truth)" in line:
+                in_ground_truth_section = True
+                continue
+
+            # Check for end of section (next ## header that's not part of ground truth)
+            if in_ground_truth_section and line.startswith("## ") and "Expected Dependency Graph" not in line:
+                break
+
+            if not in_ground_truth_section:
+                continue
+
+            # Parse nodes section
+            if "### Nodes" in line:
+                # Extract node count from header (e.g., "### Nodes (10 expected)")
+                node_match = re.search(r'\((\d+)\s+expected\)', line)
+                if node_match:
+                    ground_truth["nodes"] = int(node_match.group(1))
+                continue
+
+            # Detect start of nodes YAML block (check previous lines for context)
+            if line.strip() == "```yaml":
+                # Look back to see if we're in nodes section
+                lookback = '\n'.join(lines[max(0, i-10):i])
+                if "### Nodes" in lookback and "### Edges" not in lookback:
+                    in_nodes_yaml = True
+                    in_edges_yaml = False
+                elif "### Edges" in lookback:
+                    in_edges_yaml = True
+                    in_nodes_yaml = False
+                continue
+
+            # Parse nodes YAML content
+            if in_nodes_yaml:
+                if line.strip() == "```":
+                    in_nodes_yaml = False
+                    continue
+
+                # Parse "nodes: 10"
+                if line.strip().startswith("nodes:"):
+                    node_count = line.split(":")[1].strip()
+                    ground_truth["nodes"] = int(node_count)
+
+                # Parse node list items (e.g., "  - create_product")
+                if line.strip().startswith("- "):
+                    node_name = line.strip()[2:].split("#")[0].strip()  # Remove "- " and comments
+                    if node_name and not node_name.startswith("from") and not node_name.startswith("to"):
+                        ground_truth["node_list"].append(node_name)
+
+            # Parse edges section
+            if "### Edges" in line:
+                # Extract edge count from header (e.g., "### Edges (12 explicit dependencies)")
+                edge_match = re.search(r'\((\d+)\s+explicit', line)
+                if edge_match:
+                    ground_truth["edges"] = int(edge_match.group(1))
+                continue
+
+            # Parse edges YAML content
+            if in_edges_yaml:
+                if line.strip() == "```":
+                    in_edges_yaml = False
+                    continue
+
+                # Parse "edges: 12"
+                if line.strip().startswith("edges:"):
+                    edge_count = line.split(":")[1].strip()
+                    ground_truth["edges"] = int(edge_count)
+
+                # Parse edge "from" field
+                if line.strip().startswith("- from:"):
+                    from_node = line.split("from:")[1].strip()
+                    current_edge_from = from_node
+
+                # Parse edge "to" field
+                if line.strip().startswith("to:") and current_edge_from:
+                    to_node = line.split("to:")[1].strip()
+                    ground_truth["edge_list"].append((current_edge_from, to_node))
+                    current_edge_from = None  # Reset for next edge
+
+        # Validate ground truth format
+        if ground_truth["nodes"] > 0 and len(ground_truth["node_list"]) != ground_truth["nodes"]:
+            print(f"Warning: DAG ground truth nodes mismatch - expected {ground_truth['nodes']}, got {len(ground_truth['node_list'])}")
+
+        if ground_truth["edges"] > 0 and len(ground_truth["edge_list"]) != ground_truth["edges"]:
+            print(f"Warning: DAG ground truth edges mismatch - expected {ground_truth['edges']}, got {len(ground_truth['edge_list'])}")
+
+    except Exception as e:
+        print(f"Warning: Failed to load DAG ground truth: {e}")
+
+    return ground_truth

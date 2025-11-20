@@ -721,3 +721,256 @@ class MultiPassPlanner:
     def execute(self, spec: str) -> Dict[str, Any]:
         """Alias for plan() method."""
         return self.plan(spec)
+
+    # ========================================================================
+    # Enhanced Dependency Inference (M3.2)
+    # ========================================================================
+
+    def _group_by_entity(self, requirements: List[Any]) -> Dict[str, List[Any]]:
+        """
+        Group requirements by entity (Product, Customer, Cart, etc.)
+
+        Args:
+            requirements: List of Requirement objects
+
+        Returns:
+            Dict mapping entity name to list of requirements
+
+        Example:
+            >>> reqs = [
+            ...     Requirement(id="F1", description="Create product"),
+            ...     Requirement(id="F2", description="Get product"),
+            ...     Requirement(id="F3", description="Register customer")
+            ... ]
+            >>> grouped = planner._group_by_entity(reqs)
+            >>> grouped.keys()
+            >>> # dict_keys(['product', 'customer'])
+        """
+        entities = {}
+
+        for req in requirements:
+            # Extract entity from requirement
+            entity = self._extract_entity(req)
+
+            if entity not in entities:
+                entities[entity] = []
+
+            entities[entity].append(req)
+
+        return entities
+
+    def _extract_entity(self, req: Any) -> str:
+        """
+        Extract entity name from requirement
+
+        Uses heuristic: look for known entities in requirement description
+
+        Args:
+            req: Requirement object with description field
+
+        Returns:
+            Entity name (lowercase) or "unknown"
+
+        Example:
+            >>> req = Requirement(id="F1", description="Create product with price")
+            >>> entity = planner._extract_entity(req)
+            >>> # "product"
+        """
+        # Simple heuristic: look for known entities
+        text = req.description.lower()
+
+        # Known e-commerce entities (can be extended)
+        entities = ['product', 'customer', 'cart', 'order', 'payment']
+
+        for entity in entities:
+            if entity in text:
+                return entity
+
+        return 'unknown'
+
+    def _crud_dependencies(self, requirements: List[Any]) -> List[Any]:
+        """
+        Infer CRUD dependencies
+
+        Rule: Create must come before Read/Update/Delete for same entity
+
+        Args:
+            requirements: List of Requirement objects with 'operation' field
+
+        Returns:
+            List of Edge objects representing dependencies
+
+        Example:
+            >>> reqs = [
+            ...     Requirement(id="F1", description="Create product", operation="create"),
+            ...     Requirement(id="F2", description="Get product", operation="read"),
+            ...     Requirement(id="F3", description="Update product", operation="update")
+            ... ]
+            >>> edges = planner._crud_dependencies(reqs)
+            >>> # [Edge(F1 -> F2), Edge(F1 -> F3)]
+        """
+        # Import Edge dataclass locally to avoid circular imports
+        from dataclasses import dataclass
+
+        @dataclass
+        class Edge:
+            """Dependency edge"""
+            from_node: str
+            to_node: str
+            type: str
+            reason: str = ""
+
+        edges = []
+        entities = self._group_by_entity(requirements)
+
+        for entity_name, reqs in entities.items():
+            # Find create requirement for this entity
+            create_req = next(
+                (r for r in reqs if r.operation == 'create'),
+                None
+            )
+
+            if not create_req:
+                continue
+
+            # Create edges from create to all other operations
+            for req in reqs:
+                if req.operation in ['read', 'list', 'update', 'delete']:
+                    edges.append(Edge(
+                        from_node=create_req.id,
+                        to_node=req.id,
+                        type='crud_dependency',
+                        reason=f"{entity_name} must be created before {req.operation}"
+                    ))
+
+        return edges
+
+    def _validate_edges(self, edges: List[Any]) -> List[Any]:
+        """
+        Validate and deduplicate edges
+
+        Removes duplicate edges with same from_node and to_node
+
+        Args:
+            edges: List of Edge objects
+
+        Returns:
+            List of unique edges
+
+        Example:
+            >>> edges = [Edge("F1", "F2"), Edge("F1", "F2"), Edge("F1", "F3")]
+            >>> unique = planner._validate_edges(edges)
+            >>> len(unique)
+            >>> # 2 (duplicate removed)
+        """
+        # Deduplicate based on (from_node, to_node) pair
+        seen = set()
+        unique_edges = []
+
+        for edge in edges:
+            edge_key = (edge.from_node, edge.to_node)
+            if edge_key not in seen:
+                seen.add(edge_key)
+                unique_edges.append(edge)
+
+        return unique_edges
+
+    def _explicit_dependencies(self, requirements: List[Any]) -> List[Any]:
+        """
+        Extract explicit dependencies from requirement metadata
+
+        Args:
+            requirements: List of Requirement objects
+
+        Returns:
+            List of Edge objects from explicit dependencies
+
+        Example:
+            >>> reqs = [
+            ...     Requirement(id="F1", dependencies=[]),
+            ...     Requirement(id="F2", dependencies=["F1"])
+            ... ]
+            >>> edges = planner._explicit_dependencies(reqs)
+            >>> # [Edge(F1 -> F2)]
+        """
+        from dataclasses import dataclass
+
+        @dataclass
+        class Edge:
+            """Dependency edge"""
+            from_node: str
+            to_node: str
+            type: str
+            reason: str = ""
+
+        edges = []
+
+        for req in requirements:
+            # Check if requirement has explicit dependencies
+            deps = getattr(req, 'dependencies', [])
+            for dep_id in deps:
+                edges.append(Edge(
+                    from_node=dep_id,
+                    to_node=req.id,
+                    type='explicit_dependency',
+                    reason=f"Explicit dependency from spec"
+                ))
+
+        return edges
+
+    def _pattern_dependencies(self, requirements: List[Any]) -> List[Any]:
+        """
+        Infer dependencies based on common patterns
+
+        Currently returns empty list (placeholder for future pattern-based inference)
+
+        Args:
+            requirements: List of Requirement objects
+
+        Returns:
+            List of Edge objects from pattern inference
+        """
+        # Placeholder for future pattern-based inference
+        # Could include patterns like:
+        # - "checkout" depends on "cart"
+        # - "payment" depends on "order"
+        # - "delete" operations should be last, etc.
+        return []
+
+    def infer_dependencies_enhanced(self, requirements: List[Any]) -> List[Any]:
+        """
+        Multi-strategy dependency inference
+
+        Strategies:
+        1. Explicit dependencies from spec metadata
+        2. CRUD dependencies (create before read/update/delete)
+        3. Pattern-based dependencies
+        4. Semantic dependencies (future: LLM-based)
+
+        Args:
+            requirements: List of Requirement objects
+
+        Returns:
+            List of validated, deduplicated Edge objects
+
+        Example:
+            >>> reqs = [
+            ...     Requirement(id="F1", description="Create product", operation="create"),
+            ...     Requirement(id="F2", description="Get product", operation="read", dependencies=["F1"])
+            ... ]
+            >>> edges = planner.infer_dependencies_enhanced(reqs)
+            >>> # Combines explicit + CRUD edges, deduplicated
+        """
+        edges = []
+
+        # Strategy 1: Explicit from spec
+        edges.extend(self._explicit_dependencies(requirements))
+
+        # Strategy 2: CRUD rules
+        edges.extend(self._crud_dependencies(requirements))
+
+        # Strategy 3: Pattern-based
+        edges.extend(self._pattern_dependencies(requirements))
+
+        # Deduplicate and validate
+        return self._validate_edges(edges)

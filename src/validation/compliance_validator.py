@@ -547,6 +547,106 @@ class ComplianceValidator:
 
         return missing
 
+    def _format_entity_report(
+        self,
+        report: ComplianceReport
+    ) -> str:
+        """
+        Enhanced entity report with categorization
+
+        Separates:
+        - Domain entities (Product, Customer, etc.)
+        - Request/Response schemas (ProductCreate, etc.)
+        - Enums (Status enums)
+
+        Args:
+            report: ComplianceReport with entities data
+
+        Returns:
+            Formatted string with categorized entities
+
+        Part of Task Group 2: Presentation Enhancement (M4)
+        """
+        # Categorize entities
+        domain_entities = []
+        schemas = []
+        enums = []
+
+        for entity in report.entities_implemented:
+            if entity in report.entities_expected:
+                domain_entities.append(entity)
+            elif entity.endswith(('Create', 'Update', 'Request', 'Response')):
+                schemas.append(entity)
+            elif entity.endswith('Status'):
+                enums.append(entity)
+            else:
+                # Unknown category - treat as domain entity
+                domain_entities.append(entity)
+
+        # Format output
+        lines = []
+        lines.append(f"\n📦 Entities ({len(report.entities_expected)} required, {len(domain_entities)} present):")
+        lines.append(f"   ✅ {', '.join(domain_entities)}")
+
+        if schemas or enums:
+            lines.append(f"\n   📝 Additional models (best practices):")
+            if schemas:
+                lines.append(f"   - Request/Response schemas: {len(schemas)}")
+            if enums:
+                lines.append(f"   - Enums: {len(enums)}")
+
+        return "\n".join(lines)
+
+    def _format_endpoint_report(
+        self,
+        report: ComplianceReport
+    ) -> str:
+        """
+        Enhanced endpoint report with categorization
+
+        Separates:
+        - Required endpoints (from spec)
+        - Additional endpoints (best practices like / and /health)
+
+        Args:
+            report: ComplianceReport with endpoints data
+
+        Returns:
+            Formatted string with categorized endpoints
+
+        Part of Task Group 2: Presentation Enhancement (M4)
+        """
+        # Categorize endpoints
+        required_endpoints = []
+        additional_endpoints = []
+
+        for endpoint in report.endpoints_implemented:
+            if endpoint in report.endpoints_expected:
+                required_endpoints.append(endpoint)
+            else:
+                # Additional endpoints (best practices)
+                additional_endpoints.append(endpoint)
+
+        # Format output
+        lines = []
+        lines.append(f"\n🌐 Endpoints ({len(report.endpoints_expected)} required, {len(required_endpoints)} present):")
+        
+        if required_endpoints:
+            # Show sample of required endpoints (first 5)
+            sample = required_endpoints[:5]
+            lines.append(f"   ✅ {', '.join(sample)}")
+            if len(required_endpoints) > 5:
+                lines.append(f"   ... and {len(required_endpoints) - 5} more")
+        else:
+            lines.append(f"   ❌ No required endpoints found")
+
+        if additional_endpoints:
+            lines.append(f"\n   📝 Additional endpoints (best practices):")
+            for endpoint in additional_endpoints:
+                lines.append(f"   - {endpoint}")
+
+        return "\n".join(lines)
+
     def generate_detailed_report(
         self, spec_requirements: SpecRequirements, generated_code: str
     ) -> Dict[str, Any]:

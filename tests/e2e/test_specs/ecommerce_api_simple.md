@@ -179,3 +179,224 @@ Exponer documentación automática del API (OpenAPI/Swagger).
 Incluir endpoint de healthcheck simple que devuelva:
 ```json
 { "message": "Ecommerce API", "status": "running" }
+```
+
+---
+
+## Classification Ground Truth
+
+**Purpose**: Ground truth for classification validation (Task Group 1.2)  
+**Format**: requirement_id → {domain: <domain>, risk: <risk>}
+
+### Products (F1-F5)
+
+**F1_create_product**:
+  - domain: crud
+  - risk: low
+  - rationale: Simple CRUD create operation
+
+**F2_list_products**:
+  - domain: crud
+  - risk: low
+  - rationale: Simple CRUD list/read operation with pagination
+
+**F3_get_product**:
+  - domain: crud
+  - risk: low
+  - rationale: Simple CRUD read operation by ID
+
+**F4_update_product**:
+  - domain: crud
+  - risk: low
+  - rationale: Simple CRUD update operation
+
+**F5_deactivate_product**:
+  - domain: crud
+  - risk: low
+  - rationale: Simple CRUD soft-delete operation
+
+### Customers (F6-F7)
+
+**F6_register_customer**:
+  - domain: crud
+  - risk: low
+  - rationale: Simple CRUD create operation with email uniqueness validation
+
+**F7_get_customer**:
+  - domain: crud
+  - risk: low
+  - rationale: Simple CRUD read operation by ID
+
+### Cart (F8-F12)
+
+**F8_create_cart**:
+  - domain: workflow
+  - risk: medium
+  - rationale: Workflow operation with state management (reuse existing OPEN cart)
+
+**F9_add_item_to_cart**:
+  - domain: workflow
+  - risk: medium
+  - rationale: Workflow operation with business logic (stock check, price snapshot, quantity aggregation)
+
+**F10_view_cart**:
+  - domain: workflow
+  - risk: low
+  - rationale: Simple read operation within workflow context
+
+**F11_update_cart_item**:
+  - domain: workflow
+  - risk: medium
+  - rationale: Workflow operation with business logic (stock validation, item removal)
+
+**F12_clear_cart**:
+  - domain: workflow
+  - risk: low
+  - rationale: Simple workflow operation (delete all items)
+
+### Orders (F13-F17)
+
+**F13_checkout_cart**:
+  - domain: payment
+  - risk: high
+  - rationale: Payment workflow with critical business logic (stock deduction, cart state transition, order creation)
+
+**F14_simulate_payment**:
+  - domain: payment
+  - risk: high
+  - rationale: Payment state transition with financial implications
+
+**F15_cancel_order**:
+  - domain: payment
+  - risk: high
+  - rationale: Payment reversal with stock restoration logic
+
+**F16_list_customer_orders**:
+  - domain: workflow
+  - risk: low
+  - rationale: Simple list operation with filtering
+
+**F17_get_order**:
+  - domain: workflow
+  - risk: low
+  - rationale: Simple read operation for order details
+
+---
+
+## Expected Dependency Graph (Ground Truth)
+
+**Purpose**: Ground truth for DAG construction validation (Task Group 6.2)
+**Format**: Explicit nodes and edges defining the expected dependency graph
+
+### Nodes (10 expected)
+
+```yaml
+nodes: 10
+node_list:
+  - create_product      # F1
+  - list_products       # F2
+  - create_customer     # F6
+  - create_cart         # F8
+  - add_to_cart         # F9
+  - checkout_cart       # F13
+  - simulate_payment    # F14
+  - cancel_order        # F15
+  - list_orders         # F16
+  - get_order           # F17
+```
+
+**Rationale**: Core API operations representing the main workflow paths. Excludes simple CRUD operations that don't have dependencies (F3_get_product, F4_update_product, F5_deactivate_product, F7_get_customer, F10_view_cart, F11_update_cart_item, F12_clear_cart).
+
+### Edges (12 explicit dependencies)
+
+```yaml
+edges: 12
+edge_list:
+  # Customer → Cart dependency
+  - from: create_customer
+    to: create_cart
+    reason: "Cart requires customer to exist"
+
+  # Product → Cart workflow
+  - from: create_product
+    to: add_to_cart
+    reason: "Cannot add non-existent product to cart"
+
+  - from: create_cart
+    to: add_to_cart
+    reason: "Cart must exist before adding items"
+
+  # Cart → Checkout workflow
+  - from: add_to_cart
+    to: checkout_cart
+    reason: "Cart must have items before checkout"
+
+  # Checkout → Payment workflow
+  - from: checkout_cart
+    to: simulate_payment
+    reason: "Order must be created before payment"
+
+  - from: checkout_cart
+    to: cancel_order
+    reason: "Order must exist before cancellation"
+
+  # Customer → Orders queries
+  - from: create_customer
+    to: list_orders
+    reason: "Customer must exist to list their orders"
+
+  - from: checkout_cart
+    to: list_orders
+    reason: "Orders must be created to appear in list"
+
+  - from: checkout_cart
+    to: get_order
+    reason: "Order must exist to be retrieved"
+
+  # Product → Product queries
+  - from: create_product
+    to: list_products
+    reason: "Products must exist to be listed"
+
+  # Additional customer dependencies
+  - from: create_customer
+    to: get_order
+    reason: "Customer must exist to retrieve their orders"
+
+  # Additional cart dependencies
+  - from: create_cart
+    to: checkout_cart
+    reason: "Cart must exist to be checked out"
+```
+
+**Dependency Patterns Explained**:
+
+1. **CRUD Dependencies**: Create operations must precede read/list operations for the same entity
+   - `create_product → list_products` (products must exist to be listed)
+   - `create_customer → list_orders` (customer must exist to list their orders)
+
+2. **Workflow Dependencies**: Multi-step business processes have strict ordering
+   - `create_customer → create_cart` (cart needs customer)
+   - `create_cart → add_to_cart` (items need cart)
+   - `add_to_cart → checkout_cart` (checkout needs items)
+   - `checkout_cart → simulate_payment` (payment needs order)
+
+3. **Entity Reference Dependencies**: Operations on related entities
+   - `create_product → add_to_cart` (product must exist to add to cart)
+   - `checkout_cart → cancel_order` (order must exist to cancel)
+
+**Expected DAG Accuracy Target**: 80%+ (Baseline: 57.6%)
+
+**Common Missing Edges** (to watch for in DAG construction):
+- Missing `create_cart → checkout_cart` (cart existence check)
+- Missing `create_customer → get_order` (customer ownership)
+- Incorrect `create_product → checkout_cart` (too loose, should be via `add_to_cart`)
+
+**Wave Structure Expectation**:
+```
+Wave 1: create_product, create_customer
+Wave 2: list_products, create_cart
+Wave 3: add_to_cart
+Wave 4: checkout_cart
+Wave 5: simulate_payment, cancel_order, list_orders, get_order
+```

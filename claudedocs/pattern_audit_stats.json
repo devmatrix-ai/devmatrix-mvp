@@ -1,0 +1,71 @@
+{
+  "total_before": 10000,
+  "removed_empty": 9983,
+  "removed_framework": 17,
+  "total_after": 0,
+  "timestamp": "2025-11-20T12:42:24.945033",
+  "framework_filter": "fastapi",
+  "dry_run": true,
+  "removed_patterns": [
+    {
+      "pattern_id": "supabase_function_collectrulesnapshots_61111f8a33a7406d",
+      "reason": "empty_purpose",
+      "framework": "supabase",
+      "domain": ""
+    },
+    {
+      "pattern_id": "next-auth_function_sparkle_a60566b6b14b033e",
+      "reason": "empty_purpose",
+      "framework": "next-auth",
+      "domain": ""
+    },
+    {
+      "pattern_id": "next.js_function_default_r.interop_835d8b6b38a0838c",
+      "reason": "empty_purpose",
+      "framework": "next.js",
+      "domain": ""
+    },
+    {
+      "pattern_id": "next.js_function_commithydratedcontainer_954a4231c67bf88a",
+      "reason": "empty_purpose",
+      "framework": "next.js",
+      "domain": ""
+    },
+    {
+      "pattern_id": "next.js_function_toheaderseco_d56922c84143cf91",
+      "reason": "empty_purpose",
+      "framework": "next.js",
+      "domain": ""
+    },
+    {
+      "pattern_id": "next.js_function_diff_a2e2bc38c978735b",
+      "reason": "empty_purpose",
+      "framework": "next.js",
+      "domain": ""
+    },
+    {
+      "pattern_id": "next.js_function_getrscpayload_0fa3ed6561ef9ddd",
+      "reason": "empty_purpose",
+      "framework": "next.js",
+      "domain": ""
+    },
+    {
+      "pattern_id": "supabase_function_createclient_50ff00f5005b7cf7",
+      "reason": "empty_purpose",
+      "framework": "supabase",
+      "domain": ""
+    },
+    {
+      "pattern_id": "fastapi_function_process_fn_eaa4af0e2817f841",
+      "reason": "empty_purpose",
+      "framework": "fastapi",
+      "domain": ""
+    },
+    {
+      "pattern_id": "supabase_function_v_fdc4d2722d4f3a90",
+      "reason": "empty_purpose",
+      "framework": "supabase",
+      "domain": ""
+    }
+  ]
+}

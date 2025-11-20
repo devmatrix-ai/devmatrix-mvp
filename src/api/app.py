@@ -170,6 +170,15 @@ def create_app() -> FastAPI:
         )
 
     # ========================================
+    # Phase 1 Security: Security Headers Middleware
+    # Group 5.5: Add security headers (CSP, X-Frame-Options, HSTS, etc.)
+    # ========================================
+    # MUST run before rate limiting (order matters for headers)
+    from .middleware.security_headers_middleware import SecurityHeadersMiddleware
+    app.add_middleware(SecurityHeadersMiddleware)
+    logger.info("Security headers middleware enabled")
+
+    # ========================================
     # Phase 1 Security: Rate Limiting Middleware
     # Group 5.3: Enable rate limiting with Redis backing
     # ========================================

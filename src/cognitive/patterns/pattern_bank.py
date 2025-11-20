@@ -368,7 +368,7 @@ class PatternBank:
             code_embedding = self._encode(embedding_text)
             semantic_embedding = code_embedding  # Same for both if dual disabled
 
-        # Create metadata with auto-categorization
+        # Create metadata with auto-categorization and production readiness
         metadata = {
             "pattern_id": pattern_id,
             "purpose": signature.purpose,
@@ -381,6 +381,20 @@ class PatternBank:
             "usage_count": 0,
             "created_at": datetime.utcnow().isoformat(),
             "semantic_hash": semantic_hash,
+
+            # Production readiness metadata (Task Group 8)
+            "production_ready": False,  # Flag for production patterns (set explicitly when storing)
+            "production_readiness_score": self._calculate_production_readiness_score(
+                success_rate=success_rate,
+                test_coverage=0.0,  # Will be updated after execution
+                security_level=classification_result.security_level or "standard",
+                observability_complete=False,  # Will be updated based on pattern content
+            ),
+            "test_coverage": 0.0,  # Updated after execution metrics available
+            "security_level": classification_result.security_level or "standard",
+            "performance_tier": classification_result.performance_tier or "medium",
+            "observability_complete": False,  # Updated based on logging/metrics presence
+            "docker_ready": False,  # Updated if Docker configuration present
         }
 
         # Store in Qdrant (both collections if dual embeddings enabled)
@@ -550,6 +564,7 @@ class PatternBank:
         self,
         signature: SemanticTaskSignature,
         domain: Optional[str] = None,
+        production_ready: bool = False,
         top_k: int = 5,
     ) -> List[StoredPattern]:
         """
@@ -560,6 +575,7 @@ class PatternBank:
         Args:
             signature: Query signature
             domain: Optional domain filter
+            production_ready: If True, only return production-ready patterns (Task Group 8)
             top_k: Maximum results
 
         Returns:
@@ -567,9 +583,11 @@ class PatternBank:
 
         Example:
         ```python
+        # Search for production-ready auth patterns
         auth_patterns = bank.hybrid_search(
             my_signature,
             domain="authentication",
+            production_ready=True,
             top_k=3
         )
         ```
@@ -581,12 +599,20 @@ class PatternBank:
         query_text = f"{signature.purpose}"
         query_embedding = self._encode(query_text)
 
-        # Build filter for domain if specified
-        search_filter = None
+        # Build filter for domain and/or production_ready if specified
+        filter_conditions = []
         if domain:
-            search_filter = Filter(
-                must=[FieldCondition(key="domain", match=MatchValue(value=domain))]
+            filter_conditions.append(
+                FieldCondition(key="domain", match=MatchValue(value=domain))
             )
+        if production_ready:
+            filter_conditions.append(
+                FieldCondition(key="production_ready", match=MatchValue(value=True))
+            )
+
+        search_filter = None
+        if filter_conditions:
+            search_filter = Filter(must=filter_conditions)
 
         # Search with optional filter
         search_result = self.client.search(
@@ -954,3 +980,125 @@ class PatternBank:
         except Exception as e:
             logger.warning(f"Failed to get DAG ranking for {pattern_id}: {e}")
             return 0.5  # Fallback to neutral score on error
+
+    def _calculate_production_readiness_score(
+        self,
+        success_rate: float,
+        test_coverage: float,
+        security_level: str,
+        observability_complete: bool,
+    ) -> float:
+        """
+        Calculate production readiness score from quality metrics (Task Group 8).
+
+        Formula:
+        - success_rate: 40% weight
+        - test_coverage: 30% weight
+        - security_level: 20% weight (CRITICAL=1.0, HIGH=0.8, MEDIUM=0.6, LOW=0.4, STANDARD=0.5)
+        - observability_complete: 10% weight (True=1.0, False=0.0)
+
+        Args:
+            success_rate: Pattern success rate (0.0-1.0)
+            test_coverage: Test coverage percentage (0.0-1.0)
+            security_level: Security level (CRITICAL, HIGH, MEDIUM, LOW, STANDARD)
+            observability_complete: Whether pattern includes logging/metrics
+
+        Returns:
+            Production readiness score (0.0-1.0)
+        """
+        # Security level mapping
+        security_scores = {
+            "CRITICAL": 1.0,
+            "HIGH": 0.8,
+            "MEDIUM": 0.6,
+            "STANDARD": 0.5,
+            "LOW": 0.4,
+        }
+        security_score = security_scores.get(security_level.upper(), 0.5)
+
+        # Observability score
+        observability_score = 1.0 if observability_complete else 0.0
+
+        # Weighted calculation
+        production_score = (
+            (success_rate * 0.40) +
+            (test_coverage * 0.30) +
+            (security_score * 0.20) +
+            (observability_score * 0.10)
+        )
+
+        return round(production_score, 3)
+
+    def store_production_pattern(
+        self,
+        signature: SemanticTaskSignature,
+        code: str,
+        success_rate: float,
+        test_coverage: float = 0.85,
+        security_level: str = "HIGH",
+        observability_complete: bool = True,
+        docker_ready: bool = False,
+    ) -> str:
+        """
+        Store production-ready pattern with enhanced metadata (Task Group 8).
+
+        This is a convenience method for storing patterns with production readiness metadata.
+        Uses store_pattern() internally but sets production_ready=True and calculates
+        production_readiness_score.
+
+        Args:
+            signature: Semantic task signature
+            code: Production-ready code pattern
+            success_rate: Validation success rate (must be >= 0.95)
+            test_coverage: Test coverage percentage (0.0-1.0, default: 0.85)
+            security_level: Security level (CRITICAL, HIGH, MEDIUM, LOW, default: HIGH)
+            observability_complete: Whether pattern includes logging/metrics (default: True)
+            docker_ready: Whether pattern includes Docker configuration (default: False)
+
+        Returns:
+            pattern_id: Unique identifier for stored pattern
+
+        Example:
+        ```python
+        pattern_id = bank.store_production_pattern(
+            signature=config_signature,
+            code=pydantic_settings_code,
+            success_rate=0.98,
+            test_coverage=0.90,
+            security_level="HIGH",
+            observability_complete=True,
+            docker_ready=False
+        )
+        ```
+        """
+        # Store pattern using standard method
+        pattern_id = self.store_pattern(signature, code, success_rate)
+
+        # Update metadata with production readiness flags
+        production_score = self._calculate_production_readiness_score(
+            success_rate=success_rate,
+            test_coverage=test_coverage,
+            security_level=security_level,
+            observability_complete=observability_complete,
+        )
+
+        # Update payload with production metadata
+        self.client.set_payload(
+            collection_name=self.collection_name,
+            payload={
+                "production_ready": True,
+                "production_readiness_score": production_score,
+                "test_coverage": test_coverage,
+                "security_level": security_level,
+                "observability_complete": observability_complete,
+                "docker_ready": docker_ready,
+            },
+            points=[pattern_id],
+        )
+
+        logger.info(
+            f"Stored production pattern {pattern_id}: {signature.purpose[:50]} "
+            f"(production_score={production_score:.2%})"
+        )
+
+        return pattern_id

@@ -32,6 +32,14 @@ from src.services.error_pattern_store import (
 from src.services.file_type_detector import get_file_type_detector
 from src.services.prompt_strategies import PromptStrategyFactory, PromptContext
 from src.services.validation_strategies import ValidationStrategyFactory
+from src.services.modular_architecture_generator import ModularArchitectureGenerator
+
+# Pattern Bank for Production-Ready Code Generation (Task Group 8)
+from src.cognitive.patterns.pattern_bank import PatternBank
+from src.cognitive.patterns.production_patterns import (
+    PRODUCTION_PATTERN_CATEGORIES,
+    get_composition_order,
+)
 
 # Cognitive Feedback Loop - Pattern Promotion Pipeline (Milestone 4)
 from src.cognitive.patterns.pattern_feedback_integration import (
@@ -122,6 +130,18 @@ class CodeGenerationService:
         else:
             self.enable_dag_sync = False
 
+        # Initialize modular architecture generator
+        self.modular_generator = ModularArchitectureGenerator()
+
+        # Initialize PatternBank for production-ready code generation (Task Group 8)
+        self.pattern_bank: Optional[PatternBank] = None
+        try:
+            self.pattern_bank = PatternBank()
+            self.pattern_bank.connect()
+            logger.info("PatternBank initialized for production patterns (Task Group 8)")
+        except Exception as e:
+            logger.warning(f"Could not initialize PatternBank: {e}")
+
         logger.info(
             "CodeGenerationService initialized",
             extra={
@@ -129,8 +149,55 @@ class CodeGenerationService:
                 "feedback_loop": self.enable_feedback_loop,
                 "pattern_promotion": self.enable_pattern_promotion,
                 "dag_sync": self.enable_dag_sync,
+                "pattern_bank_enabled": self.pattern_bank is not None,
             },
         )
+
+    async def generate_modular_app(self, spec_requirements) -> Dict[str, str]:
+        """
+        Generate modular FastAPI application (Task Group 2: Modular Architecture).
+
+        Creates production-ready structure with:
+        - src/core/ (config, database)
+        - src/models/ (schemas.py, entities.py)
+        - src/repositories/ (repository pattern)
+        - src/services/ (business logic)
+        - src/api/routes/ (endpoints)
+
+        Args:
+            spec_requirements: SpecRequirements object from SpecParser
+
+        Returns:
+            Dict[file_path, file_content] for all generated files
+        """
+        logger.info(
+            "Generating modular application",
+            extra={
+                "entities_count": len(spec_requirements.entities),
+                "endpoints_count": len(spec_requirements.endpoints),
+            }
+        )
+
+        try:
+            files = self.modular_generator.generate_modular_app(spec_requirements)
+
+            logger.info(
+                "Modular application generated successfully",
+                extra={
+                    "files_generated": len(files),
+                    "file_list": list(files.keys())
+                }
+            )
+
+            return files
+
+        except Exception as e:
+            logger.error(
+                "Failed to generate modular application",
+                extra={"error": str(e)},
+                exc_info=True
+            )
+            raise
 
     async def generate_from_requirements(
         self,
@@ -1115,3 +1182,319 @@ Code MUST pass Python compile() without SyntaxError."""
         )
 
         return signature
+
+    # === TASK GROUP 8: PRODUCTION PATTERN LIBRARY ===
+    # Pattern composition system for production-ready code generation
+
+    async def generate_production_app(self, spec_requirements) -> Dict[str, str]:
+        """
+        Generate complete production-ready application using pattern composition (Task Group 8).
+
+        Uses existing PatternBank infrastructure instead of Jinja2 templates.
+        Retrieves production-ready patterns from Qdrant and composes them into modular architecture.
+
+        Args:
+            spec_requirements: SpecRequirements object from SpecParser
+
+        Returns:
+            Dictionary mapping file paths to generated code
+            {
+                "src/core/config.py": "...",
+                "src/core/database.py": "...",
+                "src/models/entities.py": "...",
+                ...
+            }
+
+        Raises:
+            ValueError: If PatternBank not initialized or patterns not available
+        """
+        if not self.pattern_bank:
+            raise ValueError("PatternBank not initialized - cannot generate production app")
+
+        logger.info(
+            "Generating production app using pattern composition",
+            extra={
+                "entities_count": len(spec_requirements.entities),
+                "endpoints_count": len(spec_requirements.endpoints),
+            },
+        )
+
+        # 1. Retrieve production-ready patterns by category
+        patterns = await self._retrieve_production_patterns(spec_requirements)
+
+        # 2. Compose patterns into modular architecture
+        generated_files = await self._compose_patterns(patterns, spec_requirements)
+
+        # 3. Validate production readiness
+        validation_result = self._validate_production_readiness(generated_files)
+
+        logger.info(
+            "Production app generation complete",
+            extra={
+                "files_generated": len(generated_files),
+                "production_score": validation_result.get("production_score", 0.0),
+            },
+        )
+
+        return generated_files
+
+    async def _retrieve_production_patterns(
+        self, spec_requirements
+    ) -> Dict[str, list]:
+        """
+        Retrieve production-ready patterns for all categories (Task Group 8).
+
+        Uses PatternBank.hybrid_search() with production_ready filter to retrieve
+        golden patterns from Qdrant vector database.
+
+        Args:
+            spec_requirements: SpecRequirements object
+
+        Returns:
+            Dictionary mapping category name to list of StoredPattern objects
+            {
+                "core_config": [StoredPattern(...), ...],
+                "database_async": [StoredPattern(...), ...],
+                ...
+            }
+        """
+        patterns = {}
+
+        for category, config in PRODUCTION_PATTERN_CATEGORIES.items():
+            # Create query signature for category
+            query_sig = SemanticTaskSignature(
+                purpose=f"production ready {category} implementation",
+                intent="implement",
+                inputs={},
+                outputs={},
+                domain=config["domain"],
+            )
+
+            # Hybrid search with production_ready filter
+            category_patterns = self.pattern_bank.hybrid_search(
+                signature=query_sig,
+                domain=config["domain"],
+                production_ready=True,
+                top_k=3,
+            )
+
+            # Filter by success threshold
+            patterns[category] = [
+                p
+                for p in category_patterns
+                if p.success_rate >= config["success_threshold"]
+            ]
+
+            logger.debug(
+                f"Retrieved {len(patterns[category])} patterns for category: {category}"
+            )
+
+        return patterns
+
+    async def _compose_patterns(
+        self, patterns: Dict[str, list], spec_requirements
+    ) -> Dict[str, str]:
+        """
+        Compose patterns into complete modular application (Task Group 8).
+
+        Pattern composition order (priority-based):
+        1. Core infrastructure (config, database, logging)
+        2. Data layer (models, repositories)
+        3. Service layer
+        4. API layer (routes)
+        5. Security patterns
+        6. Testing patterns
+        7. Docker and config files
+
+        Args:
+            patterns: Dictionary of patterns by category
+            spec_requirements: SpecRequirements object
+
+        Returns:
+            Dictionary mapping file paths to generated code
+        """
+        files = {}
+
+        # Get composition order (priority-based)
+        composition_order = get_composition_order()
+
+        for category in composition_order:
+            if category not in patterns or not patterns[category]:
+                logger.debug(f"No patterns found for category: {category}")
+                continue
+
+            # Compose patterns for this category
+            category_files = await self._compose_category_patterns(
+                category, patterns[category], spec_requirements
+            )
+            files.update(category_files)
+
+        return files
+
+    async def _compose_category_patterns(
+        self, category: str, category_patterns: list, spec_requirements
+    ) -> Dict[str, str]:
+        """
+        Compose patterns for a specific category (Task Group 8).
+
+        Args:
+            category: Category name (e.g., "core_config", "database_async")
+            category_patterns: List of StoredPattern objects for this category
+            spec_requirements: SpecRequirements object
+
+        Returns:
+            Dictionary of files generated for this category
+        """
+        files = {}
+
+        # Core infrastructure patterns
+        if category == "core_config" and category_patterns:
+            files["src/core/config.py"] = self._adapt_pattern(
+                category_patterns[0].code, spec_requirements
+            )
+
+        elif category == "database_async" and len(category_patterns) >= 1:
+            files["src/core/database.py"] = self._adapt_pattern(
+                category_patterns[0].code, spec_requirements
+            )
+
+        elif category == "observability" and len(category_patterns) >= 2:
+            files["src/core/logging.py"] = self._adapt_pattern(
+                category_patterns[0].code, spec_requirements  # structlog_setup
+            )
+            files["src/api/routes/health.py"] = self._adapt_pattern(
+                category_patterns[1].code, spec_requirements  # health_checks
+            )
+
+        # Security patterns
+        elif category == "security_hardening" and category_patterns:
+            # Combine all security patterns into single security module
+            security_code_parts = [
+                self._adapt_pattern(p.code, spec_requirements)
+                for p in category_patterns
+            ]
+            files["src/core/security.py"] = "\n\n".join(security_code_parts)
+
+        # Docker infrastructure
+        elif category == "docker_infrastructure" and len(category_patterns) >= 2:
+            files["docker/Dockerfile"] = self._adapt_pattern(
+                category_patterns[0].code, spec_requirements
+            )
+            files["docker/docker-compose.yml"] = self._adapt_pattern(
+                category_patterns[1].code, spec_requirements
+            )
+
+        # Project config
+        elif category == "project_config" and len(category_patterns) >= 4:
+            files["pyproject.toml"] = self._adapt_pattern(
+                category_patterns[0].code, spec_requirements
+            )
+            files[".env.example"] = self._adapt_pattern(
+                category_patterns[1].code, spec_requirements
+            )
+            files[".gitignore"] = self._adapt_pattern(
+                category_patterns[2].code, spec_requirements
+            )
+            files["Makefile"] = self._adapt_pattern(
+                category_patterns[3].code, spec_requirements
+            )
+
+        # Testing patterns
+        elif category == "test_infrastructure" and len(category_patterns) >= 2:
+            files["tests/conftest.py"] = self._adapt_pattern(
+                category_patterns[0].code, spec_requirements  # pytest_config
+            )
+            files["tests/factories.py"] = self._adapt_pattern(
+                category_patterns[1].code, spec_requirements  # test_factories
+            )
+
+        return files
+
+    def _adapt_pattern(self, pattern_code: str, spec_requirements) -> str:
+        """
+        Adapt pattern code to spec requirements (Task Group 8).
+
+        Replace placeholder variables with actual spec values:
+        - {APP_NAME} → spec.metadata.get("spec_name", "API")
+        - {DATABASE_URL} → spec.config.get("database_url", "")
+        - {ENTITY_NAME} → entity.name (for entity-specific patterns)
+
+        Args:
+            pattern_code: Pattern code with placeholders
+            spec_requirements: SpecRequirements object
+
+        Returns:
+            Adapted code with placeholders replaced
+        """
+        adapted = pattern_code
+
+        # App name
+        app_name = spec_requirements.metadata.get("spec_name", "API")
+        adapted = adapted.replace("{APP_NAME}", app_name)
+
+        # Database URL (from config or default)
+        database_url = spec_requirements.config.get(
+            "database_url", "postgresql+asyncpg://user:password@localhost:5432/app"
+        )
+        adapted = adapted.replace("{DATABASE_URL}", database_url)
+
+        # Additional adaptations can be added here as needed
+
+        return adapted
+
+    def _validate_production_readiness(self, files: Dict[str, str]) -> Dict[str, Any]:
+        """
+        Validate production readiness of generated files (Task Group 8).
+
+        Checks:
+        - Core infrastructure files present (config, database, logging)
+        - Security patterns included
+        - Docker configuration available
+        - Test infrastructure present
+
+        Args:
+            files: Dictionary of generated files
+
+        Returns:
+            Dictionary with validation results:
+            {
+                "production_ready": bool,
+                "production_score": float (0.0-1.0),
+                "missing_components": list[str],
+                "recommendations": list[str]
+            }
+        """
+        required_files = {
+            "src/core/config.py": "configuration",
+            "src/core/database.py": "database",
+            "src/core/security.py": "security",
+            "docker/Dockerfile": "docker",
+            "tests/conftest.py": "testing",
+        }
+
+        missing_components = []
+        for file_path, component in required_files.items():
+            if file_path not in files:
+                missing_components.append(component)
+
+        # Calculate production score
+        present_count = len(required_files) - len(missing_components)
+        production_score = present_count / len(required_files)
+
+        # Generate recommendations
+        recommendations = []
+        if "configuration" in missing_components:
+            recommendations.append("Add pydantic-settings configuration for environment management")
+        if "security" in missing_components:
+            recommendations.append("Implement security hardening (rate limiting, CORS, sanitization)")
+        if "docker" in missing_components:
+            recommendations.append("Add Docker configuration for containerized deployment")
+        if "testing" in missing_components:
+            recommendations.append("Set up pytest infrastructure with async support")
+
+        return {
+            "production_ready": production_score >= 0.80,  # 80% threshold
+            "production_score": round(production_score, 2),
+            "missing_components": missing_components,
+            "recommendations": recommendations,
+        }
