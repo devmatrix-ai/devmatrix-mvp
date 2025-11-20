@@ -22,7 +22,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from ..observability import StructuredLogger, HealthCheck, MetricsMiddleware, setup_logging
 from ..observability.global_metrics import metrics_collector
-from .routers import workflows, executions, metrics, health, websocket, rag, chat, masterplans, auth, usage, admin, validation, execution_v2, atomization, dependency, review, testing, conversations, acceptance_gate, traceability, traces, orchestrate
+from .routers import workflows, executions, metrics, health, websocket, rag, chat, masterplans, auth, usage, admin, validation, execution_v2, atomization, dependency, review, testing, conversations, acceptance_gate, traceability, traces
 from ..services.orphan_cleanup import OrphanCleanupWorker
 
 
@@ -211,7 +211,6 @@ def create_app() -> FastAPI:
     app.include_router(rag.router, prefix="/api/v1")
     app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
     app.include_router(masterplans.router)
-    app.include_router(orchestrate.router)  # Cognitive Architecture Integration
 
     # MGE V2 Routers (all include /api/v2 prefix)
     app.include_router(atomization.router)  # Phase 2: Atomization

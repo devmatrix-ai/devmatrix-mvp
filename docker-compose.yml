@@ -40,20 +40,44 @@ services:
     networks:
       - devmatrix-network
 
-  # ChromaDB Vector Database for RAG
-  chromadb:
-    image: chromadb/chroma:latest
-    container_name: devmatrix-chromadb
+  # Neo4j Graph Database for Pattern DAG
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: devmatrix-neo4j
     restart: unless-stopped
     environment:
-      IS_PERSISTENT: "TRUE"
-      ANONYMIZED_TELEMETRY: "FALSE"
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-devmatrix}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_memory_pagecache_size: ${NEO4J_PAGECACHE:-512M}
+      NEO4J_dbms_memory_heap_max__size: ${NEO4J_HEAP:-1G}
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+      NEO4J_dbms_security_procedures_allowlist: apoc.*
     ports:
-      - "${CHROMADB_PORT:-8000}:8000"
+      - "${NEO4J_HTTP_PORT:-7474}:7474"  # HTTP
+      - "${NEO4J_BOLT_PORT:-7687}:7687"  # Bolt
     volumes:
-      - chromadb_data:/chroma/chroma
-    # healthcheck disabled - curl not available in container
-    # Manual verification: curl http://localhost:8001/api/v2/heartbeat
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_import:/var/lib/neo4j/import
+      - neo4j_plugins:/plugins
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - devmatrix-network
+
+  # Qdrant Vector Database for Semantic Search
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: devmatrix-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_HTTP_PORT:-6333}:6333"  # HTTP API
+      - "${QDRANT_GRPC_PORT:-6334}:6334"  # gRPC API
+    volumes:
+      - qdrant_data:/qdrant/storage
     networks:
       - devmatrix-network
 
@@ -116,19 +140,22 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_FORMAT: ${LOG_FORMAT:-text}
       LOG_FILE: ${LOG_FILE:-}
-      # RAG Configuration
-      CHROMADB_HOST: chromadb
-      CHROMADB_PORT: 8000
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-jinaai/jina-embeddings-v2-base-code}
-      RAG_TOP_K: ${RAG_TOP_K:-5}
-      RAG_SIMILARITY_THRESHOLD: ${RAG_SIMILARITY_THRESHOLD:-0.7}
-      RAG_ENABLE_FEEDBACK: ${RAG_ENABLE_FEEDBACK:-true}
+      # Neo4j Configuration
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-devmatrix}
+      NEO4J_DATABASE: ${NEO4J_DATABASE:-neo4j}
+      # Qdrant Configuration
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      QDRANT_COLLECTION_PATTERNS: ${QDRANT_COLLECTION_PATTERNS:-devmatrix_patterns}
+      QDRANT_COLLECTION_SEMANTIC: ${QDRANT_COLLECTION_SEMANTIC:-semantic_patterns}
       # Enable GPU for embeddings
       EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cuda}
       NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
       NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
     ports:
-      - "${APP_PORT:-8000}:8000"
+      - "${APP_PORT:-8001}:8000"
     # Request all GPUs (Docker 19.03+ with nvidia-container-toolkit)
     gpus: ${GPU_REQUEST:-all}
     volumes:
@@ -141,7 +168,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      chromadb:
+      neo4j:
+        condition: service_healthy
+      qdrant:
         condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health/live"]
@@ -249,12 +278,20 @@ volumes:
     name: devmatrix-postgres-data
   redis_data:
     name: devmatrix-redis-data
+  neo4j_data:
+    name: devmatrix-neo4j-data
+  neo4j_logs:
+    name: devmatrix-neo4j-logs
+  neo4j_import:
+    name: devmatrix-neo4j-import
+  neo4j_plugins:
+    name: devmatrix-neo4j-plugins
+  qdrant_data:
+    name: devmatrix-qdrant-data
   pgadmin_data:
     name: devmatrix-pgadmin-data
   ui_node_modules:
     name: devmatrix-ui-node-modules
-  chromadb_data:
-    name: devmatrix-chromadb-data
   prometheus_data:
     name: devmatrix-prometheus-data
   grafana_data:
