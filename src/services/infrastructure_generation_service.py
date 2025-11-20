@@ -6,7 +6,7 @@ Generates complete project infrastructure (Docker, configs, docs) from MasterPla
 Flow:
 1. Detect project type (FastAPI, Node.js, React)
 2. Extract metadata (ports, services, dependencies)
-3. Render templates with Jinja2
+3. Generate infrastructure files using string composition
 4. Write infrastructure files to workspace
 
 Author: DevMatrix Team
@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 import uuid
-from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from src.models import MasterPlan, MasterPlanTask
 from src.observability import StructuredLogger
@@ -36,7 +35,7 @@ class InfrastructureGenerationService:
     - Detects project type from tasks and technologies
     - Extracts project metadata automatically
     - Generates Docker, docker-compose, .env, README, etc.
-    - Uses Jinja2 templates for flexibility
+    - Uses string composition for infrastructure generation
     """
 
     def __init__(self, db: Session, templates_dir: str = None):
@@ -45,7 +44,7 @@ class InfrastructureGenerationService:
 
         Args:
             db: Database session
-            templates_dir: Path to templates directory
+            templates_dir: Path to templates directory (legacy parameter, not used)
         """
         self.db = db
 
@@ -56,14 +55,6 @@ class InfrastructureGenerationService:
             templates_dir = project_root / "templates"
 
         self.templates_dir = Path(templates_dir)
-
-        # Initialize Jinja2 environment
-        self.jinja_env = Environment(
-            loader=FileSystemLoader(str(self.templates_dir)),
-            autoescape=select_autoescape(['html', 'xml']),
-            trim_blocks=True,
-            lstrip_blocks=True
-        )
 
         logger.info(
             "InfrastructureGenerationService initialized",
@@ -361,8 +352,9 @@ class InfrastructureGenerationService:
         template_name = f"docker/python_{project_type}.dockerfile"
 
         try:
-            template = self.jinja_env.get_template(template_name)
-            return template.render(**metadata)
+            # Template rendering disabled (templates directory removed)
+            # Using default fallback template
+            raise FileNotFoundError(f"Templates not available: {template_name}")
         except Exception as e:
             logger.warning(f"Template {template_name} not found, using default")
             # Fallback template
@@ -393,8 +385,8 @@ CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "{metadata['app_p
         template_name = "docker/docker-compose.yml.j2"
 
         try:
-            template = self.jinja_env.get_template(template_name)
-            return template.render(**metadata)
+            # Template rendering disabled (templates directory removed)
+            raise FileNotFoundError(f"Templates not available: {template_name}")
         except Exception as e:
             logger.error(f"Failed to render docker-compose template: {e}")
             raise
@@ -413,8 +405,8 @@ CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "{metadata['app_p
         template_name = f"config/env_{project_type}.example.j2"
 
         try:
-            template = self.jinja_env.get_template(template_name)
-            return template.render(**metadata)
+            # Template rendering disabled (templates directory removed)
+            raise FileNotFoundError(f"Templates not available: {template_name}")
         except Exception as e:
             logger.error(f"Failed to render .env.example template: {e}")
             raise
@@ -432,8 +424,8 @@ CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "{metadata['app_p
         template_name = "git/gitignore_python.txt"
 
         try:
-            template = self.jinja_env.get_template(template_name)
-            return template.render()
+            # Template rendering disabled (templates directory removed)
+            raise FileNotFoundError(f"Templates not available: {template_name}")
         except Exception as e:
             logger.error(f"Failed to render .gitignore template: {e}")
             raise
@@ -455,8 +447,8 @@ CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "{metadata['app_p
             template_name = "config/package_express.json.j2"
 
         try:
-            template = self.jinja_env.get_template(template_name)
-            return template.render(**metadata)
+            # Template rendering disabled (templates directory removed)
+            raise FileNotFoundError(f"Templates not available: {template_name}")
         except Exception as e:
             logger.error(f"Failed to render dependencies template: {e}")
             raise
@@ -475,8 +467,8 @@ CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "{metadata['app_p
         template_name = f"git/README_{metadata['project_type']}.md.j2"
 
         try:
-            template = self.jinja_env.get_template(template_name)
-            return template.render(**metadata)
+            # Template rendering disabled (templates directory removed)
+            raise FileNotFoundError(f"Templates not available: {template_name}")
         except Exception as e:
             logger.error(f"Failed to render README template: {e}")
             raise

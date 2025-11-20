@@ -11,7 +11,7 @@ Features:
 - Throttling (max 1 alert per event type per user per hour)
 - Alert history tracking
 - Async sending (non-blocking)
-- Jinja2 email templates
+- HTML email templates
 - Slack Block Kit formatting
 - PagerDuty Events API v2 integration
 
@@ -22,7 +22,6 @@ import uuid
 import requests
 from datetime import datetime, timedelta
 from typing import List, Optional
-from jinja2 import Template
 
 from src.models.security_event import SecurityEvent, SeverityLevel
 from src.models.alert_history import AlertHistory, AlertStatus
@@ -269,7 +268,7 @@ class AlertService:
 
     def send_email_alert(self, security_event: SecurityEvent, recipients: List[str]) -> bool:
         """
-        Send email alert using Jinja2 template.
+        Send email alert for security events.
 
         Args:
             security_event: SecurityEvent to alert on
@@ -279,19 +278,8 @@ class AlertService:
             True if sent successfully, False otherwise
         """
         try:
-            # Load email template
-            template_str = self._get_email_template()
-            template = Template(template_str)
-
-            # Render template
-            html_body = template.render(
-                event_type=security_event.event_type,
-                severity=security_event.severity,
-                user_id=security_event.user_id,
-                event_data=security_event.event_data,
-                detected_at=security_event.detected_at,
-                event_id=security_event.event_id
-            )
+            # Build email body
+            html_body = self._build_email_alert_body(security_event)
 
             # Send to each recipient
             for recipient in recipients:
@@ -319,14 +307,27 @@ class AlertService:
             )
             return False
 
-    def _get_email_template(self) -> str:
+    def _build_email_alert_body(self, security_event: SecurityEvent) -> str:
         """
-        Get Jinja2 email template for security alerts.
+        Build email alert body for security events.
+
+        Args:
+            security_event: SecurityEvent to alert on
 
         Returns:
-            Template string
+            HTML email body string
         """
-        return """
+        # Determine severity color
+        severity_color_map = {
+            'critical': '#dc2626',
+            'high': '#ea580c',
+            'medium': '#ca8a04',
+            'low': '#059669'
+        }
+        severity = security_event.severity.lower() if security_event.severity else 'low'
+        severity_color = severity_color_map.get(severity, '#059669')
+
+        return f"""
 <!DOCTYPE html>
 <html>
 <head>
@@ -335,9 +336,9 @@ class AlertService:
     <title>Security Alert</title>
 </head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-    <div style="background: {% if severity == 'critical' %}#dc2626{% elif severity == 'high' %}#ea580c{% elif severity == 'medium' %}#ca8a04{% else %}#059669{% endif %}; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+    <div style="background: {severity_color}; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
         <h1 style="color: white; margin: 0; font-size: 28px;">Security Alert</h1>
-        <p style="color: white; margin: 10px 0 0 0; font-size: 16px; opacity: 0.9;">{{ severity.upper() }} severity event detected</p>
+        <p style="color: white; margin: 10px 0 0 0; font-size: 16px; opacity: 0.9;">{security_event.severity.upper()} severity event detected</p>
     </div>
 
     <div style="background: #ffffff; padding: 40px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
@@ -345,23 +346,20 @@ class AlertService:
 
         <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
             <p style="margin: 0 0 10px 0;"><strong>Event Type:</strong></p>
-            <p style="font-size: 16px; color: #667eea; margin: 0 0 15px 0;">{{ event_type }}</p>
+            <p style="font-size: 16px; color: #667eea; margin: 0 0 15px 0;">{security_event.event_type}</p>
 
             <p style="margin: 0 0 10px 0;"><strong>Severity:</strong></p>
-            <p style="margin: 0 0 15px 0; color: {% if severity == 'critical' %}#dc2626{% elif severity == 'high' %}#ea580c{% elif severity == 'medium' %}#ca8a04{% else %}#059669{% endif %}; font-weight: bold; text-transform: uppercase;">{{ severity }}</p>
+            <p style="margin: 0 0 15px 0; color: {severity_color}; font-weight: bold; text-transform: uppercase;">{severity.upper()}</p>
 
             <p style="margin: 0 0 10px 0;"><strong>Detected At:</strong></p>
-            <p style="margin: 0 0 15px 0; color: #666;">{{ detected_at.strftime('%Y-%m-%d %H:%M:%S UTC') if detected_at else 'N/A' }}</p>
+            <p style="margin: 0 0 15px 0; color: #666;">{security_event.detected_at.strftime('%Y-%m-%d %H:%M:%S UTC') if security_event.detected_at else 'N/A'}</p>
 
-            {% if user_id %}
-            <p style="margin: 0 0 10px 0;"><strong>Affected User:</strong></p>
-            <p style="margin: 0; color: #666; font-family: monospace;">{{ user_id }}</p>
-            {% endif %}
+            {f'<p style="margin: 0 0 10px 0;"><strong>Affected User:</strong></p><p style="margin: 0; color: #666; font-family: monospace;">{security_event.user_id}</p>' if security_event.user_id else ''}
         </div>
 
         <h3 style="color: #333; margin-top: 30px;">Event Data</h3>
         <div style="background: #f9fafb; padding: 15px; border-radius: 8px; margin: 10px 0;">
-            <pre style="margin: 0; white-space: pre-wrap; word-wrap: break-word; font-size: 13px; color: #374151;">{{ event_data | tojson(indent=2) }}</pre>
+            <pre style="margin: 0; white-space: pre-wrap; word-wrap: break-word; font-size: 13px; color: #374151;">{security_event.event_data}</pre>
         </div>
 
         <h3 style="color: #333; margin-top: 30px;">Action Items</h3>
@@ -374,7 +372,7 @@ class AlertService:
 
         <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
             <p style="color: #999; font-size: 13px; margin: 0;">
-                <strong>Event ID:</strong> {{ event_id }}
+                <strong>Event ID:</strong> {security_event.event_id}
             </p>
         </div>
     </div>
