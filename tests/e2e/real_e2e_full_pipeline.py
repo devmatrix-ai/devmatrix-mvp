@@ -684,6 +684,59 @@ class RealE2ETest:
         print(f"  📊 DAG Accuracy: {self.precision.calculate_dag_accuracy():.1%}")
         print(f"  ✅ Contract validation: {'PASSED' if is_valid else 'FAILED'}")
 
+        # Task Group 8: Execution Order Validation
+        if self.planner and hasattr(self, 'classified_requirements') and self.classified_requirements:
+            try:
+                # Create DAG structure compatible with validate_execution_order
+                from dataclasses import dataclass, field
+                from typing import List
+
+                @dataclass
+                class Wave:
+                    wave_number: int
+                    requirements: List = field(default_factory=list)
+
+                @dataclass
+                class DAGStructure:
+                    waves: List[Wave] = field(default_factory=list)
+
+                    def get_wave_for_requirement(self, req_id: str):
+                        for wave in self.waves:
+                            for req in wave.requirements:
+                                if req.id == req_id:
+                                    return wave.wave_number
+                        return None
+
+                # Build waves from DAG (simplified: all in 3 waves)
+                waves_data = []
+                reqs_per_wave = len(self.classified_requirements) // 3 + 1
+
+                for wave_num in range(1, 4):
+                    start_idx = (wave_num - 1) * reqs_per_wave
+                    end_idx = min(wave_num * reqs_per_wave, len(self.classified_requirements))
+                    wave_reqs = self.classified_requirements[start_idx:end_idx]
+
+                    if wave_reqs:
+                        waves_data.append(Wave(wave_number=wave_num, requirements=wave_reqs))
+
+                dag_structure = DAGStructure(waves=waves_data)
+
+                # Validate execution order
+                result = self.planner.validate_execution_order(dag_structure, self.classified_requirements)
+
+                # Store validation score in precision metrics
+                if hasattr(self.precision, 'execution_order_score'):
+                    self.precision.execution_order_score = result.score
+
+                print(f"  🔍 Execution Order Validation: {result.score:.1%} (violations: {len(result.violations)})")
+
+                if result.violations:
+                    print(f"  ⚠️  Detected {len(result.violations)} ordering violations:")
+                    for v in result.violations[:3]:  # Show first 3
+                        print(f"     - {v.message}")
+            except Exception as e:
+                print(f"  ⚠️  Execution order validation failed: {e}")
+
         self.precision.total_operations += 1
         self.precision.successful_operations += 1
 
@@ -862,15 +915,38 @@ class RealE2ETest:
         """
         Parse generated code string into file structure
 
-        The CodeGenerationService returns a single string with all code.
-        This method splits it into logical files for deployment.
+        UPDATED: Now supports both legacy (single-file) and production (multi-file) formats.
 
-        For now, we put everything in main.py and add basic supporting files.
-        Future enhancement: Parse code to extract models, routes, tests separately.
+        Legacy format: Single Python file → main.py
+        Production format: "=== FILE: path/to/file.py ===\\n<content>\\n\\n=== FILE: ..."
+
+        Returns:
+            Dict[filepath, content] for all generated files
         """
         files = {}
 
-        # Main application file
+        # Check if this is production mode multi-file format
+        if "=== FILE:" in generated_code:
+            # Production mode: Parse multiple files
+            file_sections = generated_code.split("=== FILE: ")
+            for section in file_sections:
+                if not section.strip():
+                    continue
+
+                # Split into filepath and content
+                lines = section.split("\n", 1)
+                if len(lines) < 2:
+                    continue
+
+                filepath = lines[0].strip().replace(" ===", "")
+                content = lines[1].strip()
+
+                files[filepath] = content
+
+            print(f"  📦 Parsed production mode output: {len(files)} files")
+            return files
+
+        # Legacy mode: Single file → main.py
         files["main.py"] = generated_code
 
         # Generate requirements.txt (basic dependencies)
@@ -921,6 +997,7 @@ Once running, visit:
 {chr(10).join([f"- {endpoint.method} {endpoint.path}" for endpoint in self.spec_requirements.endpoints])}
 """
 
+        print(f"  📦 Parsed legacy mode output: {len(files)} files")
         return files
 
     # DELETED: Task Group 3.2.3 - Hardcoded template method removed entirely

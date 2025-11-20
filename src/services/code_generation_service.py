@@ -14,6 +14,7 @@ Author: DevMatrix Team
 Date: 2025-11-10
 """
 
+import os
 import uuid
 import asyncio
 import re
@@ -234,6 +235,65 @@ class CodeGenerationService:
                 "is_repair": repair_context is not None,
             },
         )
+
+        # FEATURE FLAG: Use production-ready templates if enabled (Task Group 8)
+        production_mode = os.getenv("PRODUCTION_MODE", "false").lower() == "true"
+
+        if production_mode:
+            logger.info(
+                "PRODUCTION_MODE enabled - using production-ready templates",
+                extra={"pattern_bank_available": self.pattern_bank is not None}
+            )
+
+            # FIX: Use ModularArchitectureGenerator (Task Group 2) directly
+            # Root cause: PatternBank has only 1/30K patterns with production_ready=True
+            # Domain mismatch: Qdrant patterns use (utilities, styles, authentication)
+            #                  Production patterns need (configuration, data_access, infrastructure)
+            # Solution: Use Task Group 2 generator until PatternBank is populated (Option B)
+            logger.info("Generating modular app using ModularArchitectureGenerator (Task Group 2)")
+            files_dict = await self.generate_modular_app(spec_requirements)
+
+            # Check if generation succeeded
+            if not files_dict:
+                logger.warning(
+                    "Modular generation produced no files - falling back to legacy LLM generation",
+                    extra={
+                        "reason": "ModularArchitectureGenerator may have failed or spec requirements incomplete"
+                    }
+                )
+                # Disable production mode and use legacy generation
+                production_mode = False
+                # Continue to legacy mode below (will execute after this if block)
+            else:
+                # Convert multi-file dict to single string for compatibility
+                # Format: "=== FILE: path/to/file.py ===\n<content>\n\n"
+                code_parts = []
+                for filepath, content in sorted(files_dict.items()):
+                    code_parts.append(f"=== FILE: {filepath} ===")
+                    code_parts.append(content)
+                    code_parts.append("")  # Empty line separator
+
+                generated_code = "\n".join(code_parts)
+
+                logger.info(
+                    "Production mode generation complete",
+                    extra={
+                        "files_generated": len(files_dict),
+                        "code_length": len(generated_code),
+                        "mode": "modular_architecture_generator"
+                    }
+                )
+
+                return generated_code
+
+        # If we reach here, either production_mode is False OR pattern generation failed
+        if production_mode:
+            # Should never reach here due to fallback logic above
+            logger.error("Unexpected: production_mode=True but reached legacy generation")
+            production_mode = False
+
+        # LEGACY MODE: Single-file monolithic generation
+        logger.info("Using legacy single-file generation mode")
 
         # Build comprehensive prompt from requirements
         prompt = self._build_requirements_prompt(spec_requirements)

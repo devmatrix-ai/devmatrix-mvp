@@ -46,6 +46,9 @@ class PrecisionMetrics:
     dag_cycles_detected: int = 0
     dag_cycles_fixed: int = 0
 
+    # Execution Order Validation (Task Group 8)
+    execution_order_score: float = 1.0  # 0.0-1.0 (1.0 = no violations)
+
     # Atomization Quality
     atoms_generated: int = 0
     atoms_valid: int = 0

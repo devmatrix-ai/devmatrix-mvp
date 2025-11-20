@@ -1,0 +1,311 @@
+"""
+Unit Tests for Pydantic Schemas
+
+Tests for schema validation, constraints, and strict mode.
+Coverage target: 90%+ for models/schemas.py
+"""
+import pytest
+from pydantic import ValidationError
+from datetime import datetime, timezone
+from uuid import uuid4
+{% for entity in entities %}
+from src.models.schemas import (
+    {{ entity.name }}Base,
+    {{ entity.name }}Create,
+    {{ entity.name }}Update,
+    {{ entity.name }},
+)
+{% endfor %}
+
+
+{% for entity in entities %}
+class Test{{ entity.name }}Create:
+    """Tests for {{ entity.name }}Create schema."""
+
+    def test_create_with_valid_data(self):
+        """Test creating {{ entity.name }} with all valid fields."""
+        data = {
+            {% for field in entity.fields %}
+            {% if not field.primary_key and field.name not in ['created_at', 'updated_at'] %}
+            {% if field.type == "str" %}
+            "{{ field.name }}": "test_{{ field.name }}",
+            {% elif field.type == "bool" %}
+            "{{ field.name }}": True,
+            {% elif field.type == "int" %}
+            "{{ field.name }}": 42,
+            {% elif field.type == "Decimal" %}
+            "{{ field.name }}": 99.99,
+            {% elif field.type == "datetime" %}
+            "{{ field.name }}": datetime.now(timezone.utc),
+            {% endif %}
+            {% endif %}
+            {% endfor %}
+        }
+        schema = {{ entity.name }}Create(**data)
+        {% for field in entity.fields %}
+        {% if not field.primary_key and field.name not in ['created_at', 'updated_at'] %}
+        assert schema.{{ field.name }} == data["{{ field.name }}"]
+        {% endif %}
+        {% endfor %}
+
+    {% for field in entity.fields %}
+    {% if field.required and not field.primary_key and field.name not in ['created_at', 'updated_at'] %}
+    def test_create_missing_required_{{ field.name }}(self):
+        """Test {{ entity.name }}Create fails without required field: {{ field.name }}."""
+        data = {
+            {% for f in entity.fields %}
+            {% if f.required and not f.primary_key and f.name not in ['created_at', 'updated_at'] and f.name != field.name %}
+            {% if f.type == "str" %}
+            "{{ f.name }}": "test_value",
+            {% elif f.type == "bool" %}
+            "{{ f.name }}": True,
+            {% elif f.type == "int" %}
+            "{{ f.name }}": 1,
+            {% elif f.type == "Decimal" %}
+            "{{ f.name }}": 10.00,
+            {% elif f.type == "datetime" %}
+            "{{ f.name }}": datetime.now(timezone.utc),
+            {% endif %}
+            {% endif %}
+            {% endfor %}
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            {{ entity.name }}Create(**data)
+        errors = exc_info.value.errors()
+        assert any(e["loc"][0] == "{{ field.name }}" for e in errors)
+
+    {% endif %}
+    {% endfor %}
+
+    {% for field in entity.fields %}
+    {% if field.constraints and field.type == "str" %}
+    {% if field.constraints.get('min_length') %}
+    def test_create_{{ field.name }}_min_length(self):
+        """Test {{ field.name }} minimum length constraint."""
+        data = {
+            {% for f in entity.fields %}
+            {% if not f.primary_key and f.name not in ['created_at', 'updated_at'] %}
+            {% if f.name == field.name %}
+            "{{ f.name }}": "a" * ({{ field.constraints.get('min_length') }} - 1),
+            {% elif f.required %}
+            {% if f.type == "str" %}
+            "{{ f.name }}": "test_value",
+            {% elif f.type == "bool" %}
+            "{{ f.name }}": True,
+            {% elif f.type == "int" %}
+            "{{ f.name }}": 1,
+            {% elif f.type == "Decimal" %}
+            "{{ f.name }}": 10.00,
+            {% elif f.type == "datetime" %}
+            "{{ f.name }}": datetime.now(timezone.utc),
+            {% endif %}
+            {% endif %}
+            {% endif %}
+            {% endfor %}
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            {{ entity.name }}Create(**data)
+        errors = exc_info.value.errors()
+        assert any("{{ field.name }}" in str(e) for e in errors)
+
+    {% endif %}
+    {% if field.constraints.get('max_length') %}
+    def test_create_{{ field.name }}_max_length(self):
+        """Test {{ field.name }} maximum length constraint."""
+        data = {
+            {% for f in entity.fields %}
+            {% if not f.primary_key and f.name not in ['created_at', 'updated_at'] %}
+            {% if f.name == field.name %}
+            "{{ f.name }}": "a" * ({{ field.constraints.get('max_length') }} + 1),
+            {% elif f.required %}
+            {% if f.type == "str" %}
+            "{{ f.name }}": "test_value",
+            {% elif f.type == "bool" %}
+            "{{ f.name }}": True,
+            {% elif f.type == "int" %}
+            "{{ f.name }}": 1,
+            {% elif f.type == "Decimal" %}
+            "{{ f.name }}": 10.00,
+            {% elif f.type == "datetime" %}
+            "{{ f.name }}": datetime.now(timezone.utc),
+            {% endif %}
+            {% endif %}
+            {% endif %}
+            {% endfor %}
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            {{ entity.name }}Create(**data)
+        errors = exc_info.value.errors()
+        assert any("{{ field.name }}" in str(e) for e in errors)
+
+    {% endif %}
+    {% endif %}
+    {% if field.constraints and field.type == "int" %}
+    {% if field.constraints.get('gt') %}
+    def test_create_{{ field.name }}_greater_than(self):
+        """Test {{ field.name }} greater than constraint."""
+        data = {
+            {% for f in entity.fields %}
+            {% if not f.primary_key and f.name not in ['created_at', 'updated_at'] %}
+            {% if f.name == field.name %}
+            "{{ f.name }}": {{ field.constraints.get('gt') }},
+            {% elif f.required %}
+            {% if f.type == "str" %}
+            "{{ f.name }}": "test_value",
+            {% elif f.type == "bool" %}
+            "{{ f.name }}": True,
+            {% elif f.type == "int" %}
+            "{{ f.name }}": 1,
+            {% elif f.type == "Decimal" %}
+            "{{ f.name }}": 10.00,
+            {% elif f.type == "datetime" %}
+            "{{ f.name }}": datetime.now(timezone.utc),
+            {% endif %}
+            {% endif %}
+            {% endif %}
+            {% endfor %}
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            {{ entity.name }}Create(**data)
+        errors = exc_info.value.errors()
+        assert any("{{ field.name }}" in str(e) for e in errors)
+
+    {% endif %}
+    {% if field.constraints.get('ge') %}
+    def test_create_{{ field.name }}_greater_equal(self):
+        """Test {{ field.name }} greater than or equal constraint."""
+        data = {
+            {% for f in entity.fields %}
+            {% if not f.primary_key and f.name not in ['created_at', 'updated_at'] %}
+            {% if f.name == field.name %}
+            "{{ f.name }}": {{ field.constraints.get('ge') - 1 }},
+            {% elif f.required %}
+            {% if f.type == "str" %}
+            "{{ f.name }}": "test_value",
+            {% elif f.type == "bool" %}
+            "{{ f.name }}": True,
+            {% elif f.type == "int" %}
+            "{{ f.name }}": 1,
+            {% elif f.type == "Decimal" %}
+            "{{ f.name }}": 10.00,
+            {% elif f.type == "datetime" %}
+            "{{ f.name }}": datetime.now(timezone.utc),
+            {% endif %}
+            {% endif %}
+            {% endif %}
+            {% endfor %}
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            {{ entity.name }}Create(**data)
+        errors = exc_info.value.errors()
+        assert any("{{ field.name }}" in str(e) for e in errors)
+
+    {% endif %}
+    {% endif %}
+    {% endfor %}
+
+    def test_create_strict_mode_type_coercion_rejected(self):
+        """Test strict mode rejects type coercion."""
+        data = {
+            {% for field in entity.fields %}
+            {% if not field.primary_key and field.name not in ['created_at', 'updated_at'] %}
+            {% if field.type == "str" and field.required %}
+            "{{ field.name }}": 123,  # int instead of str
+            {% elif field.type == "bool" %}
+            "{{ field.name }}": True,
+            {% elif field.type == "int" %}
+            "{{ field.name }}": 1,
+            {% elif field.type == "Decimal" %}
+            "{{ field.name }}": 10.00,
+            {% elif field.type == "datetime" %}
+            "{{ field.name }}": datetime.now(timezone.utc),
+            {% endif %}
+            {% break %}
+            {% endif %}
+            {% endfor %}
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            {{ entity.name }}Create(**data)
+        errors = exc_info.value.errors()
+        assert any(e["type"] == "string_type" for e in errors)
+
+
+class Test{{ entity.name }}Update:
+    """Tests for {{ entity.name }}Update schema."""
+
+    def test_update_all_fields_optional(self):
+        """Test all fields are optional in update schema."""
+        # Empty update should be valid
+        schema = {{ entity.name }}Update()
+        {% for field in entity.fields %}
+        {% if not field.primary_key and field.name not in ['created_at', 'updated_at'] %}
+        assert schema.{{ field.name }} is None
+        {% endif %}
+        {% endfor %}
+
+    def test_update_partial_data(self):
+        """Test updating only some fields."""
+        {% for field in entity.fields %}
+        {% if not field.primary_key and field.name not in ['created_at', 'updated_at'] %}
+        {% if field.type == "str" %}
+        schema = {{ entity.name }}Update({{ field.name }}="updated_value")
+        assert schema.{{ field.name }} == "updated_value"
+        {% break %}
+        {% endif %}
+        {% endif %}
+        {% endfor %}
+
+    {% for field in entity.fields %}
+    {% if field.constraints and field.type == "str" and not field.primary_key and field.name not in ['created_at', 'updated_at'] %}
+    {% if field.constraints.get('max_length') %}
+    def test_update_{{ field.name }}_max_length_validation(self):
+        """Test {{ field.name }} max length is still enforced in updates."""
+        with pytest.raises(ValidationError):
+            {{ entity.name }}Update({{ field.name }}="a" * ({{ field.constraints.get('max_length') }} + 1))
+
+    {% endif %}
+    {% break %}
+    {% endif %}
+    {% endfor %}
+
+
+class Test{{ entity.name }}Response:
+    """Tests for {{ entity.name }} response schema."""
+
+    def test_response_with_orm_model(self):
+        """Test converting ORM entity to response schema."""
+        from src.models.entities import {{ entity.name }}Entity
+
+        entity = {{ entity.name }}Entity(
+            id=uuid4(),
+            {% for field in entity.fields %}
+            {% if not field.primary_key and field.name not in ['created_at', 'updated_at'] %}
+            {% if field.type == "str" %}
+            {{ field.name }}="test_{{ field.name }}",
+            {% elif field.type == "bool" %}
+            {{ field.name }}=True,
+            {% elif field.type == "int" %}
+            {{ field.name }}=42,
+            {% elif field.type == "Decimal" %}
+            {{ field.name }}=99.99,
+            {% elif field.type == "datetime" %}
+            {{ field.name }}=datetime.now(timezone.utc),
+            {% endif %}
+            {% endif %}
+            {% endfor %}
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        schema = {{ entity.name }}.model_validate(entity)
+        assert schema.id == entity.id
+        {% for field in entity.fields %}
+        {% if not field.primary_key and field.name not in ['created_at', 'updated_at'] %}
+        assert schema.{{ field.name }} == entity.{{ field.name }}
+        {% endif %}
+        {% endfor %}
+        assert schema.created_at == entity.created_at
+        assert schema.updated_at == entity.updated_at
+
+
+{% endfor %}

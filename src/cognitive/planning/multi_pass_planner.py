@@ -21,10 +21,38 @@ import logging
 import re
 from typing import Dict, Any, List, Tuple, Optional
 from collections import defaultdict
+from dataclasses import dataclass, field
 
 from src.cognitive.signatures.semantic_signature import SemanticTaskSignature
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Execution Order Validation Data Structures
+# ============================================================================
+
+@dataclass
+class OrderingViolation:
+    """Execution order violation"""
+    entity: str
+    violation_type: str  # "crud" or "workflow"
+    message: str
+    expected_order: str
+    actual_order: str
+
+
+@dataclass
+class ExecutionOrderResult:
+    """Result of execution order validation"""
+    score: float  # 0.0-1.0 (1.0 = all checks pass)
+    total_checks: int
+    violations: List[OrderingViolation] = field(default_factory=list)
+
+    @property
+    def is_valid(self) -> bool:
+        """Check if validation passed (no violations)"""
+        return len(self.violations) == 0
 
 
 # ============================================================================
@@ -974,3 +1002,196 @@ class MultiPassPlanner:
 
         # Deduplicate and validate
         return self._validate_edges(edges)
+
+    def validate_execution_order(self, dag: Any, requirements: List[Any]) -> ExecutionOrderResult:
+        """
+        Validate if DAG allows correct execution order
+
+        Checks:
+        1. CRUD ordering: Create before Read/Update/Delete (for each entity)
+        2. Workflow ordering: Cart before Checkout, Checkout before Payment
+
+        Args:
+            dag: DAG object with waves (List[Wave])
+            requirements: List of Requirement objects
+
+        Returns:
+            ExecutionOrderResult with:
+                - score: 0.0-1.0 (1.0 = all checks pass)
+                - total_checks: Number of checks performed
+                - violations: List[OrderingViolation]
+
+        Example:
+            >>> dag = DAG(waves=[
+            ...     Wave(1, [create_product]),
+            ...     Wave(2, [read_product])
+            ... ])
+            >>> result = planner.validate_execution_order(dag, requirements)
+            >>> result.score
+            >>> # 1.0 (valid ordering)
+        """
+        violations = []
+
+        # Check 1: CRUD ordering violations
+        crud_violations = self._check_crud_ordering(dag, requirements)
+        violations.extend(crud_violations)
+
+        # Check 2: Workflow ordering violations
+        workflow_violations = self._check_workflow_ordering(dag, requirements)
+        violations.extend(workflow_violations)
+
+        # Calculate total checks
+        # CRUD checks: 4 entities (product, customer, cart, order)
+        # Workflow checks: 1 (cart → checkout workflow)
+        total_checks = 5
+
+        # Calculate score
+        score = 1.0 - (len(violations) / total_checks) if total_checks > 0 else 1.0
+
+        if violations:
+            logger.warning(f"Execution order violations detected: {len(violations)} violations")
+            for v in violations:
+                logger.warning(f"  - {v.message}")
+
+        return ExecutionOrderResult(
+            score=score,
+            total_checks=total_checks,
+            violations=violations
+        )
+
+    def _check_crud_ordering(self, dag: Any, requirements: List[Any]) -> List[OrderingViolation]:
+        """
+        Check CRUD ordering violations
+
+        Rule: Create must come before Read/Update/Delete for same entity
+
+        Args:
+            dag: DAG object with waves
+            requirements: List of Requirement objects
+
+        Returns:
+            List[OrderingViolation] for detected violations
+
+        Example:
+            >>> # Valid: create (wave 1) → read (wave 2)
+            >>> violations = planner._check_crud_ordering(dag, reqs)
+            >>> len(violations)
+            >>> # 0
+
+            >>> # Invalid: read (wave 1) → create (wave 2)
+            >>> violations = planner._check_crud_ordering(dag, reqs)
+            >>> len(violations)
+            >>> # 1
+        """
+        violations = []
+
+        # Check each entity
+        for entity in ['product', 'customer', 'cart', 'order']:
+            # Find create and read/update/delete operations for this entity
+            create_req = None
+            other_reqs = []
+
+            for req in requirements:
+                entity_match = entity in req.description.lower()
+                if not entity_match:
+                    continue
+
+                if req.operation == 'create':
+                    create_req = req
+                elif req.operation in ['read', 'list', 'update', 'delete']:
+                    other_reqs.append(req)
+
+            # Skip if no create or no other operations
+            if not create_req or not other_reqs:
+                continue
+
+            # Get wave numbers
+            create_wave = dag.get_wave_for_requirement(create_req.id)
+            if create_wave is None:
+                continue
+
+            # Check each other operation
+            for other_req in other_reqs:
+                other_wave = dag.get_wave_for_requirement(other_req.id)
+                if other_wave is None:
+                    continue
+
+                # Violation: other operation before create
+                if other_wave <= create_wave:
+                    violations.append(OrderingViolation(
+                        entity=entity,
+                        violation_type="crud",
+                        message=f"{entity.capitalize()} {other_req.operation} (wave {other_wave}) before create (wave {create_wave})",
+                        expected_order=f"create → {other_req.operation}",
+                        actual_order=f"{other_req.operation} → create"
+                    ))
+
+        return violations
+
+    def _check_workflow_ordering(self, dag: Any, requirements: List[Any]) -> List[OrderingViolation]:
+        """
+        Check workflow ordering violations
+
+        Rules:
+        - Cart operations (create_cart, add_to_cart) before checkout_cart
+        - Checkout before payment
+
+        Args:
+            dag: DAG object with waves
+            requirements: List of Requirement objects
+
+        Returns:
+            List[OrderingViolation] for detected violations
+
+        Example:
+            >>> # Valid: create_cart (wave 1) → add_to_cart (wave 2) → checkout (wave 3)
+            >>> violations = planner._check_workflow_ordering(dag, reqs)
+            >>> len(violations)
+            >>> # 0
+        """
+        violations = []
+
+        # Find workflow-related requirements
+        create_cart_req = None
+        add_to_cart_req = None
+        checkout_req = None
+
+        for req in requirements:
+            desc_lower = req.description.lower()
+
+            if 'create' in desc_lower and 'cart' in desc_lower and 'checkout' not in desc_lower:
+                create_cart_req = req
+            elif 'add' in desc_lower and 'cart' in desc_lower:
+                add_to_cart_req = req
+            elif 'checkout' in desc_lower:
+                checkout_req = req
+
+        # Check cart → checkout ordering
+        if checkout_req:
+            checkout_wave = dag.get_wave_for_requirement(checkout_req.id)
+
+            # Check create_cart before checkout
+            if create_cart_req and checkout_wave is not None:
+                cart_wave = dag.get_wave_for_requirement(create_cart_req.id)
+                if cart_wave is not None and checkout_wave <= cart_wave:
+                    violations.append(OrderingViolation(
+                        entity="cart",
+                        violation_type="workflow",
+                        message=f"Checkout (wave {checkout_wave}) before create_cart (wave {cart_wave})",
+                        expected_order="create_cart → checkout",
+                        actual_order="checkout → create_cart"
+                    ))
+
+            # Check add_to_cart before checkout
+            if add_to_cart_req and checkout_wave is not None:
+                add_wave = dag.get_wave_for_requirement(add_to_cart_req.id)
+                if add_wave is not None and checkout_wave <= add_wave:
+                    violations.append(OrderingViolation(
+                        entity="cart",
+                        violation_type="workflow",
+                        message=f"Checkout (wave {checkout_wave}) before add_to_cart (wave {add_wave})",
+                        expected_order="add_to_cart → checkout",
+                        actual_order="checkout → add_to_cart"
+                    ))
+
+        return violations
