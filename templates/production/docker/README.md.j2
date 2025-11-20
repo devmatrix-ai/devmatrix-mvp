@@ -1,4 +1,4 @@
-# Docker Infrastructure for {{ app_name }}
+# Docker Infrastructure for {APP_NAME}
 
 Production-ready Docker setup with full observability stack.
 
@@ -105,12 +105,12 @@ Persistent data is stored in named volumes:
 
 ```bash
 # Backup PostgreSQL data
-docker run --rm -v {{ app_name }}_postgres-data:/data \
+docker run --rm -v {APP_NAME}_postgres-data:/data \
   -v $(pwd)/backup:/backup alpine \
   tar czf /backup/postgres-backup.tar.gz -C /data .
 
 # Restore PostgreSQL data
-docker run --rm -v {{ app_name }}_postgres-data:/data \
+docker run --rm -v {APP_NAME}_postgres-data:/data \
   -v $(pwd)/backup:/backup alpine \
   tar xzf /backup/postgres-backup.tar.gz -C /data
 ```
@@ -132,7 +132,7 @@ Access Prometheus at http://localhost:9090
 
 ```promql
 # Request rate
-rate(http_requests_total{service="{{ app_name }}"}[5m])
+rate(http_requests_total{service="{APP_NAME}"}[5m])
 
 # Request duration p95
 histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))
@@ -148,7 +148,7 @@ Access Grafana at http://localhost:3000
 **Default credentials**: admin/admin (change on first login)
 
 **Pre-configured dashboards**:
-- {{ app_name }} - Application Metrics
+- {APP_NAME} - Application Metrics
 
 ## Troubleshooting
 
@@ -170,7 +170,7 @@ docker-compose -f docker/docker-compose.yml exec postgres pg_isready
 
 # Verify database exists
 docker-compose -f docker/docker-compose.yml exec postgres \
-  psql -U {{ app_name }}_user -d {{ app_name }}_db -c '\l'
+  psql -U {APP_NAME}_user -d {APP_NAME}_db -c '\l'
 
 # Run migrations manually
 docker-compose -f docker/docker-compose.yml exec app alembic upgrade head
@@ -207,13 +207,13 @@ Create a `.env` file with production values:
 
 ```bash
 # Application
-APP_NAME={{ app_name }}
+APP_NAME={APP_NAME}
 ENVIRONMENT=production
 DEBUG=false
 LOG_LEVEL=INFO
 
 # Database (use strong passwords!)
-DATABASE_URL=postgresql+asyncpg://user:STRONG_PASSWORD@postgres:5432/{{ app_name }}_db
+DATABASE_URL=postgresql+asyncpg://user:STRONG_PASSWORD@postgres:5432/{APP_NAME}_db
 POSTGRES_PASSWORD=STRONG_PASSWORD
 
 # Security

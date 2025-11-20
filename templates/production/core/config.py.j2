@@ -17,13 +17,13 @@ class Settings(BaseSettings):
     )
 
     # Application
-    app_name: str = "{{ app_name }}"
+    app_name: str = "{APP_NAME}"
     app_version: str = "1.0.0"
     environment: str = "development"
     debug: bool = False
 
     # Database
-    database_url: str = "postgresql+asyncpg://user:pass@localhost/{{ app_name.replace('-', '_') }}"
+    database_url: str = "postgresql+asyncpg://user:pass@localhost/{APP_NAME_SNAKE}"
     db_echo: bool = False
     db_pool_size: int = 5
     db_max_overflow: int = 10

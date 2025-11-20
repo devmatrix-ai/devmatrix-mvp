@@ -106,7 +106,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "rate(http_requests_total{service=\"{{ app_name }}\"}[5m])",
+          "expr": "rate(http_requests_total{service=\"{APP_NAME}\"}[5m])",
           "legendFormat": "{{{{ method }}}} {{{{ endpoint }}}}",
           "range": true,
           "refId": "A"
@@ -199,7 +199,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{service=\"{{ app_name }}\"}[5m]))",
+          "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{service=\"{APP_NAME}\"}[5m]))",
           "legendFormat": "p95 - {{{{ method }}}} {{{{ endpoint }}}}",
           "range": true,
           "refId": "A"
@@ -210,7 +210,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.50, rate(http_request_duration_seconds_bucket{service=\"{{ app_name }}\"}[5m]))",
+          "expr": "histogram_quantile(0.50, rate(http_request_duration_seconds_bucket{service=\"{APP_NAME}\"}[5m]))",
           "legendFormat": "p50 - {{{{ method }}}} {{{{ endpoint }}}}",
           "range": true,
           "refId": "B"
@@ -276,7 +276,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "rate(http_requests_total{service=\"{{ app_name }}\", status=~\"5..\"}[5m]) / rate(http_requests_total{service=\"{{ app_name }}\"}[5m])",
+          "expr": "rate(http_requests_total{service=\"{APP_NAME}\", status=~\"5..\"}[5m]) / rate(http_requests_total{service=\"{APP_NAME}\"}[5m])",
           "legendFormat": "Error Rate",
           "range": true,
           "refId": "A"
@@ -365,7 +365,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by(status) (rate(http_requests_total{service=\"{{ app_name }}\"}[5m]))",
+          "expr": "sum by(status) (rate(http_requests_total{service=\"{APP_NAME}\"}[5m]))",
           "legendFormat": "HTTP {{{{ status }}}}",
           "range": true,
           "refId": "A"
@@ -378,7 +378,7 @@
   "refresh": "10s",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": ["{{ app_name }}", "api", "production"],
+  "tags": ["{APP_NAME}", "api", "production"],
   "templating": {
     "list": []
   },
@@ -388,8 +388,8 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "{{ app_name }} - Application Metrics",
-  "uid": "{{ app_name }}-metrics",
+  "title": "{APP_NAME} - Application Metrics",
+  "uid": "{APP_NAME}-metrics",
   "version": 1,
   "weekStart": ""
 }

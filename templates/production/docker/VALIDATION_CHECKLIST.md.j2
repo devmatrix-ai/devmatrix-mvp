@@ -1,4 +1,4 @@
-# Docker Infrastructure Validation Checklist - {{ app_name }}
+# Docker Infrastructure Validation Checklist - {APP_NAME}
 
 Use this checklist to validate the complete Docker setup after deployment.
 
@@ -36,8 +36,8 @@ Use this checklist to validate the complete Docker setup after deployment.
 ### Docker Image Build
 
 ```bash
-cd /path/to/{{ app_name }}
-docker build -f docker/Dockerfile -t {{ app_name }}:test .
+cd /path/to/{APP_NAME}
+docker build -f docker/Dockerfile -t {APP_NAME}:test .
 ```
 
 - [ ] Build succeeds without errors
@@ -47,7 +47,7 @@ docker build -f docker/Dockerfile -t {{ app_name }}:test .
 
 **Check image size**:
 ```bash
-docker images {{ app_name }}:test
+docker images {APP_NAME}:test
 ```
 
 **Expected**: ~200-400MB for Python 3.11 + FastAPI + dependencies
@@ -56,7 +56,7 @@ docker images {{ app_name }}:test
 
 ```bash
 # Check layer sizes
-docker history {{ app_name }}:test
+docker history {APP_NAME}:test
 ```
 
 - [ ] Builder stage uses poetry
@@ -90,7 +90,7 @@ docker-compose -f docker/docker-compose.yml ps
 
 1. **PostgreSQL**:
 ```bash
-docker-compose -f docker/docker-compose.yml exec postgres pg_isready -U {{ app_name }}_user
+docker-compose -f docker/docker-compose.yml exec postgres pg_isready -U {APP_NAME}_user
 ```
 - [ ] Returns "accepting connections"
 
@@ -136,7 +136,7 @@ curl http://localhost:8000/metrics/metrics | grep http_requests_total
 ### Monitoring Endpoints
 
 - [ ] **Prometheus UI**: http://localhost:9090 (loads)
-- [ ] **Prometheus Targets**: http://localhost:9090/targets ({{ app_name }} target is UP)
+- [ ] **Prometheus Targets**: http://localhost:9090/targets ({APP_NAME} target is UP)
 - [ ] **Grafana UI**: http://localhost:3000 (login page)
 - [ ] **Grafana Login**: admin/admin works
 
@@ -208,7 +208,7 @@ curl -s 'http://localhost:9090/api/v1/query?query=http_requests_total' | jq
 
 1. Login to Grafana: http://localhost:3000 (admin/admin)
 
-2. Navigate to Dashboards > {{ app_name }} - Application Metrics
+2. Navigate to Dashboards > {APP_NAME} - Application Metrics
 
 - [ ] Dashboard loads without errors
 - [ ] HTTP Request Rate panel shows data
@@ -227,13 +227,13 @@ curl -s 'http://localhost:9090/api/v1/query?query=http_requests_total' | jq
 ### Check Volumes Exist
 
 ```bash
-docker volume ls | grep {{ app_name }}
+docker volume ls | grep {APP_NAME}
 ```
 
-- [ ] `{{ app_name }}_postgres-data`
-- [ ] `{{ app_name }}_redis-data`
-- [ ] `{{ app_name }}_prometheus-data`
-- [ ] `{{ app_name }}_grafana-data`
+- [ ] `{APP_NAME}_postgres-data`
+- [ ] `{APP_NAME}_redis-data`
+- [ ] `{APP_NAME}_prometheus-data`
+- [ ] `{APP_NAME}_grafana-data`
 
 ### Volume Persistence Test
 
@@ -329,7 +329,7 @@ docker-compose -f docker/docker-compose.yml exec prometheus wget -O- http://app:
 ### Network Isolation
 
 ```bash
-docker network inspect {{ app_name }}_app-network
+docker network inspect {APP_NAME}_app-network
 ```
 
 - [ ] All 5 containers in network

@@ -1,4 +1,4 @@
-# Docker Troubleshooting Guide - {{ app_name }}
+# Docker Troubleshooting Guide - {APP_NAME}
 
 Common issues and solutions for Docker infrastructure.
 
@@ -45,7 +45,7 @@ docker-compose -f docker/docker-compose.yml ps postgres
 
 2. **Check database is ready**:
 ```bash
-docker-compose -f docker/docker-compose.yml exec postgres pg_isready -U {{ app_name }}_user
+docker-compose -f docker/docker-compose.yml exec postgres pg_isready -U {APP_NAME}_user
 ```
 
 3. **Verify connection string**:
@@ -53,13 +53,13 @@ docker-compose -f docker/docker-compose.yml exec postgres pg_isready -U {{ app_n
 # Inside app container
 docker-compose -f docker/docker-compose.yml exec app env | grep DATABASE_URL
 
-# Should show: postgresql+asyncpg://{{ app_name }}_user:{{ app_name }}_password@postgres:5432/{{ app_name }}_db
+# Should show: postgresql+asyncpg://{APP_NAME}_user:{APP_NAME}_password@postgres:5432/{APP_NAME}_db
 ```
 
 4. **Test connection manually**:
 ```bash
 docker-compose -f docker/docker-compose.yml exec postgres \
-  psql -U {{ app_name }}_user -d {{ app_name }}_db -c 'SELECT 1;'
+  psql -U {APP_NAME}_user -d {APP_NAME}_db -c 'SELECT 1;'
 ```
 
 5. **Check network connectivity**:
@@ -92,10 +92,10 @@ docker-compose -f docker/docker-compose.yml stop app
 
 # Drop and recreate database
 docker-compose -f docker/docker-compose.yml exec postgres \
-  psql -U {{ app_name }}_user -c 'DROP DATABASE {{ app_name }}_db;'
+  psql -U {APP_NAME}_user -c 'DROP DATABASE {APP_NAME}_db;'
 
 docker-compose -f docker/docker-compose.yml exec postgres \
-  psql -U {{ app_name }}_user -c 'CREATE DATABASE {{ app_name }}_db;'
+  psql -U {APP_NAME}_user -c 'CREATE DATABASE {APP_NAME}_db;'
 
 # Run migrations
 docker-compose -f docker/docker-compose.yml exec app alembic upgrade head
@@ -307,7 +307,7 @@ docker network ls | grep app-network
 
 2. **Inspect network**:
 ```bash
-docker network inspect {{ app_name }}_app-network
+docker network inspect {APP_NAME}_app-network
 ```
 
 3. **Recreate network**:
