@@ -79,6 +79,14 @@ class Entity:
     validations: List[Validation] = field(default_factory=list)
     description: str = ""
 
+    @property
+    def snake_name(self) -> str:
+        """Convert entity name to snake_case for use in file/variable names"""
+        # Convert CamelCase to snake_case: Product → product, CustomerOrder → customer_order
+        import re
+        s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', self.name)
+        return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+
 
 @dataclass
 class Param:

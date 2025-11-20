@@ -402,6 +402,9 @@ class RealE2ETest:
             self.precision.classifications_correct = 0
             self.precision.classifications_incorrect = 0
 
+            print(f"\n    DEBUG: Validating {len(self.classified_requirements)} requirements")
+            print(f"    DEBUG: Ground truth has {len(ground_truth)} keys: {list(ground_truth.keys())[:5]}...")
+
             for req in self.classified_requirements:
                 # Get requirement ID (e.g., "F1_create_product")
                 # Try to extract from description or use a generated ID
@@ -409,11 +412,29 @@ class RealE2ETest:
                 if hasattr(req, 'id') and req.id:
                     req_id = req.id
                 elif hasattr(req, 'description') and req.description:
-                    # Try to extract from description (e.g., "F1. Create product" -> "F1_create_product")
+                    # Try to match full ground truth IDs (e.g., "F1_create_product", "F13_checkout_cart")
+                    # Ground truth keys have format: F<number>_<snake_case_name>
                     import re
-                    match = re.match(r'([A-Z]\d+)', req.description)
-                    if match:
-                        req_id = match.group(1)
+                    desc = req.description
+
+                    # Try to find the best matching ground truth key by prefix
+                    # Extract "F1", "F2", etc. from description
+                    prefix_match = re.match(r'([A-Z]\d+)', desc)
+                    if prefix_match:
+                        prefix = prefix_match.group(1)  # e.g., "F1"
+
+                        # Find ground truth keys that start with this prefix
+                        matching_keys = [key for key in ground_truth.keys() if key.startswith(prefix)]
+                        if len(matching_keys) == 1:
+                            req_id = matching_keys[0]  # Exact match
+                        elif len(matching_keys) > 1:
+                            # Multiple matches - try to disambiguate by description text
+                            # For now, just use the first match
+                            req_id = matching_keys[0]
+
+                # Debug logging
+                req_desc = req.description if hasattr(req, 'description') else "NO_DESC"
+                print(f"    DEBUG: req_desc='{req_desc[:50]}...', req_id='{req_id}', in_gt={req_id in ground_truth if req_id else False}")
 
                 # Skip if we can't identify the requirement
                 if not req_id or req_id not in ground_truth:
@@ -1705,6 +1726,8 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         # Save all generated files
         for filename, content in self.generated_code.items():
             filepath = os.path.join(self.output_dir, filename)
+            # Create parent directories if they don't exist (for modular structure)
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
             with open(filepath, 'w') as f:
                 f.write(content)
             print(f"  💾 Saved: {filepath}")

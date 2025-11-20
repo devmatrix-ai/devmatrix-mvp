@@ -555,7 +555,8 @@ def load_classification_ground_truth(spec_path: str) -> Dict[str, Dict[str, str]
                 continue
 
             # Parse requirement ID (e.g., **F1_create_product**:)
-            req_match = re.match(r'\*\*([A-Z0-9_]+)\*\*:', line)
+            # Use search instead of match to allow leading whitespace
+            req_match = re.search(r'\*\*([A-Z0-9_a-z]+)\*\*:', line)
             if req_match:
                 current_req_id = req_match.group(1)
                 ground_truth[current_req_id] = {}
