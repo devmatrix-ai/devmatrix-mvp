@@ -272,7 +272,8 @@ def validate_category_config() -> bool:
         "business_logic",
         "api",
         "security",
-        "testing"
+        "testing",
+        "observability"
     }
 
     required_fields = ["patterns", "success_threshold", "domain", "description", "priority"]
