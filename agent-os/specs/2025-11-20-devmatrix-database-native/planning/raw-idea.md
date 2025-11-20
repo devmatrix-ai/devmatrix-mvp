@@ -411,13 +411,16 @@ PatternFeedbackIntegration.learn_from_execution(spec_id)
 # High token usage, slow queries
 ```
 
-### DevMatrix Database-Native (Minimal Optimized)
+### DevMatrix Database-Native (Enriched Optimized)
+
 ```python
-# Query specific task (0.5KB)
-# Top 3 patterns from Qdrant (1-2KB)
-# Completed dependencies (0.5KB)
-# Required skills (0.3KB)
-# Total: 2-3KB (30-50% reduction)
+# Complete task details with acceptance criteria (1KB)
+# Top 5 patterns from Qdrant with full examples (3KB)
+# All dependencies with status (1KB)
+# Required skills with guidelines (0.5KB)
+# Parent and sibling context (1KB)
+# Spec requirements and tech stack (0.5KB)
+# Total: 5-8KB standard (balanced comprehension vs optimization)
 ```
 
 ## Open Questions
@@ -452,7 +455,8 @@ PatternFeedbackIntegration.learn_from_execution(spec_id)
 ## Next Steps
 
 ### Immediate (Week 1-2)
-1. Implement DatabaseContext with minimal context queries
+
+1. Implement DatabaseContext with enriched context queries (5-8KB standard)
 2. Create DatabaseTaskManager with PostgreSQL integration
 3. Build GraphOrchestrator with Neo4j wave generation
 4. Test with simple_task_api.md spec
