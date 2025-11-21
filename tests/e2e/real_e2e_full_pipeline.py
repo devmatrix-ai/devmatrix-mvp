@@ -1069,8 +1069,8 @@ Once running, visit:
             self.metrics_collector.complete_phase("code_repair")
             return
 
-        # Get main.py code for validation
-        main_code = self.generated_code.get("main.py", "")
+        # Get main.py code for validation (stored as src/main.py in modular architecture)
+        main_code = self.generated_code.get("src/main.py", "")
         if not main_code:
             print("  ⚠️ No main.py found in generated code, skipping repair phase")
             self.metrics_collector.add_checkpoint("code_repair", "CP-6.5.SKIP", {
