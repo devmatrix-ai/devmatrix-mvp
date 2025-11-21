@@ -212,9 +212,11 @@ class ComplianceValidator:
         import importlib.util
         from pathlib import Path
 
-        # Ensure output_path is Path object
+        # Ensure output_path is Path object and convert to absolute path
         if not isinstance(output_path, Path):
-            output_path = Path(output_path)
+            output_path = Path(output_path).resolve()
+        else:
+            output_path = output_path.resolve()
 
         logger.info(f"Validating app at {output_path} using OpenAPI schema")
 
