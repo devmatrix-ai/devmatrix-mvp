@@ -1596,7 +1596,12 @@ Code MUST pass Python compile() without SyntaxError."""
                 exact_main = p
                 break
 
-        if exact_main:
+        # Production mode: Always use hardcoded main.py (ensures docs enabled, correct config)
+        if os.getenv("PRODUCTION_MODE") == "true":
+            logger.info("🔨 PRODUCTION_MODE: Using hardcoded main.py (docs always enabled)")
+            main_py_code = self._generate_main_py(spec_requirements)
+            files["src/main.py"] = main_py_code
+        elif exact_main:
             files["src/main.py"] = self._adapt_pattern(exact_main.code, spec_requirements)
             logger.info("✅ Added main.py from PatternBank")
         else:
@@ -1948,11 +1953,15 @@ Generate ONLY the README.md content, no additional explanations."""
                 elif "metrics" in purpose_lower or "prometheus" in purpose_lower:
                     files["src/api/routes/metrics.py"] = self._adapt_pattern(p.code, spec_requirements)
 
-            # Production mode: Always use optimized metrics route (prevents metric duplication)
+            # Production mode: Always use optimized routes (prevents issues)
             if os.getenv("PRODUCTION_MODE") == "true":
                 logger.info("🔨 PRODUCTION_MODE: Using deduplicated metrics route (imports from middleware)")
                 metrics_code = self._generate_metrics_route()
                 files["src/api/routes/metrics.py"] = metrics_code
+
+                logger.info("🔨 PRODUCTION_MODE: Using health routes with text() fix (SQLAlchemy 2.0)")
+                health_code = self._generate_health_routes()
+                files["src/api/routes/health.py"] = health_code
 
         # Data Layer - Pydantic Models
         elif category == "models_pydantic":
@@ -3217,6 +3226,88 @@ async def metrics():
         content=generate_latest(),
         media_type=CONTENT_TYPE_LATEST
     )
+'''
+
+    def _generate_health_routes(self) -> str:
+        """
+        Generate health check routes with correct SQLAlchemy text() usage.
+
+        CRITICAL FIX: Uses text("SELECT 1") instead of "SELECT 1" to avoid
+        SQLAlchemy deprecation warning.
+
+        Provides two endpoints:
+        - /health/health: Basic liveness check
+        - /health/ready: Readiness check with database verification
+        """
+        return '''"""
+Health Check Endpoints
+
+Provides /health and /ready endpoints for monitoring.
+"""
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+from src.core.database import get_db
+import structlog
+
+router = APIRouter(prefix="/health", tags=["health"])
+logger = structlog.get_logger(__name__)
+
+
+@router.get("/health")
+async def health_check():
+    """
+    Basic health check - always returns OK.
+
+    Returns:
+        dict: Service status
+    """
+    return {
+        "status": "ok",
+        "service": "API"
+    }
+
+
+@router.get("/ready")
+async def readiness_check(db: AsyncSession = Depends(get_db)):
+    """
+    Readiness check - verifies dependencies.
+
+    Checks:
+        - Database connection
+
+    Args:
+        db: Database session
+
+    Returns:
+        dict: Readiness status with component checks
+
+    Raises:
+        HTTPException: 503 if not ready
+    """
+    try:
+        # Check database connection (use text() to avoid SQLAlchemy warning)
+        await db.execute(text("SELECT 1"))
+
+        return {
+            "status": "ready",
+            "checks": {
+                "database": "ok"
+            }
+        }
+    except Exception as e:
+        logger.error("readiness_check_failed", error=str(e), exc_info=True)
+
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "status": "not_ready",
+                "checks": {
+                    "database": "failed"
+                },
+                "error": str(e)
+            }
+        )
 '''
 
     def _generate_requirements_hardcoded(self) -> str:
