@@ -1759,27 +1759,34 @@ Once running, visit:
                 except Exception as e:
                     print(f"        ⚠️ Pattern search failed: {e}")
 
-            # Step 3: Generate repair proposal (REAL - using LLM with full spec context)
-            print(f"      📋 Step 3: Analyzing compliance gaps...")
-            repair_proposal = await self._generate_repair_proposal(
+            # Step 3: Apply targeted repairs using AST patching (NEW - P1 fix)
+            print(f"      🔧 Step 3: Applying targeted AST repairs...")
+
+            # Initialize CodeRepairAgent if not already done
+            if not self.code_repair_agent:
+                from src.mge.v2.agents.code_repair_agent import CodeRepairAgent
+                self.code_repair_agent = CodeRepairAgent(output_path=self.output_path)
+
+            # Use CodeRepairAgent for targeted repairs instead of LLM regeneration
+            repair_result = self.code_repair_agent.repair(
                 compliance_report=initial_compliance_report,
                 spec_requirements=self.spec_requirements,
-                test_results=test_results,
-                current_code=current_code,
-                iteration=iteration
+                max_attempts=3
             )
 
-            if not repair_proposal:
-                print(f"        ⚠️ Failed to generate repair, stopping iteration")
+            if not repair_result.success:
+                print(f"        ⚠️ Repair failed: {repair_result.error_message}, stopping iteration")
                 break
 
-            # Step 4: Create backup
-            print(f"      Step 4: Creating backup...")
-            backup_code = current_code
+            # Show what was repaired
+            print(f"        ✅ Applied {len(repair_result.repairs_applied)} repairs:")
+            for repair_desc in repair_result.repairs_applied:
+                print(f"           - {repair_desc}")
 
-            # Step 5: Apply repair
-            print(f"      Step 5: Applying repair...")
-            repaired_code = self._apply_repair_to_code(current_code, repair_proposal)
+            # Step 4: Backup not needed (AST patches wrote to files directly)
+            # Files are now modified, compliance check will read from filesystem
+
+            # Step 5: No separate apply step (agent already modified files)
 
             # Step 6: Re-validate compliance using OpenAPI
             print(f"      Step 6: Re-validating compliance...")
@@ -1904,6 +1911,8 @@ Once running, visit:
         self,
         compliance_report,
         spec_requirements: SpecRequirements,
+        # DEPRECATED: This method is no longer used after P1 fix
+        # Replaced by CodeRepairAgent.repair() with targeted AST patching
         test_results: List,
         current_code: str,
         iteration: int
@@ -2027,6 +2036,9 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
 
     def _apply_repair_to_code(self, code: str, repair_proposal) -> str:
         """
+        DEPRECATED: This method is no longer used after P1 fix.
+        Replaced by CodeRepairAgent.repair() with targeted AST patching.
+
         Apply repair proposal to code
 
         SIMPLIFIED after Phase 6.5 enhancement: Since _generate_repair_proposal()

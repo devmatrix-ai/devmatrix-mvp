@@ -1335,7 +1335,8 @@ Code MUST pass Python compile() without SyntaxError."""
         # 2. Compose patterns into modular architecture
         generated_files = await self._compose_patterns(patterns, spec_requirements)
 
-        # 2.5. LLM fallback for missing essential files (no patterns available)
+        # 2.5. Fallback for missing essential files (no patterns available)
+        # Hardcoded generators in PRODUCTION_MODE, LLM otherwise
         # User requirement: "SI NO HAY PATTERNS DEBEMOS PASARLE CONTEXTO NECESARIO PARA Q EL LLM ESCRIBA EL CODIGO"
         llm_generated = await self._generate_with_llm_fallback(generated_files, spec_requirements)
         generated_files.update(llm_generated)
@@ -1617,7 +1618,7 @@ Code MUST pass Python compile() without SyntaxError."""
         self, existing_files: Dict[str, str], spec_requirements
     ) -> Dict[str, str]:
         """
-        Generate missing essential files using LLM fallback (no patterns available).
+        Generate missing essential files (hardcoded in PRODUCTION_MODE, LLM otherwise when no patterns available).
 
         User requirement: "SI NO HAY PATTERNS DEBEMOS PASARLE CONTEXTO NECESARIO PARA Q EL LLM
         ESCRIBA EL CODIGO COMO MEJOR CREA, LUEGO ITERAR SI FALLA CON EL REPAIR LOOP LEARNING"
@@ -1627,7 +1628,7 @@ Code MUST pass Python compile() without SyntaxError."""
             spec_requirements: SpecRequirements with project context
 
         Returns:
-            Dictionary of LLM-generated files for missing essentials
+            Dictionary of generated files for missing essentials (hardcoded or LLM-based)
         """
         logger.info(
             "🔍 Checking for missing essential files",
@@ -2096,9 +2097,9 @@ File: src/api/routes/{entity.snake_name}.py
                     # TODO: Call LLM here (for now, use placeholder)
                     # generated_code = await self._generate_with_llm(prompt, entity_context)
 
-                    # Placeholder until LLM integration
+                    # Placeholder - LLM generation not yet implemented for api_routes
                     logger.info(
-                        f"LLM fallback would generate: src/api/routes/{entity.snake_name}.py",
+                        f"⏸️  Placeholder: LLM generation for src/api/routes/{entity.snake_name}.py (not yet implemented)",
                         extra={"prompt_length": len(prompt)}
                     )
 
