@@ -1619,30 +1619,34 @@ Code MUST pass Python compile() without SyntaxError."""
         description = spec_requirements.metadata.get("description", "Production-ready FastAPI application")
 
         # Build context about the project
-        context = f"""Generate a production-ready requirements.txt for this FastAPI application.
+        context = f"""Generate PRODUCTION ONLY requirements.txt for this FastAPI application.
+NO testing, linting, or development tools - ONLY runtime dependencies!
 
 Project: {project_name}
 Description: {description}
 
-Technology Stack:
-- FastAPI (async web framework)
+Technology Stack (PRODUCTION ONLY):
+- FastAPI 0.109+ (async web framework)
 - SQLAlchemy 2.0+ with asyncpg (async PostgreSQL)
 - Pydantic v2 with pydantic-settings (config management)
 - Alembic (database migrations)
 - structlog (structured logging)
 - prometheus-client (metrics)
-- pytest with pytest-asyncio (testing)
-- httpx (async HTTP client for tests)
+- httpx (async HTTP client)
+- bleach (HTML sanitization)
+- slowapi (rate limiting)
 
 Entities: {', '.join(e.name for e in spec_requirements.entities)}
 Endpoints: {len(spec_requirements.endpoints)} REST endpoints
 
-IMPORTANT:
+CRITICAL REQUIREMENTS:
 1. Pin ALL versions (use ==, not >=)
-2. Include production-ready versions (latest stable as of 2024)
-3. Group by category (web, database, config, logging, metrics, testing)
-4. Add comments for each group
-5. Ensure compatibility (FastAPI 0.109+, SQLAlchemy 2.0+, Pydantic 2.5+)
+2. ONLY production runtime dependencies, NO testing/dev tools
+3. NO pytest, black, mypy, ruff, pre-commit, faker, coverage, etc.
+4. Group by category (web, database, config, logging, metrics, security)
+5. Add comments for each group
+6. Ensure compatibility (FastAPI 0.109+, SQLAlchemy 2.0+, Pydantic 2.5+)
+7. Keep versions compatible with Python 3.11
 
 Generate ONLY the requirements.txt content, no explanations."""
 
