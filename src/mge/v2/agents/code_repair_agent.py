@@ -186,10 +186,29 @@ class CodeRepairAgent:
             True if successful, False otherwise
         """
         try:
-            # Read current entities.py
+            # DEBUG: Print path resolution info (using ERROR level to ensure visibility)
+            logger.error(f"DEBUG: Checking entities_file: {self.entities_file}")
+            logger.error(f"DEBUG: entities_file type: {type(self.entities_file)}")
+            logger.error(f"DEBUG: entities_file.exists() = {self.entities_file.exists()}")
+            logger.error(f"DEBUG: entities_file.is_file() = {self.entities_file.is_file() if self.entities_file.exists() else 'N/A'}")
+
+            # List parent directory to see what files actually exist
+            import os
+            parent_dir = self.entities_file.parent
+            logger.error(f"DEBUG: Parent directory: {parent_dir}")
+            logger.error(f"DEBUG: Parent exists: {parent_dir.exists()}")
+            if parent_dir.exists():
+                files = list(parent_dir.iterdir())
+                logger.error(f"DEBUG: Files in {parent_dir.name}: {[f.name for f in files]}")
+
+            # Read current entities.py (create if doesn't exist)
             if not self.entities_file.exists():
-                logger.error(f"entities.py not found at {self.entities_file}")
-                return False
+                logger.warning(f"entities.py not found at {self.entities_file}, creating it")
+                self._create_entities_file()
+                # After creation, file should exist with base structure
+                if not self.entities_file.exists():
+                    logger.error(f"Failed to create entities.py at {self.entities_file}")
+                    return False
 
             with open(self.entities_file, 'r') as f:
                 source_code = f.read()
@@ -459,3 +478,47 @@ router = APIRouter(
             f.write(template)
 
         logger.info(f"Created new route file: {route_file.name}")
+
+    def _create_entities_file(self):
+        """
+        Create new entities.py file with basic SQLAlchemy structure.
+
+        Creates file like:
+        ```
+        from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, ForeignKey
+        from sqlalchemy.dialects.postgresql import UUID
+        from sqlalchemy.orm import relationship
+        from src.core.database import Base
+        import uuid
+        from datetime import datetime, timezone
+
+        # Entity classes will be added here by repair agent
+        ```
+
+        The file is created with base imports, then entities are added via AST patching.
+        """
+        template = '''"""
+SQLAlchemy Entity Models
+
+Auto-generated entity file.
+"""
+
+from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, ForeignKey, Text
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
+from src.core.database import Base
+import uuid
+from datetime import datetime, timezone
+
+
+# Entity classes will be added below
+'''
+
+        # Ensure parent directory exists
+        self.entities_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write base structure
+        with open(self.entities_file, 'w') as f:
+            f.write(template)
+
+        logger.info(f"Created new entities file: {self.entities_file.name}")
