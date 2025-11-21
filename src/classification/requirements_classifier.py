@@ -1,7 +1,17 @@
 """
-Requirements Classifier - Semantic Classification System
+Requirements Classifier - Hybrid Semantic Classification System
 
-Replaces naive keyword matching (42% accuracy) with semantic analysis (≥90% accuracy).
+ENHANCED with hybrid approach combining keyword rules + GraphCodeBERT embeddings.
+
+BEFORE (P2 - from QA analysis):
+- Only keyword matching (lines 365-394)
+- Pattern Recall: 47.1%
+- Accuracy: 37.5%
+
+AFTER (P2 - Hybrid):
+- Keyword matching + semantic similarity
+- Pre-computed domain template embeddings
+- Expected: Recall 75%+, Accuracy 70%+
 
 Classifies requirements by:
 - Domain: CRUD, Authentication, Payment, Workflow, Search, Custom
@@ -11,13 +21,17 @@ Classifies requirements by:
 - Risk level: low, medium, high
 """
 
-from typing import List, Dict
+from typing import List, Dict, Optional
 from collections import defaultdict
 import re
 import logging
+import numpy as np
 
 # Import from spec_parser
 from src.parsing.spec_parser import Requirement
+
+# Import GraphCodeBERT singleton (P3 optimization)
+from src.models.graphcodebert_singleton import get_graphcodebert
 
 logger = logging.getLogger(__name__)
 
@@ -235,14 +249,46 @@ class PriorityPatterns:
 
 class RequirementsClassifier:
     """
-    Semantic requirements classifier using rule-based patterns
+    Hybrid requirements classifier using keyword rules + GraphCodeBERT embeddings
 
-    Achieves ≥90% accuracy vs 42% naive keyword matching
+    ENHANCED with P2 fix:
+    - Keyword matching for high-confidence cases
+    - Semantic similarity for ambiguous cases
+    - Pre-computed domain template embeddings
+
+    Expected accuracy: 70%+ (vs 37.5% before)
+    Expected recall: 75%+ (vs 47.1% before)
     """
 
-    def __init__(self) -> None:
+    def __init__(self, use_embeddings: bool = True) -> None:
+        """
+        Initialize classifier with optional embedding support.
+
+        Args:
+            use_embeddings: If True, use hybrid (keywords + embeddings).
+                          If False, use keyword-only (backward compatible).
+        """
         self.domain_keywords = DomainPatterns.get_all_keywords()
         self.priority_patterns = PriorityPatterns()
+
+        # P2 ENHANCEMENT: Embedding support
+        self.use_embeddings = use_embeddings
+        self.embedding_model = None
+        self.domain_templates: Optional[Dict[str, np.ndarray]] = None
+
+        if self.use_embeddings:
+            try:
+                # Load GraphCodeBERT singleton (P3 optimization)
+                self.embedding_model = get_graphcodebert()
+
+                # Pre-compute domain template embeddings
+                self.domain_templates = self._precompute_domain_templates()
+
+                logger.info("✅ Hybrid classifier initialized (keywords + embeddings)")
+            except Exception as e:
+                logger.warning(f"Failed to load embeddings, falling back to keyword-only: {e}")
+                self.use_embeddings = False
+                logger.info("✅ Keyword-only classifier initialized (fallback)")
 
     def classify_single(self, requirement: Requirement) -> Requirement:
         """
@@ -364,7 +410,33 @@ class RequirementsClassifier:
 
     def _detect_domain(self, description: str) -> str:
         """
-        Detect requirement domain using semantic keyword matching
+        Detect requirement domain using HYBRID approach (P2 enhancement).
+
+        Strategy:
+        1. Try keyword matching first (fast, high-confidence)
+        2. If ambiguous (score < threshold), use semantic similarity
+        3. Combine both for final decision
+
+        Args:
+            description: Requirement description text
+
+        Returns:
+            Domain: "crud", "authentication", "payment", "workflow", "search", "custom"
+        """
+        # HYBRID APPROACH: Keywords + Embeddings
+        if self.use_embeddings and self.embedding_model and self.domain_templates:
+            return self._detect_domain_hybrid(description)
+
+        # FALLBACK: Keyword-only (backward compatible)
+        return self._detect_domain_keywords(description)
+
+    def _detect_domain_keywords(self, description: str) -> str:
+        """
+        Keyword-only domain detection (original implementation).
+
+        Used as:
+        - Fast path for high-confidence matches
+        - Fallback when embeddings unavailable
 
         Args:
             description: Requirement description text
@@ -392,6 +464,141 @@ class RequirementsClassifier:
             return "crud"
 
         return max_domain[0]
+
+    def _detect_domain_hybrid(self, description: str) -> str:
+        """
+        Hybrid domain detection using keywords + semantic embeddings.
+
+        P2 ENHANCEMENT: Combines rule-based and semantic approaches:
+        1. Keyword matching for high-confidence cases
+        2. Semantic similarity for ambiguous cases
+        3. Weighted combination for final decision
+
+        Args:
+            description: Requirement description text
+
+        Returns:
+            Domain: "crud", "authentication", "payment", "workflow", "search", "custom"
+        """
+        # Step 1: Get keyword scores
+        keyword_scores = self._get_keyword_scores(description)
+
+        # Step 2: Get semantic similarity scores
+        semantic_scores = self._get_semantic_scores(description)
+
+        # Step 3: Combine scores (weighted average)
+        # Keyword weight: 0.6 (rules are precise when they match)
+        # Semantic weight: 0.4 (embeddings catch similar meanings)
+        combined_scores = {}
+        for domain in self.domain_keywords.keys():
+            kw_score = keyword_scores.get(domain, 0.0)
+            sem_score = semantic_scores.get(domain, 0.0)
+            combined_scores[domain] = 0.6 * kw_score + 0.4 * sem_score
+
+        # Step 4: Return domain with highest combined score
+        if not combined_scores or max(combined_scores.values()) == 0:
+            return "custom"
+
+        return max(combined_scores.items(), key=lambda x: x[1])[0]
+
+    def _get_keyword_scores(self, description: str) -> Dict[str, float]:
+        """
+        Get normalized keyword match scores for each domain.
+
+        Args:
+            description: Requirement description
+
+        Returns:
+            Dict mapping domain -> normalized score (0.0-1.0)
+        """
+        desc_lower = description.lower()
+
+        # Count keyword matches per domain
+        raw_scores = {}
+        for domain, keywords in self.domain_keywords.items():
+            matches = sum(1 for kw in keywords if kw in desc_lower)
+            raw_scores[domain] = matches
+
+        # Normalize to 0.0-1.0 range
+        max_score = max(raw_scores.values()) if raw_scores.values() else 1
+        if max_score == 0:
+            return {domain: 0.0 for domain in raw_scores}
+
+        normalized = {
+            domain: score / max_score
+            for domain, score in raw_scores.items()
+        }
+
+        return normalized
+
+    def _get_semantic_scores(self, description: str) -> Dict[str, float]:
+        """
+        Get semantic similarity scores using GraphCodeBERT embeddings.
+
+        Args:
+            description: Requirement description
+
+        Returns:
+            Dict mapping domain -> similarity score (0.0-1.0)
+        """
+        if not self.embedding_model or not self.domain_templates:
+            return {domain: 0.0 for domain in self.domain_keywords.keys()}
+
+        try:
+            # Encode requirement description
+            req_embedding = self.embedding_model.encode(description, convert_to_numpy=True)
+
+            # Compute cosine similarity with each domain template
+            similarities = {}
+            for domain, template_embedding in self.domain_templates.items():
+                # Cosine similarity
+                similarity = np.dot(req_embedding, template_embedding) / (
+                    np.linalg.norm(req_embedding) * np.linalg.norm(template_embedding)
+                )
+                # Clamp to [0, 1] range
+                similarities[domain] = max(0.0, min(1.0, similarity))
+
+            return similarities
+
+        except Exception as e:
+            logger.warning(f"Semantic scoring failed: {e}")
+            return {domain: 0.0 for domain in self.domain_keywords.keys()}
+
+    def _precompute_domain_templates(self) -> Dict[str, np.ndarray]:
+        """
+        Pre-compute domain template embeddings.
+
+        Creates representative text for each domain and computes
+        its embedding. This is done once at initialization.
+
+        Returns:
+            Dict mapping domain -> embedding vector
+        """
+        if not self.embedding_model:
+            return {}
+
+        # Domain templates: representative descriptions
+        templates = {
+            "crud": "Create, read, update, and delete entities from database. List all records with pagination.",
+            "authentication": "User login, logout, registration with JWT tokens. Password reset and authentication.",
+            "payment": "Process payments, checkout, transactions with Stripe. Handle billing and invoices.",
+            "workflow": "Manage order status, state transitions, approvals. Send notifications and emails.",
+            "search": "Search and filter records. Sort results with pagination and query parameters.",
+        }
+
+        logger.info("Pre-computing domain template embeddings...")
+
+        embeddings = {}
+        for domain, template_text in templates.items():
+            try:
+                embedding = self.embedding_model.encode(template_text, convert_to_numpy=True)
+                embeddings[domain] = embedding
+            except Exception as e:
+                logger.error(f"Failed to embed template for {domain}: {e}")
+
+        logger.info(f"✅ Pre-computed {len(embeddings)} domain templates")
+
+        return embeddings
 
     def _detect_priority(self, description: str) -> str:
         """

@@ -20,10 +20,12 @@ from dataclasses import dataclass, field
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
 from neo4j import GraphDatabase
-from sentence_transformers import SentenceTransformer
 
 from src.cognitive.config.settings import CognitiveSettings
 from src.observability import get_logger
+
+# P3 FIX: Use GraphCodeBERT singleton to avoid multiple loads
+from src.models.graphcodebert_singleton import get_graphcodebert
 
 
 logger = get_logger("services.error_pattern_store")
@@ -100,49 +102,15 @@ class ErrorPatternStore:
         self.logger = logger
         self.settings = CognitiveSettings()
 
-        # Initialize GraphCodeBERT for code-aware embeddings
+        # P3 FIX: Use GraphCodeBERT singleton (avoids multiple loads)
+        # BEFORE: Each ErrorPatternStore instance loaded model (~10-30s + 300MB RAM)
+        # AFTER: Singleton loads once, all instances share (~50% startup time reduction)
         try:
-            # Suppress all transformers/sentence-transformers initialization warnings
-            with warnings.catch_warnings():
-                # Blanket suppress all warnings during model loading
-                warnings.simplefilter("ignore")
-                warnings.filterwarnings("ignore", category=UserWarning)
-                warnings.filterwarnings("ignore", category=FutureWarning)
-                warnings.filterwarnings("ignore", message=".*pooler.*")
-                warnings.filterwarnings("ignore", message=".*Some weights.*not initialized.*")
-                warnings.filterwarnings("ignore", message=".*You should probably TRAIN.*")
-                warnings.filterwarnings("ignore", message=".*No sentence-transformers model found.*")
-                warnings.filterwarnings("ignore", message=".*Creating a new one.*")
-                warnings.filterwarnings("ignore", message=".*RobertaModel.*")
-
-                # Suppress transformers logger - all levels during initialization
-                transformers_logger = logging.getLogger("transformers")
-                transformers_logger.setLevel(logging.CRITICAL)
-                transformers_logger.propagate = False
-                transformers_logger.disabled = True
-
-                # Suppress transformers.modeling_utils logger specifically
-                modeling_logger = logging.getLogger("transformers.modeling_utils")
-                modeling_logger.setLevel(logging.CRITICAL)
-                modeling_logger.propagate = False
-                modeling_logger.disabled = True
-
-                # Suppress sentence-transformers logger - all levels
-                st_logger = logging.getLogger("sentence_transformers")
-                st_logger.setLevel(logging.CRITICAL)
-                st_logger.propagate = False
-                st_logger.disabled = True
-
-                self.logger.info("⏳ Loading GraphCodeBERT model (this may take 10-30s on first run)...")
-                import sys
-                sys.stdout.flush()  # Force immediate output
-
-                self.embedding_model = SentenceTransformer('microsoft/graphcodebert-base')
-
-            self.logger.info("✅ Loaded GraphCodeBERT for error pattern embeddings (768-dim)")
-            sys.stdout.flush()  # Force immediate output
+            self.logger.info("Loading GraphCodeBERT singleton...")
+            self.embedding_model = get_graphcodebert()
+            self.logger.info("✅ GraphCodeBERT singleton loaded (768-dim embeddings)")
         except Exception as e:
-            self.logger.error(f"Failed to load GraphCodeBERT: {e}")
+            self.logger.error(f"Failed to load GraphCodeBERT singleton: {e}")
             raise
 
         # Initialize Qdrant client
