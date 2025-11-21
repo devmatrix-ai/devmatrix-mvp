@@ -120,7 +120,8 @@ if [[ "$CLEAN_ALL" == true ]]; then
         echo "$containers" | while read -r container; do
             echo "      - $container"
         done
-        echo "$containers" | xargs -r docker rm -f 2>/dev/null || true
+        # Add timeout to prevent hanging (max 20 seconds)
+        timeout 20 bash -c "echo '$containers' | xargs -r docker rm -f" 2>/dev/null || true
     else
         echo_warning "No app containers found"
     fi
@@ -131,7 +132,8 @@ else
         if [[ -d "$DOCKER_DIR" ]]; then
             echo "    Cleaning docker-compose stack in: $DOCKER_DIR"
             cd "$DOCKER_DIR"
-            docker-compose down -v 2>/dev/null || docker compose down -v 2>/dev/null || true
+            # Add timeout to prevent hanging (max 30 seconds)
+            timeout 30 docker-compose down -v 2>/dev/null || timeout 30 docker compose down -v 2>/dev/null || true
         fi
     done
 
@@ -142,7 +144,8 @@ else
         echo "$containers" | while read -r container; do
             echo "      - $container"
         done
-        echo "$containers" | xargs -r docker rm -f 2>/dev/null || true
+        # Add timeout to prevent hanging (max 20 seconds)
+        timeout 20 bash -c "echo '$containers' | xargs -r docker rm -f" 2>/dev/null || true
     fi
 fi
 
@@ -161,7 +164,8 @@ if [[ -n "$volumes" ]]; then
     echo "$volumes" | while read -r volume; do
         echo "      - $volume"
     done
-    echo "$volumes" | xargs -r docker volume rm 2>/dev/null || true
+    # Add timeout to prevent hanging (max 15 seconds)
+    timeout 15 bash -c "echo '$volumes' | xargs -r docker volume rm" 2>/dev/null || true
 else
     echo_warning "No app volumes found"
 fi
