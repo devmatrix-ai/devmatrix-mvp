@@ -275,10 +275,14 @@ class ComplianceValidator:
                 # Extract OpenAPI schema (while app is still accessible)
                 openapi_schema = app.openapi()
 
-                # Restore working directory after extraction
-                os.chdir(original_cwd)
-
             finally:
+                # CRITICAL: Restore working directory FIRST (even if exception occurred)
+                # This must be in finally block to prevent affecting subsequent operations
+                try:
+                    os.chdir(original_cwd)
+                except:
+                    pass  # Ignore if restoration fails
+
                 # Restore original DATABASE_URL
                 if original_database_url is not None:
                     os.environ['DATABASE_URL'] = original_database_url
