@@ -272,9 +272,10 @@ class CodeGenerationService:
             logger.info("Composing production-ready application from patterns")
             files_dict = await self._compose_patterns(patterns, spec_requirements)
 
-            # LLM fallback for missing essential files (Task Group 8 enhancement)
+            # Fallback for missing essential files (Task Group 8 enhancement)
+            # Hardcoded generators in PRODUCTION_MODE, LLM otherwise
             # User requirement: "SI NO HAY PATTERNS DEBEMOS PASARLE CONTEXTO NECESARIO PARA Q EL LLM ESCRIBA EL CODIGO"
-            logger.info("Checking for missing essential files (LLM fallback)")
+            logger.info("Checking for missing essential files (hardcoded in PRODUCTION_MODE, LLM otherwise)")
             llm_generated = await self._generate_with_llm_fallback(files_dict, spec_requirements)
             files_dict.update(llm_generated)
 
@@ -1641,20 +1642,22 @@ Code MUST pass Python compile() without SyntaxError."""
             "README.md": self._generate_readme_md,
         }
 
-        # Generate missing files using LLM
+        # Generate missing files (hardcoded in PRODUCTION_MODE, LLM otherwise)
         for file_path, generator_func in essential_files.items():
             if file_path not in existing_files:
+                is_production = os.getenv("PRODUCTION_MODE") == "true"
+                method = "Hardcoded generator" if is_production else "LLM fallback"
                 logger.info(
-                    f"🤖 LLM fallback: Generating {file_path} (no pattern available)",
-                    extra={"file": file_path}
+                    f"🤖 {method}: Generating {file_path} (no pattern in PatternBank)",
+                    extra={"file": file_path, "production_mode": is_production}
                 )
                 try:
                     content = await generator_func(spec_requirements, existing_files)
                     llm_files[file_path] = content
-                    logger.info(f"✅ LLM generated: {file_path}")
+                    logger.info(f"✅ Generated: {file_path}")
                 except Exception as e:
                     logger.error(
-                        f"❌ LLM fallback failed for {file_path}: {e}",
+                        f"❌ Generation failed for {file_path}: {e}",
                         extra={"file": file_path, "error": str(e)}
                     )
                     # Don't fail the entire generation, continue with other files
@@ -1963,6 +1966,10 @@ Generate ONLY the README.md content, no additional explanations."""
                 health_code = self._generate_health_routes()
                 files["src/api/routes/health.py"] = health_code
 
+                logger.info("🔨 PRODUCTION_MODE: Using middleware with relaxed CSP for Swagger UI")
+                middleware_code = self._generate_middleware()
+                files["src/core/middleware.py"] = middleware_code
+
         # Data Layer - Pydantic Models
         elif category == "models_pydantic":
             # Use hardcoded production-ready schemas generator
@@ -2199,20 +2206,20 @@ File: src/api/routes/{entity.snake_name}.py
                     files["README.md"] = self._adapt_pattern(p.code, spec_requirements)
                     found_files.add("README.md")
 
-            # LLM fallback for missing critical files (production mode)
+            # Hardcoded fallback for missing critical files (production mode)
             if os.getenv("PRODUCTION_MODE") == "true":
                 if "alembic.ini" not in found_files:
-                    logger.info("🔨 LLM fallback: Generating alembic.ini (no pattern available)")
+                    logger.info("🔨 Hardcoded generator: Generating alembic.ini (no pattern in PatternBank)")
                     alembic_ini = self._generate_alembic_ini(spec_requirements)
                     files["alembic.ini"] = alembic_ini
 
                 if "alembic/env.py" not in found_files:
-                    logger.info("🔨 LLM fallback: Generating alembic/env.py (no pattern available)")
+                    logger.info("🔨 Hardcoded generator: Generating alembic/env.py (no pattern in PatternBank)")
                     alembic_env = self._generate_alembic_env(spec_requirements)
                     files["alembic/env.py"] = alembic_env
 
                 if "alembic/script.py.mako" not in found_files:
-                    logger.info("🔨 LLM fallback: Generating alembic/script.py.mako (no pattern available)")
+                    logger.info("🔨 Hardcoded generator: Generating alembic/script.py.mako (no pattern in PatternBank)")
                     alembic_script = self._generate_alembic_script_template()
                     files["alembic/script.py.mako"] = alembic_script
 
@@ -2226,22 +2233,22 @@ File: src/api/routes/{entity.snake_name}.py
                         files["alembic/versions/001_initial.py"] = migration_code
 
                 if "pyproject.toml" not in found_files:
-                    logger.info("🔨 LLM fallback: Generating pyproject.toml (no pattern available)")
+                    logger.info("🔨 Hardcoded generator: Generating pyproject.toml (no pattern in PatternBank)")
                     pyproject = self._generate_pyproject_toml(spec_requirements)
                     files["pyproject.toml"] = pyproject
 
                 if ".env.example" not in found_files:
-                    logger.info("🔨 LLM fallback: Generating .env.example (no pattern available)")
+                    logger.info("🔨 Hardcoded generator: Generating .env.example (no pattern in PatternBank)")
                     env_example = self._generate_env_example()
                     files[".env.example"] = env_example
 
                 if ".gitignore" not in found_files:
-                    logger.info("🔨 LLM fallback: Generating .gitignore (no pattern available)")
+                    logger.info("🔨 Hardcoded generator: Generating .gitignore (no pattern in PatternBank)")
                     gitignore = self._generate_gitignore()
                     files[".gitignore"] = gitignore
 
                 if "Makefile" not in found_files:
-                    logger.info("🔨 LLM fallback: Generating Makefile (no pattern available)")
+                    logger.info("🔨 Hardcoded generator: Generating Makefile (no pattern in PatternBank)")
                     makefile = self._generate_makefile()
                     files["Makefile"] = makefile
 
@@ -3226,6 +3233,122 @@ async def metrics():
         content=generate_latest(),
         media_type=CONTENT_TYPE_LATEST
     )
+'''
+
+    def _generate_middleware(self) -> str:
+        """
+        Generate middleware with proper CSP for FastAPI docs.
+
+        CRITICAL FIX: CSP allows Swagger UI resources from CDN.
+        Enables /docs and /redoc to load properly without CSP violations.
+
+        CSP Policy:
+        - default-src 'self': Only same-origin by default
+        - style-src 'self' cdn.jsdelivr.net: Allow Swagger UI CSS
+        - script-src 'self' cdn.jsdelivr.net 'unsafe-inline': Allow Swagger UI JS + inline init
+        - img-src 'self' fastapi.tiangolo.com data:: Allow FastAPI favicon + inline images
+        """
+        return '''"""
+Custom Middleware
+
+Request ID tracking, metrics, and security headers.
+"""
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
+import structlog
+from uuid import uuid4
+import time
+from prometheus_client import Counter, Histogram
+
+# Initialize logger
+logger = structlog.get_logger(__name__)
+
+# Prometheus metrics
+http_requests_total = Counter(
+    "http_requests_total",
+    "Total HTTP requests",
+    ["method", "endpoint", "status"]
+)
+
+http_request_duration_seconds = Histogram(
+    "http_request_duration_seconds",
+    "HTTP request duration",
+    ["method", "endpoint"]
+)
+
+
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    """Add unique request ID to all requests."""
+
+    async def dispatch(self, request: Request, call_next):
+        request_id = request.headers.get("X-Request-ID", str(uuid4()))
+
+        # Bind to structlog context
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path
+        )
+
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+
+        return response
+
+
+class MetricsMiddleware(BaseHTTPMiddleware):
+    """Track request metrics for Prometheus."""
+
+    async def dispatch(self, request: Request, call_next):
+        start_time = time.time()
+
+        response = await call_next(request)
+
+        duration = time.time() - start_time
+
+        # Record metrics
+        http_requests_total.labels(
+            method=request.method,
+            endpoint=request.url.path,
+            status=response.status_code
+        ).inc()
+
+        http_request_duration_seconds.labels(
+            method=request.method,
+            endpoint=request.url.path
+        ).observe(duration)
+
+        return response
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """
+    Add security headers to all responses.
+
+    CSP allows FastAPI docs (/docs, /redoc) to load Swagger UI from CDN.
+    In production, use reverse proxy (nginx, ALB) for stricter CSP if needed.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+
+        # Security headers
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+        # CSP: Allow Swagger UI resources for /docs and /redoc
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "style-src 'self' cdn.jsdelivr.net; "
+            "script-src 'self' cdn.jsdelivr.net 'unsafe-inline'; "
+            "img-src 'self' fastapi.tiangolo.com data:"
+        )
+
+        return response
 '''
 
     def _generate_health_routes(self) -> str:
