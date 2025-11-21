@@ -48,6 +48,17 @@ from src.cognitive.patterns.pattern_feedback_integration import (
     get_pattern_feedback_integration,
     PatternFeedbackIntegration,
 )
+
+# Production-Ready Code Generators (Hardcoded fallback)
+from src.services.production_code_generators import (
+    generate_entities,
+    generate_config,
+    generate_schemas,
+    generate_service_method,
+    generate_initial_migration,
+    validate_generated_files,
+    get_validation_summary,
+)
 from src.cognitive.signatures.semantic_signature import SemanticTaskSignature
 
 # DAG Synchronizer - Execution Metrics (Milestone 3)
@@ -1323,11 +1334,34 @@ Code MUST pass Python compile() without SyntaxError."""
         # 3. Validate production readiness
         validation_result = self._validate_production_readiness(generated_files)
 
+        # 4. Validate Python syntax for all generated code
+        logger.info("🔍 Validating Python syntax of generated code...")
+        syntax_validation = validate_generated_files(generated_files)
+        syntax_summary = get_validation_summary(syntax_validation)
+
+        logger.info(
+            "✅ Syntax validation complete",
+            extra={
+                "total_files": syntax_summary["total"],
+                "passed": syntax_summary["passed"],
+                "failed": syntax_summary["failed"],
+                "pass_rate": f"{syntax_summary['pass_rate']}%",
+            },
+        )
+
+        if not syntax_summary["valid"]:
+            failed_files = [f for f, valid in syntax_validation.items() if not valid]
+            logger.warning(
+                f"⚠️ {syntax_summary['failed']} file(s) have syntax errors",
+                extra={"failed_files": failed_files}
+            )
+
         logger.info(
             "Production app generation complete",
             extra={
                 "files_generated": len(generated_files),
                 "production_score": validation_result.get("production_score", 0.0),
+                "syntax_valid": syntax_summary["valid"],
             },
         )
 
@@ -1856,10 +1890,17 @@ Generate ONLY the README.md content, no additional explanations."""
 
         # Core infrastructure patterns
         if category == "core_config":
-            for p in category_patterns:
-                if "pydantic" in p.signature.purpose.lower() or "configuration" in p.signature.purpose.lower():
-                    files["src/core/config.py"] = self._adapt_pattern(p.code, spec_requirements)
-                    logger.info(f"✅ Mapped: src/core/config.py", extra={"purpose": p.signature.purpose[:60]})
+            # Use hardcoded production-ready config generator
+            config_code = generate_config()
+            if config_code:
+                files["src/core/config.py"] = config_code
+                logger.info(f"✅ Generated: src/core/config.py (hardcoded production generator)")
+            else:
+                # Fallback to pattern matching
+                for p in category_patterns:
+                    if "pydantic" in p.signature.purpose.lower() or "configuration" in p.signature.purpose.lower():
+                        files["src/core/config.py"] = self._adapt_pattern(p.code, spec_requirements)
+                        logger.info(f"✅ Mapped: src/core/config.py", extra={"purpose": p.signature.purpose[:60]})
 
         elif category == "database_async":
             for p in category_patterns:
@@ -1889,15 +1930,45 @@ Generate ONLY the README.md content, no additional explanations."""
 
         # Data Layer - Pydantic Models
         elif category == "models_pydantic":
-            for p in category_patterns:
-                if "pydantic" in p.signature.purpose.lower() or "schema" in p.signature.purpose.lower():
-                    files["src/models/schemas.py"] = self._adapt_pattern(p.code, spec_requirements)
+            # Use hardcoded production-ready schemas generator
+            if spec_requirements.entities:
+                schemas_code = generate_schemas(
+                    [{"name": e.name, "plural": e.name.lower() + "s"} for e in spec_requirements.entities]
+                )
+                if schemas_code:
+                    files["src/models/schemas.py"] = schemas_code
+                    logger.info(f"✅ Generated: src/models/schemas.py (hardcoded production generator)")
+                else:
+                    # Fallback to pattern matching
+                    for p in category_patterns:
+                        if "pydantic" in p.signature.purpose.lower() or "schema" in p.signature.purpose.lower():
+                            files["src/models/schemas.py"] = self._adapt_pattern(p.code, spec_requirements)
+            else:
+                # Fallback to pattern matching if no entities
+                for p in category_patterns:
+                    if "pydantic" in p.signature.purpose.lower() or "schema" in p.signature.purpose.lower():
+                        files["src/models/schemas.py"] = self._adapt_pattern(p.code, spec_requirements)
 
         # Data Layer - SQLAlchemy Models
         elif category == "models_sqlalchemy":
-            for p in category_patterns:
-                if "sqlalchemy" in p.signature.purpose.lower() or "orm" in p.signature.purpose.lower():
-                    files["src/models/entities.py"] = self._adapt_pattern(p.code, spec_requirements)
+            # Use hardcoded production-ready entities generator
+            if spec_requirements.entities:
+                entities_code = generate_entities(
+                    [{"name": e.name, "plural": e.name.lower() + "s"} for e in spec_requirements.entities]
+                )
+                if entities_code:
+                    files["src/models/entities.py"] = entities_code
+                    logger.info(f"✅ Generated: src/models/entities.py (hardcoded production generator)")
+                else:
+                    # Fallback to pattern matching
+                    for p in category_patterns:
+                        if "sqlalchemy" in p.signature.purpose.lower() or "orm" in p.signature.purpose.lower():
+                            files["src/models/entities.py"] = self._adapt_pattern(p.code, spec_requirements)
+            else:
+                # Fallback to pattern matching if no entities
+                for p in category_patterns:
+                    if "sqlalchemy" in p.signature.purpose.lower() or "orm" in p.signature.purpose.lower():
+                        files["src/models/entities.py"] = self._adapt_pattern(p.code, spec_requirements)
 
         # Repository Pattern
         elif category == "repository_pattern":
@@ -1911,13 +1982,26 @@ Generate ONLY the README.md content, no additional explanations."""
 
         # Business Logic / Service Layer
         elif category == "business_logic":
-            # Generate service for each entity
-            service_pattern = find_pattern_by_keyword(category_patterns, "service", "business logic")
-            if service_pattern and spec_requirements.entities:
+            # Generate service for each entity using hardcoded production-ready generator
+            if spec_requirements.entities:
                 for entity in spec_requirements.entities:
-                    # Pass current entity to _adapt_pattern so Jinja2 has access to {{ entity.name }}
-                    adapted = self._adapt_pattern(service_pattern.code, spec_requirements, current_entity=entity)
-                    files[f"src/services/{entity.snake_name}_service.py"] = adapted
+                    service_code = generate_service_method(entity.name)
+                    if service_code:
+                        files[f"src/services/{entity.snake_name}_service.py"] = service_code
+                        logger.info(f"✅ Generated: src/services/{entity.snake_name}_service.py (hardcoded)")
+                    else:
+                        # Fallback to pattern matching
+                        service_pattern = find_pattern_by_keyword(category_patterns, "service", "business logic")
+                        if service_pattern:
+                            adapted = self._adapt_pattern(service_pattern.code, spec_requirements, current_entity=entity)
+                            files[f"src/services/{entity.snake_name}_service.py"] = adapted
+            else:
+                # Fallback to pattern matching if no entities
+                service_pattern = find_pattern_by_keyword(category_patterns, "service", "business logic")
+                if service_pattern and spec_requirements.entities:
+                    for entity in spec_requirements.entities:
+                        adapted = self._adapt_pattern(service_pattern.code, spec_requirements, current_entity=entity)
+                        files[f"src/services/{entity.snake_name}_service.py"] = adapted
 
         # API Routes
         elif category == "api_routes":
@@ -2093,6 +2177,15 @@ File: src/api/routes/{entity.snake_name}.py
                     logger.info("🔨 LLM fallback: Generating alembic/script.py.mako (no pattern available)")
                     alembic_script = self._generate_alembic_script_template()
                     files["alembic/script.py.mako"] = alembic_script
+
+                # Generate initial migration using hardcoded production-ready generator
+                if spec_requirements.entities:
+                    logger.info("✅ Generating initial migration (hardcoded production generator)")
+                    migration_code = generate_initial_migration(
+                        [{"name": e.name, "plural": e.name.lower() + "s"} for e in spec_requirements.entities]
+                    )
+                    if migration_code:
+                        files["alembic/versions/001_initial.py"] = migration_code
 
                 if "pyproject.toml" not in found_files:
                     logger.info("🔨 LLM fallback: Generating pyproject.toml (no pattern available)")
