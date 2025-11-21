@@ -19,7 +19,7 @@ class ClaudeModel(str, Enum):
     HAIKU_4_5 = "claude-haiku-4-5-20251001"  # Released Oct 15, 2025
 
     # Legacy (for compatibility)
-    SONNET_3_5 = "claude-3-5-sonnet-20241022"
+    SONNET_3_5 = "claude-sonnet-4-5-20250929"
     HAIKU_3_5 = "claude-3-5-haiku-20241022"
 
 

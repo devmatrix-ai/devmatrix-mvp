@@ -464,7 +464,7 @@ class LLMPromptCache:
             common_prompts = [
                 {
                     "prompt": "Validate Python syntax and check for common errors",
-                    "model": "claude-3-5-sonnet-20241022",
+                    "model": "claude-sonnet-4-5-20250929",
                     "temperature": 0.0,
                     "response": "# Syntax validation template",
                     "tokens_in": 100,
@@ -472,7 +472,7 @@ class LLMPromptCache:
                 },
                 {
                     "prompt": "Check import statements and resolve dependencies",
-                    "model": "claude-3-5-sonnet-20241022",
+                    "model": "claude-sonnet-4-5-20250929",
                     "temperature": 0.0,
                     "response": "# Import validation template",
                     "tokens_in": 100,
@@ -480,7 +480,7 @@ class LLMPromptCache:
                 },
                 {
                     "prompt": "Verify type annotations and type safety",
-                    "model": "claude-3-5-sonnet-20241022",
+                    "model": "claude-sonnet-4-5-20250929",
                     "temperature": 0.0,
                     "response": "# Type validation template",
                     "tokens_in": 100,
@@ -488,7 +488,7 @@ class LLMPromptCache:
                 },
                 {
                     "prompt": "Generate pytest unit tests for function",
-                    "model": "claude-3-5-sonnet-20241022",
+                    "model": "claude-sonnet-4-5-20250929",
                     "temperature": 0.7,
                     "response": "# Test generation template",
                     "tokens_in": 150,

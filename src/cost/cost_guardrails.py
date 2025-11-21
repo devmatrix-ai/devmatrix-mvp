@@ -204,7 +204,7 @@ class CostGuardrails:
         self,
         masterplan_id: UUID,
         estimated_tokens: int = 10000,
-        model: str = 'claude-3-5-sonnet-20241022'
+        model: str = 'claude-sonnet-4-5-20250929'
     ):
         """
         Check limits before executing an operation

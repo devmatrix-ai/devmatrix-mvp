@@ -507,7 +507,7 @@ Provide a complete DDD analysis in the specified JSON format."""
 
         # Stream discovery with callbacks for real-time entity extraction
         response = await self.llm.stream_with_callbacks(
-            model="claude-sonnet-4-5-20250929",
+            model="claude-opus-4-1-20250805",
             messages=[
                 {
                     "role": "user",
@@ -532,7 +532,7 @@ Provide a complete DDD analysis in the specified JSON format."""
 
         logger.info(
             "Discovery LLM generation complete",
-            model="claude-sonnet-4-5-20250929",
+            model="claude-opus-4-1-20250805",
             duration_seconds=duration,
             input_tokens=response["usage"]["input_tokens"],
             output_tokens=response["usage"]["output_tokens"]
@@ -540,7 +540,7 @@ Provide a complete DDD analysis in the specified JSON format."""
 
         return {
             "content": response["full_text"],
-            "model": "claude-sonnet-4-5-20250929",
+            "model": "claude-opus-4-1-20250805",
             "cost_usd": (response["usage"]["input_tokens"] * 0.003 + response["usage"]["output_tokens"] * 0.015) / 1000,
             "usage": response["usage"],
             "duration_seconds": duration
