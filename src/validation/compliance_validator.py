@@ -236,10 +236,24 @@ class ComplianceValidator:
                     main_code = (output_path / "src" / "main.py").read_text()
                 return self.validate(spec_requirements, main_code)
 
-            # Load main.py as module
-            spec = importlib.util.spec_from_file_location("generated_app.main", main_py_path)
-            main_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(main_module)
+            # Configure temporary database for validation (avoid global DATABASE_URL issues)
+            # Use asyncpg driver to avoid psycopg2 async errors
+            import os
+            original_database_url = os.environ.get('DATABASE_URL')
+            # Use dummy async PostgreSQL URL (won't actually connect during OpenAPI extraction)
+            os.environ['DATABASE_URL'] = 'postgresql+asyncpg://validation:validation@localhost/validation_temp'
+
+            try:
+                # Load main.py as module
+                spec = importlib.util.spec_from_file_location("generated_app.main", main_py_path)
+                main_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(main_module)
+            finally:
+                # Restore original DATABASE_URL
+                if original_database_url is not None:
+                    os.environ['DATABASE_URL'] = original_database_url
+                else:
+                    os.environ.pop('DATABASE_URL', None)
 
             # Get FastAPI app instance
             app = main_module.app

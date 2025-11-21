@@ -1729,11 +1729,9 @@ Once running, visit:
         """
         print(f"  🔄 Starting repair loop (max {max_iterations} iterations, target: {precision_target:.1%})")
 
-        # Track repair state
+        # Track repair state (P1: files modified directly, no code in memory)
         current_compliance = initial_compliance_report.overall_compliance
         best_compliance = current_compliance
-        current_code = main_code
-        best_code = main_code
         no_improvement_count = 0
 
         # Metrics
@@ -1807,22 +1805,18 @@ Once running, visit:
 
             print(f"        Compliance: {current_compliance:.1%} → {new_compliance:.1%}")
 
-            # Step 7: Check for regression
+            # Step 7: Check for regression (P1: no rollback yet, files already modified)
             if new_compliance < current_compliance:
-                print(f"      Step 7: ⚠️ Regression detected! Rolling back...")
+                print(f"      Step 7: ⚠️ Regression detected!")
+                print(f"        Note: P1 repair modifies files directly, rollback not yet implemented")
                 regressions_detected += 1
-
-                # Rollback to backup
-                current_code = backup_code
-
-                # Don't update compliance
                 no_improvement_count += 1
 
-                # Step 8: Store failed repair pattern
+                # Store failed repair pattern
                 if self.error_pattern_store:
                     try:
                         await self.error_pattern_store.store_error_pattern(
-                            repair={"proposal": str(repair_proposal)[:500]},
+                            repair={"repairs": str(repair_result.repairs_applied)[:500]},
                             metadata={
                                 "iteration": iteration,
                                 "compliance_before": current_compliance,
@@ -1834,17 +1828,17 @@ Once running, visit:
                     except Exception as e:
                         print(f"        ⚠️ Failed to store error pattern: {e}")
 
+                # Continue to next iteration despite regression
+                current_compliance = new_compliance
                 continue
 
             # No regression - update state
-            current_code = repaired_code
             current_compliance = new_compliance
 
             # Check for improvement
             if new_compliance > best_compliance:
                 print(f"      ✓ Improvement detected!")
                 best_compliance = new_compliance
-                best_code = repaired_code
                 no_improvement_count = 0
 
                 # Calculate tests fixed
@@ -1907,7 +1901,7 @@ Once running, visit:
             "tests_fixed": tests_fixed,
             "regressions_detected": regressions_detected,
             "pattern_reuse_count": pattern_reuse_count,
-            "final_code": best_code if best_code != main_code else None
+            "final_code": None  # P1: files modified directly, no code in memory
         }
 
     async def _generate_repair_proposal(

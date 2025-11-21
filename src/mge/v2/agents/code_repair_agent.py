@@ -54,7 +54,8 @@ class CodeRepairAgent:
         Args:
             output_path: Path to generated app directory
         """
-        self.output_path = Path(output_path)
+        # Convert to absolute path to work from any working directory
+        self.output_path = Path(output_path).resolve()
         self.entities_file = self.output_path / "src" / "models" / "entities.py"
         self.routes_dir = self.output_path / "src" / "api" / "routes"
 
