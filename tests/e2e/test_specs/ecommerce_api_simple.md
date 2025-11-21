@@ -1,55 +1,55 @@
 # Ecommerce API - Simple Spec
 
-## 1. Descripción General
+## 1. Overview
 
-Construir una **API backend de e-commerce básico** (solo backend, sin frontend) que permita:
+Build a **basic e-commerce backend API** (backend only, no frontend) that allows:
 
-- Gestionar productos
-- Gestionar clientes
-- Gestionar carritos de compra
-- Crear órdenes a partir del carrito
-- Consultar el historial de órdenes
+- Manage products
+- Manage customers
+- Manage shopping carts
+- Create orders from the cart
+- Query order history
 
-No es necesario integrar pagos reales: se usará un estado `payment_status` simulado.
+No real payment integration is required: a simulated `payment_status` will be used.
 
-Complejidad esperada: **0.45 (Simple–Medium)**.
+Expected complexity: **0.45 (Simple–Medium)**.
 
 ---
 
-## 2. Modelo de Dominio (Conceptual)
+## 2. Domain Model (Conceptual)
 
-Entidades principales:
+Main entities:
 
 1. **Product**
    - id (UUID)
-   - name (string, obligatorio)
-   - description (string, opcional)
-   - price (decimal, obligatorio, > 0)
-   - stock (int, obligatorio, >= 0)
-   - is_active (bool, por defecto true)
+   - name (string, required)
+   - description (string, optional)
+   - price (decimal, required, > 0)
+   - stock (int, required, >= 0)
+   - is_active (bool, default true)
 
 2. **Customer**
    - id (UUID)
-   - email (string, obligatorio, formato email, único)
-   - full_name (string, obligatorio)
-   - created_at (datetime, solo lectura)
+   - email (string, required, email format, unique)
+   - full_name (string, required)
+   - created_at (datetime, read-only)
 
 3. **Cart**
    - id (UUID)
-   - customer_id (UUID, referencia a Customer)
-   - items: lista de CartItem
+   - customer_id (UUID, reference to Customer)
+   - items: list of CartItem
    - status: enum ["OPEN", "CHECKED_OUT"] (default "OPEN")
 
 4. **CartItem**
-   - product_id (UUID, referencia a Product)
-   - quantity (int, obligatorio, > 0)
-   - unit_price (decimal, copia del precio del producto al momento de agregar)
+   - product_id (UUID, reference to Product)
+   - quantity (int, required, > 0)
+   - unit_price (decimal, copy of product price at time of adding)
 
 5. **Order**
    - id (UUID)
    - customer_id (UUID)
-   - items: lista de OrderItem
-   - total_amount (decimal, calculado)
+   - items: list of OrderItem
+   - total_amount (decimal, calculated)
    - status: enum ["PENDING_PAYMENT", "PAID", "CANCELLED"]
    - payment_status: enum ["PENDING", "SIMULATED_OK", "FAILED"]
    - created_at (datetime)
@@ -57,126 +57,128 @@ Entidades principales:
 6. **OrderItem**
    - product_id (UUID)
    - quantity (int, > 0)
-   - unit_price (decimal, copia del precio del producto al momento de la orden)
+   - unit_price (decimal, copy of price at time of order)
 
 ---
 
-## 3. Requerimientos Funcionales
+## 3. Functional Requirements
 
-### Productos
+### Products
 
-**F1. Crear producto**  
-La API debe permitir crear productos con `name`, `description`, `price`, `stock` e `is_active`.
+**F1. Create product**  
+API must allow creating products with `name`, `description`, `price`, `stock`, and `is_active`.
 
-**F2. Listar productos activos**  
-Endpoint para listar productos con `is_active = true`, con paginación simple (`page`, `page_size`).
+**F2. List active products**  
+Endpoint to list products where `is_active = true` with simple pagination (`page`, `page_size`).
 
-**F3. Obtener detalle de producto**  
-Endpoint para obtener un producto por `id`. Si no existe, devolver 404.
+**F3. Get product detail**  
+Endpoint to get a product by `id`. If not found, return 404.
 
-**F4. Actualizar producto**  
-Permitir actualizar `name`, `description`, `price`, `stock` e `is_active`.
+**F4. Update product**  
+Allow updating `name`, `description`, `price`, `stock`, and `is_active`.
 
-**F5. Desactivar producto**  
-Permitir desactivar un producto (`is_active = false`) sin borrarlo físicamente.
-
----
-
-### Clientes
-
-**F6. Registrar cliente**  
-Endpoint para crear un `Customer` con `email` y `full_name`.  
-Si el `email` ya existe, devolver 400.
-
-**F7. Obtener cliente por id**  
-Endpoint para obtener un cliente por `id`. Si no existe, 404.
+**F5. Deactivate product**  
+Allow deactivating a product (`is_active = false`) without physically deleting it.
 
 ---
 
-### Carrito
+### Customers
 
-**F8. Crear carrito para cliente**  
-Crear un carrito `OPEN` para un `customer_id`.  
-Si ya existe un carrito `OPEN` para ese cliente, reutilizarlo (no crear uno nuevo).
+**F6. Register customer**  
+Endpoint to create a `Customer` with `email` and `full_name`.  
+If `email` already exists, return 400.
 
-**F9. Agregar item al carrito**  
-Permitir agregar un producto al carrito:
-- Si el producto está inactivo o sin stock, devolver 400.
-- Si el item ya existe en el carrito, sumar la cantidad.
-- Guardar `unit_price` tomando el precio actual del producto.
-
-**F10. Ver carrito actual**  
-Endpoint para obtener el carrito `OPEN` de un cliente, con items y subtotales.
-
-**F11. Actualizar cantidad de un item**  
-Permitir cambiar `quantity`:
-- Si `quantity` <= 0, eliminar el item del carrito.
-- Si la nueva cantidad es mayor que el stock disponible, devolver 400.
-
-**F12. Vaciar carrito**  
-Endpoint para eliminar todos los items de un carrito `OPEN`.
+**F7. Get customer by id**  
+Endpoint to get a customer by `id`. If not found, return 404.
 
 ---
 
-### Órdenes
+### Cart
 
-**F13. Checkout del carrito**  
-Crear una `Order` a partir del carrito `OPEN`:
+**F8. Create cart for customer**  
+Create an `OPEN` cart for a `customer_id`.  
+If an `OPEN` cart already exists for that customer, reuse it (do not create a new one).
 
-- Calcular `total_amount` como suma de (`unit_price * quantity`).
-- Verificar stock de todos los productos.
-- Descontar stock al confirmar la orden.
-- Cambiar estado del carrito a `CHECKED_OUT`.
-- Crear la orden con `status = "PENDING_PAYMENT"` y `payment_status = "PENDING"`.
+**F9. Add item to cart**  
+Allow adding a product to the cart:
+- If the product is inactive or out of stock, return 400.
+- If the item already exists in the cart, increase quantity.
+- Store `unit_price` using the current product price.
 
-**F14. Simular pago exitoso**  
-Endpoint para marcar una orden como pagada:
-- Cambiar `status` a `"PAID"` y `payment_status` a `"SIMULATED_OK"`.
-- Solo permitido si la orden está en `"PENDING_PAYMENT"`.
+**F10. View current cart**  
+Endpoint to get the customer's `OPEN` cart, including items and subtotals.
 
-**F15. Cancelar orden**  
-Endpoint para cancelar una orden:
-- Solo permitido si `status` es `"PENDING_PAYMENT"`.
-- Devolver stock de los productos (sumar cantidades).
+**F11. Update item quantity**  
+Allow modifying `quantity`:
+- If `quantity <= 0`, remove the item.
+- If new quantity exceeds available stock, return 400.
 
-**F16. Listar órdenes de un cliente**  
-Endpoint para listar todas las órdenes de un cliente, con filtro opcional por `status`.
-
-**F17. Obtener detalle de orden**  
-Endpoint para obtener una orden por `id`. Si no existe, 404.
+**F12. Clear cart**  
+Endpoint to delete all items from an `OPEN` cart.
 
 ---
 
-## 4. Requerimientos No Funcionales
+### Orders
+
+**F13. Checkout cart**  
+Create an `Order` from the `OPEN` cart:
+
+- Compute `total_amount` as the sum of (`unit_price * quantity`).
+- Validate stock for all products.
+- Deduct stock when confirming the order.
+- Change cart status to `CHECKED_OUT`.
+- Create the order with:
+  - `status = "PENDING_PAYMENT"`
+  - `payment_status = "PENDING"`
+
+**F14. Simulate successful payment**  
+Endpoint to mark an order as paid:
+- Change `status` to `"PAID"` and `payment_status` to `"SIMULATED_OK"`.
+- Only allowed if order is `"PENDING_PAYMENT"`.
+
+**F15. Cancel order**  
+Endpoint to cancel an order:
+- Only allowed if `status` is `"PENDING_PAYMENT"`.
+- Restore product stock (sum quantities back).
+
+**F16. List customer orders**  
+Endpoint to list all orders for a customer, with optional filter by `status`.
+
+**F17. Get order detail**  
+Endpoint to get an order by `id`. If not found, return 404.
+
+---
+
+## 4. Non-Functional Requirements
 
 **NF1. Framework**  
-Usar un framework web moderno tipo **FastAPI** o similar (según plantillas del sistema).
+Use a modern web framework such as **FastAPI** or similar (depending on system templates).
 
-**NF2. Persistencia**  
-Puede usarse almacenamiento en memoria (para este demo), pero la API debe estar diseñada como si fuera persistente.
+**NF2. Persistence**  
+In-memory storage is acceptable for this demo, but the API must be designed as if persistent.
 
-**NF3. Validación**  
-Usar modelos de datos tipados (p. ej. Pydantic) y devolver errores 422/400 con mensajes claros.
+**NF3. Validation**  
+Use typed data models (e.g., Pydantic) and return clear 422/400 errors.
 
-**NF4. Estructura de código**  
-Separar:
-- modelos / esquemas
-- rutas / controladores
-- lógica de negocio donde aplique
+**NF4. Code structure**  
+Separate:
+- models / schemas
+- routes / controllers
+- business logic where applicable
 
 **NF5. Tests**  
-Incluir un conjunto mínimo de tests automatizados:
+Include a minimal set of automated tests:
 
-- Crear y listar productos.
-- Registrar cliente.
-- Flujo completo: crear carrito → agregar producto → checkout → marcar pago OK.
-- Intentar checkout sin stock suficiente (debe fallar).
+- Create and list products
+- Register customer
+- Full flow: create cart → add product → checkout → mark payment OK
+- Attempt checkout without sufficient stock (should fail)
 
-**NF6. Documentación**  
-Exponer documentación automática del API (OpenAPI/Swagger).
+**NF6. Documentation**  
+Expose automatic API documentation (OpenAPI/Swagger).
 
-**NF7. Healthcheck**  
-Incluir endpoint de healthcheck simple que devuelva:
+**NF7. Healthcheck**
+Include a simple healthcheck endpoint returning:
 ```json
 { "message": "Ecommerce API", "status": "running" }
 ```
@@ -185,218 +187,110 @@ Incluir endpoint de healthcheck simple que devuelva:
 
 ## Classification Ground Truth
 
-**Purpose**: Ground truth for classification validation (Task Group 1.2)  
-**Format**: requirement_id → {domain: <domain>, risk: <risk>}
+F1_create_product:
+  domain: crud
+  risk: high
 
-### Products (F1-F5)
+F2_list_products:
+  domain: crud
+  risk: medium
 
-**F1_create_product**:
-  - domain: crud
-  - risk: low
-  - rationale: Simple CRUD create operation
+F3_get_product:
+  domain: crud
+  risk: low
 
-**F2_list_products**:
-  - domain: crud
-  - risk: low
-  - rationale: Simple CRUD list/read operation with pagination
+F4_update_product:
+  domain: crud
+  risk: high
 
-**F3_get_product**:
-  - domain: crud
-  - risk: low
-  - rationale: Simple CRUD read operation by ID
+F5_deactivate_product:
+  domain: crud
+  risk: medium
 
-**F4_update_product**:
-  - domain: crud
-  - risk: low
-  - rationale: Simple CRUD update operation
+F6_register_customer:
+  domain: authentication
+  risk: high
 
-**F5_deactivate_product**:
-  - domain: crud
-  - risk: low
-  - rationale: Simple CRUD soft-delete operation
+F7_get_customer:
+  domain: crud
+  risk: low
 
-### Customers (F6-F7)
+F8_create_cart:
+  domain: workflow
+  risk: medium
 
-**F6_register_customer**:
-  - domain: crud
-  - risk: low
-  - rationale: Simple CRUD create operation with email uniqueness validation
+F9_add_item:
+  domain: workflow
+  risk: high
 
-**F7_get_customer**:
-  - domain: crud
-  - risk: low
-  - rationale: Simple CRUD read operation by ID
+F10_view_cart:
+  domain: crud
+  risk: low
 
-### Cart (F8-F12)
+F11_update_quantity:
+  domain: workflow
+  risk: medium
 
-**F8_create_cart**:
-  - domain: workflow
-  - risk: medium
-  - rationale: Workflow operation with state management (reuse existing OPEN cart)
+F12_clear_cart:
+  domain: crud
+  risk: medium
 
-**F9_add_item_to_cart**:
-  - domain: workflow
-  - risk: medium
-  - rationale: Workflow operation with business logic (stock check, price snapshot, quantity aggregation)
+F13_checkout:
+  domain: payment
+  risk: high
 
-**F10_view_cart**:
-  - domain: workflow
-  - risk: low
-  - rationale: Simple read operation within workflow context
+F14_payment:
+  domain: payment
+  risk: high
 
-**F11_update_cart_item**:
-  - domain: workflow
-  - risk: medium
-  - rationale: Workflow operation with business logic (stock validation, item removal)
+F15_cancel_order:
+  domain: payment
+  risk: medium
 
-**F12_clear_cart**:
-  - domain: workflow
-  - risk: low
-  - rationale: Simple workflow operation (delete all items)
+F16_list_orders:
+  domain: crud
+  risk: low
 
-### Orders (F13-F17)
-
-**F13_checkout_cart**:
-  - domain: payment
-  - risk: high
-  - rationale: Payment workflow with critical business logic (stock deduction, cart state transition, order creation)
-
-**F14_simulate_payment**:
-  - domain: payment
-  - risk: high
-  - rationale: Payment state transition with financial implications
-
-**F15_cancel_order**:
-  - domain: payment
-  - risk: high
-  - rationale: Payment reversal with stock restoration logic
-
-**F16_list_customer_orders**:
-  - domain: workflow
-  - risk: low
-  - rationale: Simple list operation with filtering
-
-**F17_get_order**:
-  - domain: workflow
-  - risk: low
-  - rationale: Simple read operation for order details
-
----
+F17_get_order:
+  domain: crud
+  risk: low
 
 ## Expected Dependency Graph (Ground Truth)
 
-**Purpose**: Ground truth for DAG construction validation (Task Group 6.2)
-**Format**: Explicit nodes and edges defining the expected dependency graph
+node_count: 17
+nodes:
+  - create_product
+  - list_products
+  - get_product
+  - update_product
+  - deactivate_product
+  - register_customer
+  - get_customer
+  - create_cart
+  - add_item
+  - view_cart
+  - update_quantity
+  - clear_cart
+  - checkout
+  - payment
+  - cancel_order
+  - list_orders
+  - get_order
 
-### Nodes (10 expected)
-
-```yaml
-nodes: 10
-node_list:
-  - create_product      # F1
-  - list_products       # F2
-  - create_customer     # F6
-  - create_cart         # F8
-  - add_to_cart         # F9
-  - checkout_cart       # F13
-  - simulate_payment    # F14
-  - cancel_order        # F15
-  - list_orders         # F16
-  - get_order           # F17
-```
-
-**Rationale**: Core API operations representing the main workflow paths. Excludes simple CRUD operations that don't have dependencies (F3_get_product, F4_update_product, F5_deactivate_product, F7_get_customer, F10_view_cart, F11_update_cart_item, F12_clear_cart).
-
-### Edges (12 explicit dependencies)
-
-```yaml
-edges: 12
-edge_list:
-  # Customer → Cart dependency
-  - from: create_customer
-    to: create_cart
-    reason: "Cart requires customer to exist"
-
-  # Product → Cart workflow
-  - from: create_product
-    to: add_to_cart
-    reason: "Cannot add non-existent product to cart"
-
-  - from: create_cart
-    to: add_to_cart
-    reason: "Cart must exist before adding items"
-
-  # Cart → Checkout workflow
-  - from: add_to_cart
-    to: checkout_cart
-    reason: "Cart must have items before checkout"
-
-  # Checkout → Payment workflow
-  - from: checkout_cart
-    to: simulate_payment
-    reason: "Order must be created before payment"
-
-  - from: checkout_cart
-    to: cancel_order
-    reason: "Order must exist before cancellation"
-
-  # Customer → Orders queries
-  - from: create_customer
-    to: list_orders
-    reason: "Customer must exist to list their orders"
-
-  - from: checkout_cart
-    to: list_orders
-    reason: "Orders must be created to appear in list"
-
-  - from: checkout_cart
-    to: get_order
-    reason: "Order must exist to be retrieved"
-
-  # Product → Product queries
-  - from: create_product
-    to: list_products
-    reason: "Products must exist to be listed"
-
-  # Additional customer dependencies
-  - from: create_customer
-    to: get_order
-    reason: "Customer must exist to retrieve their orders"
-
-  # Additional cart dependencies
-  - from: create_cart
-    to: checkout_cart
-    reason: "Cart must exist to be checked out"
-```
-
-**Dependency Patterns Explained**:
-
-1. **CRUD Dependencies**: Create operations must precede read/list operations for the same entity
-   - `create_product → list_products` (products must exist to be listed)
-   - `create_customer → list_orders` (customer must exist to list their orders)
-
-2. **Workflow Dependencies**: Multi-step business processes have strict ordering
-   - `create_customer → create_cart` (cart needs customer)
-   - `create_cart → add_to_cart` (items need cart)
-   - `add_to_cart → checkout_cart` (checkout needs items)
-   - `checkout_cart → simulate_payment` (payment needs order)
-
-3. **Entity Reference Dependencies**: Operations on related entities
-   - `create_product → add_to_cart` (product must exist to add to cart)
-   - `checkout_cart → cancel_order` (order must exist to cancel)
-
-**Expected DAG Accuracy Target**: 80%+ (Baseline: 57.6%)
-
-**Common Missing Edges** (to watch for in DAG construction):
-- Missing `create_cart → checkout_cart` (cart existence check)
-- Missing `create_customer → get_order` (customer ownership)
-- Incorrect `create_product → checkout_cart` (too loose, should be via `add_to_cart`)
-
-**Wave Structure Expectation**:
-```
-Wave 1: create_product, create_customer
-Wave 2: list_products, create_cart
-Wave 3: add_to_cart
-Wave 4: checkout_cart
-Wave 5: simulate_payment, cancel_order, list_orders, get_order
-```
+edge_count: 15
+edges:
+  - create_product → list_products
+  - create_product → get_product
+  - create_product → update_product
+  - create_product → deactivate_product
+  - register_customer → get_customer
+  - register_customer → create_cart
+  - register_customer → list_orders
+  - create_cart → add_item
+  - add_item → view_cart
+  - add_item → update_quantity
+  - add_item → clear_cart
+  - view_cart → checkout
+  - checkout → payment
+  - checkout → cancel_order
+  - checkout → get_order

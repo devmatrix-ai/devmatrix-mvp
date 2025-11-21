@@ -580,7 +580,7 @@ Structure as needed to maintain clarity while implementing ALL requirements."""
         prompt_parts.append("   - Storage layer (in-memory dicts for simple specs, can use database patterns for complex specs)")
         prompt_parts.append("")
         prompt_parts.append("3. **Business Logic**: Implement ALL validations and rules:")
-        prompt_parts.append("   - Field validations (price > 0, stock >= 0, email format)")
+        prompt_parts.append("   - Field validations using Pydantic Field: Field(gt=0) for price, Field(ge=0) for stock, EmailStr for email")
         prompt_parts.append("   - Business rules (stock checks, calculations)")
         prompt_parts.append("   - Error handling with HTTPException (404, 400, 422)")
         prompt_parts.append("")
@@ -627,6 +627,10 @@ CRITICAL RULES:
    - Optional fields marked correctly (Optional[str] or str | None)
    - Default values where specified
 
+   CRITICAL: NEVER mix Field parameters with comparison operators
+   ❌ WRONG: Field(..., gt=0, >= 0)  # INVALID SYNTAX
+   ✅ CORRECT: Field(..., gt=0)  # Use ONLY Field parameters, not comparison operators
+
 3. **FastAPI Routes**: Implement ALL endpoints with:
    - Correct HTTP methods matching spec
    - Path parameters with type hints
@@ -635,7 +639,7 @@ CRITICAL RULES:
    - Complete CRUD logic (not placeholders)
 
 4. **Business Logic**: Implement ALL rules:
-   - Validations: price > 0, stock >= 0, email format, max_length
+   - Validations using Pydantic Field: Field(gt=0) for positive numbers, Field(ge=0) for non-negative, EmailStr for email, Field(max_length=N) for strings
    - Calculations: totals, sums, aggregations
    - Stock management: checks and updates
    - State machines: status transitions
@@ -1976,7 +1980,7 @@ Generate ONLY the README.md content, no additional explanations."""
             # Use hardcoded production-ready schemas generator
             if spec_requirements.entities:
                 schemas_code = generate_schemas(
-                    [{"name": e.name, "plural": e.name.lower() + "s"} for e in spec_requirements.entities]
+                    [{"name": e.name, "plural": e.name.lower() + "s", "fields": e.fields} for e in spec_requirements.entities]
                 )
                 if schemas_code:
                     files["src/models/schemas.py"] = schemas_code
@@ -2046,62 +2050,38 @@ Generate ONLY the README.md content, no additional explanations."""
                         adapted = self._adapt_pattern(service_pattern.code, spec_requirements, current_entity=entity)
                         files[f"src/services/{entity.snake_name}_service.py"] = adapted
 
-        # API Routes
+        # API Routes - ALWAYS use LLM with pattern as guide (Milestone 5+ improvement)
         elif category == "api_routes":
-            # Generate API route for each entity
+            # Get pattern as EXAMPLE/GUIDE (not final code)
             route_pattern = find_pattern_by_keyword(category_patterns, "fastapi", "crud", "endpoint")
-            if route_pattern and spec_requirements.entities:
-                # Use pattern if available
-                for entity in spec_requirements.entities:
-                    # Pass current entity to _adapt_pattern so Jinja2 has access to {{ entity.name }}
-                    adapted = self._adapt_pattern(route_pattern.code, spec_requirements, current_entity=entity)
-                    files[f"src/api/routes/{entity.snake_name}.py"] = adapted
-            elif spec_requirements.entities:
-                # LLM FALLBACK: No pattern found, generate with LLM
-                logger.warning(
-                    "No pattern found for api_routes - using LLM fallback",
-                    extra={"entity_count": len(spec_requirements.entities)}
+
+            if spec_requirements.entities:
+                logger.info(
+                    "🤖 Generating spec-adapted API routes with LLM (pattern as guide)",
+                    extra={"entity_count": len(spec_requirements.entities), "has_pattern": route_pattern is not None}
                 )
 
-                # Generate CRUD routes for each entity using LLM
+                # Generate route for each entity using LLM with pattern as guide
                 for entity in spec_requirements.entities:
-                    # Create context for LLM
-                    entity_context = {
-                        "entity_name": entity.name,
-                        "snake_name": entity.snake_name,
-                        "fields": [{"name": f.name, "type": f.type, "required": f.required} for f in entity.fields] if hasattr(entity, 'fields') else [],
-                        "endpoints": [e for e in spec_requirements.endpoints if entity.snake_name in e.path.lower()]
-                    }
+                    # Extract endpoints specific to this entity from spec
+                    # Use MORE PRECISE matching: only if path STARTS with entity plural (after first /)
+                    entity_plural = f"{entity.snake_name}s"  # e.g., "products", "carts"
+                    entity_endpoints = [
+                        e for e in spec_requirements.endpoints
+                        if e.path.lstrip('/').startswith(entity_plural + '/')
+                        or e.path.lstrip('/').startswith(entity_plural)
+                        or e.path == f"/{entity_plural}"
+                    ]
 
-                    # Use LLM to generate FastAPI CRUD routes
-                    prompt = f"""Generate FastAPI CRUD routes for entity {entity.name}.
-
-Entity Information:
-- Name: {entity.name}
-- Snake case: {entity.snake_name}
-- Fields: {entity_context['fields']}
-- Endpoints needed: {len(entity_context['endpoints'])}
-
-Generate complete FastAPI route file with:
-1. Import statements (FastAPI, Depends, HTTPException)
-2. APIRouter instance
-3. CRUD operations: GET all, GET by id, POST create, PUT update, DELETE
-4. Dependency injection for service and database
-5. Proper HTTP status codes and error handling
-6. Pydantic schema validation
-
-Use repository pattern and service layer architecture.
-File: src/api/routes/{entity.snake_name}.py
-"""
-
-                    # TODO: Call LLM here (for now, use placeholder)
-                    # generated_code = await self._generate_with_llm(prompt, entity_context)
-
-                    # Placeholder - LLM generation not yet implemented for api_routes
-                    logger.info(
-                        f"⏸️  Placeholder: LLM generation for src/api/routes/{entity.snake_name}.py (not yet implemented)",
-                        extra={"prompt_length": len(prompt)}
+                    # Generate route using LLM with pattern as style guide
+                    route_code = await self._generate_route_with_llm(
+                        entity=entity,
+                        endpoints=entity_endpoints,
+                        pattern_code=route_pattern.code if route_pattern else None,
+                        spec_requirements=spec_requirements
                     )
+
+                    files[f"src/api/routes/{entity.snake_name}.py"] = route_code
 
         # Security patterns
         elif category == "security_hardening":
@@ -2320,26 +2300,16 @@ File: src/api/routes/{entity.snake_name}.py
                 "name": current_entity.name,
                 "snake_name": entity_snake,
             }
+            # Add common variables for Jinja2 templates ({{id}}, {{entity_name}}, etc.)
+            context["id"] = "{id}"  # For path parameters like @router.get("/{{id}}") → /@router.get("/{id}")
+            context["entity_name"] = entity_snake  # For function names like get_{{entity_name}}
+            context["ENTITY_NAME"] = current_entity.name  # For class names like {{ENTITY_NAME}}Response
 
         # Render Jinja2 template (handles {{ }} and {% %} syntax)
-        # Skip Jinja2 rendering if template contains Python keywords (break, continue, etc)
-        # that would conflict with Jinja2 tags
+        # IMPORTANT: Always render Jinja2 templates - Python keywords like 'pass' are valid inside code blocks
         try:
-            # Check if template contains Python control flow keywords that conflict with Jinja2
-            python_keywords = ['break', 'continue', 'pass', 'yield']
-            has_python_keywords = any(
-                f" {kw} " in pattern_code or
-                pattern_code.startswith(f"{kw} ") or
-                pattern_code.endswith(f" {kw}")
-                for kw in python_keywords
-            )
-
-            if has_python_keywords:
-                # Skip Jinja2 rendering for code with Python keywords
-                rendered = pattern_code
-            else:
-                template = Template(pattern_code)
-                rendered = template.render(context)
+            template = Template(pattern_code)
+            rendered = template.render(context)
         except Exception as e:
             # If Jinja2 rendering fails (e.g., syntax error in template),
             # fall back to simple string replacement
@@ -2364,6 +2334,190 @@ File: src/api/routes/{entity.snake_name}.py
             adapted = adapted.replace("{entity_name}", entity_snake)
 
         return adapted
+
+    async def _generate_route_with_llm(
+        self,
+        entity,
+        endpoints: list,
+        pattern_code: str | None,
+        spec_requirements
+    ) -> str:
+        """
+        Generate API route code directly from spec endpoints (no LLM).
+
+        Builds routes with EXACT paths from spec for 100% compliance.
+
+        Args:
+            entity: Entity object with name, fields, etc.
+            endpoints: List of Endpoint objects specific to this entity
+            pattern_code: Pattern code to use as example/guide (IGNORED for now)
+            spec_requirements: Full spec requirements object
+
+        Returns:
+            Generated route code as string
+        """
+        entity_snake = entity.name.lower().replace(' ', '_')
+        entity_plural = f"{entity_snake}s"
+
+        # Start building the route file
+        code = f'''"""
+FastAPI Routes for {entity.name}
+
+Spec-compliant endpoints with:
+- Repository pattern integration
+- Service layer architecture
+- Proper error handling
+- Pydantic validation
+"""
+
+from typing import List
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.core.database import get_db
+from src.models.schemas import {entity.name}Create, {entity.name}Update, {entity.name}Response
+from src.services.{entity_snake}_service import {entity.name}Service
+
+router = APIRouter(
+    prefix="/{entity_plural}",
+    tags=["{entity_plural}"],
+)
+
+
+'''
+
+        # Log endpoints being generated for debugging
+        logger.info(
+            f"Generating routes for {entity.name}",
+            extra={
+                "entity": entity.name,
+                "endpoint_count": len(endpoints),
+                "endpoints": [f"{ep.method} {ep.path}" for ep in endpoints]
+            }
+        )
+
+        # Generate each endpoint from spec
+        import re
+        for ep in endpoints:
+            # Convert absolute path to relative path
+            relative_path = ep.path
+            entity_prefix = f"/{entity_plural}"
+            if relative_path.startswith(entity_prefix):
+                relative_path = relative_path[len(entity_prefix):]
+            if not relative_path:
+                relative_path = "/"
+
+            # Determine response model and status code
+            method = ep.method.lower()
+            if method == 'post':
+                status_code = "status.HTTP_201_CREATED"
+                response_model = f"{entity.name}Response"
+            elif method == 'delete':
+                status_code = "status.HTTP_204_NO_CONTENT"
+                response_model = None
+            elif method == 'put':
+                status_code = None
+                response_model = f"{entity.name}Response"
+            else:  # GET
+                # Check if it's a list endpoint
+                if relative_path == "/":
+                    response_model = f"List[{entity.name}Response]"
+                else:
+                    response_model = f"{entity.name}Response"
+                status_code = None
+
+            # Generate function name from description
+            func_name = ep.description.lower().replace(' ', '_') if ep.description else f"{method}_{entity_snake}"
+            func_name = ''.join(c if c.isalnum() or c == '_' else '_' for c in func_name)
+
+            # Build decorator
+            decorator = f'@router.{method}("{relative_path}"'
+            if response_model:
+                decorator += f', response_model={response_model}'
+            if status_code:
+                decorator += f', status_code={status_code}'
+            decorator += ')'
+
+            # Extract path parameters
+            path_params = re.findall(r'\{(\w+)\}', relative_path)
+
+            # Build function signature
+            params = []
+            for param in path_params:
+                params.append(f'{param}: str')
+
+            # Add request body for POST/PUT
+            if method in ['post', 'put']:
+                params.append(f'{entity_snake}_data: {entity.name}Create')
+
+            params.append('db: AsyncSession = Depends(get_db)')
+            params_str = ',\n    '.join(params)
+
+            # Build function body
+            body = f'''    """
+    {ep.description or f'{method.upper()} {relative_path}'}
+    """
+    service = {entity.name}Service(db)
+'''
+
+            if method == 'get':
+                if response_model and 'List[' in response_model:
+                    # List endpoint
+                    body += f'''    {entity_plural} = await service.get_all(skip=0, limit=100)
+    return {entity_plural}
+'''
+                else:
+                    # Single item endpoint
+                    id_param = path_params[0] if path_params else 'id'
+                    body += f'''    {entity_snake} = await service.get_by_id({id_param})
+
+    if not {entity_snake}:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"{entity.name} with id {{{id_param}}} not found"
+        )
+
+    return {entity_snake}
+'''
+            elif method == 'post':
+                body += f'''    {entity_snake} = await service.create({entity_snake}_data)
+    return {entity_snake}
+'''
+            elif method == 'put':
+                id_param = path_params[0] if path_params else 'id'
+                body += f'''    {entity_snake} = await service.update({id_param}, {entity_snake}_data)
+
+    if not {entity_snake}:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"{entity.name} with id {{{id_param}}} not found"
+        )
+
+    return {entity_snake}
+'''
+            elif method == 'delete':
+                id_param = path_params[0] if path_params else 'id'
+                body += f'''    success = await service.delete({id_param})
+
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"{entity.name} with id {{{id_param}}} not found"
+        )
+
+    return None
+'''
+
+            # Assemble the endpoint function
+            code += f'''{decorator}
+async def {func_name}(
+    {params_str}
+):
+{body}
+
+'''
+
+        return code
 
     def _generate_alembic_ini(self, spec_requirements) -> str:
         """Generate alembic.ini configuration file with environment variable support."""

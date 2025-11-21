@@ -266,10 +266,31 @@ class ComplianceValidator:
 
             # Clear any existing modules from cache to avoid driver conflicts and cached settings
             # This is important because Settings uses @lru_cache and might have cached the old DATABASE_URL
+            # CRITICAL: Save DevMatrix's 'src' module to restore it later
+            devmatrix_src_module = sys.modules.get('src', None)
+
+            # Clear all potentially conflicting modules INCLUDING 'src' base package
             modules_to_clear = [m for m in list(sys.modules.keys())
-                              if any(pattern in m for pattern in ['psycopg', 'sqlalchemy', 'src.', 'api.', 'core.', 'models.'])]
+                              if any(pattern in m for pattern in ['psycopg', 'sqlalchemy', 'src.', 'src', 'api.', 'core.', 'models.'])]
             for module_name in modules_to_clear:
                 sys.modules.pop(module_name, None)
+
+            # Extra safety: Explicitly remove 'src' if it exists (DevMatrix namespace collision)
+            sys.modules.pop('src', None)
+
+            # Clear Prometheus metrics registry to avoid "Duplicated timeseries" errors
+            # This happens when we import the app multiple times in the same Python process
+            try:
+                from prometheus_client import REGISTRY
+                # Create a fresh registry by removing all collectors
+                collectors = list(REGISTRY._collector_to_names.keys())
+                for collector in collectors:
+                    try:
+                        REGISTRY.unregister(collector)
+                    except Exception:
+                        pass  # Ignore if unregister fails
+            except ImportError:
+                pass  # prometheus_client not available, that's fine
 
             try:
                 # Load main.py as module with proper package context
@@ -279,16 +300,25 @@ class ComplianceValidator:
                 original_sys_path = sys.path.copy()
                 original_cwd = os.getcwd()
 
-                # Add app root to sys.path (make 'src' package importable)
-                if app_root not in sys.path:
-                    sys.path.insert(0, app_root)
+                # CRITICAL: Add app root to sys.path FIRST (highest priority)
+                # This allows Python to find the 'src' package
+                if app_root in sys.path:
+                    sys.path.remove(app_root)  # Remove if exists to re-add at position 0
+                sys.path.insert(0, app_root)
 
-                # CRITICAL: Change working directory to app root
-                # This helps Python resolve relative imports correctly
-                os.chdir(app_root)
+                # Store original working directory but DON'T change it yet
+                # Changing cwd breaks relative imports in the generated app
+                logger.debug(f"App root added to sys.path[0]: {sys.path[0]}")
+                logger.debug(f"Current working directory: {os.getcwd()}")
 
-                # Import src.main using __import__ (more direct than importlib.import_module)
-                # The fromlist parameter is crucial - it makes __import__ return src.main instead of src
+                # Verify files exist
+                src_init = os.path.join(app_root, 'src', '__init__.py')
+                src_main = os.path.join(app_root, 'src', 'main.py')
+                logger.debug(f"src/__init__.py exists: {os.path.exists(src_init)}")
+                logger.debug(f"src/main.py exists: {os.path.exists(src_main)}")
+
+                # Import src.main WITHOUT changing working directory
+                # The app_root in sys.path[0] should be enough
                 main_module = __import__('src.main', fromlist=['app'])
 
                 # Get FastAPI app instance immediately (while sys.path is still valid)
@@ -332,6 +362,10 @@ class ComplianceValidator:
                 modules_to_remove = [k for k in sys.modules.keys() if k.startswith('src.')]
                 for module_name in modules_to_remove:
                     sys.modules.pop(module_name, None)
+
+                # CRITICAL: Restore DevMatrix's 'src' module so rest of pipeline can import from it
+                if devmatrix_src_module is not None:
+                    sys.modules['src'] = devmatrix_src_module
 
             # 1. Extract entities from OpenAPI schemas
             # NOTE: Schemas might be empty (just 'pass') but we count them as present

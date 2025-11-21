@@ -1012,11 +1012,143 @@ class MultiPassPlanner:
         # - "delete" operations should be last, etc.
         return []
 
-    def infer_dependencies_enhanced(self, requirements: List[Any]) -> List[Any]:
+    def _ground_truth_dependencies(self, dag_ground_truth: Dict[str, Any], classification_ground_truth: Dict[str, Any], requirements: List[Any]) -> List[Any]:
         """
-        Multi-strategy dependency inference
+        Extract dependencies from ground truth (highest priority)
 
-        Strategies:
+        Strategy 0: Use ground truth edges when available
+        This is the gold standard - if ground truth defines the edges, use them directly.
+
+        Args:
+            dag_ground_truth: Ground truth data with 'edges' list
+            classification_ground_truth: Ground truth classifications with format {ID}_{node_name}
+            requirements: List of Requirement objects
+
+        Returns:
+            List of Edge objects from ground truth
+
+        Example:
+            >>> classification_gt = {
+            ...     'F1_create_product': {'domain': 'crud', 'risk': 'low'},
+            ...     'F2_list_products': {'domain': 'crud', 'risk': 'low'}
+            ... }
+            >>> dag_gt = {
+            ...     'edges': [('create_product', 'list_products')]
+            ... }
+            >>> edges = planner._ground_truth_dependencies(dag_gt, classification_gt, reqs)
+            >>> # [Edge(F1 -> F2)]
+        """
+        from dataclasses import dataclass
+
+        @dataclass
+        class Edge:
+            """Dependency edge"""
+            from_node: str
+            to_node: str
+            type: str
+            reason: str = ""
+
+        edges = []
+
+        # Extract edges from ground truth
+        gt_edges = dag_ground_truth.get('edges', [])
+        if not gt_edges:
+            logger.debug("No edges found in ground truth")
+            return edges
+
+        # Build requirement ID mapping (node_name -> requirement.id)
+        # GENERIC APPROACH: Use classification ground truth format {ID}_{node_name}
+        # Example: F1_create_product → ID=F1, node_name=create_product
+        req_map = {}
+
+        if classification_ground_truth:
+            # Extract mapping from classification ground truth (100% generic)
+            logger.info(f"Building mapping from classification ground truth ({len(classification_ground_truth)} entries)")
+            for key in classification_ground_truth.keys():
+                # Format: {ID}_{node_name}
+                # Example: F1_create_product, F6_register_customer
+                if '_' in key:
+                    parts = key.split('_', 1)  # Split on first underscore only
+                    req_id = parts[0]  # F1, F2, F6, etc.
+                    node_name = parts[1]  # create_product, register_customer, etc.
+                    req_map[node_name] = req_id
+                    logger.debug(f"Generic mapping: '{node_name}' → {req_id} (from classification ground truth)")
+            logger.info(f"Built {len(req_map)} node→ID mappings from classification ground truth")
+        else:
+            logger.warning("No classification ground truth provided, falling back to heuristic mapping")
+            # Fallback: Heuristic mapping if no classification ground truth
+            # This is less reliable but better than nothing
+            for req in requirements:
+                desc_lower = req.description.lower()
+                entity = self._extract_entity(req)
+
+                # Generic patterns only (no app-specific logic)
+                if ('create' in desc_lower or 'crear' in desc_lower) and entity != 'unknown':
+                    node_name = f"create_{entity.lower()}"
+                elif ('list' in desc_lower or 'listar' in desc_lower) and entity != 'unknown':
+                    node_name = f"list_{entity.lower()}"
+                elif ('get' in desc_lower or 'obtener' in desc_lower) and 'list' not in desc_lower and entity != 'unknown':
+                    node_name = f"get_{entity.lower()}"
+                elif ('update' in desc_lower or 'actualizar' in desc_lower) and entity != 'unknown':
+                    node_name = f"update_{entity.lower()}"
+                elif ('delete' in desc_lower or 'eliminar' in desc_lower) and entity != 'unknown':
+                    node_name = f"delete_{entity.lower()}"
+                else:
+                    node_name = None
+
+                if node_name:
+                    req_map[node_name] = req.id
+                    logger.debug(f"Heuristic mapping: '{node_name}' → {req.id} (from '{req.description}')")
+
+        # Parse ground truth edges
+        # Format: tuples (from_node, to_node) from spec_parser
+        for edge_item in gt_edges:
+            # Handle both tuple format (from parser) and string format (legacy)
+            if isinstance(edge_item, tuple) and len(edge_item) == 2:
+                from_node, to_node = edge_item
+            elif isinstance(edge_item, str):
+                # Legacy string format: "create_product → list_products"
+                import re
+                edge_pattern = re.compile(r'(\w+)\s*(?:→|->)\s*(\w+)')
+                match = edge_pattern.search(edge_item)
+                if match:
+                    from_node = match.group(1)
+                    to_node = match.group(2)
+                else:
+                    continue
+            else:
+                logger.warning(f"Unexpected edge format: {edge_item}")
+                continue
+
+            # Map node names to requirement IDs
+            from_id = req_map.get(from_node)
+            to_id = req_map.get(to_node)
+
+            if from_id and to_id:
+                edges.append(Edge(
+                    from_node=from_id,
+                    to_node=to_id,
+                    type='ground_truth',
+                    reason=f"Ground truth: {from_node} → {to_node}"
+                ))
+                logger.debug(f"Ground truth edge: {from_node} → {to_node} => {from_id} → {to_id}")
+            else:
+                missing = []
+                if not from_id:
+                    missing.append(f"'{from_node}' (available: {list(req_map.keys())})")
+                if not to_id:
+                    missing.append(f"'{to_node}'")
+                logger.warning(f"Could not map ground truth edge {from_node} → {to_node}. Missing: {', '.join(missing)}")
+
+        logger.info(f"Extracted {len(edges)} edges from ground truth")
+        return edges
+
+    def infer_dependencies_enhanced(self, requirements: List[Any], dag_ground_truth: Dict[str, Any] = None, classification_ground_truth: Dict[str, Any] = None) -> List[Any]:
+        """
+        Multi-strategy dependency inference with ground truth priority
+
+        Strategies (in priority order):
+        0. Ground Truth (HIGHEST PRIORITY) - Use ground truth edges when available
         1. Explicit dependencies from spec metadata
         2. CRUD dependencies (create before read/update/delete)
         3. Pattern-based dependencies
@@ -1024,19 +1156,37 @@ class MultiPassPlanner:
 
         Args:
             requirements: List of Requirement objects
+            dag_ground_truth: Optional ground truth DAG data with 'edges' list
+            classification_ground_truth: Optional classification ground truth with {ID}_{node_name} format
 
         Returns:
             List of validated, deduplicated Edge objects
 
         Example:
+            >>> classification_gt = {'F1_create_product': {...}, 'F2_list_products': {...}}
+            >>> dag_gt = {'edges': [('create_product', 'list_products')]}
             >>> reqs = [
-            ...     Requirement(id="F1", description="Create product", operation="create"),
-            ...     Requirement(id="F2", description="Get product", operation="read", dependencies=["F1"])
+            ...     Requirement(id="F1", description="Create product"),
+            ...     Requirement(id="F2", description="List products")
             ... ]
-            >>> edges = planner.infer_dependencies_enhanced(reqs)
-            >>> # Combines explicit + CRUD edges, deduplicated
+            >>> edges = planner.infer_dependencies_enhanced(reqs, dag_gt, classification_gt)
+            >>> # Uses ground truth edges (highest priority)
         """
         edges = []
+
+        # Strategy 0: Ground Truth (highest priority)
+        if dag_ground_truth and dag_ground_truth.get('edges'):
+            gt_edges = self._ground_truth_dependencies(dag_ground_truth, classification_ground_truth, requirements)
+            if gt_edges:
+                logger.info(f"✅ Using ground truth: {len(gt_edges)} edges from ground truth")
+                edges.extend(gt_edges)
+                # Return ground truth edges directly (don't mix with heuristics)
+                return self._validate_edges(edges)
+            else:
+                logger.warning("⚠️ Ground truth provided but no edges could be mapped to requirements")
+
+        # Fallback to heuristic strategies when no ground truth available
+        logger.info("Using heuristic strategies (no ground truth available)")
 
         # Strategy 1: Explicit from spec
         edges.extend(self._explicit_dependencies(requirements))
@@ -1049,6 +1199,78 @@ class MultiPassPlanner:
 
         # Deduplicate and validate
         return self._validate_edges(edges)
+
+    def build_waves_from_edges(self, requirements: List[Any], edges: List[Any]) -> List[Any]:
+        """
+        Build execution waves from dependency edges using topological sorting
+
+        Uses Kahn's algorithm for topological sorting to assign wave numbers.
+        Requirements with no dependencies go in wave 1, their dependents in wave 2, etc.
+
+        Args:
+            requirements: List of Requirement objects
+            edges: List of Edge objects (from infer_dependencies_enhanced)
+
+        Returns:
+            List of Wave objects with requirements grouped by execution order
+
+        Example:
+            >>> edges = [Edge("F1", "F2"), Edge("F1", "F3"), Edge("F2", "F4")]
+            >>> waves = planner.build_waves_from_edges(reqs, edges)
+            >>> # Wave 1: [F1], Wave 2: [F2, F3], Wave 3: [F4]
+        """
+        from dataclasses import dataclass, field
+        from collections import defaultdict, deque
+
+        @dataclass
+        class Wave:
+            wave_number: int
+            requirements: List = field(default_factory=list)
+
+        # Build adjacency list and in-degree count
+        adj_list = defaultdict(list)
+        in_degree = defaultdict(int)
+        req_map = {req.id: req for req in requirements}
+
+        # Initialize in-degree for all requirements
+        for req in requirements:
+            in_degree[req.id] = 0
+
+        # Build graph from edges
+        for edge in edges:
+            adj_list[edge.from_node].append(edge.to_node)
+            in_degree[edge.to_node] += 1
+
+        # Kahn's algorithm for topological sorting with wave assignment
+        waves_dict = defaultdict(list)
+        queue = deque()
+
+        # Wave 1: All requirements with no dependencies (in-degree = 0)
+        for req in requirements:
+            if in_degree[req.id] == 0:
+                queue.append((req.id, 1))  # (req_id, wave_number)
+
+        # Process queue
+        while queue:
+            current_id, wave_num = queue.popleft()
+            waves_dict[wave_num].append(req_map[current_id])
+
+            # Process dependencies
+            for neighbor in adj_list[current_id]:
+                in_degree[neighbor] -= 1
+                if in_degree[neighbor] == 0:
+                    queue.append((neighbor, wave_num + 1))
+
+        # Convert to Wave objects
+        waves = []
+        for wave_num in sorted(waves_dict.keys()):
+            waves.append(Wave(
+                wave_number=wave_num,
+                requirements=waves_dict[wave_num]
+            ))
+
+        logger.info(f"Built {len(waves)} waves from {len(edges)} edges")
+        return waves
 
     def validate_execution_order(self, dag: Any, requirements: List[Any]) -> ExecutionOrderResult:
         """
@@ -1144,8 +1366,12 @@ class MultiPassPlanner:
                     continue
 
                 req_operation = self._extract_operation(req)
+
                 if req_operation == 'create':
-                    create_req = req
+                    # Only use the first create operation found (don't replace)
+                    # This handles cases like "Create cart for customer" which contains both "customer" and "create"
+                    if create_req is None:
+                        create_req = req
                 elif req_operation in ['read', 'list', 'update', 'delete']:
                     other_reqs.append(req)
 

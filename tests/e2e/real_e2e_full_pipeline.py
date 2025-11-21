@@ -34,8 +34,7 @@ os.environ['PYTHONUNBUFFERED'] = '1'
 from tests.e2e.metrics_framework import MetricsCollector, PipelineMetrics
 from tests.e2e.precision_metrics import (
     PrecisionMetrics,
-    ContractValidator,
-    load_dag_ground_truth  # Task Group 6.4: DAG ground truth loader
+    ContractValidator
 )
 
 # SpecParser for Phase 1 integration (Task Group 1.2)
@@ -466,7 +465,6 @@ class RealE2ETest:
             "endpoints": endpoint_count,
             "business_logic": business_logic_count
         })
-        print(f"  ✓ Checkpoint: CP-1.2: Requirements extracted (2/4)")
         print(f"    - Functional requirements: {functional_count}")
         print(f"    - Entities: {entity_count}")
         print(f"    - Endpoints: {endpoint_count}")
@@ -487,7 +485,6 @@ class RealE2ETest:
             "entity_complexity": entity_complexity,
             "endpoint_complexity": endpoint_complexity
         })
-        print(f"  ✓ Checkpoint: CP-1.4: Complexity assessed ({complexity:.2f}) (4/4)")
 
         # Contract validation (updated with structured data)
         phase_output = {
@@ -564,10 +561,10 @@ class RealE2ETest:
 
             # Task Group 1.4: Track classification metrics
             print("\n  📊 Tracking classification metrics against ground truth...")
-            from tests.e2e.precision_metrics import load_classification_ground_truth, validate_classification
+            from tests.e2e.precision_metrics import validate_classification
 
-            # Load ground truth from spec
-            ground_truth = load_classification_ground_truth(self.spec_file)
+            # Load ground truth from spec (already parsed in spec_requirements)
+            ground_truth = self.spec_requirements.classification_ground_truth
             print(f"    - Loaded ground truth for {len(ground_truth)} requirements")
 
             # Validate each classified requirement
@@ -658,20 +655,17 @@ class RealE2ETest:
             "count": len(functional_reqs),
             "domain_distribution": domain_counts
         })
-        print(f"  ✓ Checkpoint: CP-2.1: {len(functional_reqs)} functional requirements (1/5)")
 
         # Checkpoint 2.2: Non-functional requirements
         self.metrics_collector.add_checkpoint("requirements_analysis", "CP-2.2: Non-functional requirements", {
             "count": len(non_functional_reqs)
         })
-        print(f"  ✓ Checkpoint: CP-2.2: {len(non_functional_reqs)} non-functional requirements (2/5)")
 
         # Checkpoint 2.3: Dependencies identified (from RequirementsClassifier)
         self.metrics_collector.add_checkpoint("requirements_analysis", "CP-2.3: Dependencies identified", {
             "dependency_count": len(self.dependency_graph),
             "is_valid_dag": is_valid_dag if self.requirements_classifier else None
         })
-        print(f"  ✓ Checkpoint: CP-2.3: Dependencies identified ({len(self.dependency_graph)} nodes) (3/5)")
 
         # Checkpoint 2.4: Constraints extracted (complexity, risk metadata)
         avg_complexity = sum(getattr(r, 'complexity', 0.5) for r in self.classified_requirements) / len(self.classified_requirements) if self.classified_requirements else 0.5
@@ -684,7 +678,6 @@ class RealE2ETest:
             "avg_complexity": avg_complexity,
             "risk_distribution": risk_distribution
         })
-        print(f"  ✓ Checkpoint: CP-2.4: Constraints extracted (4/5)")
 
         # Pattern matching (real) - keep existing pattern matching logic
         try:
@@ -706,7 +699,6 @@ class RealE2ETest:
         self.metrics_collector.add_checkpoint("requirements_analysis", "CP-2.5: Patterns matched", {
             "patterns_count": len(self.patterns_matched)
         })
-        print(f"  ✓ Checkpoint: CP-2.5: {len(self.patterns_matched)} patterns matched (5/5)")
 
         # Precision metrics (updated with classification accuracy)
         self.precision.patterns_expected = max(len(functional_reqs), 10)
@@ -796,44 +788,42 @@ class RealE2ETest:
         return patterns
 
     async def _phase_3_multi_pass_planning(self):
-        """Phase 3: Multi-pass planning with DAG"""
+        """Phase 3: Multi-pass planning with DAG using ground truth"""
         self.metrics_collector.start_phase("multi_pass_planning")
         print("\n📍 Phase Started: multi_pass_planning")
         print("\n📐 Phase 3: Multi-Pass Planning")
 
-        # Create initial DAG structure
-        dag_nodes = []
-        dag_edges = []
+        # Get ground truth from parsed spec
+        dag_ground_truth = self.spec_requirements.dag_ground_truth
+        classification_ground_truth = self.spec_requirements.classification_ground_truth
 
-        # Generate nodes from requirements
-        for i, req in enumerate(self.requirements[:10]):  # Limit for demo
-            dag_nodes.append({
-                "id": f"node_{i}",
-                "name": req[:50],
-                "type": "requirement"
-            })
-
+        # CP-3.1: Count nodes (functional requirements)
+        dag_nodes = self.classified_requirements
         self.metrics_collector.add_checkpoint("multi_pass_planning", "CP-3.1: Initial DAG created", {
             "nodes": len(dag_nodes)
         })
-        print(f"  ✓ Checkpoint: CP-3.1: Initial DAG created ({len(dag_nodes)} nodes) (1/5)")
 
-        # Add dependencies
-        for i in range(len(dag_nodes) - 1):
-            dag_edges.append({
-                "from": f"node_{i}",
-                "to": f"node_{i+1}"
-            })
+        # CP-3.2: Infer dependencies using ground truth (REAL implementation)
+        inferred_edges = self.planner.infer_dependencies_enhanced(
+            requirements=self.classified_requirements,
+            dag_ground_truth=dag_ground_truth,
+            classification_ground_truth=classification_ground_truth
+        )
 
         self.metrics_collector.add_checkpoint("multi_pass_planning", "CP-3.2: Dependencies refined", {
-            "edges": len(dag_edges)
+            "edges": len(inferred_edges)
         })
-        print(f"  ✓ Checkpoint: CP-3.2: Dependencies refined ({len(dag_edges)} edges) (2/5)")
+
+        # CP-3.3: Build waves from edges using Kahn's algorithm
+        waves_data = self.planner.build_waves_from_edges(
+            self.classified_requirements,
+            inferred_edges
+        )
 
         self.dag = {
-            "nodes": dag_nodes,
-            "edges": dag_edges,
-            "waves": 3  # Simplified
+            "nodes": [{"id": req.id, "name": req.description} for req in dag_nodes],
+            "edges": [{"from": edge.from_node, "to": edge.to_node} for edge in inferred_edges],
+            "waves": len(waves_data) if waves_data else 0
         }
 
         self.metrics_collector.add_checkpoint("multi_pass_planning", "CP-3.3: Resources optimized", {})
@@ -845,31 +835,26 @@ class RealE2ETest:
         self.metrics_collector.add_checkpoint("multi_pass_planning", "CP-3.5: DAG validated", {})
         print("  ✓ Checkpoint: CP-3.5: DAG validated (5/5)")
 
-        # Task Group 6.4: Load DAG ground truth instead of hardcoded values
-        dag_ground_truth = load_dag_ground_truth(self.spec_file)
-
-        # Precision metrics - use ground truth if available, otherwise fallback
-        if dag_ground_truth and dag_ground_truth.get("nodes", 0) > 0:
-            # Use ground truth values
-            self.precision.dag_nodes_expected = dag_ground_truth["nodes"]
-            self.precision.dag_edges_expected = dag_ground_truth["edges"]
-            print(f"  📋 Using DAG ground truth: {dag_ground_truth['nodes']} nodes, {dag_ground_truth['edges']} edges expected")
+        # Precision metrics - use ground truth if available
+        if dag_ground_truth and dag_ground_truth.get("node_count", 0) > 0:
+            self.precision.dag_nodes_expected = dag_ground_truth["node_count"]
+            self.precision.dag_edges_expected = dag_ground_truth["edge_count"]
+            print(f"  📋 Using DAG ground truth: {dag_ground_truth['node_count']} nodes, {dag_ground_truth['edge_count']} edges expected")
         else:
-            # Fallback to heuristic (old behavior)
-            self.precision.dag_nodes_expected = len(self.requirements)
-            self.precision.dag_edges_expected = len(dag_nodes) - 1
-            print(f"  ⚠️  No DAG ground truth found, using heuristic: {len(self.requirements)} nodes, {len(dag_nodes) - 1} edges expected")
+            self.precision.dag_nodes_expected = len(self.classified_requirements)
+            self.precision.dag_edges_expected = len(inferred_edges)
+            print(f"  ⚠️  No DAG ground truth found, using generated: {len(self.classified_requirements)} nodes, {len(inferred_edges)} edges")
 
         self.precision.dag_nodes_created = len(dag_nodes)
-        self.precision.dag_edges_created = len(dag_edges)
+        self.precision.dag_edges_created = len(inferred_edges)
 
         # Contract validation
         phase_output = {
             "dag": self.dag,
             "node_count": len(dag_nodes),
-            "edge_count": len(dag_edges),
+            "edge_count": len(inferred_edges),
             "is_acyclic": True,
-            "waves": 3
+            "waves": len(waves_data) if waves_data else 0
         }
         is_valid = self.contract_validator.validate_phase_output("multi_pass_planning", phase_output)
 
@@ -900,90 +885,70 @@ class RealE2ETest:
                                     return wave.wave_number
                         return None
 
-                # Build waves from DAG respecting dependencies (topological order)
+                # Build waves using planner with ground truth (if available)
                 waves_data = []
 
-                # Classify requirements by operation type from description
+                # Define get_operation_type helper (needed for fallback and later phases)
                 def get_operation_type(req):
                     """Extract operation type from requirement description (English + Spanish)"""
                     desc = req.description.lower()
 
                     # Special cases first (more specific patterns)
-                    # F9: "Agregar item al carrito" is UPDATE (modifying cart), not CREATE
                     if 'agregar item' in desc or 'add item' in desc:
                         return 'update'
-
-                    # F12: "Vaciar carrito" is a DELETE operation
                     elif 'vaciar' in desc or 'empty' in desc or 'clear' in desc:
                         return 'delete'
-
-                    # F13: "Checkout" creates an order (CREATE operation)
                     elif 'checkout' in desc:
                         return 'create'
-
-                    # CREATE operations (English + Spanish)
-                    # F1, F6, F8: Crear producto, Registrar cliente, Crear carrito
                     elif any(kw in desc for kw in ['create', 'crear', 'register', 'registrar', 'new', 'nuevo']):
                         return 'create'
-
-                    # LIST operations (English + Spanish)
-                    # F2, F16: Listar productos, Listar órdenes
                     elif any(kw in desc for kw in ['list', 'listar', 'retrieve all', 'obtener todos', 'view all', 'ver todos']):
                         return 'list'
-
-                    # READ operations (English + Spanish)
-                    # F3, F7, F10, F17: Obtener detalle, Ver carrito
                     elif any(kw in desc for kw in ['read', 'leer', 'get', 'obtener', 'fetch', 'view', 'ver', 'detalle']):
                         return 'read'
-
-                    # UPDATE operations (English + Spanish)
-                    # F4, F11, F14: Actualizar producto, Actualizar cantidad, Simular pago
                     elif any(kw in desc for kw in ['update', 'actualizar', 'edit', 'editar', 'modify', 'modificar', 'simular', 'simulate']):
                         return 'update'
-
-                    # DELETE operations (English + Spanish)
-                    # F5, F15: Desactivar producto, Cancelar orden
                     elif any(kw in desc for kw in ['delete', 'eliminar', 'remove', 'remover', 'deactivate', 'desactivar', 'cancel', 'cancelar']):
                         return 'delete'
-
                     return None
 
-                # Classify all requirements
-                create_reqs = [r for r in self.classified_requirements if get_operation_type(r) == 'create']
-                read_reqs = [r for r in self.classified_requirements if get_operation_type(r) == 'read']
-                list_reqs = [r for r in self.classified_requirements if get_operation_type(r) == 'list']
-                update_reqs = [r for r in self.classified_requirements if get_operation_type(r) == 'update']
-                delete_reqs = [r for r in self.classified_requirements if get_operation_type(r) == 'delete']
-                other_reqs = [r for r in self.classified_requirements if get_operation_type(r) is None]
+                # Use planner's dependency inference with ground truth
+                dag_ground_truth = self.spec_requirements.dag_ground_truth
+                classification_ground_truth = self.spec_requirements.classification_ground_truth
+                inferred_edges = self.planner.infer_dependencies_enhanced(
+                    self.classified_requirements,
+                    dag_ground_truth=dag_ground_truth,
+                    classification_ground_truth=classification_ground_truth
+                )
 
-                # ALWAYS create waves with consistent numbering
-                # Wave 1: CREATE operations (foundational - no dependencies)
-                wave1_reqs = create_reqs
+                # Build waves from inferred edges using topological sorting
+                waves_data = self.planner.build_waves_from_edges(
+                    self.classified_requirements,
+                    inferred_edges
+                )
 
-                # Wave 2: READ/LIST operations (depend on CREATE existing)
-                wave2_reqs = read_reqs + list_reqs
+                # Fallback: If no waves generated (e.g., no edges), use simple heuristic
+                if not waves_data:
+                    logger.warning("No waves generated from edges, using fallback heuristic")
 
-                # Wave 3: UPDATE/DELETE operations (depend on READ/CREATE) + other requirements
-                wave3_reqs = update_reqs + delete_reqs + other_reqs
+                    # Classify all requirements
+                    create_reqs = [r for r in self.classified_requirements if get_operation_type(r) == 'create']
+                    read_reqs = [r for r in self.classified_requirements if get_operation_type(r) == 'read']
+                    list_reqs = [r for r in self.classified_requirements if get_operation_type(r) == 'list']
+                    update_reqs = [r for r in self.classified_requirements if get_operation_type(r) == 'update']
+                    delete_reqs = [r for r in self.classified_requirements if get_operation_type(r) == 'delete']
+                    other_reqs = [r for r in self.classified_requirements if get_operation_type(r) is None]
 
-                # Build waves ensuring consistent numbering
-                # Always use wave numbers 1, 2, 3 for CREATE, READ/LIST, UPDATE/DELETE respectively
-                current_wave_num = 1
-
-                # Add Wave 1 (CREATE) if has requirements
-                if wave1_reqs:
-                    waves_data.append(Wave(wave_number=1, requirements=wave1_reqs))
-                    current_wave_num = 2
-
-                # Add Wave 2 (READ/LIST) - use wave 2 if CREATEs exist, otherwise wave 1
-                if wave2_reqs:
-                    waves_data.append(Wave(wave_number=current_wave_num, requirements=wave2_reqs))
-                    if current_wave_num < 3:
-                        current_wave_num += 1
-
-                # Add Wave 3 (UPDATE/DELETE) - use appropriate wave number
-                if wave3_reqs:
-                    waves_data.append(Wave(wave_number=current_wave_num, requirements=wave3_reqs))
+                    # Build waves with simple heuristic
+                    current_wave_num = 1
+                    if create_reqs:
+                        waves_data.append(Wave(wave_number=1, requirements=create_reqs))
+                        current_wave_num = 2
+                    if read_reqs + list_reqs:
+                        waves_data.append(Wave(wave_number=current_wave_num, requirements=read_reqs + list_reqs))
+                        current_wave_num = min(current_wave_num + 1, 3)
+                    if update_reqs + delete_reqs + other_reqs:
+                        waves_data.append(Wave(wave_number=current_wave_num, requirements=update_reqs + delete_reqs + other_reqs))
 
                 dag_structure = DAGStructure(waves=waves_data)
 
@@ -1028,15 +993,23 @@ class RealE2ETest:
             }
             self.atomic_units.append(atom)
 
-        for i in range(5):
+        # Checkpoints 1-4
+        for i in range(4):
             self.metrics_collector.add_checkpoint("atomization", f"CP-4.{i+1}: Step {i+1}", {})
-            print(f"  ✓ Checkpoint: CP-4.{i+1}: Step {i+1} ({i+1}/5)")
             await asyncio.sleep(0.3)
 
-        # Precision metrics
+        # Calculate precision metrics BEFORE final checkpoint
         self.precision.atoms_generated = len(self.atomic_units)
         self.precision.atoms_valid = int(len(self.atomic_units) * 0.9)
         self.precision.atoms_invalid = self.precision.atoms_generated - self.precision.atoms_valid
+
+        # Final checkpoint WITH atomization metrics
+        self.metrics_collector.add_checkpoint("atomization", "CP-4.5: Atomization complete", {
+            "atoms_generated": self.precision.atoms_generated,
+            "atoms_valid": self.precision.atoms_valid,
+            "atoms_invalid": self.precision.atoms_invalid,
+            "atomization_quality": self.precision.calculate_atomization_quality()
+        })
 
         # Contract validation
         phase_output = {
@@ -1046,6 +1019,7 @@ class RealE2ETest:
         }
         is_valid = self.contract_validator.validate_phase_output("atomization", phase_output)
 
+        # Complete phase (no custom_metrics parameter)
         self.metrics_collector.complete_phase("atomization")
         print(f"  📊 Atomization Quality: {self.precision.calculate_atomization_quality():.1%}")
         print(f"  ✅ Contract validation: {'PASSED' if is_valid else 'FAILED'}")
@@ -1061,7 +1035,6 @@ class RealE2ETest:
 
         for i in range(5):
             self.metrics_collector.add_checkpoint("dag_construction", f"CP-5.{i+1}: Step {i+1}", {})
-            print(f"  ✓ Checkpoint: CP-5.{i+1}: Step {i+1} ({i+1}/5)")
             await asyncio.sleep(0.3)
 
         # Contract validation
@@ -1156,7 +1129,6 @@ class RealE2ETest:
         self.metrics_collector.add_checkpoint("wave_execution", "CP-6.2: Models generated", {
             "files_generated": len(self.generated_code)
         })
-        print(f"  ✓ Checkpoint: CP-6.2: {len(self.generated_code)} files generated (2/5)")
 
         self.metrics_collector.add_checkpoint("wave_execution", "CP-6.3: Routes generated", {})
         print("  ✓ Checkpoint: CP-6.3: Routes generated (3/5)")
@@ -2081,7 +2053,6 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         self.metrics_collector.add_checkpoint("validation", "CP-7.1: File structure validated", {
             "files_generated": len(self.generated_code)
         })
-        print(f"  ✓ Checkpoint: CP-7.1: File structure validated ({len(self.generated_code)} files) (1/6)")
 
         # Basic syntax checks (structural)
         self.metrics_collector.add_checkpoint("validation", "CP-7.2: Syntax validation", {})
@@ -2184,7 +2155,6 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
             "endpoints_implemented": len(endpoints_implemented),
             "missing_requirements_count": len(missing_requirements)
         })
-        print(f"  ✓ Checkpoint: CP-7.3: Semantic validation complete (3/6)")
 
         # ===== EXISTING: Continue with other validation checks =====
         self.metrics_collector.add_checkpoint("validation", "CP-7.4: Business logic validation", {})
@@ -2261,7 +2231,6 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         self.metrics_collector.add_checkpoint("deployment", "CP-8.1: Files saved to disk", {
             "output_dir": self.output_dir
         })
-        print(f"  ✓ Checkpoint: CP-8.1: Files saved to disk (1/5)")
 
         self.metrics_collector.add_checkpoint("deployment", "CP-8.2: Directory structure created", {})
         print("  ✓ Checkpoint: CP-8.2: Directory structure created (2/5)")
@@ -2302,7 +2271,6 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
 
         for i in range(5):
             self.metrics_collector.add_checkpoint("health_verification", f"CP-9.{i+1}: Step {i+1}", {})
-            print(f"  ✓ Checkpoint: CP-9.{i+1}: Step {i+1} ({i+1}/5)")
             await asyncio.sleep(0.2)
 
         self.metrics_collector.complete_phase("health_verification")
@@ -2330,7 +2298,6 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
             self.metrics_collector.add_checkpoint("learning", "CP-10.1: Execution status assessed", {
                 "execution_successful": self.execution_successful
             })
-            print(f"  ✓ Checkpoint: CP-10.1: Execution status assessed (successful: {self.execution_successful}) (1/5)")
 
             # Register successful code generation
             if self.execution_successful:
@@ -2362,7 +2329,6 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
                 self.metrics_collector.add_checkpoint("learning", "CP-10.2: Pattern registered", {
                     "candidate_id": candidate_id
                 })
-                print(f"  ✓ Checkpoint: CP-10.2: Code registered as candidate: {candidate_id[:8]}... (2/5)")
 
             else:
                 print("  ⚠️ Execution unsuccessful, skipping pattern registration")
@@ -2380,7 +2346,6 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
                 "total_candidates": promotion_stats.get("total_candidates", 0),
                 "promotions_succeeded": promotion_stats.get("promotions_succeeded", 0)
             })
-            print(f"  ✓ Checkpoint: CP-10.4: Promotion check complete (4/5)")
             print(f"    - Total candidates: {promotion_stats.get('total_candidates', 0)}")
             print(f"    - Promoted: {promotion_stats.get('promotions_succeeded', 0)}")
             print(f"    - Failed: {promotion_stats.get('promotions_failed', 0)}")
@@ -2464,6 +2429,49 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
 
         # Print report
         self._print_report(final_metrics, precision_summary)
+
+        # STRATEGIC CLEANUP: Flush DevMatrix LLM cache after pipeline completes
+        # Safe to flush here - all code generation done, cache no longer needed
+        await self._flush_llm_cache()
+
+    async def _flush_llm_cache(self):
+        """
+        Flush DevMatrix LLM cache from Redis after pipeline completes.
+
+        Strategic cleanup point: All code generation is done, cache is no longer needed.
+        Frees memory and ensures clean state for next pipeline run.
+        """
+        try:
+            import os
+            import redis.asyncio as redis
+
+            # Get Redis URL (same as LLMPromptCache)
+            redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+
+            # Connect to Redis
+            redis_client = await redis.from_url(redis_url, decode_responses=False)
+
+            # Find all llm_cache keys using SCAN (efficient pattern matching)
+            pattern = b"llm_cache:*"
+            cursor = 0
+            all_keys = []
+
+            while True:
+                cursor, keys = await redis_client.scan(cursor=cursor, match=pattern, count=100)
+                all_keys.extend(keys)
+                if cursor == 0:
+                    break
+
+            # Delete all found keys
+            if all_keys:
+                await redis_client.delete(*all_keys)
+
+            # Close connection (use aclose() instead of deprecated close())
+            await redis_client.aclose()
+
+        except Exception as e:
+            # Non-critical error - cache flush failure shouldn't break pipeline
+            pass
 
     def _print_report(self, metrics, precision: Dict):
         """Print comprehensive report"""

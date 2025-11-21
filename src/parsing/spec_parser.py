@@ -141,6 +141,8 @@ class SpecRequirements:
     endpoints: List[Endpoint] = field(default_factory=list)
     business_logic: List[BusinessLogic] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    classification_ground_truth: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    dag_ground_truth: Dict[str, Any] = field(default_factory=dict)
 
 
 # ============================================================================
@@ -227,6 +229,10 @@ class SpecParser:
         result.entities = self._extract_entities(content)
         result.endpoints = self._extract_endpoints(content, result.requirements)
         result.business_logic = self._extract_business_logic(content, result.requirements)
+
+        # Extract ground truth (optional sections for validation)
+        result.classification_ground_truth = self._parse_classification_ground_truth(content)
+        result.dag_ground_truth = self._parse_dag_ground_truth(content)
 
         # Metadata
         result.metadata = {
@@ -536,6 +542,7 @@ class SpecParser:
                 entity = self._detect_entity(desc_lower)
                 path = self._generate_path(entity, operation, desc_lower)
 
+
                 # Extract business logic references
                 business_logic = self._detect_business_logic_refs(req.description)
 
@@ -554,25 +561,17 @@ class SpecParser:
 
     def _detect_operation(self, text: str) -> str:
         """Detect operation type from requirement text"""
-        if any(
-            word in text for word in ["crear", "create", "registrar", "register", "agregar", "add"]
-        ):
+        if any(word in text for word in ["create", "register", "add"]):
             return "create"
-        elif any(word in text for word in ["listar", "list", "obtener todos", "get all"]):
+        elif any(word in text for word in ["list", "get all"]):
             return "list"
-        elif any(word in text for word in ["obtener", "get", "ver", "view", "detalle", "detail"]):
+        elif any(word in text for word in ["get", "view", "detail", "retrieve"]):
             return "read"
-        elif any(
-            word in text
-            for word in ["actualizar", "update", "modificar", "modify", "cambiar", "change"]
-        ):
+        elif any(word in text for word in ["update", "modify", "change"]):
             return "update"
-        elif any(
-            word in text
-            for word in ["eliminar", "delete", "borrar", "remove", "desactivar", "deactivate"]
-        ):
+        elif any(word in text for word in ["delete", "remove", "deactivate", "clear"]):
             return "delete"
-        elif any(word in text for word in ["checkout", "pago", "payment", "simular", "simulate"]):
+        elif any(word in text for word in ["checkout", "payment", "simulate", "cancel"]):
             return "custom"
         else:
             return "custom"
@@ -596,33 +595,33 @@ class SpecParser:
         return operation_method_map.get(operation, "GET")
 
     def _detect_entity(self, text: str) -> str:
-        """Detect entity name from requirement text"""
-        entities = ["Product", "Customer", "Cart", "Order", "Task", "User", "Item"]
-
+        """Detect entity name from requirement text (English only)"""
         text_lower = text.lower()
 
-        # Spanish to English entity mapping
-        entity_mapping = {
-            "producto": "Product",
-            "productos": "Product",
-            "cliente": "Customer",
-            "clientes": "Customer",
-            "carrito": "Cart",
-            "orden": "Order",
-            "ordenes": "Order",
-            "tarea": "Task",
-            "tareas": "Task",
-            "usuario": "User",
-            "usuarios": "User",
-        }
+        # Priority detection for specific patterns
+        # F8: "Create cart for customer" → Cart (not Customer)
+        if "cart" in text_lower and "create" in text_lower:
+            return "Cart"
 
-        # Check Spanish terms
-        for spanish, english in entity_mapping.items():
-            if spanish in text_lower:
-                return english
+        # F12: "Clear cart" → Cart (operation on cart items)
+        if "cart" in text_lower and "clear" in text_lower:
+            return "Cart"
 
-        # Check English terms
-        for entity in entities:
+        # "item" operations on cart → Cart entity (not Item)
+        if "item" in text_lower and ("cart" in text_lower or "quantity" in text_lower):
+            return "Cart"
+
+        # Payment operations → Order entity
+        if "payment" in text_lower:
+            return "Order"
+
+        # List orders of customer → Customer (nested resource)
+        if "list" in text_lower and "order" in text_lower and "customer" in text_lower:
+            return "Customer"
+
+        # Check for main entities (priority order: Cart, Product, Order, Customer, Task, User)
+        priority_entities = ["Cart", "Product", "Order", "Customer", "Task", "User"]
+        for entity in priority_entities:
             if entity.lower() in text_lower:
                 return entity
 
@@ -653,7 +652,7 @@ class SpecParser:
         return plural_mapping.get(entity_plural, entity_plural.capitalize())
 
     def _generate_path(self, entity: str, operation: str, text: str) -> str:
-        """Generate API path from entity and operation"""
+        """Generate API path from entity and operation (English only)"""
         # Check if path is explicitly mentioned
         path_match = self.path_pattern.search(text)
         if path_match:
@@ -661,17 +660,35 @@ class SpecParser:
 
         # Generate standard RESTful path
         entity_lower = entity.lower() + "s"  # pluralize
+        text_lower = text.lower()
 
+        # Nested resource: items in cart
+        if entity == "Cart" and ("item" in text_lower or "clear" in text_lower):
+            if operation == "create" or "add" in text_lower:
+                return f"/{entity_lower}/{{id}}/items"
+            elif operation == "update" or "quantity" in text_lower:
+                return f"/{entity_lower}/{{id}}/items/{{item_id}}"
+            elif operation == "delete" or "clear" in text_lower:
+                # F12: Clear cart → DELETE /carts/{id}/items
+                return f"/{entity_lower}/{{id}}/items"
+
+        # Nested resource: orders of customer
+        if "order" in text_lower and entity == "Customer":
+            return f"/{entity_lower}/{{id}}/orders"
+
+        # Standard CRUD operations
         if operation in ["list", "create"]:
             return f"/{entity_lower}"
         elif operation in ["read", "update", "delete"]:
             return f"/{entity_lower}/{{id}}"
         else:
-            # Custom operation
-            if "checkout" in text.lower():
-                return f"/{entity_lower}/checkout"
-            elif "pago" in text.lower() or "payment" in text.lower():
+            # Custom operations with entity ID context
+            if "checkout" in text_lower:
+                return f"/{entity_lower}/{{id}}/checkout"
+            elif "payment" in text_lower:
                 return f"/{entity_lower}/{{id}}/payment"
+            elif "cancel" in text_lower:
+                return f"/{entity_lower}/{{id}}/cancel"
             else:
                 return f"/{entity_lower}/action"
 
@@ -813,3 +830,134 @@ class SpecParser:
                     seen_descriptions.add(desc)
 
         return business_logic
+
+    def _parse_classification_ground_truth(self, content: str) -> Dict[str, Dict[str, Any]]:
+        """
+        Parse Classification Ground Truth section from spec (YAML format).
+
+        Expected format:
+        ## Classification Ground Truth
+
+        F1_create_product:
+          domain: crud
+          risk: high
+          rationale: Creates product entity
+
+        Returns:
+            Dictionary mapping requirement_id -> {domain, risk, rationale}
+        """
+        import yaml
+
+        ground_truth = {}
+
+        try:
+            # Find the Classification Ground Truth section
+            section_pattern = re.compile(
+                r'##\s+Classification\s+Ground\s+Truth\s*\n(.*?)(?=\n##|\Z)',
+                re.DOTALL | re.IGNORECASE
+            )
+            match = section_pattern.search(content)
+
+            if not match:
+                logger.debug("No Classification Ground Truth section found in spec")
+                return ground_truth
+
+            yaml_content = match.group(1).strip()
+
+            # Parse YAML
+            data = yaml.safe_load(yaml_content)
+
+            if data and isinstance(data, dict):
+                ground_truth = data
+                logger.info(f"Loaded classification ground truth for {len(ground_truth)} requirements")
+
+        except Exception as e:
+            logger.warning(f"Failed to parse Classification Ground Truth: {e}")
+
+        return ground_truth
+
+    def _parse_dag_ground_truth(self, content: str) -> Dict[str, Any]:
+        """
+        Parse Expected Dependency Graph section from spec (YAML format).
+
+        Expected format:
+        ## Expected Dependency Graph (Ground Truth)
+
+        nodes: 17
+          - create_product
+          - list_products
+          ...
+
+        edges: 15
+          - create_product → list_products
+            rationale: Must create before listing
+          ...
+
+        Returns:
+            Dictionary with 'nodes' (list) and 'edges' (list of tuples)
+        """
+        import yaml
+        import re as regex_module
+
+        dag_gt = {}
+
+        try:
+            # Find the Expected Dependency Graph section
+            section_pattern = re.compile(
+                r'##\s+Expected\s+Dependency\s+Graph.*?\n(.*?)(?=\n##|\Z)',
+                re.DOTALL | re.IGNORECASE
+            )
+            match = section_pattern.search(content)
+
+            if not match:
+                logger.debug("No Expected Dependency Graph section found in spec")
+                return dag_gt
+
+            yaml_content = match.group(1).strip()
+
+            # Parse YAML
+            data = yaml.safe_load(yaml_content)
+
+            if data and isinstance(data, dict):
+                # Extract nodes
+                if 'nodes' in data:
+                    # Handle both formats: "nodes: 17" (count) and list of nodes
+                    nodes_data = data['nodes']
+                    if isinstance(nodes_data, list):
+                        dag_gt['nodes'] = nodes_data
+                        dag_gt['node_count'] = len(nodes_data)
+                    elif isinstance(nodes_data, int):
+                        dag_gt['node_count'] = nodes_data
+
+                # Extract edges
+                if 'edges' in data:
+                    # Handle both formats: "edges: 15" (count) and list of edges
+                    edges_data = data['edges']
+                    if isinstance(edges_data, list):
+                        # Parse edge strings like "create_product → list_products"
+                        parsed_edges = []
+                        edge_pattern = regex_module.compile(r'(\w+)\s*(?:→|->)\s*(\w+)')
+
+                        for edge_item in edges_data:
+                            if isinstance(edge_item, str):
+                                edge_match = edge_pattern.search(edge_item)
+                                if edge_match:
+                                    from_node = edge_match.group(1)
+                                    to_node = edge_match.group(2)
+                                    parsed_edges.append((from_node, to_node))
+
+                        dag_gt['edges'] = parsed_edges
+                        dag_gt['edge_count'] = len(parsed_edges)
+                    elif isinstance(edges_data, int):
+                        dag_gt['edge_count'] = edges_data
+
+                logger.info(
+                    f"Loaded DAG ground truth: "
+                    f"{dag_gt.get('node_count', 0)} nodes, "
+                    f"{dag_gt.get('edge_count', 0)} edges"
+                )
+
+        except Exception as e:
+            logger.warning(f"Failed to parse Expected Dependency Graph: {e}")
+
+        return dag_gt

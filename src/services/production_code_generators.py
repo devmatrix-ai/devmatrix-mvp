@@ -173,7 +173,7 @@ def generate_schemas(entities: List[Dict[str, Any]]) -> str:
     Generate Pydantic schemas for request/response validation.
 
     Args:
-        entities: List of entity dicts
+        entities: List of entity dicts with 'name', 'plural', and 'fields'
 
     Returns:
         Complete schemas.py code
@@ -187,23 +187,180 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 from uuid import UUID
 from typing import List, Optional
+from decimal import Decimal
 
 
 '''
+
+    # Type mapping from spec types to Python/Pydantic types
+    type_mapping = {
+        'UUID': 'UUID',
+        'str': 'str',
+        'string': 'str',
+        'int': 'int',
+        'integer': 'int',
+        'float': 'float',
+        'Decimal': 'Decimal',
+        'decimal': 'Decimal',
+        'bool': 'bool',
+        'boolean': 'bool',
+        'datetime': 'datetime',
+        'date': 'datetime',
+    }
 
     for entity in entities:
         entity_name = entity.get('name', 'Unknown')
         entity_lower = entity_name.lower()
+        fields_list = entity.get('fields', [])
 
-        # Base schema
+        # Build field definitions for Pydantic
+        pydantic_fields = []
+        for field_obj in fields_list:
+            # Skip system fields (id, created_at) - those go in Response only
+            if hasattr(field_obj, 'name') and field_obj.name in ['id', 'created_at']:
+                continue
+
+            # Extract field attributes
+            if hasattr(field_obj, 'name'):
+                field_name = field_obj.name
+                field_type = getattr(field_obj, 'type', 'str')
+                required = getattr(field_obj, 'required', True)
+                field_default = getattr(field_obj, 'default', None)
+                description = getattr(field_obj, 'description', '')
+                constraints = getattr(field_obj, 'constraints', [])
+            else:
+                # Fallback for dict-based fields
+                field_name = field_obj.get('name', 'unknown')
+                field_type = field_obj.get('type', 'str')
+                required = field_obj.get('required', True)
+                field_default = field_obj.get('default', None)
+                description = field_obj.get('description', '')
+                constraints = field_obj.get('constraints', [])
+
+            # Map type to Python type
+            python_type = type_mapping.get(field_type, 'str')
+
+            # Build Field() constraints based on type and constraints list
+            field_constraints = {}  # Use dict to track constraint types and avoid duplicates
+
+            # Parse constraints from spec first (to get the authoritative values)
+            for constraint in constraints:
+                if isinstance(constraint, str):
+                    constraint = constraint.strip()
+
+                    # Parse operator syntax: ">= 0", "> 0", "< 10", etc.
+                    if constraint.startswith('>='):
+                        value = constraint[2:].strip()
+                        field_constraints['ge'] = f'ge={value}'
+                        logger.debug(f"✅ Parsed constraint '{constraint}' → 'ge={value}' for {field_name}")
+                    elif constraint.startswith('>'):
+                        value = constraint[1:].strip()
+                        field_constraints['gt'] = f'gt={value}'
+                        logger.debug(f"✅ Parsed constraint '{constraint}' → 'gt={value}' for {field_name}")
+                    elif constraint.startswith('<='):
+                        value = constraint[2:].strip()
+                        field_constraints['le'] = f'le={value}'
+                        logger.debug(f"✅ Parsed constraint '{constraint}' → 'le={value}' for {field_name}")
+                    elif constraint.startswith('<'):
+                        value = constraint[1:].strip()
+                        field_constraints['lt'] = f'lt={value}'
+                        logger.debug(f"✅ Parsed constraint '{constraint}' → 'lt={value}' for {field_name}")
+                    # Parse named constraints
+                    elif '=' in constraint:
+                        # Direct constraint like "gt=0", "min_length=1"
+                        key = constraint.split('=')[0]
+                        field_constraints[key] = constraint
+                        logger.debug(f"✅ Parsed named constraint '{constraint}' → key='{key}' for {field_name}")
+                    elif constraint == 'email_format':
+                        field_constraints['pattern'] = 'pattern=r"^[^@]+@[^@]+\\.[^@]+$"'
+                        logger.debug(f"✅ Parsed email_format constraint for {field_name}")
+                    elif constraint == 'positive':
+                        field_constraints['gt'] = 'gt=0'
+                        logger.debug(f"✅ Parsed 'positive' → 'gt=0' for {field_name}")
+                    elif constraint == 'non_negative':
+                        field_constraints['ge'] = 'ge=0'
+                        logger.debug(f"✅ Parsed 'non_negative' → 'ge=0' for {field_name}")
+                    else:
+                        logger.warning(f"⚠️ Unparsed constraint '{constraint}' for {field_name} - SKIPPING")
+                else:
+                    logger.warning(f"⚠️ Non-string constraint {constraint} (type={type(constraint)}) for {field_name}")
+
+            # Add type-specific default constraints (only if not already set)
+            if python_type == 'str' and field_name == 'email':
+                # Email validation with pattern
+                if 'pattern' not in field_constraints:
+                    field_constraints['pattern'] = 'pattern=r"^[^@]+@[^@]+\\.[^@]+$"'
+            elif python_type == 'str':
+                # Default min_length=1 for required strings to ensure not empty
+                if required and 'min_length' not in field_constraints:
+                    field_constraints['min_length'] = 'min_length=1'
+                # Add reasonable max_length to trigger validation in OpenAPI
+                if 'max_length' not in field_constraints:
+                    field_constraints['max_length'] = 'max_length=255'
+            elif python_type in ['Decimal', 'int', 'float']:
+                # Numeric constraints - only add defaults if no constraint already exists
+                # gt (greater than) is more restrictive than ge (greater or equal)
+                if 'gt' not in field_constraints and 'ge' not in field_constraints:
+                    if field_name in ['price', 'total_amount', 'amount', 'cost', 'quantity']:
+                        field_constraints['gt'] = 'gt=0'
+                    elif field_name in ['id', 'count', 'total']:
+                        field_constraints['ge'] = 'ge=0'
+                    # For 'stock' - spec says >= 0, so don't override with gt=0
+
+            # Convert dict to list for joining
+            field_constraints_list = list(field_constraints.values())
+
+            # Convert JavaScript/JSON boolean values to Python
+            python_default = field_default
+            if field_default is not None:
+                if isinstance(field_default, str):
+                    if field_default.lower() == 'true':
+                        python_default = 'True'
+                    elif field_default.lower() == 'false':
+                        python_default = 'False'
+
+            # Build field definition with or without Field()
+            if field_constraints_list:
+                # Use Field() with constraints
+                constraints_str = ', '.join(field_constraints_list)
+                if required and not python_default:
+                    # Required field: Field(...)
+                    pydantic_fields.append(f"    {field_name}: {python_type} = Field(..., {constraints_str})")
+                elif python_default:
+                    # Field with default value
+                    if python_type == 'str':
+                        pydantic_fields.append(f'    {field_name}: {python_type} = Field("{python_default}", {constraints_str})')
+                    else:
+                        pydantic_fields.append(f'    {field_name}: {python_type} = Field({python_default}, {constraints_str})')
+                else:
+                    # Optional field
+                    pydantic_fields.append(f"    {field_name}: Optional[{python_type}] = Field(None, {constraints_str})")
+            else:
+                # No constraints, use simple type annotation
+                if required and not python_default:
+                    # Required field without default
+                    pydantic_fields.append(f"    {field_name}: {python_type}")
+                elif python_default:
+                    # Field with default value
+                    if python_type == 'str':
+                        pydantic_fields.append(f'    {field_name}: {python_type} = "{python_default}"')
+                    else:
+                        pydantic_fields.append(f'    {field_name}: {python_type} = {python_default}')
+                else:
+                    # Optional field (not required, no default)
+                    pydantic_fields.append(f"    {field_name}: Optional[{python_type}] = None")
+
+        # Base schema - includes all fields
         code += f'''class {entity_name}Base(BaseModel):
     """Base schema for {entity_lower}."""
-    pass
-
-
 '''
+        if pydantic_fields:
+            code += '\n'.join(pydantic_fields) + '\n'
+        else:
+            code += '    pass\n'
+        code += '\n\n'
 
-        # Create schema
+        # Create schema - inherits all fields from Base
         code += f'''class {entity_name}Create({entity_name}Base):
     """Schema for creating {entity_lower}."""
     pass
@@ -211,13 +368,55 @@ from typing import List, Optional
 
 '''
 
-        # Update schema
+        # Update schema - all fields optional for partial updates
         code += f'''class {entity_name}Update(BaseModel):
     """Schema for updating {entity_lower}."""
-    pass
-
-
 '''
+        if pydantic_fields:
+            # Make all fields optional for updates, preserving Field() constraints
+            update_fields = []
+            for field_line in pydantic_fields:
+                # Extract field name and type
+                field_def = field_line.strip()
+                if ': ' in field_def:
+                    field_part = field_def.split(': ', 1)
+                    fname = field_part[0]
+                    rest = field_part[1]
+
+                    # Check if it uses Field()
+                    if ' = Field(' in rest:
+                        # Extract type and Field() part
+                        type_part = rest.split(' = Field(')[0]
+                        field_part_match = rest.split(' = Field(')[1]
+                        # Replace first argument with None and keep constraints
+                        if field_part_match.startswith('...'):
+                            # Field(..., constraints) → Field(None, constraints)
+                            field_constraints = field_part_match.replace('...', 'None', 1)
+                        else:
+                            # Field(default, constraints) → Field(None, constraints)
+                            # Find the first comma to replace default with None
+                            if ',' in field_part_match:
+                                field_constraints = 'None' + field_part_match[field_part_match.index(','):]
+                            else:
+                                # No constraints, just default
+                                field_constraints = 'None' + field_part_match[field_part_match.index(')'):]
+
+                        # Make type Optional if not already
+                        if not type_part.startswith('Optional['):
+                            update_fields.append(f"    {fname}: Optional[{type_part}] = Field({field_constraints}")
+                        else:
+                            update_fields.append(f"    {fname}: {type_part} = Field({field_constraints}")
+                    else:
+                        # Simple type annotation, make it Optional
+                        ftype = rest.split(' = ')[0]  # Remove default if present
+                        if ftype.startswith('Optional['):
+                            update_fields.append(f"    {fname}: {ftype} = None")
+                        else:
+                            update_fields.append(f"    {fname}: Optional[{ftype}] = None")
+            code += '\n'.join(update_fields) + '\n'
+        else:
+            code += '    pass\n'
+        code += '\n\n'
 
         # Response schema (WITH Response suffix for consistency with routes)
         code += f'''class {entity_name}Response({entity_name}Base):
