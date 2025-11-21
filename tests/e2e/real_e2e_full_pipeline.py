@@ -1545,10 +1545,12 @@ Once running, visit:
             return
 
         try:
-            # Run pre-check compliance validation
-            compliance_report = self.compliance_validator.validate(
+            # Run pre-check compliance validation using OpenAPI
+            # CRITICAL FIX: Use validate_from_app() instead of validate()
+            # to get REAL compliance across modular architecture
+            compliance_report = self.compliance_validator.validate_from_app(
                 spec_requirements=self.spec_requirements,
-                generated_code=main_code
+                output_path=self.output_path
             )
 
             compliance_score = compliance_report.overall_compliance
@@ -1779,12 +1781,13 @@ Once running, visit:
             print(f"      Step 5: Applying repair...")
             repaired_code = self._apply_repair_to_code(current_code, repair_proposal)
 
-            # Step 6: Re-validate compliance
+            # Step 6: Re-validate compliance using OpenAPI
             print(f"      Step 6: Re-validating compliance...")
             try:
-                new_compliance_report = self.compliance_validator.validate(
+                # Use validate_from_app() to get real compliance after repair
+                new_compliance_report = self.compliance_validator.validate_from_app(
                     spec_requirements=self.spec_requirements,
-                    generated_code=repaired_code
+                    output_path=self.output_path
                 )
                 new_compliance = new_compliance_report.overall_compliance
             except Exception as e:
@@ -2145,10 +2148,10 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
                     print(f"    {str(e)[:500]}")  # First 500 chars of error
 
                     # Extract report from exception
-                    # The validator already computed the report before raising
-                    self.compliance_report = self.compliance_validator.validate(
+                    # Use validate_from_app() to get real compliance
+                    self.compliance_report = self.compliance_validator.validate_from_app(
                         spec_requirements=self.spec_requirements,
-                        generated_code=main_code
+                        output_path=self.output_path
                     )
 
                     compliance_score = self.compliance_report.overall_compliance

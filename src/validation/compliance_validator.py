@@ -188,6 +188,202 @@ class ComplianceValidator:
 
         return report
 
+    def validate_from_app(
+        self, spec_requirements: SpecRequirements, output_path
+    ) -> ComplianceReport:
+        """
+        Validate generated code using OpenAPI schema from running app.
+
+        CRITICAL FIX for 0% compliance bug: Instead of parsing main.py string,
+        this dynamically imports the generated FastAPI app and reads its OpenAPI schema.
+
+        This finds ALL entities and endpoints across modular architecture:
+        - Entities from OpenAPI schemas (src/models/schemas.py)
+        - Endpoints from OpenAPI paths (src/api/routes/*.py)
+
+        Args:
+            spec_requirements: Parsed specification with entities, endpoints, etc.
+            output_path: Path to generated app directory (e.g., tests/e2e/generated_apps/app_123/)
+
+        Returns:
+            ComplianceReport with REAL compliance analysis
+        """
+        import sys
+        import importlib.util
+        from pathlib import Path
+
+        # Ensure output_path is Path object
+        if not isinstance(output_path, Path):
+            output_path = Path(output_path)
+
+        logger.info(f"Validating app at {output_path} using OpenAPI schema")
+
+        # Add output_path to sys.path for imports
+        output_path_str = str(output_path)
+        if output_path_str not in sys.path:
+            sys.path.insert(0, output_path_str)
+
+        try:
+            # Import the generated FastAPI app
+            main_py_path = output_path / "src" / "main.py"
+
+            if not main_py_path.exists():
+                logger.error(f"main.py not found at {main_py_path}")
+                # Fallback to old validation method
+                logger.warning("Falling back to string-based validation (will show low compliance)")
+                main_code = ""
+                if (output_path / "src" / "main.py").exists():
+                    main_code = (output_path / "src" / "main.py").read_text()
+                return self.validate(spec_requirements, main_code)
+
+            # Load main.py as module
+            spec = importlib.util.spec_from_file_location("generated_app.main", main_py_path)
+            main_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(main_module)
+
+            # Get FastAPI app instance
+            app = main_module.app
+
+            logger.info("Successfully imported FastAPI app")
+
+            # Extract OpenAPI schema
+            openapi_schema = app.openapi()
+
+            # 1. Extract entities from OpenAPI schemas
+            entities_found = []
+            schemas = openapi_schema.get("components", {}).get("schemas", {})
+
+            for schema_name in schemas.keys():
+                # Filter domain entities (exclude Create, Update, Response, List suffixes)
+                if not any(schema_name.endswith(suffix) for suffix in ['Create', 'Update', 'Response', 'List']):
+                    entities_found.append(schema_name)
+
+            # Also check for entities with "Entity" suffix (SQLAlchemy models)
+            # These might be referenced but not directly in schemas
+            entities_expected_lower = {e.lower() for e in [ent.name for ent in spec_requirements.entities]}
+            for schema_name in schemas.keys():
+                # Check if this matches an expected entity (case-insensitive)
+                base_name = schema_name.replace('Entity', '').replace('Create', '').replace('Update', '').replace('Response', '').replace('List', '')
+                if base_name.lower() in entities_expected_lower and base_name not in entities_found:
+                    entities_found.append(base_name)
+
+            logger.info(f"Extracted {len(entities_found)} entities from OpenAPI schemas: {entities_found}")
+
+            # 2. Extract endpoints from OpenAPI paths
+            endpoints_found = []
+            paths = openapi_schema.get("paths", {})
+
+            for path, methods in paths.items():
+                for method in methods.keys():
+                    # Only include actual HTTP methods (not 'parameters', 'summary', etc.)
+                    if method.upper() in ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']:
+                        endpoints_found.append(f"{method.upper()} {path}")
+
+            logger.info(f"Extracted {len(endpoints_found)} endpoints from OpenAPI paths")
+
+            # 3. Extract validations (heuristic from schemas)
+            validations_found = []
+            for schema_name, schema_def in schemas.items():
+                properties = schema_def.get("properties", {})
+                for prop_name, prop_def in properties.items():
+                    # Check for validation constraints
+                    if "minimum" in prop_def or "maximum" in prop_def:
+                        validations_found.append(f"range validation on {prop_name}")
+                    if "minLength" in prop_def or "maxLength" in prop_def:
+                        validations_found.append(f"length validation on {prop_name}")
+                    if "pattern" in prop_def:
+                        validations_found.append(f"pattern validation on {prop_name}")
+                    if prop_def.get("format") == "email":
+                        validations_found.append(f"email validation on {prop_name}")
+
+            logger.info(f"Extracted {len(validations_found)} validations from schemas")
+
+            # 4. Extract what was expected from spec
+            entities_expected = [e.name for e in spec_requirements.entities]
+            endpoints_expected = [f"{ep.method} {ep.path}" for ep in spec_requirements.endpoints]
+
+            # For validations, count business logic items + entity constraints
+            validations_expected = []
+            for bl in spec_requirements.business_logic:
+                if bl.type == "validation":
+                    validations_expected.append(bl.description)
+
+            # Add entity field constraints as expected validations
+            for entity in spec_requirements.entities:
+                for field in entity.fields:
+                    if field.constraints:
+                        validations_expected.extend(field.constraints)
+
+            # If no explicit validations, use a minimum count based on entities
+            if not validations_expected and entities_expected:
+                # Expect at least 2 validations per entity (heuristic)
+                validations_expected = [f"validation_{i}" for i in range(len(entities_expected) * 2)]
+
+            # 5. Calculate compliance per category
+            entity_compliance = self._calculate_compliance(entities_found, entities_expected)
+            endpoint_compliance = self._calculate_endpoint_compliance_fuzzy(endpoints_found, endpoints_expected)
+            validation_compliance = self._calculate_validation_compliance(
+                validations_found, validations_expected
+            )
+
+            # 6. Calculate overall compliance (weighted average)
+            # Entities and endpoints are more important than validations
+            overall_compliance = (
+                entity_compliance * 0.40 + endpoint_compliance * 0.40 + validation_compliance * 0.20
+            )
+
+            # 7. Identify missing requirements
+            missing = self._identify_missing_requirements(
+                entities_expected,
+                entities_found,
+                endpoints_expected,
+                endpoints_found,
+                spec_requirements,
+            )
+
+            # 8. Build detailed report
+            report = ComplianceReport(
+                overall_compliance=overall_compliance,
+                entities_implemented=entities_found,
+                entities_expected=entities_expected,
+                endpoints_implemented=endpoints_found,
+                endpoints_expected=endpoints_expected,
+                validations_implemented=validations_found,
+                validations_expected=validations_expected,
+                missing_requirements=missing,
+                compliance_details={
+                    "entities": entity_compliance,
+                    "endpoints": endpoint_compliance,
+                    "validations": validation_compliance,
+                },
+            )
+
+            logger.info(
+                f"OpenAPI-based compliance validation complete: {overall_compliance:.1%} "
+                f"(entities: {entity_compliance:.1%}, "
+                f"endpoints: {endpoint_compliance:.1%}, "
+                f"validations: {validation_compliance:.1%})"
+            )
+
+            return report
+
+        except Exception as e:
+            logger.error(f"Error importing app for OpenAPI validation: {e}")
+            import traceback
+            traceback.print_exc()
+
+            # Fallback to old validation method
+            logger.warning("Falling back to string-based validation (will show low compliance)")
+            main_code = ""
+            if (output_path / "src" / "main.py").exists():
+                main_code = (output_path / "src" / "main.py").read_text()
+            return self.validate(spec_requirements, main_code)
+
+        finally:
+            # Clean up sys.path
+            if output_path_str in sys.path:
+                sys.path.remove(output_path_str)
+
     def validate_or_raise(
         self, spec_requirements: SpecRequirements, generated_code: str, threshold: float = 0.80
     ) -> ComplianceReport:
