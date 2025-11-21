@@ -186,21 +186,6 @@ class CodeRepairAgent:
             True if successful, False otherwise
         """
         try:
-            # DEBUG: Print path resolution info (using ERROR level to ensure visibility)
-            logger.error(f"DEBUG: Checking entities_file: {self.entities_file}")
-            logger.error(f"DEBUG: entities_file type: {type(self.entities_file)}")
-            logger.error(f"DEBUG: entities_file.exists() = {self.entities_file.exists()}")
-            logger.error(f"DEBUG: entities_file.is_file() = {self.entities_file.is_file() if self.entities_file.exists() else 'N/A'}")
-
-            # List parent directory to see what files actually exist
-            import os
-            parent_dir = self.entities_file.parent
-            logger.error(f"DEBUG: Parent directory: {parent_dir}")
-            logger.error(f"DEBUG: Parent exists: {parent_dir.exists()}")
-            if parent_dir.exists():
-                files = list(parent_dir.iterdir())
-                logger.error(f"DEBUG: Files in {parent_dir.name}: {[f.name for f in files]}")
-
             # Read current entities.py (create if doesn't exist)
             if not self.entities_file.exists():
                 logger.warning(f"entities.py not found at {self.entities_file}, creating it")
@@ -215,6 +200,13 @@ class CodeRepairAgent:
 
             # Parse to AST
             tree = ast.parse(source_code)
+
+            # Check if entity already exists (avoid duplicates)
+            entity_class_name = f"{entity_req.name}Entity"
+            for node in tree.body:
+                if isinstance(node, ast.ClassDef) and node.name == entity_class_name:
+                    logger.info(f"Entity {entity_class_name} already exists in entities.py, skipping")
+                    return True  # Not an error, just already exists
 
             # Create new entity class
             new_class = self._generate_entity_class_ast(entity_req)
@@ -280,6 +272,13 @@ class CodeRepairAgent:
 
             # Create new endpoint function
             new_function = self._generate_endpoint_function_ast(endpoint_req, entity_name)
+
+            # Check if endpoint function already exists (avoid duplicates)
+            function_name = new_function.name
+            for node in tree.body:
+                if isinstance(node, ast.AsyncFunctionDef) and node.name == function_name:
+                    logger.info(f"Endpoint function {function_name} already exists in {route_file.name}, skipping")
+                    return str(route_file)  # Not an error, just already exists
 
             # Add to AST
             tree.body.append(new_function)
