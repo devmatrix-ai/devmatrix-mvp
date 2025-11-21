@@ -2026,23 +2026,21 @@ File: src/api/routes/{entity.snake_name}.py
                 elif "validation script" in purpose_lower or ".sh" in purpose_lower:
                     files["docker/validate-docker-setup.sh"] = self._adapt_pattern(p.code, spec_requirements)
 
-            # LLM fallback for Docker files when patterns unavailable (production mode)
+            # Production mode: Always use optimized Docker files (not patterns)
+            # This ensures consistent, pip-based Dockerfiles that work without manual steps
             if os.getenv("PRODUCTION_MODE") == "true":
-                if "docker/Dockerfile" not in files:
-                    logger.info("🔨 LLM fallback: Generating docker/Dockerfile (no pattern available)")
-                    dockerfile = self._generate_dockerfile(spec_requirements)
-                    files["docker/Dockerfile"] = dockerfile
+                logger.info("🔨 PRODUCTION_MODE: Using optimized pip-based Dockerfile")
+                dockerfile = self._generate_dockerfile(spec_requirements)
+                files["docker/Dockerfile"] = dockerfile
 
-                if "docker/docker-compose.yml" not in files:
-                    logger.info("🔨 LLM fallback: Generating docker/docker-compose.yml (no pattern available)")
-                    docker_compose = self._generate_docker_compose(spec_requirements)
-                    files["docker/docker-compose.yml"] = docker_compose
+                logger.info("🔨 PRODUCTION_MODE: Using optimized docker-compose.yml")
+                docker_compose = self._generate_docker_compose(spec_requirements)
+                files["docker/docker-compose.yml"] = docker_compose
 
                 # Ensure Grafana directories exist
-                if "docker/grafana/dashboards/dashboard-provider.yml" not in files:
-                    logger.info("🔨 LLM fallback: Generating Grafana dashboard provisioning")
-                    files["docker/grafana/dashboards/dashboard-provider.yml"] = self._generate_grafana_dashboard_provider()
-                    files["docker/grafana/datasources/prometheus.yml"] = self._generate_grafana_prometheus_datasource()
+                logger.info("🔨 PRODUCTION_MODE: Generating Grafana provisioning files")
+                files["docker/grafana/dashboards/dashboard-provider.yml"] = self._generate_grafana_dashboard_provider()
+                files["docker/grafana/datasources/prometheus.yml"] = self._generate_grafana_prometheus_datasource()
 
         # Project config & Alembic migrations
         elif category == "project_config":
