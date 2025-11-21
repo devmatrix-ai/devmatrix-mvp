@@ -334,22 +334,31 @@ class ComplianceValidator:
                     sys.modules.pop(module_name, None)
 
             # 1. Extract entities from OpenAPI schemas
+            # NOTE: Schemas might be empty (just 'pass') but we count them as present
+            # since the structure exists even if fields are missing
             entities_found = []
             schemas = openapi_schema.get("components", {}).get("schemas", {})
 
-            for schema_name in schemas.keys():
-                # Filter domain entities (exclude Create, Update, Response, List suffixes)
-                if not any(schema_name.endswith(suffix) for suffix in ['Create', 'Update', 'Response', 'List']):
-                    entities_found.append(schema_name)
-
-            # Also check for entities with "Entity" suffix (SQLAlchemy models)
-            # These might be referenced but not directly in schemas
+            # Build set of expected entity names (lowercase for comparison)
             entities_expected_lower = {e.lower() for e in [ent.name for ent in spec_requirements.entities]}
+            logger.debug(f"Looking for entities: {entities_expected_lower}")
+
+            # Check all schemas and extract base entity names
             for schema_name in schemas.keys():
+                # Remove common suffixes to get base entity name
+                base_name = schema_name
+
+                # Try removing suffixes in order (longest first)
+                suffixes = ['Response', 'Create', 'Update', 'Entity', 'List', 'Base']
+                for suffix in suffixes:
+                    if base_name.endswith(suffix):
+                        base_name = base_name[:-len(suffix)]
+                        break
+
                 # Check if this matches an expected entity (case-insensitive)
-                base_name = schema_name.replace('Entity', '').replace('Create', '').replace('Update', '').replace('Response', '').replace('List', '')
                 if base_name.lower() in entities_expected_lower and base_name not in entities_found:
                     entities_found.append(base_name)
+                    logger.debug(f"Found entity '{base_name}' from schema '{schema_name}'")
 
             logger.info(f"Extracted {len(entities_found)} entities from OpenAPI schemas: {entities_found}")
 
