@@ -247,23 +247,36 @@ class ComplianceValidator:
 
             try:
                 # Load main.py as module with proper package context
-                # Add app root to sys.path temporarily so absolute imports work
+                # Add app root to sys.path so Python can find the 'src' package
                 import sys
                 app_root = str(output_path)
-                sys.path.insert(0, app_root)
+
+                # Store original sys.path and working directory
+                original_sys_path = sys.path.copy()
+                original_cwd = os.getcwd()
 
                 try:
-                    # Import using spec but set __package__ correctly
-                    spec = importlib.util.spec_from_file_location("src.main", main_py_path, submodule_search_locations=[app_root])
-                    main_module = importlib.util.module_from_spec(spec)
-                    # Set package context so absolute imports like "from src.core.logging" work
-                    main_module.__package__ = "src"
-                    sys.modules['src.main'] = main_module
-                    spec.loader.exec_module(main_module)
+                    # Add app root to sys.path (make 'src' package importable)
+                    sys.path.insert(0, app_root)
+
+                    # Change working directory to app root (helps with relative imports)
+                    os.chdir(app_root)
+
+                    # Now import src.main directly using standard import mechanism
+                    # This will properly resolve all "from src.X import Y" statements
+                    import importlib
+                    main_module = importlib.import_module("src.main")
+
                 finally:
-                    # Remove app root from sys.path
-                    if app_root in sys.path:
-                        sys.path.remove(app_root)
+                    # Restore original sys.path and working directory
+                    sys.path = original_sys_path
+                    os.chdir(original_cwd)
+
+                    # Clean up imported modules to avoid pollution
+                    # Keep src.main but remove other src.* modules from cache
+                    modules_to_remove = [k for k in sys.modules.keys() if k.startswith('src.') and k != 'src.main']
+                    for module_name in modules_to_remove:
+                        sys.modules.pop(module_name, None)
             finally:
                 # Restore original DATABASE_URL
                 if original_database_url is not None:
