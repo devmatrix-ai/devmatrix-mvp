@@ -246,10 +246,24 @@ class ComplianceValidator:
             os.environ['DATABASE_URL'] = 'postgresql+asyncpg://validation:validation@localhost/validation_temp'
 
             try:
-                # Load main.py as module
-                spec = importlib.util.spec_from_file_location("generated_app.main", main_py_path)
-                main_module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(main_module)
+                # Load main.py as module with proper package context
+                # Add app root to sys.path temporarily so absolute imports work
+                import sys
+                app_root = str(output_path)
+                sys.path.insert(0, app_root)
+
+                try:
+                    # Import using spec but set __package__ correctly
+                    spec = importlib.util.spec_from_file_location("src.main", main_py_path, submodule_search_locations=[app_root])
+                    main_module = importlib.util.module_from_spec(spec)
+                    # Set package context so absolute imports like "from src.core.logging" work
+                    main_module.__package__ = "src"
+                    sys.modules['src.main'] = main_module
+                    spec.loader.exec_module(main_module)
+                finally:
+                    # Remove app root from sys.path
+                    if app_root in sys.path:
+                        sys.path.remove(app_root)
             finally:
                 # Restore original DATABASE_URL
                 if original_database_url is not None:
