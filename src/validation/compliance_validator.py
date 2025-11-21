@@ -247,36 +247,37 @@ class ComplianceValidator:
 
             try:
                 # Load main.py as module with proper package context
-                # Add app root to sys.path so Python can find the 'src' package
                 import sys
+                import importlib
                 app_root = str(output_path)
 
-                # Store original sys.path and working directory
+                # Store original sys.path and cwd for cleanup
                 original_sys_path = sys.path.copy()
                 original_cwd = os.getcwd()
 
-                try:
-                    # Add app root to sys.path (make 'src' package importable)
+                # Add app root to sys.path (make 'src' package importable)
+                if app_root not in sys.path:
                     sys.path.insert(0, app_root)
 
-                    # Change working directory to app root (helps with relative imports)
-                    os.chdir(app_root)
+                # CRITICAL: Change working directory to app root
+                # This helps Python resolve relative imports correctly
+                os.chdir(app_root)
 
-                    # Now import src.main directly using standard import mechanism
-                    # This will properly resolve all "from src.X import Y" statements
-                    import importlib
-                    main_module = importlib.import_module("src.main")
+                # Import src.main using __import__ (more direct than importlib.import_module)
+                # The fromlist parameter is crucial - it makes __import__ return src.main instead of src
+                main_module = __import__('src.main', fromlist=['app'])
 
-                finally:
-                    # Restore original sys.path and working directory
-                    sys.path = original_sys_path
-                    os.chdir(original_cwd)
+                # Get FastAPI app instance immediately (while sys.path is still valid)
+                app = main_module.app
 
-                    # Clean up imported modules to avoid pollution
-                    # Keep src.main but remove other src.* modules from cache
-                    modules_to_remove = [k for k in sys.modules.keys() if k.startswith('src.') and k != 'src.main']
-                    for module_name in modules_to_remove:
-                        sys.modules.pop(module_name, None)
+                logger.info("Successfully imported FastAPI app")
+
+                # Extract OpenAPI schema (while app is still accessible)
+                openapi_schema = app.openapi()
+
+                # Restore working directory after extraction
+                os.chdir(original_cwd)
+
             finally:
                 # Restore original DATABASE_URL
                 if original_database_url is not None:
@@ -284,13 +285,25 @@ class ComplianceValidator:
                 else:
                     os.environ.pop('DATABASE_URL', None)
 
-            # Get FastAPI app instance
-            app = main_module.app
+                # Cleanup: Remove app_root from sys.path if we added it
+                if app_root in sys.path:
+                    sys.path.remove(app_root)
 
-            logger.info("Successfully imported FastAPI app")
+                # Cleanup: Clear lru_cache from get_settings() to avoid stale config
+                # This is critical because get_settings() caches the Settings object,
+                # and if we reimport modules later, we want fresh settings
+                if 'src.core.config' in sys.modules:
+                    try:
+                        config_module = sys.modules['src.core.config']
+                        if hasattr(config_module, 'get_settings'):
+                            config_module.get_settings.cache_clear()
+                    except Exception:
+                        pass  # Ignore if cache_clear fails
 
-            # Extract OpenAPI schema
-            openapi_schema = app.openapi()
+                # Cleanup: Remove imported src.* modules from cache to avoid pollution
+                modules_to_remove = [k for k in sys.modules.keys() if k.startswith('src.')]
+                for module_name in modules_to_remove:
+                    sys.modules.pop(module_name, None)
 
             # 1. Extract entities from OpenAPI schemas
             entities_found = []
