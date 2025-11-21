@@ -1958,22 +1958,52 @@ File: src/api/routes/{entity.snake_name}.py
                 elif "validation script" in purpose_lower or ".sh" in purpose_lower:
                     files["docker/validate-docker-setup.sh"] = self._adapt_pattern(p.code, spec_requirements)
 
-        # Project config
+        # Project config & Alembic migrations
         elif category == "project_config":
+            found_files = set()
+
             for p in category_patterns:
                 purpose_lower = p.signature.purpose.lower()
                 if "pyproject" in purpose_lower or "toml" in purpose_lower:
                     files["pyproject.toml"] = self._adapt_pattern(p.code, spec_requirements)
+                    found_files.add("pyproject.toml")
                 elif "env" in purpose_lower and "example" in purpose_lower:
                     files[".env.example"] = self._adapt_pattern(p.code, spec_requirements)
+                    found_files.add(".env.example")
                 elif "gitignore" in purpose_lower:
                     files[".gitignore"] = self._adapt_pattern(p.code, spec_requirements)
+                    found_files.add(".gitignore")
                 elif "makefile" in purpose_lower:
                     files["Makefile"] = self._adapt_pattern(p.code, spec_requirements)
+                    found_files.add("Makefile")
                 elif "pre-commit" in purpose_lower or "pre_commit" in purpose_lower:
                     files[".pre-commit-config.yaml"] = self._adapt_pattern(p.code, spec_requirements)
+                    found_files.add(".pre-commit-config.yaml")
+                elif "alembic.ini" in purpose_lower or ("alembic" in purpose_lower and "config" in purpose_lower):
+                    files["alembic.ini"] = self._adapt_pattern(p.code, spec_requirements)
+                    found_files.add("alembic.ini")
+                elif "alembic/env" in purpose_lower or ("alembic" in purpose_lower and "env" in purpose_lower):
+                    files["alembic/env.py"] = self._adapt_pattern(p.code, spec_requirements)
+                    found_files.add("alembic/env.py")
                 elif "readme" in purpose_lower:
                     files["README.md"] = self._adapt_pattern(p.code, spec_requirements)
+                    found_files.add("README.md")
+
+            # LLM fallback for missing critical files (production mode)
+            if "alembic.ini" not in found_files and os.getenv("PRODUCTION_MODE") == "true":
+                logger.info("🔨 LLM fallback: Generating alembic.ini (no pattern available)")
+                alembic_ini = self._generate_alembic_ini(spec_requirements)
+                files["alembic.ini"] = alembic_ini
+
+            if "alembic/env.py" not in found_files and os.getenv("PRODUCTION_MODE") == "true":
+                logger.info("🔨 LLM fallback: Generating alembic/env.py (no pattern available)")
+                alembic_env = self._generate_alembic_env(spec_requirements)
+                files["alembic/env.py"] = alembic_env
+
+            if "alembic/script.py.mako" not in found_files and os.getenv("PRODUCTION_MODE") == "true":
+                logger.info("🔨 LLM fallback: Generating alembic/script.py.mako (no pattern available)")
+                alembic_script = self._generate_alembic_script_template()
+                files["alembic/script.py.mako"] = alembic_script
 
         # Log summary for this category
         logger.info(
@@ -2071,6 +2101,169 @@ File: src/api/routes/{entity.snake_name}.py
             adapted = adapted.replace("{entity_name}", entity_snake)
 
         return adapted
+
+    def _generate_alembic_ini(self, spec_requirements) -> str:
+        """Generate alembic.ini configuration file."""
+        return """# Alembic Configuration
+# This file contains the configuration for Alembic database migrations
+
+[alembic]
+# path to migration scripts
+sqlalchemy.url = driver://user:pass@localhost/dbname
+script_location = alembic
+prepend_sys_path = .
+sqlalchemy_track_modifications = false
+
+# Logging configuration
+[loggers]
+keys = root,sqlalchemy,alembic
+
+[handlers]
+keys = console
+
+[formatters]
+keys = generic
+
+[logger_root]
+level = WARN
+handlers = console
+qualname =
+
+[logger_sqlalchemy]
+level = WARN
+handlers =
+qualname = sqlalchemy.engine
+
+[logger_alembic]
+level = INFO
+handlers =
+qualname = alembic
+
+[handler_console]
+class = StreamHandler
+args = (sys.stderr,)
+level = NOTSET
+formatter = generic
+
+[formatter_generic]
+format = %(levelname)-5.5s [%(name)s] %(message)s
+datefmt = %H:%M:%S
+"""
+
+    def _generate_alembic_env(self, spec_requirements) -> str:
+        """Generate alembic/env.py for migrations."""
+        return '''"""Alembic environment configuration for database migrations."""
+
+from logging.config import fileConfig
+from sqlalchemy import engine_from_config, pool
+from alembic import context
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# this is the Alembic Config object
+config = context.config
+
+# Interpret the config file for Python logging
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+# Get database URL from environment variable
+database_url = os.getenv(
+    "DATABASE_URL",
+    "postgresql+asyncpg://user:password@localhost:5432/app"
+)
+config.set_main_option("sqlalchemy.url", database_url)
+
+# Import models for autogenerate
+from src.models.entities import Base
+
+target_metadata = Base.metadata
+
+
+def run_migrations_offline() -> None:
+    """Run migrations in 'offline' mode.
+
+    This configures the context with just a URL
+    and not an Engine, though an Engine is acceptable
+    here as well. By skipping the create_engine() step
+    we don't even need a DBAPI to be available.
+
+    Calls to context.execute() here emit the given string to the
+    script output.
+
+    """
+    url = config.get_main_option("sqlalchemy.url")
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+    )
+
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def run_migrations_online() -> None:
+    """Run migrations in 'online' mode.
+
+    In this scenario we need to create an Engine
+    and associate a connection with the context.
+
+    """
+    connectable = engine_from_config(
+        config.get_section(config.config_ini_section, {}),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+
+    with connectable.connect() as connection:
+        context.configure(
+            connection=connection, target_metadata=target_metadata
+        )
+
+        with context.begin_transaction():
+            context.run_migrations()
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
+'''
+
+    def _generate_alembic_script_template(self) -> str:
+        """Generate alembic/script.py.mako template."""
+        return '''"""${message}
+
+Revision ID: ${up_revision}
+Revises: ${down_revision | comma,n}
+Create Date: ${create_date}
+
+"""
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+${imports if imports else ""}
+
+# revision identifiers, used by Alembic.
+revision: str = ${repr(up_revision)}
+down_revision: Union[str, None] = ${repr(down_revision)}
+branch_labels: Union[str, Sequence[str], None] = ${repr(branch_labels)}
+depends_on: Union[str, Sequence[str], None] = ${repr(depends_on)}
+
+
+def upgrade() -> None:
+    ${upgrades if upgrades else "pass"}
+
+
+def downgrade() -> None:
+    ${downgrades if downgrades else "pass"}
+'''
 
     def _validate_production_readiness(self, files: Dict[str, str]) -> Dict[str, Any]:
         """
