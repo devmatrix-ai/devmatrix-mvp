@@ -144,8 +144,27 @@ Endpoint to cancel an order:
 **F16. List customer orders**  
 Endpoint to list all orders for a customer, with optional filter by `status`.
 
-**F17. Get order detail**  
+**F17. Get order detail**
 Endpoint to get an order by `id`. If not found, return 404.
+
+---
+
+## 3.5. Business Validations
+
+**V1. Price validation**
+Product price must be greater than 0. Price > 0 is enforced.
+
+**V2. Stock validation**
+Product stock must be non-negative. Stock >= 0 is enforced.
+
+**V3. Quantity validation**
+Cart item quantity must be positive. Quantity > 0 is required.
+
+**V4. Order quantity validation**
+Order item quantity must be positive. Quantity > 0 is required.
+
+**V5. Email format validation**
+Customer email must be valid email format.
 
 ---
 
