@@ -239,6 +239,7 @@ echo -e "  ✅ Real-time logging enabled (FlushingStreamHandler)"
 echo -e "  ✅ Prometheus metrics deduplicated (import from middleware)"
 echo -e "  ✅ Prometheus/Grafana use Docker service names (app:8000, prometheus:9090)"
 echo -e "  ✅ Logs in human-readable format (not JSON)"
+echo -e "  ✅ Requirements.txt with verified versions (psycopg 3.2.12)"
 echo ""
 
 echo ""
