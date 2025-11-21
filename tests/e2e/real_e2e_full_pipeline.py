@@ -1761,12 +1761,17 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         print("\n🏥 Phase 9: Health Verification")
 
         # Verify files exist
-        expected_files = ["main.py", "requirements.txt", "README.md"]
-        for filename in expected_files:
+        # Note: main.py is in src/ directory, not root
+        expected_files = [
+            ("src/main.py", "src/main.py"),
+            ("requirements.txt", "requirements.txt"),
+            ("README.md", "README.md")
+        ]
+        for display_name, filename in expected_files:
             filepath = os.path.join(self.output_dir, filename)
             exists = os.path.exists(filepath)
             status = "✓" if exists else "✗"
-            print(f"  {status} File check: {filename}")
+            print(f"  {status} File check: {display_name}")
 
         for i in range(5):
             self.metrics_collector.add_checkpoint("health_verification", f"CP-9.{i+1}: Step {i+1}", {})
