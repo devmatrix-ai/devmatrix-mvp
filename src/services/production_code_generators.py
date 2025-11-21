@@ -219,8 +219,8 @@ from typing import List, Optional
 
 '''
 
-        # Response schema (no Response suffix, just use entity name)
-        code += f'''class {entity_name}({entity_name}Base):
+        # Response schema (WITH Response suffix for consistency with routes)
+        code += f'''class {entity_name}Response({entity_name}Base):
     """Response schema for {entity_lower}."""
     id: UUID
     created_at: datetime
@@ -231,10 +231,10 @@ from typing import List, Optional
 
 '''
 
-        # List schema
+        # List schema (uses {entity_name}Response for items)
         code += f'''class {entity_name}List(BaseModel):
     """List response with pagination."""
-    items: List[{entity_name}]
+    items: List[{entity_name}Response]
     total: int
     page: int
 
@@ -266,7 +266,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 import logging
 
-from src.models.schemas import {entity_name}Create, {entity_name}Update, {entity_name}, {entity_name}List
+from src.models.schemas import {entity_name}Create, {entity_name}Update, {entity_name}Response, {entity_name}List
 from src.repositories.{entity_name.lower()}_repository import {entity_name}Repository
 from src.models.entities import {entity_name}Entity
 
@@ -280,16 +280,16 @@ class {entity_name}Service:
         self.db = db
         self.repo = {entity_name}Repository(db)
 
-    async def create(self, data: {entity_name}Create) -> {entity_name}:
+    async def create(self, data: {entity_name}Create) -> {entity_name}Response:
         """Create a new {entity_name.lower()}."""
         db_obj = await self.repo.create(data)
-        return {entity_name}.model_validate(db_obj)
+        return {entity_name}Response.model_validate(db_obj)
 
-    async def get(self, id: UUID) -> Optional[{entity_name}]:
+    async def get(self, id: UUID) -> Optional[{entity_name}Response]:
         """Get {entity_name.lower()} by ID."""
         db_obj = await self.repo.get(id)
         if db_obj:
-            return {entity_name}.model_validate(db_obj)
+            return {entity_name}Response.model_validate(db_obj)
         return None
 
     async def list(self, page: int = 1, size: int = 10) -> {entity_name}List:
@@ -300,17 +300,17 @@ class {entity_name}Service:
         total = await self.repo.count()
 
         return {entity_name}List(
-            items=[{entity_name}.model_validate(t) for t in items],
+            items=[{entity_name}Response.model_validate(t) for t in items],
             total=total,
             page=page,
             size=size,
         )
 
-    async def update(self, id: UUID, data: {entity_name}Update) -> Optional[{entity_name}]:
+    async def update(self, id: UUID, data: {entity_name}Update) -> Optional[{entity_name}Response]:
         """Update {entity_name.lower()}."""
         db_obj = await self.repo.update(id, data)
         if db_obj:
-            return {entity_name}.model_validate(db_obj)
+            return {entity_name}Response.model_validate(db_obj)
         return None
 
     async def delete(self, id: UUID) -> bool:
