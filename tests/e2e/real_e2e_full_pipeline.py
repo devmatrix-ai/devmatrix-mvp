@@ -328,14 +328,16 @@ class RealE2ETest:
             # Phase 6: Wave Execution (Code Generation) - UPDATED Task Group 3.2
             await self._phase_6_code_generation()
 
+            # Phase 8: Deployment (Save Generated Files) - MOVED BEFORE Phase 6.5
+            # CRITICAL: Must write files to disk BEFORE Code Repair tries to read them
+            await self._phase_8_deployment()
+
             # Phase 6.5: Code Repair (NEW - Task Group 3 & 4)
+            # Now runs AFTER deployment, so it can read/modify files on disk
             await self._phase_6_5_code_repair()
 
             # Phase 7: Validation (ENHANCED with semantic validation - Task Group 4.2)
             await self._phase_7_validation()
-
-            # Phase 8: Deployment (Save Generated Files)
-            await self._phase_8_deployment()
 
             # Phase 9: Health Verification
             await self._phase_9_health_verification()
