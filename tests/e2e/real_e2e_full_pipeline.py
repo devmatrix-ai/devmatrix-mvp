@@ -1758,7 +1758,7 @@ Once running, visit:
                     print(f"        ⚠️ Pattern search failed: {e}")
 
             # Step 3: Generate repair proposal (REAL - using LLM with full spec context)
-            print(f"      Step 3: Generating repair proposal with LLM...")
+            print(f"      📋 Step 3: Analyzing compliance gaps...")
             repair_proposal = await self._generate_repair_proposal(
                 compliance_report=initial_compliance_report,
                 spec_requirements=self.spec_requirements,
@@ -1995,13 +1995,14 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
 """
 
             # CRITICAL: Use LLM to generate repaired code with FULL spec context
-            print(f"        🤖 Calling LLM with detailed repair context...")
-            print(f"           Missing entities: {missing_entities}")
-            print(f"           Wrong entities: {wrong_entities}")
-            print(f"           Missing endpoints: {missing_endpoints}")
-
-            # Generate repaired code using the same method as Phase 6, but with repair context
-            print("        ⏳ Generating repair (real-time logging enabled)...")
+            print(f"\n        🔧 Repair Analysis:")
+            if missing_entities:
+                print(f"           📦 Missing entities: {', '.join(missing_entities[:5])}{' ...' if len(missing_entities) > 5 else ''}")
+            if wrong_entities:
+                print(f"           ⚠️  Wrong entities: {', '.join(wrong_entities[:5])}{' ...' if len(wrong_entities) > 5 else ''}")
+            if missing_endpoints:
+                print(f"           🔌 Missing endpoints: {len(missing_endpoints)} endpoints")
+            print(f"\n        🤖 Generating code repair...")
             repaired_code = await self.code_generator.generate_from_requirements(
                 spec_requirements,
                 allow_syntax_errors=False,  # Phase 6.5 must produce valid syntax

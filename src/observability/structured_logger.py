@@ -172,17 +172,20 @@ class StructuredLogger:
 
             return json.dumps(log_entry, default=json_serializable)
         else:
-            # Text format
-            parts = [
-                f"[{level.value}]",
-                f"[{self.name}]",
-                message,
-            ]
+            # Clean text format (no prefixes for better readability)
+            # Add emoji prefix based on log level
+            emoji_map = {
+                LogLevel.DEBUG: "🔍",
+                LogLevel.INFO: "ℹ️",
+                LogLevel.WARNING: "⚠️",
+                LogLevel.ERROR: "❌",
+                LogLevel.CRITICAL: "🚨",
+            }
 
+            # Simple format: just the message (emojis in message itself are better)
             if kwargs:
-                parts.append(str(kwargs))
-
-            return " ".join(parts)
+                return f"{message} {kwargs}"
+            return message
 
     def debug(self, message: str, **kwargs):
         """Log debug message."""
