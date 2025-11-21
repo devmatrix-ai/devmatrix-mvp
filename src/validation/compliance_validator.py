@@ -241,14 +241,38 @@ class ComplianceValidator:
             # Configure temporary database for validation (avoid global DATABASE_URL issues)
             # Use asyncpg driver to avoid psycopg2 async errors
             import os
+            import sys
+            import importlib
+
+            # CRITICAL: Store and replace DATABASE_URL BEFORE any app imports
             original_database_url = os.environ.get('DATABASE_URL')
-            # Use dummy async PostgreSQL URL (won't actually connect during OpenAPI extraction)
-            os.environ['DATABASE_URL'] = 'postgresql+asyncpg://validation:validation@localhost/validation_temp'
+
+            # Fix DATABASE_URL if it exists but doesn't have asyncpg driver
+            # This is critical because many environments set DATABASE_URL with postgresql://
+            # but generated apps use AsyncSession which requires postgresql+asyncpg://
+            if original_database_url and 'postgresql://' in original_database_url:
+                if '+asyncpg' not in original_database_url:
+                    # Convert postgresql:// to postgresql+asyncpg://
+                    fixed_url = original_database_url.replace('postgresql://', 'postgresql+asyncpg://')
+                    logger.info(f"Converting DATABASE_URL to async driver for validation")
+                    os.environ['DATABASE_URL'] = fixed_url
+                else:
+                    # Already has asyncpg, use as is
+                    pass
+            else:
+                # No DATABASE_URL or not PostgreSQL, set a dummy async URL
+                # This won't actually connect during OpenAPI extraction
+                os.environ['DATABASE_URL'] = 'postgresql+asyncpg://validation:validation@localhost/validation_temp'
+
+            # Clear any existing modules from cache to avoid driver conflicts and cached settings
+            # This is important because Settings uses @lru_cache and might have cached the old DATABASE_URL
+            modules_to_clear = [m for m in list(sys.modules.keys())
+                              if any(pattern in m for pattern in ['psycopg', 'sqlalchemy', 'src.', 'api.', 'core.', 'models.'])]
+            for module_name in modules_to_clear:
+                sys.modules.pop(module_name, None)
 
             try:
                 # Load main.py as module with proper package context
-                import sys
-                import importlib
                 app_root = str(output_path)
 
                 # Store original sys.path and cwd for cleanup
