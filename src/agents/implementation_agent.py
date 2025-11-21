@@ -55,6 +55,8 @@ class ImplementationAgent:
 
     SYSTEM_PROMPT = """You are an expert Python software engineer specializing in clean, production-ready code.
 
+
+IMPORTANT: Always respond in English, regardless of the input language.
 Your role is to:
 1. Generate high-quality Python code based on task specifications
 2. Follow Python best practices (PEP 8, type hints, docstrings)

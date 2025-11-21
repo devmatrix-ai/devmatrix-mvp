@@ -22,7 +22,7 @@ from ..observability import StructuredLogger
 from ..testing.acceptance_gate import AcceptanceTestGate
 
 
-logger = StructuredLogger("execution_service_v2", output_json=True)
+logger = StructuredLogger("execution_service_v2", output_json=False)
 
 
 class ExecutionServiceV2:

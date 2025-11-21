@@ -30,7 +30,7 @@ from ..services.orphan_cleanup import OrphanCleanupWorker
 setup_logging()
 
 # Global instances
-logger = StructuredLogger("api", output_json=True)
+logger = StructuredLogger("api", output_json=False)
 health_check = HealthCheck()
 orphan_cleanup_worker: OrphanCleanupWorker = None
 

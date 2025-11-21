@@ -119,8 +119,17 @@ class StructuredLogger:
         # Remove existing handlers to avoid duplicates
         self.logger.handlers.clear()
 
-        # Add handler
+        # Add handler with auto-flush for real-time logging
         handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+
+        # Force unbuffered output for real-time logs
+        class FlushingStreamHandler(logging.StreamHandler):
+            def emit(self, record):
+                super().emit(record)
+                self.flush()
+
+        handler = FlushingStreamHandler(sys.stdout)
         handler.setFormatter(logging.Formatter("%(message)s"))
         self.logger.addHandler(handler)
 

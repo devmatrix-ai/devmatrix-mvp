@@ -46,6 +46,8 @@ class DocumentationAgent:
 
     SYSTEM_PROMPT = """You are an expert technical writer specializing in Python documentation.
 
+
+IMPORTANT: Always respond in English, regardless of the input language.
 Your role is to:
 1. Generate clear, comprehensive documentation for Python code
 2. Write Google-style docstrings for functions, classes, and modules

@@ -24,7 +24,7 @@ import uuid
 from src.models import MasterPlan, MasterPlanTask
 from src.observability import StructuredLogger
 
-logger = StructuredLogger("infrastructure_generation_service", output_json=True)
+logger = StructuredLogger("infrastructure_generation_service", output_json=False)
 
 
 class InfrastructureGenerationService:

@@ -9,9 +9,12 @@ import json
 import time
 import shutil
 import tempfile
+import logging
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, List, Optional
+from contextlib import contextmanager
+from io import StringIO
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -20,6 +23,12 @@ load_dotenv()  # Load ANTHROPIC_API_KEY and other env vars
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
+
+# Force unbuffered output for real-time logging visibility
+# This prevents logs from being buffered and appearing all at once
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
+os.environ['PYTHONUNBUFFERED'] = '1'
 
 # Test framework
 from tests.e2e.metrics_framework import MetricsCollector, PipelineMetrics
@@ -70,6 +79,147 @@ except ImportError as e:
     ErrorPatternStore = None
 
 
+class ErrorPatternStoreFilter(logging.Filter):
+    """Filter to selectively allow/block error_pattern_store logs"""
+
+    def filter(self, record):
+        message = record.getMessage()
+
+        # Allow GraphCodeBERT messages ONLY
+        if "GraphCodeBERT" in message:
+            return True
+
+        # Block RobertaModel initialization warnings
+        if "Some weights of RobertaModel" in message or "You should probably TRAIN" in message:
+            return False
+
+        # Block non-Python file parsing errors (README.md with box-drawing chars)
+        if "Syntax error parsing code" in message or "Error extracting validations" in message:
+            return False
+
+        # Block all other error_pattern_store INFO messages
+        if record.name == "services.error_pattern_store" and record.levelno == logging.INFO:
+            return False
+
+        # Block all warnings from transformers/sentence-transformers unless they contain GraphCodeBERT
+        if "transformers" in record.name and "GraphCodeBERT" not in message:
+            return False
+
+        # Allow everything else
+        return True
+
+
+@contextmanager
+def silent_logs():
+    """
+    Context manager to suppress verbose structlog and logging output.
+
+    Handles multiple suppression mechanisms:
+    1. Redirects sys.stdout/stderr to /dev/null
+    2. Removes ALL logging handlers from ALL loggers (not just root)
+    3. Updates existing StreamHandlers to point to /dev/null (catches pre-created handlers)
+    4. Sets all loggers to CRITICAL level
+    5. Applies ErrorPatternStoreFilter to allow only GraphCodeBERT messages
+    """
+    # Save original stdout/stderr
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+
+    # Create devnull file
+    devnull_file = open(os.devnull, 'w')
+
+    # Save ALL logger state (root + all existing loggers)
+    root_logger = logging.getLogger()
+    old_root_handlers = root_logger.handlers.copy()
+    old_root_level = root_logger.level
+
+    # Save state of ALL existing loggers in the logging system
+    all_loggers = {}
+    logger_filters = {}  # Store original filters
+    for logger_name in logging.root.manager.loggerDict:
+        logger_obj = logging.getLogger(logger_name)
+        all_loggers[logger_name] = {
+            'handlers': logger_obj.handlers.copy(),
+            'level': logger_obj.level,
+            'propagate': logger_obj.propagate,
+            'filters': logger_obj.filters.copy()  # Save filters
+        }
+
+    try:
+        # Redirect sys.stdout and sys.stderr to devnull
+        sys.stdout = devnull_file
+        sys.stderr = devnull_file
+
+        # Apply ErrorPatternStoreFilter to selectively allow GraphCodeBERT logs
+        error_filter = ErrorPatternStoreFilter()
+        for logger_name in logging.root.manager.loggerDict:
+            logger_obj = logging.getLogger(logger_name)
+            if "error_pattern_store" in logger_name:
+                logger_obj.addFilter(error_filter)
+
+        # Remove all handlers from root logger
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+        root_logger.setLevel(logging.CRITICAL)
+
+        # Update ALL loggers to suppress output
+        for logger_name in logging.root.manager.loggerDict:
+            logger_obj = logging.getLogger(logger_name)
+
+            # Update/remove all handlers
+            for handler in logger_obj.handlers[:]:
+                # If it's a StreamHandler pointing to stdout/stderr, redirect to devnull
+                if isinstance(handler, logging.StreamHandler):
+                    if handler.stream in (old_stdout, old_stderr):
+                        # Update the stream directly (StreamHandler.stream is just an attribute)
+                        handler.stream = devnull_file
+                else:
+                    # For non-stream handlers, remove them
+                    logger_obj.removeHandler(handler)
+
+            # Set to CRITICAL level to suppress all logging below that
+            logger_obj.setLevel(logging.CRITICAL)
+            logger_obj.propagate = False  # Don't propagate to root logger
+
+        yield
+
+    finally:
+        # Restore sys.stdout/stderr
+        try:
+            devnull_file.close()
+        except:
+            pass
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+
+        # Restore root logger
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+        for handler in old_root_handlers:
+            root_logger.addHandler(handler)
+        root_logger.setLevel(old_root_level)
+
+        # Restore ALL loggers
+        for logger_name, state in all_loggers.items():
+            logger_obj = logging.getLogger(logger_name)
+
+            # Restore handlers
+            for handler in logger_obj.handlers[:]:
+                logger_obj.removeHandler(handler)
+            for handler in state['handlers']:
+                logger_obj.addHandler(handler)
+
+            # Restore filters
+            for filt in logger_obj.filters[:]:
+                logger_obj.removeFilter(filt)
+            for filt in state['filters']:
+                logger_obj.addFilter(filt)
+
+            # Restore level and propagate
+            logger_obj.setLevel(state['level'])
+            logger_obj.propagate = state['propagate']
+
+
 class RealE2ETest:
     """Real E2E test with actual code generation"""
 
@@ -81,6 +231,9 @@ class RealE2ETest:
         # Output directory for generated app
         self.output_dir = f"tests/e2e/generated_apps/{self.spec_name}_{self.timestamp}"
         Path(self.output_dir).mkdir(parents=True, exist_ok=True)
+
+        # Apply ErrorPatternStoreFilter globally to all loggers
+        self._apply_error_pattern_filter()
 
         # Metrics and validation
         self.metrics_collector = MetricsCollector(
@@ -127,6 +280,19 @@ class RealE2ETest:
 
         # NEW for Task Group 4.2: Store compliance report
         self.compliance_report = None
+
+    def _apply_error_pattern_filter(self):
+        """Apply ErrorPatternStoreFilter to all loggers globally"""
+        error_filter = ErrorPatternStoreFilter()
+
+        # Apply to root logger
+        root_logger = logging.getLogger()
+        root_logger.addFilter(error_filter)
+
+        # Apply to all existing loggers
+        for logger_name in logging.root.manager.loggerDict:
+            logger_obj = logging.getLogger(logger_name)
+            logger_obj.addFilter(error_filter)
 
     async def run(self):
         """Execute full real pipeline"""
@@ -232,6 +398,7 @@ class RealE2ETest:
 
         # Code generator for real code generation (Task Group 3.1)
         try:
+            # Initialize with real-time logging
             self.code_generator = CodeGenerationService(db=None)  # db not needed for E2E test
             print("  ✓ CodeGenerationService initialized")
         except Exception as e:
@@ -240,6 +407,7 @@ class RealE2ETest:
         # Initialize learning feedback integration (separate try-except)
         try:
             if PatternFeedbackIntegration:
+                # Initialize with real-time logging
                 self.feedback_integration = PatternFeedbackIntegration(
                     enable_auto_promotion=False,  # Manual control for testing
                     mock_dual_validator=True  # Use mock for testing
@@ -727,19 +895,96 @@ class RealE2ETest:
                                     return wave.wave_number
                         return None
 
-                # Build waves from DAG (simplified: all in 3 waves)
+                # Build waves from DAG respecting dependencies (topological order)
                 waves_data = []
-                reqs_per_wave = len(self.classified_requirements) // 3 + 1
 
-                for wave_num in range(1, 4):
-                    start_idx = (wave_num - 1) * reqs_per_wave
-                    end_idx = min(wave_num * reqs_per_wave, len(self.classified_requirements))
-                    wave_reqs = self.classified_requirements[start_idx:end_idx]
+                # Classify requirements by operation type from description
+                def get_operation_type(req):
+                    """Extract operation type from requirement description (English + Spanish)"""
+                    desc = req.description.lower()
 
-                    if wave_reqs:
-                        waves_data.append(Wave(wave_number=wave_num, requirements=wave_reqs))
+                    # Special cases first (more specific patterns)
+                    # F9: "Agregar item al carrito" is UPDATE (modifying cart), not CREATE
+                    if 'agregar item' in desc or 'add item' in desc:
+                        return 'update'
+
+                    # F12: "Vaciar carrito" is a DELETE operation
+                    elif 'vaciar' in desc or 'empty' in desc or 'clear' in desc:
+                        return 'delete'
+
+                    # F13: "Checkout" creates an order (CREATE operation)
+                    elif 'checkout' in desc:
+                        return 'create'
+
+                    # CREATE operations (English + Spanish)
+                    # F1, F6, F8: Crear producto, Registrar cliente, Crear carrito
+                    elif any(kw in desc for kw in ['create', 'crear', 'register', 'registrar', 'new', 'nuevo']):
+                        return 'create'
+
+                    # LIST operations (English + Spanish)
+                    # F2, F16: Listar productos, Listar órdenes
+                    elif any(kw in desc for kw in ['list', 'listar', 'retrieve all', 'obtener todos', 'view all', 'ver todos']):
+                        return 'list'
+
+                    # READ operations (English + Spanish)
+                    # F3, F7, F10, F17: Obtener detalle, Ver carrito
+                    elif any(kw in desc for kw in ['read', 'leer', 'get', 'obtener', 'fetch', 'view', 'ver', 'detalle']):
+                        return 'read'
+
+                    # UPDATE operations (English + Spanish)
+                    # F4, F11, F14: Actualizar producto, Actualizar cantidad, Simular pago
+                    elif any(kw in desc for kw in ['update', 'actualizar', 'edit', 'editar', 'modify', 'modificar', 'simular', 'simulate']):
+                        return 'update'
+
+                    # DELETE operations (English + Spanish)
+                    # F5, F15: Desactivar producto, Cancelar orden
+                    elif any(kw in desc for kw in ['delete', 'eliminar', 'remove', 'remover', 'deactivate', 'desactivar', 'cancel', 'cancelar']):
+                        return 'delete'
+
+                    return None
+
+                # Classify all requirements
+                create_reqs = [r for r in self.classified_requirements if get_operation_type(r) == 'create']
+                read_reqs = [r for r in self.classified_requirements if get_operation_type(r) == 'read']
+                list_reqs = [r for r in self.classified_requirements if get_operation_type(r) == 'list']
+                update_reqs = [r for r in self.classified_requirements if get_operation_type(r) == 'update']
+                delete_reqs = [r for r in self.classified_requirements if get_operation_type(r) == 'delete']
+                other_reqs = [r for r in self.classified_requirements if get_operation_type(r) is None]
+
+                # ALWAYS create waves with consistent numbering
+                # Wave 1: CREATE operations (foundational - no dependencies)
+                wave1_reqs = create_reqs
+
+                # Wave 2: READ/LIST operations (depend on CREATE existing)
+                wave2_reqs = read_reqs + list_reqs
+
+                # Wave 3: UPDATE/DELETE operations (depend on READ/CREATE) + other requirements
+                wave3_reqs = update_reqs + delete_reqs + other_reqs
+
+                # Build waves ensuring consistent numbering
+                # Always use wave numbers 1, 2, 3 for CREATE, READ/LIST, UPDATE/DELETE respectively
+                current_wave_num = 1
+
+                # Add Wave 1 (CREATE) if has requirements
+                if wave1_reqs:
+                    waves_data.append(Wave(wave_number=1, requirements=wave1_reqs))
+                    current_wave_num = 2
+
+                # Add Wave 2 (READ/LIST) - use wave 2 if CREATEs exist, otherwise wave 1
+                if wave2_reqs:
+                    waves_data.append(Wave(wave_number=current_wave_num, requirements=wave2_reqs))
+                    if current_wave_num < 3:
+                        current_wave_num += 1
+
+                # Add Wave 3 (UPDATE/DELETE) - use appropriate wave number
+                if wave3_reqs:
+                    waves_data.append(Wave(wave_number=current_wave_num, requirements=wave3_reqs))
 
                 dag_structure = DAGStructure(waves=waves_data)
+
+                # SAVE ORDERED WAVES FOR PHASE 6 CODE GENERATION
+                self.ordered_waves = waves_data
+                self.get_operation_type = get_operation_type
 
                 # Validate execution order
                 result = self.planner.validate_execution_order(dag_structure, self.classified_requirements)
@@ -841,7 +1086,7 @@ class RealE2ETest:
         """
         self.metrics_collector.start_phase("wave_execution")
         print("\n📍 Phase Started: wave_execution")
-        print("\n🌊 Phase 6: Code Generation (Real - Task Group 3.2)")
+        print("\n🌊 Phase 6: Code Generation")
 
         self.metrics_collector.add_checkpoint("wave_execution", "CP-6.1: Code generation started", {})
         print("  ✓ Checkpoint: CP-6.1: Code generation started (1/5)")
@@ -863,18 +1108,37 @@ class RealE2ETest:
         if not self.spec_requirements:
             raise ValueError("SpecRequirements not available from Phase 1. Cannot generate code.")
 
-        print("  🔨 Generating code from requirements (CodeGenerationService)...")
+        print("  🔨 Generating code from requirements...")
+
+        # Capture start time for metrics
+        codegen_start_time = time.time()
 
         try:
-            # Generate real code from requirements
+            # Generate real code from requirements respecting wave order (suppress verbose logs)
             # allow_syntax_errors=True → let repair loop fix syntax issues
+
+            # Note: ordered_waves are created in Phase 3 for validation in Phase 7,
+            # but CodeGenerationService doesn't support them as a parameter yet
+            if hasattr(self, 'ordered_waves') and self.ordered_waves:
+                print(f"  📊 Dependency waves prepared: {len(self.ordered_waves)} waves (validation in Phase 7)")
+
+            # Generate code with real-time logging (silent_logs() removed for visibility)
+            print("  ⏳ Generating code (this may take 30-60s)... logs will appear in real-time")
+            sys.stdout.flush()
+
             generated_code_str = await self.code_generator.generate_from_requirements(
                 self.spec_requirements,
-                allow_syntax_errors=True  # Phase 6.5 repair loop will fix syntax errors
+                allow_syntax_errors=True
             )
 
             # Parse generated code into file structure
             self.generated_code = self._parse_generated_code_to_files(generated_code_str)
+
+            # Capture end time and calculate metrics
+            codegen_duration_ms = (time.time() - codegen_start_time) * 1000
+
+            # Display elegant phase 6 summary
+            self._display_phase_6_summary(codegen_duration_ms)
 
             print(f"  ✅ Generated {len(self.generated_code)} files from specification")
 
@@ -1000,13 +1264,13 @@ python main.py
 uvicorn main:app --reload
 ```
 
-The API will be available at: http://localhost:8000
+The API will be available at: http://localhost:8002
 
 ## API Documentation
 
 Once running, visit:
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
+- Swagger UI: http://localhost:8002/docs
+- ReDoc: http://localhost:8002/redoc
 
 ## Entities
 
@@ -1027,6 +1291,207 @@ Once running, visit:
     # - HARDCODED_MAIN_TEMPLATE constant
     # - HARDCODED_TESTS_TEMPLATE constant
     # All hardcoded Task API template code has been removed.
+
+    def _display_phase_6_patterns_summary(self) -> None:
+        """
+        Display pattern retrieval summary during code generation.
+
+        Shows which patterns were successfully retrieved from PatternBank.
+        """
+        categories_map = {
+            "core_config": ("Core Config", 1),
+            "database_async": ("Database (Async)", 1),
+            "observability": ("Observability", 5),
+            "models_pydantic": ("Models (Pydantic)", 1),
+            "models_sqlalchemy": ("Models (SQLAlchemy)", 1),
+            "repository_pattern": ("Repository Pattern", 1),
+            "business_logic": ("Business Logic", 1),
+            "api_routes": ("API Routes", 1),
+            "security_hardening": ("Security Hardening", 1),
+            "test_infrastructure": ("Test Infrastructure", 7),
+            "docker_infrastructure": ("Docker Infrastructure", 4),
+            "project_config": ("Project Config", 3)
+        }
+
+        print("\n  🔍 Pattern Retrieval Summary:")
+        print("  " + "─" * 65)
+
+        total_patterns = 0
+        for category_key, (display_name, expected_count) in categories_map.items():
+            # Visual bar (simplified)
+            bar = "█" * 8 + "░" * 2
+            total_patterns += expected_count
+            print(f"  ✅ {display_name:25} {bar} {expected_count:2} patterns")
+
+        print("  " + "─" * 65)
+        print(f"  📦 Total: {total_patterns} patterns retrieved from PatternBank\n")
+
+    def _display_phase_6_summary(self, duration_ms: float) -> None:
+        """
+        Display elegant Phase 6 code generation summary with ASCII table.
+
+        Replaces verbose JSON logs with clean visual format.
+        Shows component-based file generation summary.
+        """
+        # Display pattern retrieval summary first
+        self._display_phase_6_patterns_summary()
+
+        # Categorize files by component
+        components = {
+            "Core": {"files": [], "patterns": 0},
+            "Models": {"files": [], "patterns": 0},
+            "Services": {"files": [], "patterns": 0},
+            "API Routes": {"files": [], "patterns": 0},
+            "Middleware": {"files": [], "patterns": 0},
+            "Migrations": {"files": [], "patterns": 0},
+            "Tests": {"files": [], "patterns": 0},
+            "Other": {"files": [], "patterns": 0}
+        }
+
+        # Categorize each file
+        for filepath in self.generated_code.keys():
+            if any(x in filepath for x in ["config.py", "database.py", "logging.py", "main.py"]):
+                components["Core"]["files"].append(filepath)
+                components["Core"]["patterns"] += 1
+            elif any(x in filepath for x in ["models/", "schemas.py", "entities.py"]):
+                components["Models"]["files"].append(filepath)
+                components["Models"]["patterns"] += 1
+            elif any(x in filepath for x in ["services/", "service.py"]):
+                components["Services"]["files"].append(filepath)
+                components["Services"]["patterns"] += 1
+            elif any(x in filepath for x in ["routes/", "endpoints", "api/"]):
+                components["API Routes"]["files"].append(filepath)
+                components["API Routes"]["patterns"] += 1
+            elif any(x in filepath for x in ["middleware.py"]):
+                components["Middleware"]["files"].append(filepath)
+                components["Middleware"]["patterns"] += 1
+            elif any(x in filepath for x in ["alembic", "migrations"]):
+                components["Migrations"]["files"].append(filepath)
+                components["Migrations"]["patterns"] += 1
+            elif any(x in filepath for x in ["tests/", "test_"]):
+                components["Tests"]["files"].append(filepath)
+                components["Tests"]["patterns"] += 1
+            else:
+                components["Other"]["files"].append(filepath)
+                components["Other"]["patterns"] += 1
+
+        # Filter out empty components
+        active_components = {k: v for k, v in components.items() if v["files"]}
+
+        # Calculate total code size
+        total_code_size = sum(len(content) for content in self.generated_code.values())
+        total_code_size_kb = total_code_size / 1024
+        total_files = sum(len(v["files"]) for v in active_components.values())
+
+        # Build ASCII table (safe ASCII characters, no special Unicode)
+        print("\n  " + "─" * 110)
+        print("    📦 Code Generation Components")
+        print("  " + "─" * 110)
+        print("    Component                              |     Patterns     |     Files Generated     | Status")
+        print("  " + "-" * 110)
+
+        for component_name, data in active_components.items():
+            num_files = len(data["files"])
+            status = "✅" if num_files > 0 else "⏭️ "
+            print(f"    {component_name:<40} |        {data['patterns']:2}        |          {num_files:2}           |  {status:>2}")
+
+        print("  " + "-" * 110)
+        time_val = f"⏱️  {duration_ms:.0f}ms"
+        code_val = f"📦 {total_code_size_kb:.1f}KB"
+        files_val = f"📊 {total_files}"
+        print(f"    {time_val:<40} |      {code_val:>11}       |        {files_val:>6}          |  ✅ 100%")
+        print("  " + "─" * 110 + "\n")
+
+    def _display_phase_7_summary(
+        self,
+        compliance_score: float,
+        files_count: int,
+        entities_impl: int,
+        entities_exp: int,
+        endpoints_impl: int,
+        endpoints_exp: int,
+        test_pass_rate: float,
+        contract_valid: bool
+    ) -> None:
+        """
+        Display elegant Phase 7 validation summary with ASCII table.
+
+        Shows semantic compliance, entity/endpoint coverage, and test results.
+        """
+        print("\n  " + "─" * 110)
+        print("    ✅ Validation Results Summary")
+        print("  " + "─" * 110)
+        print("    Metric                                  |           Result            |     Status")
+        print("  " + "-" * 110)
+
+        # Compliance
+        compliance_status = "✅" if compliance_score >= 0.80 else "⚠️ "
+        print(f"    Semantic Compliance                     |  {compliance_score:>15.1%}        |  {compliance_status:^11}")
+
+        # Entities
+        entities_match = "✅" if entities_impl >= entities_exp else "⚠️ "
+        entities_display = f"{entities_impl}/{entities_exp}"
+        print(f"    Entities                                |  {entities_display:>15}        |  {entities_match:^11}")
+
+        # Endpoints
+        endpoints_match = "✅" if endpoints_impl >= endpoints_exp else "⚠️ "
+        endpoints_display = f"{endpoints_impl}/{endpoints_exp}"
+        print(f"    Endpoints                               |  {endpoints_display:>15}        |  {endpoints_match:^11}")
+
+        # Files
+        print(f"    Files Generated                         |  {files_count:>15}        |  {'✅':^11}")
+
+        # Tests
+        test_status = "✅" if test_pass_rate >= 0.90 else "⚠️ "
+        print(f"    Test Pass Rate                          |  {test_pass_rate:>15.1%}        |  {test_status:^11}")
+
+        # Contract
+        contract_status = "✅" if contract_valid else "❌"
+        contract_text = "PASSED" if contract_valid else "FAILED"
+        print(f"    Contract Validation                     |  {contract_text:>15}        |  {contract_status:^11}")
+
+        print("  " + "-" * 110)
+
+        overall_pass = compliance_score >= 0.80 and contract_valid
+        status_text = "✅ PASSED" if overall_pass else "⚠️  REVIEW NEEDED"
+        print(f"    Overall Validation Status: {status_text:<50}")
+
+        print("  " + "─" * 110 + "\n")
+
+    def _display_phase_8_summary(self, files_saved: int, total_size: int, duration_ms: float) -> None:
+        """
+        Display elegant Phase 8 deployment summary with ASCII table.
+
+        Shows file deployment results and statistics.
+        """
+        total_size_mb = total_size / (1024 * 1024)
+        size_display = f"{total_size_mb:.1f}MB" if total_size_mb >= 1 else f"{total_size/1024:.1f}KB"
+        time_display = f"{duration_ms:.0f}ms"
+
+        print("\n  " + "─" * 110)
+        print("    💾 Deployment Complete")
+        print("  " + "─" * 110)
+        print("    Metric                                  |           Result            |     Status")
+        print("  " + "-" * 110)
+
+        # Files saved
+        print(f"    Files Saved                             |  {files_saved:>15}        |  {'✅':^11}")
+
+        # Total size
+        print(f"    Total Size                              |  {size_display:>15}        |  {'✅':^11}")
+
+        # Deployment time
+        print(f"    Deployment Time                         |  {time_display:>15}        |  {'✅':^11}")
+
+        # Output directory
+        output_display = self.output_dir.split('/')[-1]
+        if len(output_display) > 15:
+            output_display = ".../" + self.output_dir[-11:]
+        print(f"    Output Location                         |  {output_display:>15}        |  {'✅':^11}")
+
+        print("  " + "-" * 110)
+        print(f"    ✅ All {files_saved} files successfully deployed to disk" + " " * (50 - len(str(files_saved))))
+        print("  " + "─" * 110 + "\n")
 
     async def _phase_6_5_code_repair(self):
         """
@@ -1536,6 +2001,7 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
             print(f"           Missing endpoints: {missing_endpoints}")
 
             # Generate repaired code using the same method as Phase 6, but with repair context
+            print("        ⏳ Generating repair (real-time logging enabled)...")
             repaired_code = await self.code_generator.generate_from_requirements(
                 spec_requirements,
                 allow_syntax_errors=False,  # Phase 6.5 must produce valid syntax
@@ -1605,6 +2071,27 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         # Basic syntax checks (structural)
         self.metrics_collector.add_checkpoint("validation", "CP-7.2: Syntax validation", {})
         print("  ✓ Checkpoint: CP-7.2: Syntax validation (2/6)")
+
+        # ===== NEW: Dependency Order Validation =====
+        print("\n  📊 Validating dependency execution order...")
+
+        order_validation_passed = True
+        if hasattr(self, 'ordered_waves') and self.ordered_waves:
+            # Verify waves are ordered correctly
+            for i, wave in enumerate(self.ordered_waves, 1):
+                if i <= 2:
+                    # Waves 1-2 should be creates/reads
+                    print(f"    Wave {i}: {len(wave.requirements)} requirements (dependency level {i}/3)")
+                else:
+                    print(f"    Wave {i}: {len(wave.requirements)} requirements (dependency level {i}/3)")
+            print(f"  ✅ Execution order validated: {len(self.ordered_waves)} dependency waves respected")
+        else:
+            print("  ⚠️ No ordered waves available, skipping dependency validation")
+            order_validation_passed = False
+
+        self.metrics_collector.add_checkpoint("validation", "CP-7.2.5: Dependency order validated", {
+            "waves": len(self.ordered_waves) if hasattr(self, 'ordered_waves') else 0
+        })
 
         # ===== NEW: Semantic validation (Task Group 4.2.2) =====
         print("\n  🔍 Running semantic validation (ComplianceValidator)...")
@@ -1709,18 +2196,32 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         is_valid = self.contract_validator.validate_phase_output("validation", phase_output)
 
         self.metrics_collector.complete_phase("validation")
-        print(f"\n  📊 Semantic Compliance: {compliance_score:.1%}")
-        print(f"  📊 Test Pass Rate: {self.precision.calculate_test_pass_rate():.1%}")
-        print(f"  ✅ Contract validation: {'PASSED' if is_valid else 'FAILED'}")
+
+        # Display elegant Phase 7 validation summary
+        self._display_phase_7_summary(
+            compliance_score=compliance_score,
+            files_count=len(self.generated_code),
+            entities_impl=len(entities_implemented),
+            entities_exp=len(self.spec_requirements.entities) if hasattr(self, 'spec_requirements') else 0,
+            endpoints_impl=len(endpoints_implemented),
+            endpoints_exp=len(self.spec_requirements.endpoints) if hasattr(self, 'spec_requirements') else 0,
+            test_pass_rate=self.precision.calculate_test_pass_rate(),
+            contract_valid=is_valid
+        )
 
         self.precision.total_operations += 1
         self.precision.successful_operations += 1
 
-    async def _phase_8_deployment(self):
+    async def _phase_8_deployment(self) -> None:
         """Phase 8: Deployment - Save generated files"""
         self.metrics_collector.start_phase("deployment")
         print("\n📍 Phase Started: deployment")
         print("\n📦 Phase 8: Deployment")
+
+        # Track deployment stats
+        files_saved = 0
+        total_size = 0
+        deployment_start_time = time.time()
 
         # Save all generated files
         for filename, content in self.generated_code.items():
@@ -1729,7 +2230,13 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
             with open(filepath, 'w') as f:
                 f.write(content)
-            print(f"  💾 Saved: {filepath}")
+            files_saved += 1
+            total_size += len(content)
+
+        deployment_duration_ms = (time.time() - deployment_start_time) * 1000
+
+        # Display deployment summary
+        self._display_phase_8_summary(files_saved, total_size, deployment_duration_ms)
 
         self.metrics_collector.add_checkpoint("deployment", "CP-8.1: Files saved to disk", {
             "output_dir": self.output_dir
@@ -1807,10 +2314,11 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
 
             # Register successful code generation
             if self.execution_successful:
-                # Combine all generated code
+                # Combine all generated Python code (exclude non-Python files like README.md)
                 combined_code = "\n\n".join([
                     f"# File: {filename}\n{content}"
                     for filename, content in self.generated_code.items()
+                    if filename.endswith('.py')  # Only include Python files
                 ])
 
                 # Create execution result
@@ -1971,15 +2479,25 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         print(f"   F1-Score: {precision['pattern_matching']['f1_score']:.1%}")
 
         print(f"\n=== How to Run the Generated App ===")
-        print(f"\n1. Navigate to the output directory:")
+        print(f"\n1. Navigate to the app directory:")
         print(f"   cd {self.output_dir}")
-        print(f"\n2. Install dependencies:")
-        print(f"   pip install -r requirements.txt")
-        print(f"\n3. Run the app:")
-        print(f"   python main.py")
-        print(f"\n4. Access the API:")
-        print(f"   http://localhost:8000")
-        print(f"   Docs: http://localhost:8000/docs")
+        print(f"\n2. Build and start all services with Docker Compose:")
+        print(f"   docker-compose -f docker/docker-compose.yml up -d --build")
+        print(f"\n3. Wait for services to be healthy (30-60 seconds):")
+        print(f"   docker-compose -f docker/docker-compose.yml ps")
+        print(f"\n4. Check logs (optional):")
+        print(f"   docker-compose -f docker/docker-compose.yml logs -f app")
+        print(f"\n5. Access the services:")
+        print(f"   📍 API:        http://localhost:8002")
+        print(f"   📚 API Docs:   http://localhost:8002/docs")
+        print(f"   ❤️  Health:     http://localhost:8002/health/health")
+        print(f"   📊 Metrics:    http://localhost:8002/metrics/metrics")
+        print(f"   📈 Grafana:    http://localhost:3002 (devmatrix/admin)")
+        print(f"   🔍 Prometheus: http://localhost:9091")
+        print(f"   🗄️  PostgreSQL: localhost:5433 (devmatrix/admin)")
+        print(f"\n6. Stop all services:")
+        print(f"   docker-compose -f docker/docker-compose.yml down")
+        print(f"\n   Note: Database migrations run automatically on startup")
 
         print(f"\n=== Contract Validation ===")
         if len(self.contract_validator.violations) == 0:

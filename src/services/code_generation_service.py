@@ -69,7 +69,7 @@ try:
 except ImportError:
     DAG_SYNC_AVAILABLE = False
 
-logger = StructuredLogger("code_generation_service", output_json=True)
+logger = StructuredLogger("code_generation_service", output_json=False)
 
 
 class CodeGenerationService:
@@ -610,6 +610,8 @@ Structure as needed to maintain clarity while implementing ALL requirements."""
         return """You are an expert FastAPI backend engineer specialized in generating
 production-ready APIs from specifications.
 
+IMPORTANT: Always respond in English, regardless of the input language.
+
 Your task is to generate COMPLETE, WORKING code that EXACTLY matches the specification requirements.
 
 CRITICAL RULES:
@@ -650,7 +652,13 @@ CRITICAL RULES:
    - Type hints throughout
    - Docstrings for clarity
 
-7. **Output Format**:
+7. **Observability & Metrics** (for production-mode generation):
+   - HTTP metrics (http_requests_total, http_request_duration_seconds) must be defined ONLY in middleware.py
+   - In metrics.py, IMPORT these metrics from middleware.py - DO NOT redefine them
+   - Business metrics (entity-specific counters/gauges) should be defined in metrics.py
+   - Avoid duplicate metric registrations to prevent CollectorRegistry errors
+
+8. **Output Format**:
    - Organize code logically based on complexity
    - All imports at top
    - Models section
@@ -659,7 +667,7 @@ CRITICAL RULES:
    - Main app initialization
    - Wrap in ```python code blocks
 
-8. **Structure Guidelines** (will be specified in user prompt based on spec complexity):
+9. **Structure Guidelines** (will be specified in user prompt based on spec complexity):
    - Follow the output structure specified in the user prompt
    - Simple specs: Single file is acceptable
    - Complex specs: May use modular structure or multiple sections
@@ -1666,7 +1674,8 @@ Description: {description}
 
 Technology Stack (PRODUCTION ONLY):
 - FastAPI 0.109+ (async web framework)
-- SQLAlchemy 2.0+ with asyncpg (async PostgreSQL)
+- SQLAlchemy 2.0+ with asyncpg (async PostgreSQL runtime)
+- psycopg 3.x (sync PostgreSQL for Alembic migrations)
 - Pydantic v2 with pydantic-settings (config management)
 - Alembic (database migrations)
 - structlog (structured logging)
@@ -1691,7 +1700,7 @@ Generate ONLY the requirements.txt content, no explanations."""
 
         # Use LLM to generate with caching
         response = await self.llm_client.generate_with_caching(
-            task_type="file_generation",
+            task_type="documentation",
             complexity="low",
             cacheable_context={"system_prompt": "You are a Python dependency management expert."},
             variable_prompt=context,
@@ -1840,7 +1849,7 @@ Generate ONLY the README.md content, no additional explanations."""
 
         # Use LLM to generate with caching
         response = await self.llm_client.generate_with_caching(
-            task_type="file_generation",
+            task_type="documentation",
             complexity="medium",
             cacheable_context={"system_prompt": "You are a technical documentation expert specializing in README files for FastAPI projects."},
             variable_prompt=context,
@@ -1932,6 +1941,12 @@ Generate ONLY the README.md content, no additional explanations."""
                 # Prometheus metrics
                 elif "metrics" in purpose_lower or "prometheus" in purpose_lower:
                     files["src/api/routes/metrics.py"] = self._adapt_pattern(p.code, spec_requirements)
+
+            # Production mode: Always use optimized metrics route (prevents metric duplication)
+            if os.getenv("PRODUCTION_MODE") == "true":
+                logger.info("🔨 PRODUCTION_MODE: Using deduplicated metrics route (imports from middleware)")
+                metrics_code = self._generate_metrics_route()
+                files["src/api/routes/metrics.py"] = metrics_code
 
         # Data Layer - Pydantic Models
         elif category == "models_pydantic":
@@ -2130,7 +2145,10 @@ File: src/api/routes/{entity.snake_name}.py
                 docker_compose = self._generate_docker_compose(spec_requirements)
                 files["docker/docker-compose.yml"] = docker_compose
 
-                # Ensure Grafana directories exist
+                # Ensure Prometheus and Grafana configurations exist
+                logger.info("🔨 PRODUCTION_MODE: Generating Prometheus scrape configuration")
+                files["docker/prometheus.yml"] = self._generate_prometheus_config()
+
                 logger.info("🔨 PRODUCTION_MODE: Generating Grafana provisioning files")
                 files["docker/grafana/dashboards/dashboard-provider.yml"] = self._generate_grafana_dashboard_provider()
                 files["docker/grafana/datasources/prometheus.yml"] = self._generate_grafana_prometheus_datasource()
@@ -2531,7 +2549,11 @@ database_url = os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://user:password@localhost:5432/app"
 )
-config.set_main_option("sqlalchemy.url", database_url)
+
+# Alembic requires synchronous connection - convert asyncpg to psycopg
+# postgresql+asyncpg:// -> postgresql://
+sync_database_url = database_url.replace("+asyncpg", "").replace("postgresql://", "postgresql+psycopg://")
+config.set_main_option("sqlalchemy.url", sync_database_url)
 
 # Import models for autogenerate
 from src.models.entities import Base
@@ -2646,6 +2668,7 @@ python-dotenv = "^1.0.0"
 httpx = "^0.25.0"
 aiosqlite = "^0.19.0"
 asyncpg = "^0.29.0"
+psycopg = "^3.1.0"
 pytest = "^7.4.0"
 pytest-asyncio = "^0.21.0"
 structlog = "^24.1.0"
@@ -2688,8 +2711,8 @@ addopts = "--cov=src --cov-report=html --cov-report=term-missing"
     def _generate_env_example(self) -> str:
         """Generate .env.example template."""
         return '''# Database Configuration
-DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/app_db
-DATABASE_URL_ASYNC=postgresql+asyncpg://user:password@localhost:5432/app_db
+DATABASE_URL=postgresql+asyncpg://devmatrix:admin@localhost:5433/app_db
+DATABASE_URL_ASYNC=postgresql+asyncpg://devmatrix:admin@localhost:5433/app_db
 
 # Server Configuration
 HOST=0.0.0.0
@@ -2706,7 +2729,7 @@ ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=30
 
 # CORS
-CORS_ORIGINS=["http://localhost:3000", "http://localhost:8000"]
+CORS_ORIGINS=["http://localhost:3002", "http://localhost:8002"]
 CORS_ALLOW_CREDENTIALS=true
 CORS_ALLOW_METHODS=["*"]
 CORS_ALLOW_HEADERS=["*"]
@@ -2989,6 +3012,13 @@ CMD alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port 8000
     def _generate_docker_compose(self, spec_requirements) -> str:
         """Generate docker-compose.yml with all services."""
         app_name = spec_requirements.metadata.get("app_name", "app")
+
+        # Use ports that don't conflict with DevMatrix services
+        app_port = 8002  # DevMatrix uses 8001
+        postgres_port = 5433  # DevMatrix uses 5432
+        prometheus_port = 9091  # 9090 is often occupied
+        grafana_port = 3002  # 3001 is occupied
+
         return f'''version: '3.8'
 
 services:
@@ -2998,9 +3028,9 @@ services:
       dockerfile: docker/Dockerfile
     container_name: {app_name}_app
     ports:
-      - "8000:8000"
+      - "{app_port}:8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://{app_name}_user:{app_name}_password@postgres:5432/{app_name}_db
+      - DATABASE_URL=postgresql+asyncpg://devmatrix:admin@postgres:5432/{app_name}_db
       - APP_NAME={app_name}
       - ENVIRONMENT=production
       - DEBUG=false
@@ -3023,17 +3053,17 @@ services:
     container_name: {app_name}_postgres
     environment:
       POSTGRES_DB: {app_name}_db
-      POSTGRES_USER: {app_name}_user
-      POSTGRES_PASSWORD: {app_name}_password
+      POSTGRES_USER: devmatrix
+      POSTGRES_PASSWORD: admin
     ports:
-      - "5432:5432"
+      - "{postgres_port}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     networks:
       - app-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U {app_name}_user -d {app_name}_db"]
+      test: ["CMD-SHELL", "pg_isready -U devmatrix -d {app_name}_db"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -3042,7 +3072,7 @@ services:
     image: prom/prometheus:latest
     container_name: {app_name}_prometheus
     ports:
-      - "9090:9090"
+      - "{prometheus_port}:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -3057,11 +3087,11 @@ services:
     image: grafana/grafana:latest
     container_name: {app_name}_grafana
     ports:
-      - "3000:3000"
+      - "{grafana_port}:3000"
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_USER=devmatrix
       - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_SERVER_ROOT_URL=http://localhost:3000
+      - GF_SERVER_ROOT_URL=http://localhost:{grafana_port}
     volumes:
       - grafana-data:/var/lib/grafana
     networks:
@@ -3109,6 +3139,78 @@ datasources:
     editable: true
     jsonData:
       timeInterval: 15s
+'''
+
+    def _generate_prometheus_config(self) -> str:
+        """
+        Generate Prometheus scrape configuration.
+
+        IMPORTANT: Uses service name 'app' and internal port 8000 for Docker networking.
+        The app service exposes port 8000 internally (mapped to 8002 externally in docker-compose).
+        """
+        return '''global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'app-monitor'
+
+scrape_configs:
+  - job_name: 'fastapi-app'
+    metrics_path: '/metrics'
+    static_configs:
+      # Use Docker service name 'app' and INTERNAL port 8000
+      # NOT localhost:8002 (external port) or localhost:8000
+      - targets: ['app:8000']
+        labels:
+          service: 'api'
+          environment: 'production'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+'''
+
+    def _generate_metrics_route(self) -> str:
+        """
+        Generate Prometheus metrics route.
+
+        CRITICAL FIX: IMPORTS http metrics from middleware.py instead of redefining them.
+        This prevents "Duplicated timeseries in CollectorRegistry" error.
+
+        HTTP metrics (http_requests_total, http_request_duration_seconds) are defined
+        in middleware.py where they belong. This file only imports them for exposure.
+        """
+        return '''"""
+Prometheus Metrics Endpoint
+
+Exposes application metrics for Prometheus scraping.
+
+IMPORTANT: HTTP metrics are IMPORTED from middleware.py to avoid duplication.
+Only business-specific metrics should be defined here.
+"""
+
+from fastapi import APIRouter, Response
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+
+# IMPORT HTTP metrics from middleware (DO NOT redefine them here)
+from src.core.middleware import (
+    http_requests_total,
+    http_request_duration_seconds
+)
+
+router = APIRouter()
+
+
+@router.get("/metrics")
+async def metrics():
+    """
+    Prometheus metrics endpoint.
+
+    Returns metrics in Prometheus exposition format.
+    HTTP metrics are defined in middleware.py and imported here.
+    """
+    return Response(
+        content=generate_latest(),
+        media_type=CONTENT_TYPE_LATEST
+    )
 '''
 
     def _validate_production_readiness(self, files: Dict[str, str]) -> Dict[str, Any]:

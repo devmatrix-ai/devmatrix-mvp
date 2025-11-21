@@ -266,6 +266,9 @@ class RetryOrchestrator:
         language = atom_spec.language if hasattr(atom_spec, "language") else "Python"
 
         return f"""You are an expert {language} developer.
+
+IMPORTANT: Always respond in English, regardless of the input language.
+
 Your task is to generate high-quality, production-ready code that:
 1. Follows {language} best practices and conventions
 2. Includes proper type hints and docstrings

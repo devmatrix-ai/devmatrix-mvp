@@ -20,7 +20,7 @@ from src.cognitive.patterns.pattern_bank import PatternBank
 from src.cognitive.signatures.semantic_signature import SemanticTaskSignature
 from src.observability import StructuredLogger
 
-logger = StructuredLogger("pattern_repopulation", output_json=True)
+logger = StructuredLogger("pattern_repopulation", output_json=False)
 
 
 # Production-ready seed patterns

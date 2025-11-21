@@ -87,6 +87,8 @@ class CodeGenerationAgent:
 
     SYSTEM_PROMPT = """You are an expert Python software engineer.
 
+
+IMPORTANT: Always respond in English, regardless of the input language.
 Your role is to:
 1. Understand user requirements clearly
 2. Create detailed implementation plans

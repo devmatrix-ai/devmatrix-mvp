@@ -26,7 +26,7 @@ from datetime import datetime
 from src.models import AtomicUnit, MasterPlan
 from src.observability import StructuredLogger
 
-logger = StructuredLogger("file_writer_service", output_json=True)
+logger = StructuredLogger("file_writer_service", output_json=False)
 
 
 class FileWriterService:

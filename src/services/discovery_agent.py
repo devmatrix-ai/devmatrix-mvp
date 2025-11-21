@@ -31,6 +31,8 @@ logger = get_logger("discovery_agent")
 # DDD Discovery System Prompt
 DISCOVERY_SYSTEM_PROMPT = """You are an expert software architect specializing in Domain-Driven Design (DDD).
 
+IMPORTANT: Always respond in English, regardless of the input language.
+
 Your task is to analyze user requirements and conduct a thorough DDD discovery session.
 
 ## Your Analysis Must Identify:

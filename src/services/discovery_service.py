@@ -27,11 +27,13 @@ from src.llm import EnhancedAnthropicClient
 from src.observability import StructuredLogger
 
 
-logger = StructuredLogger("discovery_service", output_json=True)
+logger = StructuredLogger("discovery_service", output_json=False)
 
 
 # Discovery System Prompt
 DISCOVERY_SYSTEM_PROMPT = """You are an expert software architect and domain-driven design (DDD) specialist.
+
+IMPORTANT: Always respond in English, regardless of the input language.
 
 Your task is to analyze user requests and extract structured domain information for software development.
 

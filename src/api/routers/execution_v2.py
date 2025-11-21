@@ -37,7 +37,7 @@ from src.mge.v2.execution.retry_orchestrator import RetryOrchestrator
 from src.observability import StructuredLogger
 
 
-logger = StructuredLogger("execution_v2_api", output_json=True)
+logger = StructuredLogger("execution_v2_api", output_json=False)
 
 router = APIRouter(prefix="/api/v2/execution", tags=["execution-v2"])
 

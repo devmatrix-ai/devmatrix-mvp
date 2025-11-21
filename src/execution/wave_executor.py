@@ -23,7 +23,7 @@ from ..observability import StructuredLogger
 from ..testing import AcceptanceTestRunner, AcceptanceTestGate
 
 
-logger = StructuredLogger("wave_executor", output_json=True)
+logger = StructuredLogger("wave_executor", output_json=False)
 
 
 class AtomStatus(Enum):

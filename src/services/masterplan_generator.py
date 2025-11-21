@@ -50,6 +50,8 @@ logger = get_logger("masterplan_generator")
 # MasterPlan Generation System Prompt
 MASTERPLAN_SYSTEM_PROMPT = """You are an expert software architect and project planner.
 
+IMPORTANT: Always respond in English, regardless of the input language.
+
 Your task is to generate a complete, executable MasterPlan for implementing a software project based on DDD discovery.
 
 ## MasterPlan Structure:

@@ -32,6 +32,8 @@ class PlanningAgent:
 
     SYSTEM_PROMPT = """You are an expert technical planner for software development.
 
+
+IMPORTANT: Always respond in English, regardless of the input language.
 Your role is to:
 1. Analyze user requests and understand their requirements
 2. Break down complex requests into clear, actionable tasks

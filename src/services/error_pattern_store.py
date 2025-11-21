@@ -12,6 +12,7 @@ Purpose: Enable ML-driven learning from code generation failures
 import asyncio
 import uuid
 import warnings
+import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from dataclasses import dataclass, field
@@ -101,12 +102,45 @@ class ErrorPatternStore:
 
         # Initialize GraphCodeBERT for code-aware embeddings
         try:
-            # Suppress pooler weights warning (cosmetic only, doesn't affect embeddings)
+            # Suppress all transformers/sentence-transformers initialization warnings
             with warnings.catch_warnings():
+                # Blanket suppress all warnings during model loading
+                warnings.simplefilter("ignore")
+                warnings.filterwarnings("ignore", category=UserWarning)
+                warnings.filterwarnings("ignore", category=FutureWarning)
                 warnings.filterwarnings("ignore", message=".*pooler.*")
                 warnings.filterwarnings("ignore", message=".*Some weights.*not initialized.*")
+                warnings.filterwarnings("ignore", message=".*You should probably TRAIN.*")
+                warnings.filterwarnings("ignore", message=".*No sentence-transformers model found.*")
+                warnings.filterwarnings("ignore", message=".*Creating a new one.*")
+                warnings.filterwarnings("ignore", message=".*RobertaModel.*")
+
+                # Suppress transformers logger - all levels during initialization
+                transformers_logger = logging.getLogger("transformers")
+                transformers_logger.setLevel(logging.CRITICAL)
+                transformers_logger.propagate = False
+                transformers_logger.disabled = True
+
+                # Suppress transformers.modeling_utils logger specifically
+                modeling_logger = logging.getLogger("transformers.modeling_utils")
+                modeling_logger.setLevel(logging.CRITICAL)
+                modeling_logger.propagate = False
+                modeling_logger.disabled = True
+
+                # Suppress sentence-transformers logger - all levels
+                st_logger = logging.getLogger("sentence_transformers")
+                st_logger.setLevel(logging.CRITICAL)
+                st_logger.propagate = False
+                st_logger.disabled = True
+
+                self.logger.info("⏳ Loading GraphCodeBERT model (this may take 10-30s on first run)...")
+                import sys
+                sys.stdout.flush()  # Force immediate output
+
                 self.embedding_model = SentenceTransformer('microsoft/graphcodebert-base')
-            self.logger.info("Loaded GraphCodeBERT for error pattern embeddings (768-dim)")
+
+            self.logger.info("✅ Loaded GraphCodeBERT for error pattern embeddings (768-dim)")
+            sys.stdout.flush()  # Force immediate output
         except Exception as e:
             self.logger.error(f"Failed to load GraphCodeBERT: {e}")
             raise

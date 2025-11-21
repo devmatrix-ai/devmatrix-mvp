@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 # System Prompt for Atomic Spec Generation
 ATOMIC_SPEC_SYSTEM_PROMPT = """You are an expert software architect specializing in atomic code decomposition.
 
+IMPORTANT: Always respond in English, regardless of the input language.
+
 Your task is to generate ATOMIC SPECIFICATIONS (not code!) for implementing tasks.
 
 ## Atomic Specification Philosophy:

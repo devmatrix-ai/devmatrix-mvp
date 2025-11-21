@@ -47,6 +47,8 @@ class TestingAgent:
 
     SYSTEM_PROMPT = """You are an expert Python test engineer specializing in pytest.
 
+
+IMPORTANT: Always respond in English, regardless of the input language.
 Your role is to:
 1. Generate comprehensive pytest tests for Python code
 2. Follow pytest best practices and conventions

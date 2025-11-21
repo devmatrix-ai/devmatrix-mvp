@@ -31,7 +31,7 @@ from src.models import MasterPlan, MasterPlanTask, MasterPlanStatus
 from src.observability import StructuredLogger
 
 
-logger = StructuredLogger("mge_v2_orchestration", output_json=True)
+logger = StructuredLogger("mge_v2_orchestration", output_json=False)
 
 
 class MGE_V2_OrchestrationService:

@@ -41,6 +41,8 @@ logger = get_logger("task_executor")
 # Task Execution System Prompt
 TASK_EXECUTION_SYSTEM_PROMPT = """You are an expert software developer.
 
+IMPORTANT: Always respond in English, regardless of the input language.
+
 Your task is to implement a specific feature/task according to detailed specifications.
 
 ## Guidelines:

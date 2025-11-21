@@ -21,7 +21,7 @@ from ..models import AtomicUnit
 from ..observability import StructuredLogger
 
 
-logger = StructuredLogger("retry_orchestrator", output_json=True)
+logger = StructuredLogger("retry_orchestrator", output_json=False)
 
 
 class ErrorCategory(Enum):
