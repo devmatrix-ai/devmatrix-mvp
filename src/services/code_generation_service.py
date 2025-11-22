@@ -2208,8 +2208,28 @@ Generate ONLY the README.md content, no additional explanations."""
                 # Generate initial migration using hardcoded production-ready generator
                 if spec_requirements.entities:
                     logger.info("✅ Generating initial migration (hardcoded production generator)")
+
+                    def _entity_to_dict(entity) -> dict:
+                        """Convert parsed entity to a plain dict for the migration generator."""
+                        fields = []
+                        for f in getattr(entity, "fields", []) or []:
+                            fields.append(
+                                {
+                                    "name": getattr(f, "name", None),
+                                    "type": getattr(f, "type", None),
+                                    "required": getattr(f, "required", None),
+                                    "default": getattr(f, "default", None),
+                                    "constraints": getattr(f, "constraints", None),
+                                }
+                            )
+                        return {
+                            "name": getattr(entity, "name", "Unknown"),
+                            "plural": (getattr(entity, "name", "Unknown") + "s").lower(),
+                            "fields": fields,
+                        }
+
                     migration_code = generate_initial_migration(
-                        [{"name": e.name, "plural": e.name.lower() + "s"} for e in spec_requirements.entities]
+                        [_entity_to_dict(e) for e in spec_requirements.entities]
                     )
                     if migration_code:
                         files["alembic/versions/001_initial.py"] = migration_code

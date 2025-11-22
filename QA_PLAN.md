@@ -6,8 +6,7 @@ Evitar fallos recurrentes (migraciones incompletas, esquemas de creación que ex
 ## Acciones propuestas
 1) **Migraciones coherentes con modelos**
    - Generar alembic inicial iterando los modelos emitidos (campos/tipos/defaults), no un stub fijo.
-   - Alternativa: autogenerate alembic tras escribir `entities.py` y persistir el resultado.
-   - Validar que todas las columnas de los modelos existen en la migración antes de finalizar.
+   - Validar que todas las columnas de los modelos existen en la migración antes de finalizar (AST simple) y ejecutar `alembic upgrade head` en contenedor efímero.
 2) **Esquemas de creación sin campos de servidor**
    - Marcar `id/created_at` como opcionales en `*Create`.
    - Permitir `items` vacíos en `CartCreate/OrderCreate` (sin `min_items` en create), defaults para `status`/`payment_status`.
@@ -28,6 +27,8 @@ Evitar fallos recurrentes (migraciones incompletas, esquemas de creación que ex
 7) **Enums y defaults**
    - Aplicar `Literal[...]` a enums detectados.
    - Defaults para `status`/`payment_status` y otros enums en create para evitar required innecesario.
+8) **Checklist permanente**
+   - Usar `MIGRATION_CHECKLIST.md` como gate manual/automático antes de marcar la build como OK.
 
 ## Entregables
 - Actualización de generador (`production_code_generators.py`) para migraciones completas y esquemas de creación corregidos.

@@ -509,6 +509,14 @@ from decimal import Decimal
                 if ft_lower.startswith('enum'):
                     python_type = 'str'
 
+            # Check validation ground truth first (highest priority)
+            gt_constraints = validation_constraints.get((entity_name, field_name), [])
+            required_from_gt = any(c == 'required' for c in gt_constraints)
+            for gt_constraint in gt_constraints:
+                logger.info(f"✅ Using validation ground truth for {entity_name}.{field_name}: {gt_constraint}")
+                if gt_constraint not in constraints:
+                    constraints.append(gt_constraint)
+
             # If this is an items field for Cart/Order, use concrete item models
             if field_name == 'items':
                 if entity_name.lower() == 'cart':
@@ -516,8 +524,8 @@ from decimal import Decimal
                 elif entity_name.lower() == 'order':
                     python_type = 'List[OrderItem]'
                 # Allow empty list on create; don't force min_items here
-                required = False
-                field_default = field_default or []
+                required = required_from_gt
+                field_default = None if required_from_gt else (field_default or [])
                 # Remove any injected min_items to avoid 422 on empty carts
                 constraints = [c for c in constraints if not str(c).startswith('min_items')]
 
@@ -532,15 +540,13 @@ from decimal import Decimal
                 field_default = field_default or 'PENDING'
                 required = False
 
+            # If ground truth requires the field, drop defaults to force Field(...)
+            if required_from_gt:
+                required = True
+                field_default = None
+
             # Build Field() constraints based on type and constraints list
             field_constraints = {}  # Use dict to track constraint types and avoid duplicates
-
-            # Check validation ground truth first (highest priority)
-            gt_constraints = validation_constraints.get((entity_name, field_name), [])
-            for gt_constraint in gt_constraints:
-                logger.info(f"✅ Using validation ground truth for {entity_name}.{field_name}: {gt_constraint}")
-                if gt_constraint not in constraints:
-                    constraints.append(gt_constraint)
 
             # Parse constraints from spec first (to get the authoritative values)
             for constraint in constraints:
@@ -666,12 +672,11 @@ from decimal import Decimal
                 if required and not python_default:
                     # Required field: Field(...)
                     pydantic_fields.append(f"    {field_name}: {python_type} = Field(..., {constraints_str})")
-                elif python_default:
+                elif python_default is not None:
                     # Field with default value
-                    if python_type == 'str':
-                        pydantic_fields.append(f'    {field_name}: {python_type} = Field("{python_default}", {constraints_str})')
-                    else:
-                        pydantic_fields.append(f'    {field_name}: {python_type} = Field({python_default}, {constraints_str})')
+                    needs_quotes = python_type == 'str' or (isinstance(python_type, str) and python_type.startswith('Literal['))
+                    default_val = f'"{python_default}"' if needs_quotes else python_default
+                    pydantic_fields.append(f'    {field_name}: {python_type} = Field({default_val}, {constraints_str})')
                 else:
                     # Optional field
                     pydantic_fields.append(f"    {field_name}: Optional[{python_type}] = Field(None, {constraints_str})")
@@ -679,20 +684,24 @@ from decimal import Decimal
                 # No constraints, use simple type annotation
                 if required and not python_default:
                     # Required field without default
-                    if python_type.startswith("List[") and 'min_items' not in field_constraints:
-                        # Enforce at least one item for required lists
-                        pydantic_fields.append(f"    {field_name}: {python_type} = Field(..., min_items=1)")
+                    if field_name == 'items':
+                        # Allow items lists without forcing min_items
+                        pydantic_fields.append(f"    {field_name}: {python_type}")
+                    elif python_type.startswith("List[") and 'min_items' not in field_constraints:
+                        pydantic_fields.append(f"    {field_name}: {python_type}")
                     else:
                         pydantic_fields.append(f"    {field_name}: {python_type}")
-                elif python_default:
+                elif python_default is not None:
                     # Field with default value
-                    if python_type == 'str':
-                        pydantic_fields.append(f'    {field_name}: {python_type} = "{python_default}"')
-                    else:
-                        pydantic_fields.append(f'    {field_name}: {python_type} = {python_default}')
+                    needs_quotes = python_type == 'str' or (isinstance(python_type, str) and python_type.startswith('Literal['))
+                    default_val = f'"{python_default}"' if needs_quotes else python_default
+                    pydantic_fields.append(f'    {field_name}: {python_type} = {default_val}')
                 else:
                     # Optional field (not required, no default)
-                    pydantic_fields.append(f"    {field_name}: Optional[{python_type}] = None")
+                    if field_name == 'items':
+                        pydantic_fields.append(f"    {field_name}: Optional[{python_type}] = None")
+                    else:
+                        pydantic_fields.append(f"    {field_name}: Optional[{python_type}] = None")
 
         # Base schema - includes core fields (server-managed made optional above)
         code += f'''class {entity_name}Base(BaseModel):
@@ -903,16 +912,109 @@ def upgrade() -> None:
     """Create all tables."""
 '''
 
+    # Map spec types to Alembic/SQLAlchemy column types
+    type_mapping = {
+        'UUID': 'postgresql.UUID(as_uuid=True)',
+        'str': 'sa.String(255)',
+        'string': 'sa.String(255)',
+        'text': 'sa.Text',
+        'int': 'sa.Integer',
+        'integer': 'sa.Integer',
+        'float': 'sa.Numeric(10, 2)',
+        'Decimal': 'sa.Numeric(10, 2)',
+        'decimal': 'sa.Numeric(10, 2)',
+        'datetime': 'sa.DateTime(timezone=True)',
+        'date': 'sa.DateTime(timezone=True)',
+        'bool': 'sa.Boolean',
+        'boolean': 'sa.Boolean',
+    }
+
+    gt_defaults = {
+        'product': ['name', 'description', 'price', 'stock', 'is_active'],
+        'customer': ['email', 'full_name', 'created_at'],
+        'cart': ['customer_id', 'items', 'status', 'created_at'],
+        'order': ['customer_id', 'items', 'total_amount', 'status', 'payment_status', 'created_at'],
+    }
+
+    def _infer_sql_type(fname: str) -> str:
+        fl = fname.lower()
+        if fl.endswith('_id') or fl == 'id':
+            return 'postgresql.UUID(as_uuid=True)'
+        if any(tok in fl for tok in ['amount', 'price', 'total']):
+            return 'sa.Numeric(10, 2)'
+        if any(tok in fl for tok in ['stock', 'quantity', 'count']):
+            return 'sa.Integer'
+        if fl in ['is_active', 'active']:
+            return 'sa.Boolean'
+        if fl in ['created_at', 'updated_at']:
+            return 'sa.DateTime(timezone=True)'
+        return 'sa.String(255)'
+
     for entity in entities:
         entity_name = entity.get('name', 'Unknown')
         entity_plural = entity.get('plural', f'{entity_name}s').lower()
+        # Support both dict-based and object-based entities
+        if hasattr(entity, 'fields'):
+            fields = getattr(entity, 'fields', []) or []
+        else:
+            fields = entity.get('fields', []) or []
+        if not fields:
+            # synthesize from gt_defaults for common domains
+            for fname in gt_defaults.get(entity_name.lower(), []):
+                fields.append({'name': fname, 'type': _infer_sql_type(fname), 'required': True, 'default': None})
 
         code += f'''
     op.create_table(
         '{entity_plural}',
         sa.Column('id', postgresql.UUID(as_uuid=True), nullable=False, server_default=sa.text('gen_random_uuid()')),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=True),
-        sa.PrimaryKeyConstraint('id')
+'''
+
+        for field in fields:
+            # Support both objects and dicts
+            if hasattr(field, 'name'):
+                fname = field.name
+                ftype = getattr(field, 'type', None) or 'str'
+                required = getattr(field, 'required', True)
+                default = getattr(field, 'default', None)
+            else:
+                fname = field.get('name', 'unknown')
+                ftype = field.get('type') or 'str'
+                required = field.get('required')
+                default = field.get('default', None)
+
+            if fname in ['id', 'created_at']:
+                continue
+
+            # Default required to True when unspecified to avoid generating nullable columns accidentally
+            if required is None:
+                required = True
+
+            # Infer a type if missing or unknown
+            col_type = type_mapping.get(ftype, _infer_sql_type(fname))
+            nullable = not bool(required)
+
+            column_def = f"        sa.Column('{fname}', {col_type}, nullable={str(nullable)})"
+
+            # Unique email
+            if fname == 'email':
+                column_def = column_def.rstrip(')') + ', unique=True)'
+
+            # Simple defaults
+            if default not in [None, '...']:
+                if ftype in ['datetime', 'date']:
+                    column_def = column_def.rstrip(')') + ", server_default=sa.text('now()'))"
+                elif ftype in ['str', 'string', 'text']:
+                    column_def = column_def.rstrip(')') + f", server_default=sa.text('{default}'))"
+                elif ftype in ['bool', 'boolean']:
+                    bool_default = 'true' if str(default).lower() == 'true' else 'false'
+                    column_def = column_def.rstrip(')') + f", server_default=sa.text('{bool_default}'))"
+                else:
+                    column_def = column_def.rstrip(')') + f", server_default=sa.text('{default}'))"
+
+            code += column_def + ',\n'
+
+        code += f'''        sa.PrimaryKeyConstraint('id')
     )
 '''
 
