@@ -2095,19 +2095,19 @@ Generate ONLY the README.md content, no additional explanations."""
             for p in category_patterns:
                 purpose_lower = p.signature.purpose.lower()
                 if "pytest fixtures" in purpose_lower or "conftest" in purpose_lower:
-                    files["tests/conftest.py"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["tests/conftest.py"] = self._adapt_pattern(p.code, spec_requirements, skip_jinja=True)
                 elif "test data factories" in purpose_lower or "factories" in purpose_lower:
-                    files["tests/factories.py"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["tests/factories.py"] = self._adapt_pattern(p.code, spec_requirements, skip_jinja=True)
                 elif "unit tests for pydantic" in purpose_lower or "test_models" in purpose_lower:
-                    files["tests/unit/test_models.py"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["tests/unit/test_models.py"] = self._adapt_pattern(p.code, spec_requirements, skip_jinja=True)
                 elif "unit tests for repository" in purpose_lower or "test_repositories" in purpose_lower:
-                    files["tests/unit/test_repositories.py"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["tests/unit/test_repositories.py"] = self._adapt_pattern(p.code, spec_requirements, skip_jinja=True)
                 elif "unit tests for service" in purpose_lower or "test_services" in purpose_lower:
-                    files["tests/unit/test_services.py"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["tests/unit/test_services.py"] = self._adapt_pattern(p.code, spec_requirements, skip_jinja=True)
                 elif "integration tests" in purpose_lower or "test_api" in purpose_lower:
-                    files["tests/integration/test_api.py"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["tests/integration/test_api.py"] = self._adapt_pattern(p.code, spec_requirements, skip_jinja=True)
                 elif "tests for logging" in purpose_lower or "observability" in purpose_lower:
-                    files["tests/test_observability.py"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["tests/test_observability.py"] = self._adapt_pattern(p.code, spec_requirements, skip_jinja=True)
 
         # Docker infrastructure
         elif category == "docker_infrastructure":
@@ -2203,7 +2203,7 @@ Generate ONLY the README.md content, no additional explanations."""
                 if "alembic/script.py.mako" not in found_files:
                     logger.info("🔨 Hardcoded generator: Generating alembic/script.py.mako (no pattern in PatternBank)")
                     alembic_script = self._generate_alembic_script_template()
-                    files["alembic/script.py.mako"] = alembic_script
+                    files["alembic/script.py.mako"] = self._adapt_pattern(alembic_script, spec_requirements, skip_jinja=True)
 
                 # Generate initial migration using hardcoded production-ready generator
                 if spec_requirements.entities:
@@ -2265,7 +2265,7 @@ Generate ONLY the README.md content, no additional explanations."""
 
         return files
 
-    def _adapt_pattern(self, pattern_code: str, spec_requirements, current_entity=None) -> str:
+    def _adapt_pattern(self, pattern_code: str, spec_requirements, current_entity=None, skip_jinja: bool = False) -> str:
         """
         Adapt pattern code to spec requirements (Task Group 8).
 
@@ -2326,19 +2326,20 @@ Generate ONLY the README.md content, no additional explanations."""
             context["entity_name"] = entity_snake  # For function names like get_{{entity_name}}
             context["ENTITY_NAME"] = current_entity.name  # For class names like {{ENTITY_NAME}}Response
 
-        # Render Jinja2 template (handles {{ }} and {% %} syntax)
-        # IMPORTANT: Always render Jinja2 templates - Python keywords like 'pass' are valid inside code blocks
-        try:
-            template = Template(pattern_code)
-            rendered = template.render(context)
-        except Exception as e:
-            # If Jinja2 rendering fails (e.g., syntax error in template),
-            # fall back to simple string replacement
-            logger.warning(
-                f"Jinja2 template rendering failed: {e}. Falling back to simple replacement.",
-                extra={"error": str(e)}
-            )
-            rendered = pattern_code
+        rendered = pattern_code
+
+        # Render Jinja2 template (handles {{ }} and {% %} syntax) unless explicitly skipped
+        if not skip_jinja:
+            try:
+                template = Template(pattern_code)
+                rendered = template.render(context)
+            except Exception as e:
+                # If Jinja2 rendering fails (e.g., syntax error in template),
+                # fall back to simple string replacement without breaking the pipeline
+                logger.warning(
+                    f"Jinja2 template rendering failed: {e}. Falling back to simple replacement.",
+                    extra={"error": str(e)}
+                )
 
         # Backward compatibility: also replace simple placeholder style {APP_NAME}
         adapted = rendered

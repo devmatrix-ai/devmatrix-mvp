@@ -251,11 +251,20 @@ Pydantic Request/Response Schemas
 
 Type-safe data validation for API endpoints.
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
 from uuid import UUID
 from typing import List, Optional, Literal
 from decimal import Decimal
+
+
+class BaseSchema(BaseModel):
+    """Base schema with UUID-friendly JSON encoding."""
+
+    model_config = ConfigDict(
+        json_encoders={UUID: str},
+        from_attributes=True,
+    )
 
 
 '''
@@ -413,7 +422,25 @@ from decimal import Decimal
     for entity in entities:
         entity_name = entity.get('name', 'Unknown')
         entity_lower = entity_name.lower()
-        fields_list = entity.get('fields', [])
+        fields_list = entity.get('fields', []) or []
+
+        # If ground truth has constraints for fields not present in the spec, synthesize those fields
+        existing_field_names = {f.name if hasattr(f, "name") else f.get("name") for f in fields_list}
+        missing_from_gt = []
+        for (gt_entity, gt_field), gt_cons in validation_constraints.items():
+            if gt_entity == entity_name and gt_field not in existing_field_names:
+                missing_from_gt.append((gt_field, gt_cons))
+        for fname, gt_cons in missing_from_gt:
+            inferred_type = _infer_type(fname, ",".join(gt_cons))
+            required_flag = any(c == 'required' for c in gt_cons)
+            fields_list.append({
+                'name': fname,
+                'type': inferred_type,
+                'required': required_flag,
+                'default': None,
+                'constraints': list(gt_cons),
+            })
+            existing_field_names.add(fname)
 
         # Build field definitions for Pydantic
         pydantic_fields = []
@@ -704,11 +731,20 @@ from decimal import Decimal
                         pydantic_fields.append(f"    {field_name}: Optional[{python_type}] = None")
 
         # Base schema - includes core fields (server-managed made optional above)
-        code += f'''class {entity_name}Base(BaseModel):
+        base_fields = []
+        managed_fields = []
+        for line in pydantic_fields:
+            fname = line.strip().split(':', 1)[0]
+            if fname in ['id', 'created_at']:
+                managed_fields.append(line)
+            else:
+                base_fields.append(line)
+
+        code += f'''class {entity_name}Base(BaseSchema):
     """Base schema for {entity_lower}."""
 '''
-        if pydantic_fields:
-            code += '\n'.join(pydantic_fields) + '\n'
+        if base_fields:
+            code += '\n'.join(base_fields) + '\n'
         else:
             code += '    pass\n'
         code += '\n\n'
@@ -722,13 +758,13 @@ from decimal import Decimal
 '''
 
         # Update schema - all fields optional for partial updates
-        code += f'''class {entity_name}Update(BaseModel):
+        code += f'''class {entity_name}Update(BaseSchema):
     """Schema for updating {entity_lower}."""
 '''
-        if pydantic_fields:
+        if base_fields:
             # Make all fields optional for updates, preserving Field() constraints
             update_fields = []
-            for field_line in pydantic_fields:
+            for field_line in base_fields:
                 # Extract field name and type
                 field_def = field_line.strip()
                 if ': ' in field_def:
@@ -774,17 +810,28 @@ from decimal import Decimal
         # Response schema (WITH Response suffix for consistency with routes)
         code += f'''class {entity_name}Response({entity_name}Base):
     """Response schema for {entity_lower}."""
-    id: UUID
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
 '''
+        response_lines = list(base_fields)
+        # Ensure managed fields are present (id, created_at) and required
+        for mline in managed_fields or []:
+            mname = mline.strip().split(':', 1)[0]
+            if mname == 'created_at':
+                response_lines.append("    created_at: datetime")
+                continue
+            # Preserve pattern if present
+            import re
+            pattern_match = re.search(r'pattern=[^,)]+', mline)
+            pattern_part = f", {pattern_match.group(0)}" if pattern_match else ""
+            response_lines.append(f"    {mname}: UUID = Field(...{pattern_part})")
+        if not managed_fields:
+            response_lines.extend([
+                "    id: UUID",
+                "    created_at: datetime",
+            ])
+        code += '\n'.join(response_lines) + '\n\n'
 
         # List schema (uses {entity_name}Response for items)
-        code += f'''class {entity_name}List(BaseModel):
+        code += f'''class {entity_name}List(BaseSchema):
     """List response with pagination."""
     items: List[{entity_name}Response]
     total: int
