@@ -1421,12 +1421,14 @@ validations:
     constraint: required
     description: Customer email is required
 
-  # Example 8: Status fields with fixed values need enum constraint
+  # Example 8: Status fields with fixed values need enum constraint WITH VALUES
+  # If spec says: status: enum ["PENDING_PAYMENT", "PAID", "CANCELLED"]
+  # Then extract the values and write: constraint: enum=PENDING_PAYMENT,PAID,CANCELLED
   V8_order_status:
     entity: Order
     field: status
-    constraint: enum
-    description: Order status must be one of allowed values
+    constraint: enum=PENDING_PAYMENT,PAID,CANCELLED
+    description: Order status must be PENDING_PAYMENT, PAID, or CANCELLED
 ```
 
 CRITICAL YAML FORMATTING RULES:

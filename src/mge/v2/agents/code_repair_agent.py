@@ -617,7 +617,20 @@ from datetime import datetime, timezone
                     constraint_value = int(length_match.group(2))
                     logger.info(f"Parsed GT validation '{validation_str}' → {entity_name}.{field_name} {constraint_type}={constraint_value}")
 
-                # Format 3: Keywords without values
+                # Format 3: "enum=VALUE1,VALUE2,VALUE3" → Literal["VALUE1", "VALUE2", "VALUE3"]
+                elif constraint_str.startswith('enum='):
+                    # Extract enum values: "enum=OPEN,CLOSED" → ["OPEN", "CLOSED"]
+                    values_str = constraint_str[5:]  # Remove "enum=" prefix
+                    enum_values = [v.strip() for v in values_str.split(',')]
+                    if enum_values:
+                        constraint_type = 'enum'
+                        constraint_value = enum_values  # List of enum values
+                        logger.info(f"Parsed GT validation '{validation_str}' → {entity_name}.{field_name} enum={enum_values}")
+                    else:
+                        logger.warning(f"Empty enum values: {validation_str}")
+                        return False
+
+                # Format 4: Keywords without values
                 elif constraint_str.lower().replace(' ', '_') in ['required', 'uuid_format', 'email_format', 'enum']:
                     constraint_normalized = constraint_str.lower().replace(' ', '_')
 
@@ -639,8 +652,9 @@ from datetime import datetime, timezone
                         logger.info(f"Parsed GT validation '{validation_str}' → {entity_name}.{field_name} required")
 
                     elif constraint_normalized == 'enum':
-                        # Enum handling is complex - skip for now
-                        logger.warning(f"Enum validation not yet supported: {validation_str}")
+                        # Enum without values - can't implement without knowing allowed values
+                        logger.warning(f"Enum validation without values not supported: {validation_str}")
+                        logger.warning(f"Hint: Use format 'enum=VALUE1,VALUE2,VALUE3' to specify allowed values")
                         return False
 
                 else:
@@ -823,8 +837,35 @@ from datetime import datetime, timezone
             # This is a simplified implementation that handles common cases
             # For production, should use full AST parsing and manipulation
 
+            # Special handling for 'enum' constraint - changes type hint to Literal
+            if constraint_type == 'enum' and isinstance(constraint_value, list):
+                # For enum, we need to change the type from str to Literal["VALUE1", "VALUE2"]
+                # Pattern: field_name: str = ... → field_name: Literal["VALUE1", "VALUE2"] = ...
+
+                # Build Literal type hint
+                values_quoted = ', '.join([f'"{v}"' for v in constraint_value])
+                literal_type = f'Literal[{values_quoted}]'
+
+                # Ensure Literal is imported
+                self._ensure_literal_import(schemas_file)
+
+                # Find and replace type annotation
+                # Match: status: str = ...
+                field_type_pattern = rf'(\s+{field_name}):\s*(?:Optional\[)?str(?:\])?\s*='
+
+                def replace_with_literal(match):
+                    indent_and_name = match.group(1)
+                    return f'{indent_and_name}: {literal_type} ='
+
+                if re.search(field_type_pattern, source_code, re.MULTILINE):
+                    source_code = re.sub(field_type_pattern, replace_with_literal, source_code, flags=re.MULTILINE, count=1)
+                    logger.info(f"Changed {entity_name}.{field_name} type to {literal_type}")
+                else:
+                    logger.warning(f"Could not find field {field_name} with str type to change to Literal")
+                    return False
+
             # Special handling for 'required' constraint
-            if constraint_type == 'required':
+            elif constraint_type == 'required':
                 # For required fields, we need to ensure Field(...) without default=None
                 # Pattern: field_name: Type = Field(default=None, ...) → Field(...)
                 field_pattern = rf'(\s+{field_name}:\s*[\w\[\]]+)\s*=\s*Field\((.*?)\)'
@@ -923,4 +964,74 @@ from datetime import datetime, timezone
 
         except Exception as e:
             logger.error(f"Failed to add constraint to {entity_name}.{field_name}: {e}")
+            return False
+
+    def _ensure_literal_import(self, schemas_file: Path) -> bool:
+        """
+        Ensure that 'from typing import Literal' is imported in schemas.py.
+
+        Args:
+            schemas_file: Path to schemas.py file
+
+        Returns:
+            True if import was added or already exists, False on error
+        """
+        try:
+            import re
+
+            # Read current schemas.py
+            with open(schemas_file, 'r') as f:
+                source_code = f.read()
+
+            # Check if Literal is already imported
+            if re.search(r'from typing import.*\bLiteral\b', source_code, re.MULTILINE):
+                logger.debug("Literal already imported in schemas.py")
+                return True
+
+            # Find the typing import line and add Literal to it
+            # Pattern: from typing import X, Y, Z
+            typing_import_pattern = r'(from typing import )([^\n]+)'
+
+            match = re.search(typing_import_pattern, source_code)
+            if match:
+                # Add Literal to existing typing imports
+                prefix = match.group(1)
+                imports = match.group(2)
+
+                # Add Literal to the import list
+                new_imports = imports.strip() + ', Literal'
+                new_line = f'{prefix}{new_imports}'
+
+                source_code = re.sub(typing_import_pattern, new_line, source_code, count=1)
+
+                # Write back modified code
+                with open(schemas_file, 'w') as f:
+                    f.write(source_code)
+
+                logger.info("Added Literal to typing imports in schemas.py")
+                return True
+            else:
+                # No typing import found, add one at the top after pydantic import
+                # Find pydantic import line
+                pydantic_pattern = r'(from pydantic import [^\n]+\n)'
+                match = re.search(pydantic_pattern, source_code)
+
+                if match:
+                    # Insert typing import after pydantic import
+                    insert_pos = match.end()
+                    new_import = 'from typing import Literal\n'
+                    source_code = source_code[:insert_pos] + new_import + source_code[insert_pos:]
+
+                    # Write back modified code
+                    with open(schemas_file, 'w') as f:
+                        f.write(source_code)
+
+                    logger.info("Added 'from typing import Literal' to schemas.py")
+                    return True
+                else:
+                    logger.warning("Could not find pydantic import to insert Literal import after")
+                    return False
+
+        except Exception as e:
+            logger.error(f"Failed to ensure Literal import: {e}")
             return False
