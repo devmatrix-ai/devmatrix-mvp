@@ -33,10 +33,10 @@ def validate_python_syntax(code: str, filename: str = "generated") -> bool:
 
 def generate_entities(entities: List[Dict[str, Any]]) -> str:
     """
-    Generate SQLAlchemy ORM entities with proper table names and columns.
+    Generate SQLAlchemy ORM entities dynamically from entity fields.
 
     Args:
-        entities: List of entity dicts with name, fields, etc.
+        entities: List of entity dicts with 'name', 'plural', and 'fields'
 
     Returns:
         Complete entities.py code
@@ -46,7 +46,7 @@ SQLAlchemy ORM Models
 
 Database entity definitions with proper table names and columns.
 """
-from sqlalchemy import Column, String, Boolean, DateTime, Text, Integer, Numeric
+from sqlalchemy import Column, String, Boolean, DateTime, Text, Integer, Numeric, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime, timezone
 import uuid
@@ -55,9 +55,26 @@ from src.core.database import Base
 
 '''
 
+    # Type mapping from spec types to SQLAlchemy types
+    type_mapping = {
+        'UUID': 'UUID(as_uuid=True)',
+        'str': 'String(255)',
+        'string': 'String(255)',
+        'int': 'Integer',
+        'integer': 'Integer',
+        'Decimal': 'Numeric(10, 2)',
+        'decimal': 'Numeric(10, 2)',
+        'float': 'Numeric(10, 2)',
+        'datetime': 'DateTime(timezone=True)',
+        'bool': 'Boolean',
+        'boolean': 'Boolean',
+        'text': 'Text',
+    }
+
     for entity in entities:
         entity_name = entity.get('name', 'Unknown')
         entity_plural = entity.get('plural', f'{entity_name}s').lower()
+        fields = entity.get('fields', [])
 
         code += f'''
 class {entity_name}Entity(Base):
@@ -68,46 +85,88 @@ class {entity_name}Entity(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 '''
 
-        # Add standard fields for each entity
-        if entity_name == 'Product':
-            code += '''    name = Column(String(255), nullable=False)
-    price = Column(Numeric(10, 2), nullable=False)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+        # Generate columns dynamically from entity fields
+        # Skip system fields that are added automatically (id, created_at, updated_at)
+        for field in fields:
+            field_name = field.name
 
-    def __repr__(self):
-        return f"<Product {self.id}: {getattr(self, 'name', 'N/A')}>"
-'''
-        elif entity_name == 'Customer':
-            code += '''    email = Column(String(255), nullable=False, unique=True)
-    name = Column(String(255), nullable=False)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+            # Skip system fields - they are added separately
+            if field_name in ['id', 'created_at', 'updated_at']:
+                continue
 
-    def __repr__(self):
-        return f"<Customer {self.id}: {getattr(self, 'email', 'N/A')}>"
-'''
-        elif entity_name == 'Cart':
-            code += '''    customer_id = Column(UUID(as_uuid=True), nullable=False)
-    total_price = Column(Numeric(10, 2), default=0)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+            field_type = field.type
+            is_required = field.required
+            has_default = field.default is not None
+            constraints = field.constraints
 
-    def __repr__(self):
-        return f"<Cart {self.id}: {getattr(self, 'customer_id', 'N/A')}>"
-'''
-        elif entity_name == 'Order':
-            code += '''    customer_id = Column(UUID(as_uuid=True), nullable=False)
-    total_price = Column(Numeric(10, 2), nullable=False)
-    status = Column(String(50), default="pending")
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+            # Map field type to SQLAlchemy type
+            sql_type = type_mapping.get(field_type, 'String(255)')
 
+            # Determine nullable
+            nullable = not is_required
+
+            # Handle foreign keys (fields ending with _id)
+            if field_name.endswith('_id') and field_type == 'UUID':
+                # Foreign key reference
+                code += f'    {field_name} = Column(UUID(as_uuid=True), nullable={nullable})\n'
+            else:
+                # Regular column
+                column_def = f'    {field_name} = Column({sql_type}'
+
+                # Add nullable
+                column_def += f', nullable={nullable}'
+
+                # Add unique for email fields
+                if field_name == 'email':
+                    column_def += ', unique=True'
+
+                # Add default if exists
+                if has_default and field.default != '...':
+                    if field_type == 'datetime':
+                        column_def += ', default=lambda: datetime.now(timezone.utc)'
+                    elif field_type in ['str', 'string']:
+                        column_def += f', default="{field.default}"'
+                    elif field_type in ['int', 'integer', 'Decimal', 'decimal', 'float']:
+                        column_def += f', default={field.default}'
+                    elif field_type in ['bool', 'boolean']:
+                        # Capitalize boolean strings (true/false → True/False)
+                        if isinstance(field.default, str):
+                            bool_value = 'True' if field.default.lower() == 'true' else 'False'
+                            column_def += f', default={bool_value}'
+                        else:
+                            column_def += f', default={field.default}'
+
+                column_def += ')\n'
+                code += column_def
+
+        # Always add created_at for consistency
+        code += '    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))\n'
+
+        # Generate __repr__ method
+        # Try to find a good display field (name, email, status, or first non-id field)
+        display_field = None
+        for field in fields:
+            if field.name in ['name', 'email', 'status']:
+                display_field = field.name
+                break
+
+        if not display_field and fields:
+            # Use first non-id field
+            for field in fields:
+                if field.name not in ['id', 'created_at', 'updated_at']:
+                    display_field = field.name
+                    break
+
+        if display_field:
+            code += f'''
     def __repr__(self):
-        return f"<Order {self.id}: {getattr(self, 'status', 'N/A')}>"
+        return f"<{entity_name} {{self.id}}: {{getattr(self, '{display_field}', 'N/A')}}>"
 '''
         else:
-            code += '''    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
+            code += f'''
     def __repr__(self):
-        return f"<{name} {self.id}>"
-'''.replace('{name}', entity_name)
+        return f"<{entity_name} {{self.id}}>"
+'''
 
     return code.strip()
 
@@ -168,12 +227,13 @@ def get_settings() -> Settings:
 '''
 
 
-def generate_schemas(entities: List[Dict[str, Any]]) -> str:
+def generate_schemas(entities: List[Dict[str, Any]], validation_ground_truth: Dict[str, Any] = None) -> str:
     """
     Generate Pydantic schemas for request/response validation.
 
     Args:
         entities: List of entity dicts with 'name', 'plural', and 'fields'
+        validation_ground_truth: Optional validation ground truth from spec parser
 
     Returns:
         Complete schemas.py code
@@ -191,6 +251,17 @@ from decimal import Decimal
 
 
 '''
+
+    # Build validation constraint lookup from ground truth
+    validation_lookup = {}  # {(entity, field): constraint}
+    if validation_ground_truth and 'validations' in validation_ground_truth:
+        for val_id, val_data in validation_ground_truth['validations'].items():
+            entity_name = val_data.get('entity')
+            field_name = val_data.get('field')
+            constraint = val_data.get('constraint')
+            if entity_name and field_name and constraint:
+                validation_lookup[(entity_name, field_name)] = constraint
+                logger.debug(f"📋 Validation ground truth: {entity_name}.{field_name} → {constraint}")
 
     # Type mapping from spec types to Python/Pydantic types
     type_mapping = {
@@ -243,10 +314,24 @@ from decimal import Decimal
             # Build Field() constraints based on type and constraints list
             field_constraints = {}  # Use dict to track constraint types and avoid duplicates
 
+            # Check validation ground truth first (highest priority)
+            gt_constraint = validation_lookup.get((entity_name, field_name))
+            if gt_constraint:
+                logger.info(f"✅ Using validation ground truth for {entity_name}.{field_name}: {gt_constraint}")
+                # Add ground truth constraint to constraints list if not already present
+                if isinstance(constraints, list):
+                    if gt_constraint not in constraints:
+                        constraints.append(gt_constraint)
+                else:
+                    constraints = [gt_constraint]
+
             # Parse constraints from spec first (to get the authoritative values)
             for constraint in constraints:
                 if isinstance(constraint, str):
                     constraint = constraint.strip()
+                    # NORMALIZATION: Convert to lowercase and replace spaces with underscores
+                    # This handles variations like "email format" vs "email_format"
+                    constraint_normalized = constraint.lower().replace(' ', '_')
 
                     # Parse operator syntax: ">= 0", "> 0", "< 10", etc.
                     if constraint.startswith('>='):
@@ -271,17 +356,35 @@ from decimal import Decimal
                         key = constraint.split('=')[0]
                         field_constraints[key] = constraint
                         logger.debug(f"✅ Parsed named constraint '{constraint}' → key='{key}' for {field_name}")
-                    elif constraint == 'email_format':
+                    # Use normalized version for matching keyword constraints
+                    elif constraint_normalized == 'email_format':
                         field_constraints['pattern'] = 'pattern=r"^[^@]+@[^@]+\\.[^@]+$"'
                         logger.debug(f"✅ Parsed email_format constraint for {field_name}")
-                    elif constraint == 'positive':
+                    elif constraint_normalized == 'positive':
                         field_constraints['gt'] = 'gt=0'
                         logger.debug(f"✅ Parsed 'positive' → 'gt=0' for {field_name}")
-                    elif constraint == 'non_negative':
+                    elif constraint_normalized == 'non_negative':
                         field_constraints['ge'] = 'ge=0'
                         logger.debug(f"✅ Parsed 'non_negative' → 'ge=0' for {field_name}")
+                    # NEW: Handle constraint types from validation ground truth
+                    elif constraint_normalized == 'required':
+                        # Mark field as required (will prevent Optional and default)
+                        required = True
+                        logger.debug(f"✅ Parsed 'required' constraint for {field_name}")
+                    elif constraint_normalized == 'uuid_format':
+                        # Add UUID pattern validation
+                        uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                        field_constraints['pattern'] = f'pattern=r"{uuid_pattern}"'
+                        logger.debug(f"✅ Parsed 'uuid_format' constraint for {field_name}")
+                    elif constraint_normalized == 'enum':
+                        # Mark that this field needs enum validation (handled separately)
+                        field_constraints['_is_enum'] = True
+                        logger.debug(f"✅ Parsed 'enum' constraint for {field_name}")
+                    elif constraint_normalized == 'business_rule':
+                        # Business rules are not field-level validations, skip
+                        logger.debug(f"ℹ️ Skipping 'business_rule' constraint for {field_name} (not a field validation)")
                     else:
-                        logger.warning(f"⚠️ Unparsed constraint '{constraint}' for {field_name} - SKIPPING")
+                        logger.warning(f"⚠️ Unparsed constraint '{constraint}' (normalized: '{constraint_normalized}') for {field_name} - SKIPPING")
                 else:
                     logger.warning(f"⚠️ Non-string constraint {constraint} (type={type(constraint)}) for {field_name}")
 
@@ -306,6 +409,13 @@ from decimal import Decimal
                     elif field_name in ['id', 'count', 'total']:
                         field_constraints['ge'] = 'ge=0'
                     # For 'stock' - spec says >= 0, so don't override with gt=0
+
+            # Handle enum fields - remove marker and note for future enhancement
+            is_enum_field = field_constraints.pop('_is_enum', False)
+            if is_enum_field:
+                logger.info(f"ℹ️ Field {entity_name}.{field_name} marked as enum - using Literal or Enum would be ideal")
+                # For now, we'll let it be a string field with the constraints
+                # Future enhancement: Generate Literal['value1', 'value2'] or Enum class
 
             # Convert dict to list for joining
             field_constraints_list = list(field_constraints.values())
@@ -453,7 +563,10 @@ def generate_service_method(entity_name: str) -> str:
     Returns:
         Complete service file code
     """
-    plural = f"{entity_name}s".lower()
+    # Convert CamelCase to snake_case (CartItem → cart_item)
+    import re
+    entity_snake = re.sub(r'(?<!^)(?=[A-Z])', '_', entity_name).lower()
+    plural = f"{entity_snake}s"
 
     return f'''"""
 FastAPI Service for {entity_name}
@@ -466,7 +579,7 @@ from uuid import UUID
 import logging
 
 from src.models.schemas import {entity_name}Create, {entity_name}Update, {entity_name}Response, {entity_name}List
-from src.repositories.{entity_name.lower()}_repository import {entity_name}Repository
+from src.repositories.{entity_snake}_repository import {entity_name}Repository
 from src.models.entities import {entity_name}Entity
 
 logger = logging.getLogger(__name__)

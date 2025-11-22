@@ -95,7 +95,12 @@ class CodeRepairAgent:
                 if e.lower() not in [i.lower() for i in compliance_report.endpoints_implemented]
             ]
 
-            logger.info(f"CodeRepair: {len(missing_entities)} missing entities, {len(missing_endpoints)} missing endpoints")
+            missing_validations = [
+                v for v in compliance_report.validations_expected
+                if v.lower() not in [i.lower() for i in compliance_report.validations_implemented]
+            ]
+
+            logger.info(f"CodeRepair: {len(missing_entities)} missing entities, {len(missing_endpoints)} missing endpoints, {len(missing_validations)} missing validations")
 
             # Repair missing entities
             if missing_entities:
@@ -145,6 +150,26 @@ class CodeRepairAgent:
                                     logger.warning(f"Failed to add endpoint: {endpoint_str}")
                     except Exception as e:
                         logger.error(f"Error adding endpoint {endpoint_str}: {e}")
+
+            # Repair missing validations (NEW - Fix #2)
+            if missing_validations:
+                for validation_str in missing_validations:
+                    try:
+                        # Parse validation: "price > 0" or "stock >= 0"
+                        # Extract field name and constraint
+                        success = self.repair_missing_validation(
+                            validation_str,
+                            spec_requirements
+                        )
+                        if success:
+                            repairs_applied.append(f"Added validation: {validation_str}")
+                            schemas_file = str(self.output_path / "src" / "models" / "schemas.py")
+                            if schemas_file not in repaired_files:
+                                repaired_files.append(schemas_file)
+                        else:
+                            logger.warning(f"Failed to add validation: {validation_str}")
+                    except Exception as e:
+                        logger.error(f"Error adding validation {validation_str}: {e}")
 
             if repairs_applied:
                 return RepairResult(
@@ -521,3 +546,381 @@ from datetime import datetime, timezone
             f.write(template)
 
         logger.info(f"Created new entities file: {self.entities_file.name}")
+
+    def repair_missing_validation(self, validation_str: str, spec_requirements) -> bool:
+        """
+        Add missing Field() validation to schemas.py using AST patching.
+
+        Parses validation strings like:
+        - "Product.price: gt=0" → Field(..., gt=0)
+        - "Product.stock: ge=0" → Field(..., ge=0)
+        - "Customer.email: email_format" → Field(..., pattern=email_regex)
+        - "Product.id: uuid_format" → Field(..., pattern=uuid_regex)
+        - "Product.name: required" → Field(...)
+        - "price > 0" → Field(..., gt=0)
+        - "stock >= 0" → Field(..., ge=0)
+        - "email format" → Field(..., pattern=email_regex)
+        - "quantity > 0" → Field(..., gt=0)
+
+        Strategy:
+        1. Parse validation string to extract entity, field name and constraint type
+        2. Convert constraint to Pydantic Field() parameter
+        3. Read schemas.py and parse to AST
+        4. Find the class and field
+        5. Add/update Field() constraint
+        6. Write back
+
+        Args:
+            validation_str: Validation description (e.g., "Product.price: gt=0" or "price > 0")
+            spec_requirements: SpecRequirements to find entity definitions
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            import re
+
+            # Parse validation string to extract entity, field name and constraint
+            # Patterns supported:
+            # GT format: "Entity.field: constraint" → entity=Entity, field=field, constraint=constraint
+            # Simple: "price > 0" → field=price, constraint=gt, value=0
+            # Verbose: "Price validation: must be greater than 0" → field=price, constraint=gt, value=0
+            # Verbose: "Stock validation: must be non-negative" → field=stock, constraint=ge, value=0
+            # Verbose: "Email validation: must be valid email format" → field=email, pattern=email_regex
+
+            entity_name = None
+            field_name = None
+            constraint_type = None
+            constraint_value = None
+
+            # PATTERN 0: Ground Truth format "Entity.field: constraint"
+            # Examples: "Product.price: gt=0", "Customer.email: email_format", "Product.id: uuid_format"
+            gt_match = re.match(r'^(\w+)\.(\w+):\s*(.+)$', validation_str.strip())
+            if gt_match:
+                entity_name = gt_match.group(1)
+                field_name = gt_match.group(2).lower()
+                constraint_str = gt_match.group(3).strip()
+
+                # Parse constraint string
+                # Format 1: "gt=0", "ge=0", "lt=100", "le=100"
+                numeric_match = re.match(r'^(gt|ge|lt|le)=(\d+(?:\.\d+)?)$', constraint_str)
+                if numeric_match:
+                    constraint_type = numeric_match.group(1)
+                    value_str = numeric_match.group(2)
+                    constraint_value = float(value_str) if '.' in value_str else int(value_str)
+                    logger.info(f"Parsed GT validation '{validation_str}' → {entity_name}.{field_name} {constraint_type}={constraint_value}")
+
+                # Format 2: "min_length=X", "max_length=X"
+                elif re.match(r'^(min_length|max_length)=(\d+)$', constraint_str):
+                    length_match = re.match(r'^(min_length|max_length)=(\d+)$', constraint_str)
+                    constraint_type = length_match.group(1)
+                    constraint_value = int(length_match.group(2))
+                    logger.info(f"Parsed GT validation '{validation_str}' → {entity_name}.{field_name} {constraint_type}={constraint_value}")
+
+                # Format 3: Keywords without values
+                elif constraint_str.lower().replace(' ', '_') in ['required', 'uuid_format', 'email_format', 'enum']:
+                    constraint_normalized = constraint_str.lower().replace(' ', '_')
+
+                    if constraint_normalized == 'uuid_format':
+                        constraint_type = 'pattern'
+                        constraint_value = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                        logger.info(f"Parsed GT validation '{validation_str}' → {entity_name}.{field_name} uuid pattern")
+
+                    elif constraint_normalized == 'email_format':
+                        constraint_type = 'pattern'
+                        constraint_value = r'^[^@]+@[^@]+\.[^@]+$'
+                        logger.info(f"Parsed GT validation '{validation_str}' → {entity_name}.{field_name} email pattern")
+
+                    elif constraint_normalized == 'required':
+                        # For 'required', we just need to ensure Field() exists without default=None
+                        # This is a special case - we'll handle it differently
+                        constraint_type = 'required'
+                        constraint_value = True
+                        logger.info(f"Parsed GT validation '{validation_str}' → {entity_name}.{field_name} required")
+
+                    elif constraint_normalized == 'enum':
+                        # Enum handling is complex - skip for now
+                        logger.warning(f"Enum validation not yet supported: {validation_str}")
+                        return False
+
+                else:
+                    logger.warning(f"Could not parse GT constraint format: {constraint_str}")
+                    return False
+
+                # If we successfully parsed the GT format, apply it
+                if entity_name and field_name and constraint_type and constraint_value is not None:
+                    return self._add_field_constraint_to_schema(
+                        entity_name=entity_name,
+                        field_name=field_name,
+                        constraint_type=constraint_type,
+                        constraint_value=constraint_value
+                    )
+                else:
+                    logger.warning(f"Incomplete GT parsing for: {validation_str}")
+                    return False
+
+            # PATTERN 1: Verbose format "Field validation: description"
+            verbose_match = re.match(r'^(\w+)\s+validation:\s*(.+)$', validation_str, re.IGNORECASE)
+            if verbose_match:
+                field_name = verbose_match.group(1).lower()
+                description = verbose_match.group(2).lower()
+
+                # Parse description for constraint type
+                # "must be greater than X" → gt
+                if 'greater than' in description:
+                    match = re.search(r'greater than\s+(\d+(?:\.\d+)?)', description)
+                    if match:
+                        constraint_type = 'gt'
+                        constraint_value = float(match.group(1)) if '.' in match.group(1) else int(match.group(1))
+
+                # "must be non-negative" → ge, 0
+                elif 'non-negative' in description or 'non negative' in description:
+                    constraint_type = 'ge'
+                    constraint_value = 0
+
+                # "must be positive" → gt, 0
+                elif 'positive' in description and 'non' not in description:
+                    constraint_type = 'gt'
+                    constraint_value = 0
+
+                # "must be greater than or equal to X" → ge
+                elif 'greater than or equal' in description or 'at least' in description:
+                    match = re.search(r'(?:greater than or equal to|at least)\s+(\d+(?:\.\d+)?)', description)
+                    if match:
+                        constraint_type = 'ge'
+                        constraint_value = float(match.group(1)) if '.' in match.group(1) else int(match.group(1))
+
+                # "must be less than X" → lt
+                elif 'less than' in description and 'or equal' not in description:
+                    match = re.search(r'less than\s+(\d+(?:\.\d+)?)', description)
+                    if match:
+                        constraint_type = 'lt'
+                        constraint_value = float(match.group(1)) if '.' in match.group(1) else int(match.group(1))
+
+                # "must be less than or equal to X" → le
+                elif 'less than or equal' in description or 'at most' in description:
+                    match = re.search(r'(?:less than or equal to|at most)\s+(\d+(?:\.\d+)?)', description)
+                    if match:
+                        constraint_type = 'le'
+                        constraint_value = float(match.group(1)) if '.' in match.group(1) else int(match.group(1))
+
+                # "must be valid email format" → pattern
+                elif 'email' in description and 'format' in description:
+                    constraint_type = 'pattern'
+                    constraint_value = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+
+            # PATTERN 2: Simple format "field > value"
+            if not constraint_type:
+                match = re.match(r'(\w+)\s*(>|>=|<|<=)\s*(\d+(?:\.\d+)?)', validation_str)
+                if match:
+                    field_name = match.group(1).lower()
+                    operator = match.group(2)
+                    value = match.group(3)
+
+                    # Convert operator to Pydantic constraint
+                    constraint_map = {
+                        '>': 'gt',
+                        '>=': 'ge',
+                        '<': 'lt',
+                        '<=': 'le'
+                    }
+                    constraint_type = constraint_map.get(operator)
+                    constraint_value = float(value) if '.' in value else int(value)
+
+            # PATTERN 3: Email format keyword
+            if not constraint_type and 'email' in validation_str.lower() and 'format' in validation_str.lower():
+                field_name = 'email'
+                constraint_type = 'pattern'
+                constraint_value = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+
+            # If we successfully parsed a constraint, apply it
+            if field_name and constraint_type and constraint_value is not None:
+                logger.info(f"Parsed validation '{validation_str}' → {field_name} {constraint_type}={constraint_value}")
+
+                # Find which entity contains this field
+                entity_name = self._find_entity_for_field(field_name, spec_requirements)
+                if not entity_name:
+                    logger.warning(f"Could not find entity for field: {field_name}")
+                    return False
+
+                # Apply validation to schemas.py
+                return self._add_field_constraint_to_schema(
+                    entity_name=entity_name,
+                    field_name=field_name,
+                    constraint_type=constraint_type,
+                    constraint_value=constraint_value
+                )
+
+            # If we couldn't parse the validation, log and skip
+            logger.warning(f"Could not parse validation: {validation_str}")
+            return False
+
+        except Exception as e:
+            logger.error(f"Failed to repair validation '{validation_str}': {e}")
+            return False
+
+    def _find_entity_for_field(self, field_name: str, spec_requirements) -> str:
+        """
+        Find which entity contains a given field.
+
+        Args:
+            field_name: Name of the field (e.g., "price", "stock")
+            spec_requirements: SpecRequirements with entity definitions
+
+        Returns:
+            Entity name if found, None otherwise
+        """
+        for entity in spec_requirements.entities:
+            for field in entity.fields:
+                if field.name.lower() == field_name.lower():
+                    return entity.name
+        return None
+
+    def _add_field_constraint_to_schema(
+        self,
+        entity_name: str,
+        field_name: str,
+        constraint_type: str,
+        constraint_value
+    ) -> bool:
+        """
+        Add or update Field() constraint in schemas.py using AST patching.
+
+        Args:
+            entity_name: Entity name (e.g., "Product")
+            field_name: Field name (e.g., "price")
+            constraint_type: Constraint type (e.g., "gt", "ge", "pattern")
+            constraint_value: Constraint value (e.g., 0, email regex)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            import re
+
+            schemas_file = self.output_path / "src" / "models" / "schemas.py"
+
+            if not schemas_file.exists():
+                logger.warning(f"schemas.py not found at {schemas_file}")
+                return False
+
+            # Read current schemas.py
+            with open(schemas_file, 'r') as f:
+                source_code = f.read()
+
+            # For simplicity, use regex replacement instead of full AST parsing
+            # This is a pragmatic approach that works for generated code structure
+
+            # Find the entity schema class (e.g., "ProductSchema")
+            schema_class_name = f"{entity_name}Schema"
+
+            # Pattern to find field definition: field_name: Type = Field(...)
+            # We want to add constraint to existing Field() or create Field() if not exists
+
+            # Simple approach: Add constraint to Field() if it exists, or create Field() with constraint
+            # Pattern: field_name: Type = value (where value might be Field(...) or just a default)
+
+            # This is a simplified implementation that handles common cases
+            # For production, should use full AST parsing and manipulation
+
+            # Special handling for 'required' constraint
+            if constraint_type == 'required':
+                # For required fields, we need to ensure Field(...) without default=None
+                # Pattern: field_name: Type = Field(default=None, ...) → Field(...)
+                field_pattern = rf'(\s+{field_name}:\s*[\w\[\]]+)\s*=\s*Field\((.*?)\)'
+
+                if re.search(field_pattern, source_code, re.MULTILINE):
+                    def make_required(match):
+                        indent = match.group(1)
+                        existing_args = match.group(2)
+
+                        # Remove default=None if present
+                        existing_args = re.sub(r',?\s*default\s*=\s*None\s*,?', '', existing_args)
+
+                        # If no args left, use ... (ellipsis) to indicate required
+                        if not existing_args.strip():
+                            existing_args = '...'
+                        else:
+                            # Clean up any leading/trailing commas
+                            existing_args = existing_args.strip(', ')
+
+                        return f'{indent} = Field({existing_args})'
+
+                    source_code = re.sub(field_pattern, make_required, source_code, flags=re.MULTILINE)
+                    logger.info(f"Made {entity_name}.{field_name} required (removed default=None)")
+
+                else:
+                    # Field() doesn't exist, create it with ...
+                    simple_field_pattern = rf'(\s+{field_name}:\s*[\w\[\]]+)\s*=\s*([^\n]+)'
+
+                    def add_required_field(match):
+                        field_def = match.group(1)
+                        return f'{field_def} = Field(...)'
+
+                    source_code = re.sub(simple_field_pattern, add_required_field, source_code, flags=re.MULTILINE, count=1)
+                    logger.info(f"Added required Field(...) to {entity_name}.{field_name}")
+
+            else:
+                # Normal constraint handling (gt, ge, pattern, etc.)
+                # Check if field already has Field()
+                field_pattern = rf'(\s+{field_name}:\s*[\w\[\]]+)\s*=\s*Field\((.*?)\)'
+
+                if re.search(field_pattern, source_code, re.MULTILINE):
+                    # Field() exists, add constraint to it
+                    def add_constraint(match):
+                        indent = match.group(1)
+                        existing_args = match.group(2)
+
+                        # Check if constraint already exists
+                        if f'{constraint_type}=' in existing_args:
+                            # Replace existing constraint
+                            # Use a more robust regex that captures:
+                            # - Quoted strings (r"...", r'...', "...", '...')
+                            # - Numbers (int/float)
+                            # - None, True, False
+                            existing_args = re.sub(
+                                rf'{constraint_type}=(?:r?["\'](?:[^"\'\\]|\\.)*["\']|\d+(?:\.\d+)?|None|True|False)',
+                                f'{constraint_type}={repr(constraint_value)}',
+                                existing_args
+                            )
+                        else:
+                            # Add new constraint
+                            if existing_args.strip() and existing_args.strip() != '...':
+                                existing_args += f', {constraint_type}={repr(constraint_value)}'
+                            elif existing_args.strip() == '...':
+                                # Field(...) case - add constraint after ...
+                                existing_args = f'..., {constraint_type}={repr(constraint_value)}'
+                            else:
+                                existing_args = f'{constraint_type}={repr(constraint_value)}'
+
+                        return f'{indent} = Field({existing_args})'
+
+                    source_code = re.sub(field_pattern, add_constraint, source_code, flags=re.MULTILINE)
+
+                else:
+                    # Field() doesn't exist, need to add it
+                    # Pattern: field_name: Type = default_value
+                    simple_field_pattern = rf'(\s+{field_name}:\s*[\w\[\]]+)\s*=\s*([^\n]+)'
+
+                    def add_field_with_constraint(match):
+                        field_def = match.group(1)
+                        default_val = match.group(2).strip()
+
+                        # Create Field() with constraint and default
+                        if default_val and not default_val.startswith('Field'):
+                            return f'{field_def} = Field(default={default_val}, {constraint_type}={repr(constraint_value)})'
+                        else:
+                            return f'{field_def} = Field({constraint_type}={repr(constraint_value)})'
+
+                    source_code = re.sub(simple_field_pattern, add_field_with_constraint, source_code, flags=re.MULTILINE, count=1)
+
+            # Write back modified code
+            with open(schemas_file, 'w') as f:
+                f.write(source_code)
+
+            logger.info(f"Added {constraint_type}={constraint_value} to {entity_name}.{field_name} in schemas.py")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to add constraint to {entity_name}.{field_name}: {e}")
+            return False

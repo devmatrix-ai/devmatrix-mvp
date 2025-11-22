@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import re
 import logging
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +144,7 @@ class SpecRequirements:
     metadata: Dict[str, Any] = field(default_factory=dict)
     classification_ground_truth: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     dag_ground_truth: Dict[str, Any] = field(default_factory=dict)
+    validation_ground_truth: Dict[str, Any] = field(default_factory=dict)
 
 
 # ============================================================================
@@ -233,6 +235,21 @@ class SpecParser:
         # Extract ground truth (optional sections for validation)
         result.classification_ground_truth = self._parse_classification_ground_truth(content)
         result.dag_ground_truth = self._parse_dag_ground_truth(content)
+        result.validation_ground_truth = self._parse_validation_ground_truth(content)
+
+        # If classification ground truth is missing, generate it with LLM from natural language
+        if not result.classification_ground_truth and result.endpoints:
+            logger.info("Classification ground truth not found, generating from endpoints with LLM...")
+            result.classification_ground_truth = self._generate_classification_ground_truth_with_llm(
+                content, result.endpoints
+            )
+
+        # If validation ground truth is missing, generate it with LLM from natural language
+        if not result.validation_ground_truth and result.business_logic:
+            logger.info("Validation ground truth not found, generating from business logic with LLM...")
+            result.validation_ground_truth = self._generate_validation_ground_truth_with_llm(
+                content, result.business_logic
+            )
 
         # Metadata
         result.metadata = {
@@ -722,8 +739,27 @@ class SpecParser:
         self, content: str, requirements: List[Requirement]
     ) -> List[BusinessLogic]:
         """Extract business logic rules from spec"""
+        logger.info("=== _extract_business_logic() called ===")
         business_logic = []
         seen_descriptions = set()  # Avoid duplicates
+
+        # Extract validations from Business Validations section (format: **V1. Description**)
+        validation_pattern = re.compile(r"\*\*V(\d+)\.\s+(.+?)\*\*", re.MULTILINE)
+        validation_matches = list(validation_pattern.finditer(content))
+        logger.info(f"Found {len(validation_matches)} validation headers in Business Validations section")
+
+        for match in validation_matches:
+            val_num = match.group(1)
+            description = match.group(2).strip()
+
+            # Get full validation text (look for lines after header)
+            full_desc = description
+            if full_desc not in seen_descriptions:
+                business_logic.append(
+                    BusinessLogic(type="validation", description=full_desc)
+                )
+                seen_descriptions.add(full_desc)
+                logger.debug(f"Added validation V{val_num}: {full_desc}")
 
         # Extract validation rules from requirements
         for req in requirements:
@@ -851,18 +887,30 @@ class SpecParser:
         ground_truth = {}
 
         try:
-            # Find the Classification Ground Truth section
-            section_pattern = re.compile(
-                r'##\s+Classification\s+Ground\s+Truth\s*\n(.*?)(?=\n##|\Z)',
+            # Try format 1: Classification Ground Truth with ```yaml blocks
+            # Allow optional whitespace (including blank lines) between header and ```yaml
+            section_pattern_blocks = re.compile(
+                r'##\s+Classification\s+Ground\s+Truth.*?\n\s*```yaml\n(.*?)\n```',
                 re.DOTALL | re.IGNORECASE
             )
-            match = section_pattern.search(content)
+            match = section_pattern_blocks.search(content)
 
-            if not match:
-                logger.debug("No Classification Ground Truth section found in spec")
-                return ground_truth
+            if match:
+                yaml_content = match.group(1).strip()
+            else:
+                # Try format 2: Plain YAML without code blocks
+                # Capture everything from header until next ## section or end of file
+                section_pattern_plain = re.compile(
+                    r'##\s+Classification\s+Ground\s+Truth.*?\n(.*?)(?=\n##|\Z)',
+                    re.DOTALL | re.IGNORECASE
+                )
+                match = section_pattern_plain.search(content)
 
-            yaml_content = match.group(1).strip()
+                if not match:
+                    logger.debug("No Classification Ground Truth section found in spec")
+                    return ground_truth
+
+                yaml_content = match.group(1).strip()
 
             # Parse YAML
             data = yaml.safe_load(yaml_content)
@@ -883,15 +931,16 @@ class SpecParser:
         Expected format:
         ## Expected Dependency Graph (Ground Truth)
 
-        nodes: 17
+        ```yaml
+        nodes:
           - create_product
           - list_products
           ...
 
-        edges: 15
+        edges:
           - create_product → list_products
-            rationale: Must create before listing
           ...
+        ```
 
         Returns:
             Dictionary with 'nodes' (list) and 'edges' (list of tuples)
@@ -902,18 +951,30 @@ class SpecParser:
         dag_gt = {}
 
         try:
-            # Find the Expected Dependency Graph section
-            section_pattern = re.compile(
-                r'##\s+Expected\s+Dependency\s+Graph.*?\n(.*?)(?=\n##|\Z)',
+            # Try format 1: Expected Dependency Graph with ```yaml blocks
+            # Allow optional whitespace (including blank lines) between header and ```yaml
+            section_pattern_blocks = re.compile(
+                r'##\s+Expected\s+Dependency\s+Graph.*?\n\s*```yaml\n(.*?)\n```',
                 re.DOTALL | re.IGNORECASE
             )
-            match = section_pattern.search(content)
+            match = section_pattern_blocks.search(content)
 
-            if not match:
-                logger.debug("No Expected Dependency Graph section found in spec")
-                return dag_gt
+            if match:
+                yaml_content = match.group(1).strip()
+            else:
+                # Try format 2: Plain YAML without code blocks
+                # Capture everything from header until next ## section or end of file
+                section_pattern_plain = re.compile(
+                    r'##\s+Expected\s+Dependency\s+Graph.*?\n(.*?)(?=\n##|\Z)',
+                    re.DOTALL | re.IGNORECASE
+                )
+                match = section_pattern_plain.search(content)
 
-            yaml_content = match.group(1).strip()
+                if not match:
+                    logger.debug("No Expected Dependency Graph section found in spec")
+                    return dag_gt
+
+                yaml_content = match.group(1).strip()
 
             # Parse YAML
             data = yaml.safe_load(yaml_content)
@@ -961,3 +1022,507 @@ class SpecParser:
             logger.warning(f"Failed to parse Expected Dependency Graph: {e}")
 
         return dag_gt
+
+    def _parse_validation_ground_truth(self, content: str) -> Dict[str, Any]:
+        """
+        Parse Validation Ground Truth section from spec (YAML format).
+
+        Expected format:
+        ## Validation Ground Truth
+
+        ```yaml
+        validation_count: 6
+
+        validations:
+          V1_product_price:
+            entity: Product
+            field: price
+            constraint: gt=0
+            description: "Product price must be greater than 0"
+          ...
+        ```
+
+        Returns:
+            Dictionary with 'validation_count' and 'validations' dict
+        """
+        import yaml
+
+        val_gt = {}
+
+        try:
+            # Try format 1: Validation Ground Truth with ```yaml blocks
+            # Allow optional whitespace (including blank lines) between header and ```yaml
+            section_pattern_blocks = re.compile(
+                r'##\s+Validation\s+Ground\s+Truth.*?\n\s*```yaml\n(.*?)\n```',
+                re.DOTALL | re.IGNORECASE
+            )
+            match = section_pattern_blocks.search(content)
+
+            if match:
+                yaml_content = match.group(1).strip()
+            else:
+                # Try format 2: Plain YAML without code blocks
+                # Capture everything from header until next ## section or end of file
+                section_pattern_plain = re.compile(
+                    r'##\s+Validation\s+Ground\s+Truth.*?\n(.*?)(?=\n##|\Z)',
+                    re.DOTALL | re.IGNORECASE
+                )
+                match = section_pattern_plain.search(content)
+
+                if not match:
+                    logger.debug("No Validation Ground Truth section found in spec")
+                    return val_gt
+
+                yaml_content = match.group(1).strip()
+
+            # Parse YAML
+            data = yaml.safe_load(yaml_content)
+
+            if data and isinstance(data, dict):
+                # Extract validation_count
+                if 'validation_count' in data:
+                    val_gt['validation_count'] = data['validation_count']
+
+                # Extract validations
+                if 'validations' in data and isinstance(data['validations'], dict):
+                    val_gt['validations'] = data['validations']
+
+                logger.info(
+                    f"Loaded validation ground truth: "
+                    f"{val_gt.get('validation_count', 0)} validations defined"
+                )
+
+        except Exception as e:
+            logger.warning(f"Failed to parse Validation Ground Truth: {e}")
+
+        return val_gt
+
+    def _generate_classification_ground_truth_with_llm(
+        self, content: str, endpoints: List['Endpoint']
+    ) -> Dict[str, Dict[str, str]]:
+        """
+        Generate classification ground truth from natural language spec using LLM.
+
+        This allows specs to be written in any format - the LLM extracts and
+        structures the ground truth in standard YAML format.
+
+        Args:
+            content: Raw markdown spec content
+            endpoints: Parsed endpoints
+
+        Returns:
+            Dictionary mapping node names to domain/risk classifications
+        """
+        try:
+            from src.llm.enhanced_anthropic_client import EnhancedAnthropicClient
+
+            # Build endpoint summary for LLM
+            endpoint_list = "\n".join([
+                f"- {ep.method} {ep.path}: {ep.description}"
+                for ep in endpoints
+            ])
+
+            prompt = f"""Analyze this API specification and generate classification ground truth in YAML format.
+
+# Specification
+{content[:3000]}  # Limit context to avoid token limits
+
+# Detected Endpoints
+{endpoint_list}
+
+# Task
+Generate a YAML classification for each endpoint. For each endpoint, assign:
+- A unique requirement ID (F1, F2, etc. sequentially)
+- domain: crud | workflow | payment | auth | integration
+- risk: low | medium | high
+
+Format:
+```yaml
+F{{ID}}_{{node_name}}:
+  domain: {{domain}}
+  risk: {{risk}}
+```
+
+Where node_name is derived from the endpoint operation (e.g., create_product, list_products, get_product).
+
+Rules:
+- CRUD operations (GET, POST single items, PUT, DELETE) → crud domain, low-medium risk
+- Workflows (checkout, payment processing, multi-step operations) → workflow/payment domain, medium-high risk
+- List/search operations → crud domain, low risk
+- Payment operations → payment domain, high risk
+
+Generate ONLY the YAML block, no explanation."""
+
+            import asyncio
+
+            client = EnhancedAnthropicClient()
+
+            from src.config.constants import DEFAULT_MODEL
+
+            # Handle both sync and async contexts
+            try:
+                # Try to get running loop (we're inside async context)
+                loop = asyncio.get_running_loop()
+                # We're already in an async context, create a task
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(
+                        asyncio.run,
+                        client.generate(
+                            prompt=prompt,
+                            model=DEFAULT_MODEL,
+                            max_tokens=2000,
+                            temperature=0.0
+                        )
+                    )
+                    response = future.result(timeout=60)
+            except RuntimeError:
+                # No running loop, we can use run_until_complete
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+
+                response = loop.run_until_complete(
+                    client.generate(
+                        prompt=prompt,
+                        model=DEFAULT_MODEL,
+                        max_tokens=2000,
+                        temperature=0.0
+                    )
+                )
+
+            # Response could be SimpleResponse object with .text attribute
+            if hasattr(response, 'text'):
+                response_text = response.text
+            elif hasattr(response, 'content'):
+                response_text = response.content
+            elif isinstance(response, dict):
+                response_text = response.get('content', '')
+            else:
+                response_text = str(response)
+
+            # Debug: log response for development
+            logger.debug(f"LLM response (first 500 chars): {response_text[:500]}")
+
+            # Extract YAML from response
+            yaml_match = re.search(r'```yaml\n(.*?)\n```', response_text, re.DOTALL)
+            if not yaml_match:
+                # Try without code blocks
+                yaml_match = re.search(r'(F\d+_\w+:.*)', response_text, re.DOTALL)
+
+            if yaml_match:
+                yaml_content = yaml_match.group(1)
+                classification_gt = yaml.safe_load(yaml_content)
+
+                logger.info(
+                    f"✅ Generated classification ground truth with LLM: "
+                    f"{len(classification_gt)} entries"
+                )
+                return classification_gt
+            else:
+                logger.warning(f"LLM response did not contain valid YAML. Response preview: {response_text[:200]}")
+                return {}
+
+        except ImportError:
+            logger.warning("EnhancedAnthropicClient not available, skipping LLM generation")
+            return {}
+        except Exception as e:
+            logger.warning(f"Failed to generate classification ground truth with LLM: {e}")
+            return {}
+
+    def _generate_validation_ground_truth_with_llm(
+        self, content: str, business_logic: List['BusinessLogic']
+    ) -> Dict[str, Any]:
+        """
+        Generate validation ground truth from natural language spec using LLM.
+
+        Extracts validation rules from Business Validations section and structures
+        them in YAML format for ComplianceValidator.
+
+        Args:
+            content: Raw markdown spec content
+            business_logic: Parsed business logic including validations
+
+        Returns:
+            Dictionary with 'validation_count' and 'validations' dict
+        """
+        try:
+            from src.llm.enhanced_anthropic_client import EnhancedAnthropicClient
+
+            # Filter only validations from business logic
+            validations_list = [bl for bl in business_logic if bl.type == "validation"]
+
+            if not validations_list:
+                logger.debug("No validations found in business logic, skipping LLM generation")
+                return {}
+
+            # Build validation summary for LLM
+            validation_descriptions = "\n".join([
+                f"- {val.description}"
+                for val in validations_list
+            ])
+
+            prompt = f"""Generate COMPLETE validation ground truth for perfect code generation.
+
+# Specification
+{content[:3000]}
+
+# Explicit Validations from Spec
+{validation_descriptions}
+
+# STEP-BY-STEP PROCESS (Follow this exactly):
+
+## Step 1: Read each validation description CAREFULLY
+For each validation like "Stock >= 0" or "Quantity > 0":
+- Identify the FIELD being validated (e.g., "stock", "quantity")
+- Identify the OPERATOR (e.g., >=, >, <, <=, ==)
+- Identify the NUMERIC VALUE (e.g., 0, 1, 100) - THIS MUST BE A NUMBER, NEVER A FIELD NAME
+
+## Step 2: Map to correct constraint format
+- "Stock >= 0" → constraint: ge=0 (NOT ge=stock, NOT ge=quantity)
+- "Quantity > 0" → constraint: gt=0 (NOT gt=quantity, NOT gt=stock)
+- "Price > 0" → constraint: gt=0 (NOT gt=price)
+- "Email format" → constraint: email_format (keyword, no value)
+- "ID is UUID" → constraint: uuid_format (keyword, no value)
+
+## Step 3: Determine which ENTITY has this FIELD
+Look at the spec to find which entity (Product, Customer, Cart, etc.) has this field.
+IMPORTANT: Don't confuse similar field names across different entities!
+
+## Step 4: Generate validation entry
+Create one validation entry with:
+- entity: EntityName (capitalized)
+- field: field_name (lowercase)
+- constraint: the_constraint (MUST be number or keyword, NEVER a field name)
+- description: simple one-line description
+
+# COMMON ERRORS TO AVOID:
+
+❌ WRONG: constraint: ge=quantity (using field name as value)
+✅ RIGHT: constraint: ge=0 (using number as value)
+
+❌ WRONG: constraint: gt=stock (using field name as value)
+✅ RIGHT: constraint: gt=0 (using number as value)
+
+❌ WRONG: entity: CartItem, field: stock, constraint: ge=0 (wrong entity - stock is in Product, not CartItem!)
+✅ RIGHT: entity: Product, field: stock, constraint: ge=0
+
+❌ WRONG: entity: Product, field: quantity, constraint: gt=0 (wrong entity - quantity is in CartItem/OrderItem, not Product!)
+✅ RIGHT: entity: CartItem, field: quantity, constraint: gt=0
+
+# VALIDATION TYPES TO GENERATE:
+
+1. **Explicit validations** from Business Validations section (analyze each one carefully)
+2. **Implicit validations** for production code:
+   - UUID format for all ID fields
+   - Email format for email fields
+   - Required for non-nullable fields
+   - Enum for status/type fields with fixed values
+   - Min/max lengths for strings
+   - Positive/non-negative for numeric fields that shouldn't be negative
+
+Format:
+```yaml
+validation_count: {{total_count}}
+
+validations:
+  V{{ID}}_{{entity}}_{{field}}:
+    entity: {{EntityName}}
+    field: {{field_name}}
+    constraint: {{constraint_type}}
+    description: {{simple_validation_description}}
+```
+
+# ALLOWED CONSTRAINT TYPES (constraint value must be NUMBER or KEYWORD - NEVER a field name):
+
+Numeric Constraints (value MUST be a number):
+- gt=0 → "greater than 0" (example: price > 0, quantity > 0)
+- ge=0 → "greater than or equal to 0" (example: stock >= 0, total >= 0)
+- lt=100 → "less than 100" (use actual number, not field name)
+- le=100 → "less than or equal to 100" (use actual number, not field name)
+
+Format Constraints (keyword only, NO value):
+- email_format → for email fields
+- uuid_format → for ID fields (Product.id, Customer.id, etc.)
+
+Presence Constraints (keyword only, NO value):
+- required → field must be present and not null
+
+Value Constraints (WITH values - extract from spec):
+- enum=VALUE1,VALUE2,VALUE3 → for status/type fields with fixed allowed values
+  Example: If spec says 'status: enum ["OPEN", "CLOSED"]' → constraint: enum=OPEN,CLOSED
+  Example: If spec says 'status: enum ["PENDING", "PAID", "CANCELLED"]' → constraint: enum=PENDING,PAID,CANCELLED
+
+String Length Constraints (value MUST be a number):
+- min_length=1 → minimum string length (use actual number)
+- max_length=255 → maximum string length (use actual number)
+
+# VALIDATION CHECKLIST (Check each constraint you write):
+
+Before writing "constraint: X", ask yourself:
+1. ✅ Is X a NUMBER (0, 1, 100) or a KEYWORD (required, email_format)?
+2. ❌ Is X a field name (quantity, stock, price)? → WRONG! Use the numeric value instead
+3. ✅ Does this constraint match the validation description exactly?
+4. ✅ Am I using the correct entity for this field?
+
+Example showing CORRECT constraint mapping:
+```yaml
+validation_count: 8
+
+validations:
+  # Example 1: "Price > 0" → constraint MUST be gt=0 (the number), NOT gt=price (field name)
+  V1_product_price:
+    entity: Product
+    field: price
+    constraint: gt=0
+    description: Product price must be greater than 0
+
+  # Example 2: "Stock >= 0" → constraint MUST be ge=0 (the number), NOT ge=stock or ge=quantity
+  V2_product_stock:
+    entity: Product
+    field: stock
+    constraint: ge=0
+    description: Product stock must be non-negative
+
+  # Example 3: "Cart item quantity > 0" → entity is CartItem (where quantity field exists), NOT Product
+  V3_cartitem_quantity:
+    entity: CartItem
+    field: quantity
+    constraint: gt=0
+    description: Cart item quantity must be greater than 0
+
+  # Example 4: "Email format" → constraint is keyword email_format, NO value needed
+  V4_customer_email_format:
+    entity: Customer
+    field: email
+    constraint: email_format
+    description: Customer email must be valid email format
+
+  # Example 5: All ID fields need UUID format (implicit validation)
+  V5_product_id:
+    entity: Product
+    field: id
+    constraint: uuid_format
+    description: Product ID must be valid UUID
+
+  # Example 6: Non-nullable fields need required constraint (implicit validation)
+  V6_product_name:
+    entity: Product
+    field: name
+    constraint: required
+    description: Product name is required
+
+  # Example 7: Email fields need BOTH email_format AND required (two separate validations)
+  V7_customer_email_required:
+    entity: Customer
+    field: email
+    constraint: required
+    description: Customer email is required
+
+  # Example 8: Status fields with fixed values need enum constraint
+  V8_order_status:
+    entity: Order
+    field: status
+    constraint: enum
+    description: Order status must be one of allowed values
+```
+
+CRITICAL YAML FORMATTING RULES:
+1. DO NOT use quotes around description values - write them directly without quotes
+2. Keep descriptions simple and on a single line
+3. Avoid special characters, apostrophes, or quotes in descriptions
+4. Each description must be valid YAML without escaping
+
+FINAL REMINDER BEFORE YOU START:
+- Read each validation SLOWLY and CAREFULLY
+- For "Stock >= 0" write constraint: ge=0 (the NUMBER zero, NOT the word "stock" or "quantity")
+- For "Quantity > 0" write constraint: gt=0 (the NUMBER zero, NOT the word "quantity")
+- NEVER EVER use a field name (like stock, quantity, price) as a constraint value
+- Always use the ACTUAL NUMERIC VALUE from the validation description
+- Double-check each entity-field mapping before writing it
+
+Generate validation ground truth that represents what PERFECT production code should have.
+This ground truth will be used to validate the generated code, so include ALL validations needed.
+
+Generate ONLY the YAML block, no explanation."""
+
+            import asyncio
+
+            client = EnhancedAnthropicClient()
+
+            from src.config.constants import DEFAULT_MODEL
+
+            # Handle both sync and async contexts
+            try:
+                # Try to get running loop (we're inside async context)
+                loop = asyncio.get_running_loop()
+                # We're already in an async context, create a task
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(
+                        asyncio.run,
+                        client.generate(
+                            prompt=prompt,
+                            model=DEFAULT_MODEL,
+                            max_tokens=2000,
+                            temperature=0.0
+                        )
+                    )
+                    response = future.result(timeout=60)
+            except RuntimeError:
+                # No running loop, we can use run_until_complete
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+
+                response = loop.run_until_complete(
+                    client.generate(
+                        prompt=prompt,
+                        model=DEFAULT_MODEL,
+                        max_tokens=2000,
+                        temperature=0.0
+                    )
+                )
+
+            # Response could be SimpleResponse object with .text attribute
+            if hasattr(response, 'text'):
+                response_text = response.text
+            elif hasattr(response, 'content'):
+                response_text = response.content
+            elif isinstance(response, dict):
+                response_text = response.get('content', '')
+            else:
+                response_text = str(response)
+
+            # Debug: log response for development
+            logger.debug(f"LLM validation response (first 500 chars): {response_text[:500]}")
+
+            # Extract YAML from response
+            yaml_match = re.search(r'```yaml\n(.*?)\n```', response_text, re.DOTALL)
+            if not yaml_match:
+                # Try without code blocks
+                yaml_match = re.search(r'(validation_count:.*)', response_text, re.DOTALL)
+
+            if yaml_match:
+                yaml_content = yaml_match.group(1)
+                validation_gt = yaml.safe_load(yaml_content)
+
+                logger.info(
+                    f"✅ Generated validation ground truth with LLM: "
+                    f"{validation_gt.get('validation_count', 0)} validations"
+                )
+                return validation_gt
+            else:
+                logger.warning(f"LLM response did not contain valid YAML. Response preview: {response_text[:200]}")
+                return {}
+
+        except ImportError:
+            logger.warning("EnhancedAnthropicClient not available, skipping LLM validation generation")
+            return {}
+        except Exception as e:
+            logger.warning(f"Failed to generate validation ground truth with LLM: {e}")
+            return {}

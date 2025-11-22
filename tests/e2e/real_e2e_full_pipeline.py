@@ -10,6 +10,8 @@ import time
 import shutil
 import tempfile
 import logging
+import tracemalloc
+import psutil
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, List, Optional
@@ -234,6 +236,14 @@ class RealE2ETest:
         # Alias for P1 CodeRepairAgent compatibility
         self.output_path = Path(self.output_dir)
 
+        # Performance profiling (Fix #3)
+        tracemalloc.start()
+        self.process = psutil.Process()
+        self.peak_memory_mb = 0.0
+        self.peak_cpu_percent = 0.0
+        self.memory_samples = []
+        self.cpu_samples = []
+
         # Apply ErrorPatternStoreFilter globally to all loggers
         self._apply_error_pattern_filter()
 
@@ -282,6 +292,82 @@ class RealE2ETest:
 
         # NEW for Task Group 4.2: Store compliance report
         self.compliance_report = None
+
+    def _sample_performance(self):
+        """
+        Sample current memory and CPU usage for performance profiling.
+
+        Captures a snapshot of system resource usage and stores it for
+        later calculation of peak and average metrics.
+
+        Thread-safe and production-ready with comprehensive error handling.
+        """
+        try:
+            # Sample memory usage (tracemalloc gives current process memory)
+            current, peak = tracemalloc.get_traced_memory()
+            current_memory_mb = current / 1024 / 1024  # Convert bytes to MB
+
+            # Sample CPU usage (psutil gives percentage across all cores)
+            # Use short interval for more accurate measurement
+            current_cpu = self.process.cpu_percent(interval=0.1)
+
+            # Store samples
+            self.memory_samples.append(current_memory_mb)
+            self.cpu_samples.append(current_cpu)
+
+            # Update peak values immediately (optimization: don't wait for finalize)
+            if current_memory_mb > self.peak_memory_mb:
+                self.peak_memory_mb = current_memory_mb
+
+            if current_cpu > self.peak_cpu_percent:
+                self.peak_cpu_percent = current_cpu
+
+        except Exception as e:
+            # Non-critical error - performance sampling failure shouldn't break pipeline
+            # Log warning but continue execution
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Performance sampling failed: {e}")
+
+    def _finalize_performance_metrics(self):
+        """
+        Calculate final performance metrics from collected samples.
+
+        Computes peak and average values for memory and CPU usage
+        from all samples collected during pipeline execution.
+
+        Should be called before metrics.finalize() in _finalize_and_report().
+        """
+        try:
+            # Calculate average memory (if we have samples)
+            if self.memory_samples:
+                avg_memory = sum(self.memory_samples) / len(self.memory_samples)
+                self.metrics_collector.metrics.avg_memory_mb = round(avg_memory, 2)
+                self.metrics_collector.metrics.peak_memory_mb = round(self.peak_memory_mb, 2)
+            else:
+                # No samples collected - set to 0
+                self.metrics_collector.metrics.avg_memory_mb = 0.0
+                self.metrics_collector.metrics.peak_memory_mb = 0.0
+
+            # Calculate average CPU (if we have samples)
+            if self.cpu_samples:
+                avg_cpu = sum(self.cpu_samples) / len(self.cpu_samples)
+                self.metrics_collector.metrics.avg_cpu_percent = round(avg_cpu, 2)
+                self.metrics_collector.metrics.peak_cpu_percent = round(self.peak_cpu_percent, 2)
+            else:
+                # No samples collected - set to 0
+                self.metrics_collector.metrics.avg_cpu_percent = 0.0
+                self.metrics_collector.metrics.peak_cpu_percent = 0.0
+
+        except Exception as e:
+            # Non-critical error - set all to 0 and log warning
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Performance metrics finalization failed: {e}")
+            self.metrics_collector.metrics.avg_memory_mb = 0.0
+            self.metrics_collector.metrics.peak_memory_mb = 0.0
+            self.metrics_collector.metrics.avg_cpu_percent = 0.0
+            self.metrics_collector.metrics.peak_cpu_percent = 0.0
 
     def _apply_error_pattern_filter(self):
         """Apply ErrorPatternStoreFilter to all loggers globally"""
@@ -433,6 +519,7 @@ class RealE2ETest:
         AFTER: Extracts structured SpecRequirements with entities, endpoints, business logic
         """
         self.metrics_collector.start_phase("spec_ingestion")
+        self._sample_performance()  # Sample memory/CPU at phase start
         print("\n📍 Phase Started: spec_ingestion")
         print("\n📋 Phase 1: Spec Ingestion (Enhanced with SpecParser)")
 
@@ -519,6 +606,7 @@ class RealE2ETest:
         AFTER: Semantic classification with ≥90% accuracy, ≥90% functional recall
         """
         self.metrics_collector.start_phase("requirements_analysis")
+        self._sample_performance()  # Sample memory/CPU at phase start
         print("\n📍 Phase Started: requirements_analysis")
         print("\n🔍 Phase 2: Requirements Analysis (Enhanced with RequirementsClassifier)")
 
@@ -790,6 +878,7 @@ class RealE2ETest:
     async def _phase_3_multi_pass_planning(self):
         """Phase 3: Multi-pass planning with DAG using ground truth"""
         self.metrics_collector.start_phase("multi_pass_planning")
+        self._sample_performance()  # Sample memory/CPU at phase start
         print("\n📍 Phase Started: multi_pass_planning")
         print("\n📐 Phase 3: Multi-Pass Planning")
 
@@ -978,6 +1067,7 @@ class RealE2ETest:
     async def _phase_4_atomization(self):
         """Phase 4: Atomization - break into atomic units"""
         self.metrics_collector.start_phase("atomization")
+        self._sample_performance()  # Sample memory/CPU at phase start
         print("\n📍 Phase Started: atomization")
         print("\n⚛️ Phase 4: Atomization")
 
@@ -1030,6 +1120,7 @@ class RealE2ETest:
     async def _phase_5_dag_construction(self):
         """Phase 5: DAG Construction"""
         self.metrics_collector.start_phase("dag_construction")
+        self._sample_performance()  # Sample memory/CPU at phase start
         print("\n📍 Phase Started: dag_construction")
         print("\n🔗 Phase 5: DAG Construction")
 
@@ -1063,6 +1154,7 @@ class RealE2ETest:
         AFTER: Generates real code based on SpecRequirements from Phase 1
         """
         self.metrics_collector.start_phase("wave_execution")
+        self._sample_performance()  # Sample memory/CPU at phase start
         print("\n📍 Phase Started: wave_execution")
         print("\n🌊 Phase 6: Code Generation")
 
@@ -1487,6 +1579,7 @@ Once running, visit:
         Skip Logic: If compliance >= 80%, skip repair entirely (fast path)
         """
         self.metrics_collector.start_phase("code_repair")
+        self._sample_performance()  # Sample memory/CPU at phase start
         print("\n📍 Phase Started: code_repair")
         print("\n🔧 Phase 6.5: Code Repair (Task Group 4)")
 
@@ -1548,10 +1641,10 @@ Once running, visit:
                 "endpoints_expected": endpoints_expected
             })
 
-            # CP-6.5.4: Skip logic (compliance >= 80%)
-            COMPLIANCE_THRESHOLD = 0.80
+            # CP-6.5.4: Skip logic (only if 100% perfect)
+            COMPLIANCE_THRESHOLD = 1.00  # Must be perfect to skip repair
             if compliance_score >= COMPLIANCE_THRESHOLD:
-                skip_reason = f"Compliance {compliance_score:.1%} exceeds threshold {COMPLIANCE_THRESHOLD:.0%}"
+                skip_reason = f"Compliance is perfect ({compliance_score:.1%})"
                 print(f"\n  ⏭️ Skipping repair: {skip_reason}")
 
                 # Update metrics for skipped repair
@@ -1587,7 +1680,7 @@ Once running, visit:
 
             self.metrics_collector.add_checkpoint("code_repair", "CP-6.5.2: Dependencies initialized", {
                 "max_iterations": 3,
-                "precision_target": 0.88,
+                "precision_target": 1.00,  # Must achieve 100% compliance
                 "approach": "simplified_llm_repair"
             })
             print("  ✓ Dependencies initialized")
@@ -1622,7 +1715,7 @@ Once running, visit:
                 test_results=test_results,
                 main_code=main_code,
                 max_iterations=3,
-                precision_target=0.88
+                precision_target=1.00  # Must achieve 100% compliance
             )
 
             # Update metrics from repair result
@@ -1678,7 +1771,7 @@ Once running, visit:
         test_results: List,
         main_code: str,
         max_iterations: int = 3,
-        precision_target: float = 0.88
+        precision_target: float = 1.00  # Must achieve 100% compliance
     ) -> Dict[str, Any]:
         """
         Execute iterative repair loop (CP-6.5.4 - Task Group 4)
@@ -1694,7 +1787,7 @@ Once running, visit:
         8. Store repair attempt in ErrorPatternStore
 
         Early exit conditions:
-        - Compliance >= precision_target (0.88)
+        - Compliance >= precision_target (1.00 = 100% compliance required)
         - No improvement for 2 consecutive iterations
         - Max iterations reached
 
@@ -1713,6 +1806,10 @@ Once running, visit:
         tests_fixed = 0
         regressions_detected = 0
         pattern_reuse_count = 0
+
+        # CRITICAL FIX: Track current compliance report for each iteration
+        # Start with initial report, then update with new report after each validation
+        current_compliance_report = initial_compliance_report
 
         # Iteration loop
         for iteration in range(max_iterations):
@@ -1742,9 +1839,10 @@ Once running, visit:
                 from src.mge.v2.agents.code_repair_agent import CodeRepairAgent
                 self.code_repair_agent = CodeRepairAgent(output_path=self.output_path)
 
-            # Use CodeRepairAgent for targeted repairs instead of LLM regeneration
+            # CRITICAL FIX: Use CURRENT compliance report, not initial
+            # This ensures repair agent sees the actual current state, not stale data
             repair_result = self.code_repair_agent.repair(
-                compliance_report=initial_compliance_report,
+                compliance_report=current_compliance_report,
                 spec_requirements=self.spec_requirements,
                 max_attempts=3
             )
@@ -1772,6 +1870,10 @@ Once running, visit:
                     output_path=self.output_path
                 )
                 new_compliance = new_compliance_report.overall_compliance
+
+                # CRITICAL FIX: Update current_compliance_report for next iteration
+                # This ensures next iteration sees the updated state
+                current_compliance_report = new_compliance_report
             except Exception as e:
                 print(f"        ❌ Validation failed: {e}")
                 # Treat validation failure as regression
@@ -2040,6 +2142,7 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         AFTER: Structural checks + semantic validation (entities, endpoints match spec)
         """
         self.metrics_collector.start_phase("validation")
+        self._sample_performance()  # Sample memory/CPU at phase start
         print("\n📍 Phase Started: validation")
         print("\n✅ Phase 7: Validation (Enhanced with Semantic Validation)")
 
@@ -2205,6 +2308,7 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
     async def _phase_8_deployment(self) -> None:
         """Phase 8: Deployment - Save generated files"""
         self.metrics_collector.start_phase("deployment")
+        self._sample_performance()  # Sample memory/CPU at phase start
         print("\n📍 Phase Started: deployment")
         print("\n📦 Phase 8: Deployment")
 
@@ -2253,6 +2357,7 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
     async def _phase_9_health_verification(self):
         """Phase 9: Health Verification"""
         self.metrics_collector.start_phase("health_verification")
+        self._sample_performance()  # Sample memory/CPU at phase start
         print("\n📍 Phase Started: health_verification")
         print("\n🏥 Phase 9: Health Verification")
 
@@ -2283,6 +2388,7 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
     async def _phase_10_learning(self):
         """Phase 10: Learning - Store successful patterns for future reuse"""
         self.metrics_collector.start_phase("learning")
+        self._sample_performance()  # Sample memory/CPU at phase start
         print("\n📍 Phase Started: learning")
         print("\n🧠 Phase 10: Learning")
 
@@ -2416,6 +2522,9 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
             self.metrics_collector.metrics.entities_compliance = self.compliance_report.compliance_details.get("entities", 0)
             self.metrics_collector.metrics.endpoints_compliance = self.compliance_report.compliance_details.get("endpoints", 0)
 
+        # PERFORMANCE METRICS (Fix #3): Calculate peak/average from samples before finalize
+        self._finalize_performance_metrics()
+
         # Finalize
         final_metrics = self.metrics_collector.finalize()
 
@@ -2474,66 +2583,168 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
             pass
 
     def _print_report(self, metrics, precision: Dict):
-        """Print comprehensive report"""
-        print("\n" + "="*70)
-        print("REPORTE COMPLETO E2E - PIPELINE REAL")
-        print("="*70)
+        """Print comprehensive report with ALL available metrics organized by category"""
+        sep = "="*90
+        print(f"\n{sep}")
+        print(" "*30 + "📊 REPORTE COMPLETO E2E" + " "*30)
+        print(f"{sep}\n")
 
-        print(f"\n=== Pipeline Execution Summary ===")
-        print(f"Spec: {self.spec_file}")
-        print(f"Output: {self.output_dir}")
-        print(f"Status: {metrics.overall_status}")
-        print(f"Duration: {(metrics.total_duration_ms or 0) / 1000 / 60:.1f} minutes")
+        # 🎯 EXECUTION SUMMARY
+        print("🎯 EXECUTION SUMMARY")
+        print("-" * 90)
+        print(f"  Spec:                {self.spec_file}")
+        print(f"  Output:              {self.output_dir}")
+        print(f"  Status:              {metrics.overall_status}")
+        print(f"  Duration:            {(metrics.total_duration_ms or 0) / 1000 / 60:.1f} minutes ({metrics.total_duration_ms or 0:.0f}ms)")
+        print(f"  Overall Progress:    {metrics.overall_progress:.1%}")
+        print(f"  Execution Success:   {metrics.execution_success_rate:.1%}")
+        print(f"  Overall Accuracy:    {metrics.overall_accuracy:.1%}")
 
-        # NEW: Show compliance metrics if available
+        # 📋 SEMANTIC COMPLIANCE
         if self.compliance_report:
-            print(f"\n=== Semantic Compliance ===")
-            print(f"Overall: {self.compliance_report.overall_compliance:.1%}")
-            print(f"Entities: {self.compliance_report.compliance_details.get('entities', 0):.1%}")
-            print(f"Endpoints: {self.compliance_report.compliance_details.get('endpoints', 0):.1%}")
-            print(f"Validations: {self.compliance_report.compliance_details.get('validations', 0):.1%}")
+            print(f"\n📋 SEMANTIC COMPLIANCE")
+            print("-" * 90)
+            print(f"  Overall Compliance:  {self.compliance_report.overall_compliance:.1%}")
+            print(f"    ├─ Entities:       {self.compliance_report.compliance_details.get('entities', 0):.1%} ({len(self.compliance_report.entities_implemented)}/{len(self.compliance_report.entities_expected)})")
+            print(f"    ├─ Endpoints:      {self.compliance_report.compliance_details.get('endpoints', 0):.1%} ({len(self.compliance_report.endpoints_implemented)}/{len(self.compliance_report.endpoints_expected)})")
+            print(f"    └─ Validations:    {self.compliance_report.compliance_details.get('validations', 0):.1%} ({len(self.compliance_report.validations_implemented)}/{len(self.compliance_report.validations_expected)})")
 
-        print(f"\n=== Generated Files ===")
-        for filename in self.generated_code.keys():
+            # Calculate Spec-to-App Precision (weighted average of all components)
+            # This metric shows how well the generated app matches the spec and works correctly
+            spec_to_app_precision = (
+                self.compliance_report.compliance_details.get('entities', 0) * 0.35 +
+                self.compliance_report.compliance_details.get('endpoints', 0) * 0.35 +
+                self.compliance_report.compliance_details.get('validations', 0) * 0.20 +
+                metrics.execution_success_rate * 0.10
+            )
+
+            precision_icon = "🎯" if spec_to_app_precision >= 0.95 else "⚠️ " if spec_to_app_precision >= 0.80 else "❌"
+            print(f"\n  {precision_icon} Spec-to-App Precision: {spec_to_app_precision:.1%}")
+            if spec_to_app_precision >= 0.95:
+                print(f"     → Generated app fully implements spec requirements and executes successfully")
+            elif spec_to_app_precision >= 0.80:
+                print(f"     → Generated app mostly implements spec, minor gaps present")
+            else:
+                print(f"     → Generated app has significant gaps or execution issues")
+
+        # 📊 PRECISION & ACCURACY
+        print(f"\n📊 PRECISION & ACCURACY METRICS")
+        print("-" * 90)
+        print(f"  🎯 Overall Pipeline Performance:")
+        print(f"     Accuracy:         {metrics.overall_accuracy:.1%}")
+        print(f"     Precision:        {metrics.pipeline_precision:.1%}")
+        print(f"")
+        print(f"  📊 Pattern Matching Performance:")
+        print(f"     Precision:        {metrics.pattern_precision:.1%}")
+        print(f"     Recall:           {metrics.pattern_recall:.1%}")
+        print(f"     F1-Score:         {metrics.pattern_f1:.1%}")
+        print(f"")
+        print(f"  🏷️  Classification Accuracy:")
+        print(f"     Overall:          {metrics.classification_accuracy:.1%}")
+
+        # 🧪 TESTING & QUALITY
+        print(f"\n🧪 TESTING & QUALITY")
+        print("-" * 90)
+        print(f"  Test Pass Rate:      {metrics.test_pass_rate:.1%}")
+        print(f"  Test Coverage:       {metrics.test_coverage:.1%}")
+        print(f"  Code Quality:        {metrics.code_quality_score:.1%}")
+        print(f"  Contract Violations: {metrics.contract_violations}")
+        print(f"  Acceptance Criteria: {metrics.acceptance_criteria_met}/{metrics.acceptance_criteria_total}")
+
+        # 📚 PATTERN LEARNING & REUSE
+        print(f"\n📚 PATTERN LEARNING & REUSE")
+        print("-" * 90)
+        print(f"  Pattern Reuse Rate:  {metrics.pattern_reuse_rate:.1%}")
+        print(f"  Patterns Matched:    {metrics.patterns_matched}")
+        print(f"  Patterns Stored:     {metrics.patterns_stored}")
+        print(f"  Patterns Promoted:   {metrics.patterns_promoted}")
+        print(f"  Patterns Reused:     {metrics.patterns_reused}")
+        print(f"  New Patterns:        {metrics.new_patterns_learned}")
+        print(f"  Candidates Created:  {metrics.candidates_created}")
+        print(f"  Learning Time:       {metrics.learning_time_ms:.1f}ms")
+
+        # 🔧 CODE REPAIR & RECOVERY
+        print(f"\n🔧 CODE REPAIR & RECOVERY")
+        print("-" * 90)
+        print(f"  Repair Applied:      {metrics.repair_applied}")
+        print(f"  Repair Iterations:   {metrics.repair_iterations}")
+        print(f"  Repair Improvement:  {metrics.repair_improvement:.1%}")
+        print(f"  Tests Fixed:         {metrics.tests_fixed}")
+        print(f"  Regressions:         {metrics.regressions_detected}")
+        print(f"  Repair Time:         {metrics.repair_time_ms:.1f}ms")
+        if metrics.repair_skipped:
+            print(f"  Repair Status:       SKIPPED - {metrics.repair_skip_reason}")
+
+        # ⚠️  ERROR TRACKING
+        print(f"\n⚠️  ERROR TRACKING & RECOVERY")
+        print("-" * 90)
+        print(f"  Total Errors:        {metrics.total_errors}")
+        print(f"  Recovered Errors:    {metrics.recovered_errors}")
+        print(f"  Critical Errors:     {metrics.critical_errors}")
+        print(f"  Recovery Rate:       {metrics.recovery_success_rate:.1%}")
+
+        # 💾 RESOURCE USAGE
+        print(f"\n💾 RESOURCE USAGE")
+        print("-" * 90)
+        print(f"  Peak Memory:         {metrics.peak_memory_mb:.1f} MB")
+        print(f"  Avg Memory:          {metrics.avg_memory_mb:.1f} MB")
+        print(f"  Peak CPU:            {metrics.peak_cpu_percent:.1f}%")
+        print(f"  Avg CPU:             {metrics.avg_cpu_percent:.1f}%")
+
+        # 🗄️  DATABASE PERFORMANCE
+        print(f"\n🗄️  DATABASE PERFORMANCE")
+        print("-" * 90)
+        print(f"  Neo4j Queries:       {metrics.neo4j_queries}")
+        print(f"  Neo4j Avg Time:      {metrics.neo4j_avg_query_ms:.1f}ms")
+        print(f"  Qdrant Queries:      {metrics.qdrant_queries}")
+        print(f"  Qdrant Avg Time:     {metrics.qdrant_avg_query_ms:.1f}ms")
+
+        # ⏱️  PHASE EXECUTION TIMES
+        print(f"\n⏱️  PHASE EXECUTION TIMES")
+        print("-" * 90)
+        for phase_name, phase_metrics in metrics.phases.items():
+            duration = phase_metrics.duration_ms if phase_metrics.duration_ms else 0
+            status_icon = "✅" if phase_metrics.status.value == "completed" else "⚠️"
+            print(f"  {status_icon} {phase_name:25s} {duration:>6.0f}ms  ({phase_metrics.checkpoints_completed}/{phase_metrics.checkpoints_total} checkpoints)")
+
+        # 📦 GENERATED FILES
+        print(f"\n📦 GENERATED FILES ({len(self.generated_code)} files)")
+        print("-" * 90)
+        file_count = 0
+        for filename in sorted(self.generated_code.keys()):
             filepath = os.path.join(self.output_dir, filename)
             print(f"  ✅ {filepath}")
+            file_count += 1
+            if file_count >= 10:  # Show only first 10, then summarize
+                remaining = len(self.generated_code) - 10
+                if remaining > 0:
+                    print(f"  ... and {remaining} more files")
+                break
 
-        print(f"\n=== Precision Metrics ===")
-        print(f"🎯 Overall Pipeline Accuracy: {self.precision.calculate_accuracy():.1%}")
-        print(f"🎯 Overall Pipeline Precision: {self.precision.calculate_overall_precision():.1%}")
-        print(f"\n📊 Pattern Matching:")
-        print(f"   Precision: {precision['pattern_matching']['precision']:.1%}")
-        print(f"   Recall: {precision['pattern_matching']['recall']:.1%}")
-        print(f"   F1-Score: {precision['pattern_matching']['f1_score']:.1%}")
+        # 🚀 HOW TO RUN
+        print(f"\n🚀 HOW TO RUN THE GENERATED APP")
+        print("-" * 90)
+        print(f"\n  1. Navigate: cd {self.output_dir}")
+        print(f"  2. Start:    docker-compose -f docker/docker-compose.yml up -d --build")
+        print(f"  3. Health:   docker-compose -f docker/docker-compose.yml ps")
+        print(f"\n  📍 Endpoints:")
+        print(f"     - API:        http://localhost:8002")
+        print(f"     - Docs:       http://localhost:8002/docs")
+        print(f"     - Health:     http://localhost:8002/health/health")
+        print(f"     - Metrics:    http://localhost:8002/metrics/metrics")
+        print(f"     - Grafana:    http://localhost:3002 (devmatrix/admin)")
+        print(f"     - Prometheus: http://localhost:9091")
+        print(f"     - PostgreSQL: localhost:5433 (devmatrix/admin)")
 
-        print(f"\n=== How to Run the Generated App ===")
-        print(f"\n1. Navigate to the app directory:")
-        print(f"   cd {self.output_dir}")
-        print(f"\n2. Build and start all services with Docker Compose:")
-        print(f"   docker-compose -f docker/docker-compose.yml up -d --build")
-        print(f"\n3. Wait for services to be healthy (30-60 seconds):")
-        print(f"   docker-compose -f docker/docker-compose.yml ps")
-        print(f"\n4. Check logs (optional):")
-        print(f"   docker-compose -f docker/docker-compose.yml logs -f app")
-        print(f"\n5. Access the services:")
-        print(f"   📍 API:        http://localhost:8002")
-        print(f"   📚 API Docs:   http://localhost:8002/docs")
-        print(f"   ❤️  Health:     http://localhost:8002/health/health")
-        print(f"   📊 Metrics:    http://localhost:8002/metrics/metrics")
-        print(f"   📈 Grafana:    http://localhost:3002 (devmatrix/admin)")
-        print(f"   🔍 Prometheus: http://localhost:9091")
-        print(f"   🗄️  PostgreSQL: localhost:5433 (devmatrix/admin)")
-        print(f"\n6. Stop all services:")
-        print(f"   docker-compose -f docker/docker-compose.yml down")
-        print(f"\n   Note: Database migrations run automatically on startup")
-
-        print(f"\n=== Contract Validation ===")
+        # ✅ CONTRACT VALIDATION
+        print(f"\n✅ CONTRACT VALIDATION")
+        print("-" * 90)
         if len(self.contract_validator.violations) == 0:
-            print("✅ Todos los contratos validados correctamente!")
+            print("  ✅ All contracts validated successfully!")
         else:
-            print(f"⚠️ {len(self.contract_validator.violations)} contract violations")
+            print(f"  ⚠️  {len(self.contract_validator.violations)} contract violations detected")
 
-        print("\n" + "="*70)
+        print(f"\n{sep}\n")
 
 
 async def main():

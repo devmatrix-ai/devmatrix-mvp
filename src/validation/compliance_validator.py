@@ -123,28 +123,43 @@ class ComplianceValidator:
         entities_expected = [e.name for e in spec_requirements.entities]
         endpoints_expected = [f"{ep.method} {ep.path}" for ep in spec_requirements.endpoints]
 
-        # For validations, count business logic items + entity constraints
+        # For validations, use ground truth if available, otherwise fallback to old logic
         validations_expected = []
-        for bl in spec_requirements.business_logic:
-            if bl.type == "validation":
-                validations_expected.append(bl.description)
 
-        # Add entity field constraints as expected validations
-        for entity in spec_requirements.entities:
-            for field in entity.fields:
-                if field.constraints:
-                    validations_expected.extend(field.constraints)
+        if spec_requirements.validation_ground_truth and 'validations' in spec_requirements.validation_ground_truth:
+            # Use ground truth validations
+            for val_id, val_data in spec_requirements.validation_ground_truth['validations'].items():
+                entity = val_data.get('entity', '')
+                field = val_data.get('field', '')
+                constraint = val_data.get('constraint', '')
+                # Format: "Entity.field: constraint"
+                validations_expected.append(f"{entity}.{field}: {constraint}")
+            logger.info(f"Using validation ground truth: {len(validations_expected)} validations expected")
+        else:
+            # Fallback to old logic
+            for bl in spec_requirements.business_logic:
+                if bl.type == "validation":
+                    validations_expected.append(bl.description)
 
-        # If no explicit validations, use a minimum count based on entities
-        if not validations_expected and entities_expected:
-            # Expect at least 2 validations per entity (heuristic)
-            validations_expected = [f"validation_{i}" for i in range(len(entities_expected) * 2)]
+            # Add entity field constraints as expected validations
+            for entity in spec_requirements.entities:
+                for field in entity.fields:
+                    if field.constraints:
+                        validations_expected.extend(field.constraints)
+
+            # If no explicit validations, use a minimum count based on entities
+            if not validations_expected and entities_expected:
+                # Expect at least 2 validations per entity (heuristic)
+                validations_expected = [f"validation_{i}" for i in range(len(entities_expected) * 2)]
 
         # 3. Calculate compliance per category
         entity_compliance = self._calculate_compliance(entities_found, entities_expected)
         endpoint_compliance = self._calculate_endpoint_compliance_fuzzy(endpoints_found, endpoints_expected)
-        validation_compliance = self._calculate_validation_compliance(
-            validations_found, validations_expected
+
+        # Use exact matching if ground truth is available, otherwise use flexible matching
+        use_exact_matching = bool(spec_requirements.validation_ground_truth and 'validations' in spec_requirements.validation_ground_truth)
+        validation_compliance, validations_matched = self._calculate_validation_compliance(
+            validations_found, validations_expected, use_exact_matching=use_exact_matching
         )
 
         # 4. Calculate overall compliance (weighted average)
@@ -163,13 +178,14 @@ class ComplianceValidator:
         )
 
         # 6. Build detailed report
+        # Use matched validations (not all found) when ground truth exists for accurate metrics
         report = ComplianceReport(
             overall_compliance=overall_compliance,
             entities_implemented=entities_found,
             entities_expected=entities_expected,
             endpoints_implemented=endpoints_found,
             endpoints_expected=endpoints_expected,
-            validations_implemented=validations_found,
+            validations_implemented=validations_matched,  # Only matched validations, not all found
             validations_expected=validations_expected,
             missing_requirements=missing,
             compliance_details={
@@ -227,16 +243,25 @@ class ComplianceValidator:
 
         try:
             # Import the generated FastAPI app
+            # Try src/main.py first (standard DevMatrix structure)
             main_py_path = output_path / "src" / "main.py"
+            is_root_main = False  # Track if main.py is in root vs src/
 
+            # Fallback: try main.py in root if src/main.py doesn't exist
             if not main_py_path.exists():
-                logger.error(f"main.py not found at {main_py_path}")
-                # Fallback to old validation method
-                logger.warning("Falling back to string-based validation (will show low compliance)")
-                main_code = ""
-                if (output_path / "src" / "main.py").exists():
-                    main_code = (output_path / "src" / "main.py").read_text()
-                return self.validate(spec_requirements, main_code)
+                root_main_py = output_path / "main.py"
+                if root_main_py.exists():
+                    logger.info(f"Found main.py in root (not in src/)")
+                    main_py_path = root_main_py
+                    is_root_main = True
+                else:
+                    logger.error(f"main.py not found at {output_path / 'src' / 'main.py'} or {root_main_py}")
+                    # Fallback to old validation method
+                    logger.warning("Falling back to string-based validation (will show low compliance)")
+                    main_code = ""
+                    if root_main_py.exists():
+                        main_code = root_main_py.read_text()
+                    return self.validate(spec_requirements, main_code)
 
             # Configure temporary database for validation (avoid global DATABASE_URL issues)
             # Use asyncpg driver to avoid psycopg2 async errors
@@ -311,15 +336,20 @@ class ComplianceValidator:
                 logger.debug(f"App root added to sys.path[0]: {sys.path[0]}")
                 logger.debug(f"Current working directory: {os.getcwd()}")
 
-                # Verify files exist
+                # Verify files exist (log for debugging)
                 src_init = os.path.join(app_root, 'src', '__init__.py')
                 src_main = os.path.join(app_root, 'src', 'main.py')
                 logger.debug(f"src/__init__.py exists: {os.path.exists(src_init)}")
                 logger.debug(f"src/main.py exists: {os.path.exists(src_main)}")
 
-                # Import src.main WITHOUT changing working directory
+                # Import main module (either 'main' from root or 'src.main' from src/)
                 # The app_root in sys.path[0] should be enough
-                main_module = __import__('src.main', fromlist=['app'])
+                if is_root_main:
+                    # main.py is in root - import as 'main'
+                    main_module = __import__('main')
+                else:
+                    # main.py is in src/ - import as 'src.main'
+                    main_module = __import__('src.main', fromlist=['app'])
 
                 # Get FastAPI app instance immediately (while sys.path is still valid)
                 app = main_module.app
@@ -396,6 +426,26 @@ class ComplianceValidator:
 
             logger.info(f"Extracted {len(entities_found)} entities from OpenAPI schemas: {entities_found}")
 
+            # 1b. Extract entities directly from entities.py (more accurate - includes entities without endpoints)
+            entities_file = output_path / "src" / "models" / "entities.py"
+            if entities_file.exists():
+                logger.debug(f"Reading entities directly from {entities_file}")
+                entities_content = entities_file.read_text()
+
+                # Find all class definitions: class XyzEntity(Base):
+                import re
+                entity_pattern = r'class\s+(\w+)Entity\(Base\):'
+                entity_matches = re.findall(entity_pattern, entities_content)
+
+                for entity_name in entity_matches:
+                    if entity_name.lower() in entities_expected_lower and entity_name not in entities_found:
+                        entities_found.append(entity_name)
+                        logger.debug(f"Found entity '{entity_name}' from entities.py")
+
+                logger.info(f"After checking entities.py: {len(entities_found)} entities found: {entities_found}")
+            else:
+                logger.warning(f"entities.py not found at {entities_file}")
+
             # 2. Extract endpoints from OpenAPI paths
             endpoints_found = []
             paths = openapi_schema.get("paths", {})
@@ -411,46 +461,140 @@ class ComplianceValidator:
             # 3. Extract validations (heuristic from schemas)
             validations_found = []
             for schema_name, schema_def in schemas.items():
+                # Get base entity name (remove suffixes)
+                base_entity_name = schema_name
+                suffixes = ['Response', 'Create', 'Update', 'Entity', 'List', 'Base']
+                for suffix in suffixes:
+                    if base_entity_name.endswith(suffix):
+                        base_entity_name = base_entity_name[:-len(suffix)]
+                        break
+
                 properties = schema_def.get("properties", {})
                 for prop_name, prop_def in properties.items():
-                    # Check for validation constraints
-                    if "minimum" in prop_def or "maximum" in prop_def:
-                        validations_found.append(f"range validation on {prop_name}")
-                    if "minLength" in prop_def or "maxLength" in prop_def:
-                        validations_found.append(f"length validation on {prop_name}")
-                    if "pattern" in prop_def:
-                        validations_found.append(f"pattern validation on {prop_name}")
-                    if prop_def.get("format") == "email":
-                        validations_found.append(f"email validation on {prop_name}")
+                    # Helper function to extract validations from a schema (handles anyOf)
+                    def extract_validations(schema_obj, entity_name, field_name):
+                        found_vals = []
 
-            logger.info(f"Extracted {len(validations_found)} validations from schemas")
+                        # Check for validation constraints and capture in "Entity.field: constraint" format
+                        if "exclusiveMinimum" in schema_obj and schema_obj.get("exclusiveMinimum") is not None:
+                            constraint = f"gt={int(schema_obj['exclusiveMinimum'])}"
+                            found_vals.append(f"{entity_name}.{field_name}: {constraint}")
+                        elif "minimum" in schema_obj:
+                            constraint = f"ge={int(schema_obj['minimum'])}"
+                            found_vals.append(f"{entity_name}.{field_name}: {constraint}")
+
+                        if "maximum" in schema_obj:
+                            constraint = f"le={int(schema_obj['maximum'])}"
+                            found_vals.append(f"{entity_name}.{field_name}: {constraint}")
+
+                        if "minLength" in schema_obj or "maxLength" in schema_obj:
+                            found_vals.append(f"{entity_name}.{field_name}: length")
+
+                        if "pattern" in schema_obj:
+                            pattern = schema_obj["pattern"]
+                            found_vals.append(f"{entity_name}.{field_name}: pattern={pattern}")
+
+                        if schema_obj.get("format") == "email":
+                            found_vals.append(f"{entity_name}.{field_name}: email")
+
+                        return found_vals
+
+                    # Extract validations from prop_def directly
+                    validations_found.extend(extract_validations(prop_def, base_entity_name, prop_name))
+
+                    # Also check inside anyOf (for Decimal fields that can be number or string)
+                    if "anyOf" in prop_def:
+                        for sub_schema in prop_def["anyOf"]:
+                            if isinstance(sub_schema, dict):
+                                validations_found.extend(extract_validations(sub_schema, base_entity_name, prop_name))
+
+            logger.info(f"Extracted {len(validations_found)} validations from OpenAPI schemas")
+
+            # 3b. Extract validations directly from schemas.py (more accurate - includes schemas without endpoints)
+            schemas_file = output_path / "src" / "models" / "schemas.py"
+            if schemas_file.exists():
+                logger.debug(f"Reading validations directly from {schemas_file}")
+                schemas_content = schemas_file.read_text()
+
+                # Find Field() validations: Field(..., gt=0), Field(..., ge=0), etc.
+                # Pattern: field_name: Type = Field(..., constraint)
+                import re
+
+                # Match patterns like: quantity: int = Field(..., gt=0)
+                # Updated to include min_length, max_length, lt and other common validators
+                field_pattern = r'(\w+):\s*(?:Optional\[)?(\w+)(?:\])?\s*=\s*Field\([^)]*?(gt=\d+|ge=\d+|le=\d+|lt=\d+|min_length=\d+|max_length=\d+|pattern=|email)[^)]*\)'
+
+                # Also track current class to know which entity
+                class_pattern = r'class\s+(\w+)(?:Base|Create|Update|Response)\(BaseModel\):'
+
+                current_entity = None
+                for line in schemas_content.split('\n'):
+                    # Check for class definition
+                    class_match = re.match(class_pattern, line)
+                    if class_match:
+                        current_entity = class_match.group(1)
+                        continue
+
+                    # Check for field with validation
+                    if current_entity:
+                        field_match = re.search(field_pattern, line)
+                        if field_match:
+                            field_name = field_match.group(1)
+                            constraint = field_match.group(3)
+
+                            # Format: "Entity.field: constraint"
+                            validation_sig = f"{current_entity}.{field_name}: {constraint}"
+
+                            # Check if this matches an expected entity (case-insensitive)
+                            if current_entity.lower() in entities_expected_lower and validation_sig not in validations_found:
+                                validations_found.append(validation_sig)
+                                logger.debug(f"Found validation '{validation_sig}' from schemas.py")
+
+                logger.info(f"After checking schemas.py: {len(validations_found)} validations found")
+            else:
+                logger.warning(f"schemas.py not found at {schemas_file}")
 
             # 4. Extract what was expected from spec
             entities_expected = [e.name for e in spec_requirements.entities]
             endpoints_expected = [f"{ep.method} {ep.path}" for ep in spec_requirements.endpoints]
 
-            # For validations, count business logic items + entity constraints
+            # For validations, use ground truth if available, otherwise fallback to old logic
             validations_expected = []
-            for bl in spec_requirements.business_logic:
-                if bl.type == "validation":
-                    validations_expected.append(bl.description)
 
-            # Add entity field constraints as expected validations
-            for entity in spec_requirements.entities:
-                for field in entity.fields:
-                    if field.constraints:
-                        validations_expected.extend(field.constraints)
+            if spec_requirements.validation_ground_truth and 'validations' in spec_requirements.validation_ground_truth:
+                # Use ground truth validations
+                for val_id, val_data in spec_requirements.validation_ground_truth['validations'].items():
+                    entity = val_data.get('entity', '')
+                    field = val_data.get('field', '')
+                    constraint = val_data.get('constraint', '')
+                    # Format: "Entity.field: constraint"
+                    validations_expected.append(f"{entity}.{field}: {constraint}")
+                logger.info(f"Using validation ground truth: {len(validations_expected)} validations expected")
+            else:
+                # Fallback to old logic (business_logic + entity constraints)
+                for bl in spec_requirements.business_logic:
+                    if bl.type == "validation":
+                        validations_expected.append(bl.description)
 
-            # If no explicit validations, use a minimum count based on entities
-            if not validations_expected and entities_expected:
-                # Expect at least 2 validations per entity (heuristic)
-                validations_expected = [f"validation_{i}" for i in range(len(entities_expected) * 2)]
+                # Add entity field constraints as expected validations
+                for entity in spec_requirements.entities:
+                    for field in entity.fields:
+                        if field.constraints:
+                            validations_expected.extend(field.constraints)
+
+                # If no explicit validations, use a minimum count based on entities
+                if not validations_expected and entities_expected:
+                    # Expect at least 2 validations per entity (heuristic)
+                    validations_expected = [f"validation_{i}" for i in range(len(entities_expected) * 2)]
 
             # 5. Calculate compliance per category
             entity_compliance = self._calculate_compliance(entities_found, entities_expected)
             endpoint_compliance = self._calculate_endpoint_compliance_fuzzy(endpoints_found, endpoints_expected)
-            validation_compliance = self._calculate_validation_compliance(
-                validations_found, validations_expected
+
+            # Use exact matching if ground truth is available, otherwise use flexible matching
+            use_exact_matching = bool(spec_requirements.validation_ground_truth and 'validations' in spec_requirements.validation_ground_truth)
+            validation_compliance, validations_matched = self._calculate_validation_compliance(
+                validations_found, validations_expected, use_exact_matching=use_exact_matching
             )
 
             # 6. Calculate overall compliance (weighted average)
@@ -469,13 +613,14 @@ class ComplianceValidator:
             )
 
             # 8. Build detailed report
+            # Use matched validations (not all found) when ground truth exists for accurate metrics
             report = ComplianceReport(
                 overall_compliance=overall_compliance,
                 entities_implemented=entities_found,
                 entities_expected=entities_expected,
                 endpoints_implemented=endpoints_found,
                 endpoints_expected=endpoints_expected,
-                validations_implemented=validations_found,
+                validations_implemented=validations_matched,  # Only matched validations, not all found
                 validations_expected=validations_expected,
                 missing_requirements=missing,
                 compliance_details={
@@ -760,27 +905,56 @@ class ComplianceValidator:
 
         return False
 
-    def _calculate_validation_compliance(self, found: List[str], expected: List[str]) -> float:
+    def _calculate_validation_compliance(self, found: List[str], expected: List[str], use_exact_matching: bool = False) -> tuple[float, List[str]]:
         """
-        Calculate validation compliance with more lenient matching
+        Calculate validation compliance with exact or flexible matching
 
-        Validations can be expressed in multiple ways, so we use
-        keyword matching instead of exact matching.
+        When ground truth is available (use_exact_matching=True), we use exact string matching
+        on "Entity.field: constraint" format. Otherwise, we use keyword matching.
 
         Args:
             found: Validation signatures found in code
             expected: Validation requirements from spec
+            use_exact_matching: If True, use exact string matching (for ground truth)
 
         Returns:
-            Compliance score 0.0-1.0
+            Tuple of (compliance_score 0.0-1.0, list of matched validation strings)
         """
         if not expected:
-            return 1.0
+            return 1.0, found  # No expectations, all found validations count
 
         if not found:
-            return 0.0
+            return 0.0, []  # Nothing found, no matches
 
-        # For validations, use more flexible matching
+        # EXACT MATCHING MODE (for ground truth)
+        if use_exact_matching:
+            # Expected format: "Entity.field: constraint" (e.g., "Product.price: gt=0")
+            # Count how many expected validations are found in code
+            matches = 0
+            matched_validations = []
+
+            for exp_val in expected:
+                # Check if this validation exists in found
+                # We need flexible matching on the format because found might have variations
+                # Expected: "Product.price: gt=0"
+                # Found could be: "Product.price: Field(gt=0)" or similar
+
+                # Extract entity.field and constraint from expected
+                if ": " in exp_val:
+                    entity_field, constraint = exp_val.split(": ", 1)
+                    # Check if any found validation contains this entity.field and constraint
+                    for found_val in found:
+                        if entity_field in found_val and constraint in found_val:
+                            matches += 1
+                            matched_validations.append(exp_val)  # Add the expected format, not found format
+                            break
+
+            compliance = matches / len(expected)
+            logger.debug(f"Exact matching: {matches}/{len(expected)} validations found = {compliance:.2%}")
+            logger.debug(f"Matched validations: {matched_validations}")
+            return min(compliance, 1.0), matched_validations
+
+        # FLEXIBLE KEYWORD MATCHING MODE (fallback for no ground truth)
         # Count validation types present
         validation_types = {
             "price": any("price" in v.lower() for v in found),
@@ -810,7 +984,7 @@ class ComplianceValidator:
         total_expected = sum(1 for val in expected_types.values() if val)
 
         if total_expected == 0:
-            return 1.0
+            return 1.0, found  # No expectations, all found validations count
 
         compliance = matches / total_expected
 
@@ -818,7 +992,8 @@ class ComplianceValidator:
         if found:
             compliance = max(compliance, 0.3)  # At least 30% if any validations exist
 
-        return min(compliance, 1.0)
+        # For flexible matching, return all found validations since we can't precisely match
+        return min(compliance, 1.0), found
 
     def _identify_missing_requirements(
         self,

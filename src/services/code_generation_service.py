@@ -1980,7 +1980,8 @@ Generate ONLY the README.md content, no additional explanations."""
             # Use hardcoded production-ready schemas generator
             if spec_requirements.entities:
                 schemas_code = generate_schemas(
-                    [{"name": e.name, "plural": e.name.lower() + "s", "fields": e.fields} for e in spec_requirements.entities]
+                    [{"name": e.name, "plural": e.name.lower() + "s", "fields": e.fields} for e in spec_requirements.entities],
+                    validation_ground_truth=spec_requirements.validation_ground_truth
                 )
                 if schemas_code:
                     files["src/models/schemas.py"] = schemas_code
@@ -1998,10 +1999,10 @@ Generate ONLY the README.md content, no additional explanations."""
 
         # Data Layer - SQLAlchemy Models
         elif category == "models_sqlalchemy":
-            # Use hardcoded production-ready entities generator
+            # Use dynamic production-ready entities generator
             if spec_requirements.entities:
                 entities_code = generate_entities(
-                    [{"name": e.name, "plural": e.name.lower() + "s"} for e in spec_requirements.entities]
+                    [{"name": e.name, "plural": e.name.lower() + "s", "fields": e.fields} for e in spec_requirements.entities]
                 )
                 if entities_code:
                     files["src/models/entities.py"] = entities_code
@@ -2356,7 +2357,9 @@ Generate ONLY the README.md content, no additional explanations."""
         Returns:
             Generated route code as string
         """
-        entity_snake = entity.name.lower().replace(' ', '_')
+        # Convert CamelCase to snake_case correctly (CartItem → cart_item)
+        import re
+        entity_snake = re.sub(r'(?<!^)(?=[A-Z])', '_', entity.name).lower()
         entity_plural = f"{entity_snake}s"
 
         # Start building the route file
@@ -2578,7 +2581,9 @@ datefmt = %H:%M:%S
         imports = []
         routers = []
         for entity in spec_requirements.entities:
-            entity_snake = entity.name.lower().replace(" ", "_")
+            # Convert CamelCase to snake_case correctly (CartItem → cart_item)
+            import re
+            entity_snake = re.sub(r'(?<!^)(?=[A-Z])', '_', entity.name).lower()
             imports.append(f"from src.api.routes import {entity_snake}")
             routers.append(f"app.include_router({entity_snake}.router)")
 
