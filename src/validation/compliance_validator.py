@@ -132,22 +132,43 @@ class ComplianceValidator:
                 entity = val_data.get('entity', '')
                 field = val_data.get('field', '')
                 constraint = val_data.get('constraint', '')
+                
+                # Normalize constraint to match code format
+                constraint = self._normalize_constraint(constraint)
+                
                 # Format: "Entity.field: constraint"
                 validations_expected.append(f"{entity}.{field}: {constraint}")
-            logger.info(f"Using validation ground truth: {len(validations_expected)} validations expected")
-        else:
+            logger.info(f"Using validation ground truth: {len(validations_expected)} validations from ground truth")
+
+        # ALWAYS add entity field constraints as expected validations (if not already present)
+        # This ensures we catch simple constraints (required, gt, etc.) even if LLM missed them
+        for entity in spec_requirements.entities:
+            for field in entity.fields:
+                # Add required constraint
+                if field.required:
+                    sig = f"{entity.name}.{field.name}: required"
+                    if sig not in validations_expected:
+                        validations_expected.append(sig)
+                
+                # Add other constraints
+                if field.constraints:
+                    for constraint in field.constraints:
+                        # Normalize constraint to match code format
+                        constraint = self._normalize_constraint(constraint)
+                        
+                        sig = f"{entity.name}.{field.name}: {constraint}"
+                        # Check for duplicates (exact match or fuzzy match)
+                        if sig not in validations_expected:
+                            validations_expected.append(sig)
+
+        # If no explicit validations found at all, use fallback
+        if not validations_expected:
             # Fallback to old logic
             for bl in spec_requirements.business_logic:
                 if bl.type == "validation":
                     validations_expected.append(bl.description)
 
-            # Add entity field constraints as expected validations
-            for entity in spec_requirements.entities:
-                for field in entity.fields:
-                    if field.constraints:
-                        validations_expected.extend(field.constraints)
-
-            # If no explicit validations, use a minimum count based on entities
+            # If still no explicit validations, use a minimum count based on entities
             if not validations_expected and entities_expected:
                 # Expect at least 2 validations per entity (heuristic)
                 validations_expected = [f"validation_{i}" for i in range(len(entities_expected) * 2)]
@@ -459,7 +480,21 @@ class ComplianceValidator:
             logger.info(f"Extracted {len(endpoints_found)} endpoints from OpenAPI paths")
 
             # 3. Extract validations (heuristic from schemas)
+            import re
+
+            uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            email_pattern = r'^[^@]+@[^@]+\.[^@]+$'
+
             validations_found = []
+            validations_seen = set()
+
+            def record_validation(entity_name: str, field_name: str, constraint: str) -> None:
+                """Add a validation signature once."""
+                sig = f"{entity_name}.{field_name}: {constraint}"
+                if sig not in validations_seen:
+                    validations_seen.add(sig)
+                    validations_found.append(sig)
+
             for schema_name, schema_def in schemas.items():
                 # Get base entity name (remove suffixes)
                 base_entity_name = schema_name
@@ -469,44 +504,56 @@ class ComplianceValidator:
                         base_entity_name = base_entity_name[:-len(suffix)]
                         break
 
+                required_props = set(schema_def.get("required", []))
                 properties = schema_def.get("properties", {})
                 for prop_name, prop_def in properties.items():
                     # Helper function to extract validations from a schema (handles anyOf)
                     def extract_validations(schema_obj, entity_name, field_name):
-                        found_vals = []
+                        if field_name in required_props:
+                            record_validation(entity_name, field_name, "required")
 
-                        # Check for validation constraints and capture in "Entity.field: constraint" format
-                        if "exclusiveMinimum" in schema_obj and schema_obj.get("exclusiveMinimum") is not None:
-                            constraint = f"gt={int(schema_obj['exclusiveMinimum'])}"
-                            found_vals.append(f"{entity_name}.{field_name}: {constraint}")
+                        if not isinstance(schema_obj, dict):
+                            return
+
+                        enum_vals = schema_obj.get("enum")
+                        if isinstance(enum_vals, list) and enum_vals:
+                            enum_str = ",".join(str(v) for v in enum_vals)
+                            record_validation(entity_name, field_name, f"enum={enum_str}")
+
+                        if schema_obj.get("exclusiveMinimum") is not None:
+                            record_validation(entity_name, field_name, f"gt={schema_obj['exclusiveMinimum']}")
                         elif "minimum" in schema_obj:
-                            constraint = f"ge={int(schema_obj['minimum'])}"
-                            found_vals.append(f"{entity_name}.{field_name}: {constraint}")
+                            record_validation(entity_name, field_name, f"ge={schema_obj['minimum']}")
 
                         if "maximum" in schema_obj:
-                            constraint = f"le={int(schema_obj['maximum'])}"
-                            found_vals.append(f"{entity_name}.{field_name}: {constraint}")
+                            record_validation(entity_name, field_name, f"le={schema_obj['maximum']}")
 
-                        if "minLength" in schema_obj or "maxLength" in schema_obj:
-                            found_vals.append(f"{entity_name}.{field_name}: length")
+                        if "minLength" in schema_obj:
+                            record_validation(entity_name, field_name, f"min_length={schema_obj['minLength']}")
 
-                        if "pattern" in schema_obj:
-                            pattern = schema_obj["pattern"]
-                            found_vals.append(f"{entity_name}.{field_name}: pattern={pattern}")
+                        if "maxLength" in schema_obj:
+                            record_validation(entity_name, field_name, f"max_length={schema_obj['maxLength']}")
 
-                        if schema_obj.get("format") == "email":
-                            found_vals.append(f"{entity_name}.{field_name}: email")
+                        if "minItems" in schema_obj:
+                            record_validation(entity_name, field_name, f"min_items={schema_obj['minItems']}")
 
-                        return found_vals
+                        pattern = schema_obj.get("pattern")
+                        fmt = schema_obj.get("format")
+                        if fmt == "uuid" or pattern == uuid_pattern:
+                            record_validation(entity_name, field_name, "uuid_format")
+                        elif fmt == "email" or pattern == email_pattern:
+                            record_validation(entity_name, field_name, "email_format")
+                        elif pattern:
+                            record_validation(entity_name, field_name, f"pattern={pattern}")
 
                     # Extract validations from prop_def directly
-                    validations_found.extend(extract_validations(prop_def, base_entity_name, prop_name))
+                    extract_validations(prop_def, base_entity_name, prop_name)
 
                     # Also check inside anyOf (for Decimal fields that can be number or string)
                     if "anyOf" in prop_def:
                         for sub_schema in prop_def["anyOf"]:
                             if isinstance(sub_schema, dict):
-                                validations_found.extend(extract_validations(sub_schema, base_entity_name, prop_name))
+                                extract_validations(sub_schema, base_entity_name, prop_name)
 
             logger.info(f"Extracted {len(validations_found)} validations from OpenAPI schemas")
 
@@ -516,16 +563,14 @@ class ComplianceValidator:
                 logger.debug(f"Reading validations directly from {schemas_file}")
                 schemas_content = schemas_file.read_text()
 
-                # Find Field() validations: Field(..., gt=0), Field(..., ge=0), etc.
-                # Pattern: field_name: Type = Field(..., constraint)
-                import re
-
-                # Match patterns like: quantity: int = Field(..., gt=0)
-                # Updated to include min_length, max_length, lt and other common validators
-                field_pattern = r'(\w+):\s*(?:Optional\[)?(\w+)(?:\])?\s*=\s*Field\([^)]*?(gt=\d+|ge=\d+|le=\d+|lt=\d+|min_length=\d+|max_length=\d+|pattern=|email)[^)]*\)'
-
-                # Also track current class to know which entity
+                # Track current class to know which entity
                 class_pattern = r'class\s+(\w+)(?:Base|Create|Update|Response)\(BaseModel\):'
+                
+                # Regex to match field definitions:
+                # 1. With Field(): name: type = Field(...)
+                # 2. Simple: name: type = value
+                # 3. Simple no default: name: type
+                field_pattern = r'\s*(\w+):\s*([^=\n]+)(?:\s*=\s*(.+))?'
 
                 current_entity = None
                 for line in schemas_content.split('\n'):
@@ -535,20 +580,56 @@ class ComplianceValidator:
                         current_entity = class_match.group(1)
                         continue
 
-                    # Check for field with validation
-                    if current_entity:
-                        field_match = re.search(field_pattern, line)
-                        if field_match:
-                            field_name = field_match.group(1)
-                            constraint = field_match.group(3)
+                    if not current_entity:
+                        continue
 
-                            # Format: "Entity.field: constraint"
-                            validation_sig = f"{current_entity}.{field_name}: {constraint}"
+                    field_match = re.match(field_pattern, line)
+                    if not field_match:
+                        continue
 
-                            # Check if this matches an expected entity (case-insensitive)
-                            if current_entity.lower() in entities_expected_lower and validation_sig not in validations_found:
-                                validations_found.append(validation_sig)
-                                logger.debug(f"Found validation '{validation_sig}' from schemas.py")
+                    field_name, field_type, field_value = field_match.groups()
+                    field_type = field_type.strip()
+                    field_value = field_value.strip() if field_value else ""
+
+                    # Check for required fields
+                    # Case 1: Field(...)
+                    if "Field(" in field_value and "..." in field_value:
+                        record_validation(current_entity, field_name, "required")
+                    # Case 2: No default value and not Optional
+                    elif not field_value and not field_type.startswith("Optional") and "None" not in field_type:
+                        record_validation(current_entity, field_name, "required")
+
+                    # Enum via Literal[...] annotations
+                    # Support both Literal["A", "B"] and typing.Literal["A", "B"]
+                    literal_match = re.search(r'(?:typing\.)?Literal\[(.+?)\]', field_type)
+                    if literal_match:
+                        # Extract values, handling quotes
+                        raw_vals = literal_match.group(1)
+                        # Split by comma but respect quotes is hard with simple split, 
+                        # but for generated code simple split usually works if no commas in values
+                        enum_vals = [v.strip().strip('"').strip("'") for v in raw_vals.split(',') if v.strip()]
+                        if enum_vals:
+                            record_validation(current_entity, field_name, f"enum={','.join(enum_vals)}")
+
+                    if "UUID" in field_type:
+                        record_validation(current_entity, field_name, "uuid_format")
+
+                    # Capture numeric and length constraints inside Field(...)
+                    if "Field(" in field_value:
+                        for key in ["gt", "ge", "lt", "le", "min_length", "max_length", "min_items"]:
+                            constraint_match = re.search(rf"{key}\s*=\s*([^,\s)]+)", field_value)
+                            if constraint_match:
+                                record_validation(current_entity, field_name, f"{key}={constraint_match.group(1)}")
+
+                        pattern_match = re.search(r'pattern\s*=\s*r?["\']([^"\']+)["\']', field_value)
+                        if pattern_match:
+                            pat_val = pattern_match.group(1)
+                            if pat_val == uuid_pattern:
+                                record_validation(current_entity, field_name, "uuid_format")
+                            elif pat_val == email_pattern:
+                                record_validation(current_entity, field_name, "email_format")
+                            else:
+                                record_validation(current_entity, field_name, f"pattern={pat_val}")
 
                 logger.info(f"After checking schemas.py: {len(validations_found)} validations found")
             else:
@@ -567,22 +648,43 @@ class ComplianceValidator:
                     entity = val_data.get('entity', '')
                     field = val_data.get('field', '')
                     constraint = val_data.get('constraint', '')
+                    
+                    # Normalize constraint to match code format
+                    constraint = self._normalize_constraint(constraint)
+                    
                     # Format: "Entity.field: constraint"
                     validations_expected.append(f"{entity}.{field}: {constraint}")
-                logger.info(f"Using validation ground truth: {len(validations_expected)} validations expected")
-            else:
-                # Fallback to old logic (business_logic + entity constraints)
+                logger.info(f"Using validation ground truth: {len(validations_expected)} validations from ground truth")
+
+            # ALWAYS add entity field constraints as expected validations (if not already present)
+            # This ensures we catch simple constraints (required, gt, etc.) even if LLM missed them
+            for entity in spec_requirements.entities:
+                for field in entity.fields:
+                    # Add required constraint
+                    if field.required:
+                        sig = f"{entity.name}.{field.name}: required"
+                        if sig not in validations_expected:
+                            validations_expected.append(sig)
+                    
+                    # Add other constraints
+                    if field.constraints:
+                        for constraint in field.constraints:
+                            # Normalize constraint to match code format
+                            constraint = self._normalize_constraint(constraint)
+                            
+                            sig = f"{entity.name}.{field.name}: {constraint}"
+                            # Check for duplicates
+                            if sig not in validations_expected:
+                                validations_expected.append(sig)
+
+            # If no explicit validations found at all, use fallback
+            if not validations_expected:
+                # Fallback to old logic (business_logic)
                 for bl in spec_requirements.business_logic:
                     if bl.type == "validation":
                         validations_expected.append(bl.description)
 
-                # Add entity field constraints as expected validations
-                for entity in spec_requirements.entities:
-                    for field in entity.fields:
-                        if field.constraints:
-                            validations_expected.extend(field.constraints)
-
-                # If no explicit validations, use a minimum count based on entities
+                # If still no explicit validations, use a minimum count based on entities
                 if not validations_expected and entities_expected:
                     # Expect at least 2 validations per entity (heuristic)
                     validations_expected = [f"validation_{i}" for i in range(len(entities_expected) * 2)]
@@ -686,6 +788,46 @@ class ComplianceValidator:
 
         logger.info(f"Compliance validation PASSED: {report.overall_compliance:.1%}")
         return report
+
+    def _normalize_constraint(self, constraint: str) -> str:
+        """
+        Normalize constraint string to standard format used in code analysis
+        
+        Args:
+            constraint: Raw constraint string (e.g., "> 0", "email format")
+            
+        Returns:
+            Normalized constraint (e.g., "gt=0", "email_format")
+        """
+        c = constraint.strip()
+        c_lower = c.lower()
+        
+        # Special handling for enums: preserve case of values
+        if c_lower.startswith("enum="):
+            # Just ensure the prefix is standardized if needed, but for now return as is
+            # assuming ground truth has correct case
+            return c
+        
+        # For other constraints, work with lowercase
+        c = c_lower
+        
+        # Map symbols to text
+        if c.startswith(">="):
+            return f"ge={c[2:].strip()}"
+        if c.startswith(">"):
+            return f"gt={c[1:].strip()}"
+        if c.startswith("<="):
+            return f"le={c[2:].strip()}"
+        if c.startswith("<"):
+            return f"lt={c[1:].strip()}"
+            
+        # Map common terms
+        if c == "email format":
+            return "email_format"
+        if c == "uuid format":
+            return "uuid_format"
+            
+        return c
 
     def _calculate_compliance(self, found: List[str], expected: List[str]) -> float:
         """

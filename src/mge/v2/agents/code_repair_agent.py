@@ -839,6 +839,13 @@ from datetime import datetime, timezone
 
             # Special handling for 'enum' constraint - changes type hint to Literal
             if constraint_type == 'enum' and isinstance(constraint_value, list):
+                # Check if already Literal
+                # Match: status: Literal["A", "B"] = ...
+                literal_pattern = rf'(\s+{field_name}):\s*(?:typing\.)?Literal\[.*\]\s*='
+                if re.search(literal_pattern, source_code, re.MULTILINE):
+                    logger.info(f"Field {entity_name}.{field_name} is already Literal, skipping enum update")
+                    return True
+
                 # For enum, we need to change the type from str to Literal["VALUE1", "VALUE2"]
                 # Pattern: field_name: str = ... → field_name: Literal["VALUE1", "VALUE2"] = ...
 
@@ -868,11 +875,12 @@ from datetime import datetime, timezone
             elif constraint_type == 'required':
                 # For required fields, we need to ensure Field(...) without default=None
                 # Pattern: field_name: Type = Field(default=None, ...) → Field(...)
-                field_pattern = rf'(\s+{field_name}:\s*[\w\[\]]+)\s*=\s*Field\((.*?)\)'
+                # Improved regex to match nested parenthesis in Field(...)
+                field_pattern = rf'(\s+{field_name}:\s*[^=]+)\s*=\s*Field\((.*?)\)'
 
                 if re.search(field_pattern, source_code, re.MULTILINE):
                     def make_required(match):
-                        indent = match.group(1)
+                        indent_type = match.group(1)
                         existing_args = match.group(2)
 
                         # Remove default=None if present
@@ -885,14 +893,15 @@ from datetime import datetime, timezone
                             # Clean up any leading/trailing commas
                             existing_args = existing_args.strip(', ')
 
-                        return f'{indent} = Field({existing_args})'
+                        return f'{indent_type} = Field({existing_args})'
 
                     source_code = re.sub(field_pattern, make_required, source_code, flags=re.MULTILINE)
                     logger.info(f"Made {entity_name}.{field_name} required (removed default=None)")
 
                 else:
                     # Field() doesn't exist, create it with ...
-                    simple_field_pattern = rf'(\s+{field_name}:\s*[\w\[\]]+)\s*=\s*([^\n]+)'
+                    # Improved regex to capture complex types like Literal["A", "B"]
+                    simple_field_pattern = rf'(\s+{field_name}:\s*[^=]+)\s*=\s*([^\n]+)'
 
                     def add_required_field(match):
                         field_def = match.group(1)

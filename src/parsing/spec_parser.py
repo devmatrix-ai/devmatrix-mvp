@@ -455,6 +455,8 @@ class SpecParser:
                 default_match = re.search(r"default[:\s]+([^\s,]+)", part, re.IGNORECASE)
                 if default_match:
                     default = default_match.group(1)
+                    # Fields with defaults are not required
+                    required = False
 
         return Field(
             name=name,
