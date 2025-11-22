@@ -45,6 +45,7 @@ class ComplianceReport:
     # Business Logic
     validations_implemented: List[str] = dataclass_field(default_factory=list)
     validations_expected: List[str] = dataclass_field(default_factory=list)
+    validations_found: List[str] = dataclass_field(default_factory=list)  # All found, including extras
 
     # Missing requirements
     missing_requirements: List[str] = dataclass_field(default_factory=list)
@@ -206,8 +207,9 @@ class ComplianceValidator:
             entities_expected=entities_expected,
             endpoints_implemented=endpoints_found,
             endpoints_expected=endpoints_expected,
-            validations_implemented=validations_matched,  # Only matched validations, not all found
+            validations_implemented=validations_matched,  # Only matched validations
             validations_expected=validations_expected,
+            validations_found=validations_found,  # All found validations
             missing_requirements=missing,
             compliance_details={
                 "entities": entity_compliance,
@@ -722,8 +724,9 @@ class ComplianceValidator:
                 entities_expected=entities_expected,
                 endpoints_implemented=endpoints_found,
                 endpoints_expected=endpoints_expected,
-                validations_implemented=validations_matched,  # Only matched validations, not all found
+                validations_implemented=validations_matched,  # Only matched validations
                 validations_expected=validations_expected,
+                validations_found=validations_found,  # All found validations
                 missing_requirements=missing,
                 compliance_details={
                     "entities": entity_compliance,

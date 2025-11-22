@@ -2608,6 +2608,11 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
             print(f"    ├─ Entities:       {self.compliance_report.compliance_details.get('entities', 0):.1%} ({len(self.compliance_report.entities_implemented)}/{len(self.compliance_report.entities_expected)})")
             print(f"    ├─ Endpoints:      {self.compliance_report.compliance_details.get('endpoints', 0):.1%} ({len(self.compliance_report.endpoints_implemented)}/{len(self.compliance_report.endpoints_expected)})")
             print(f"    └─ Validations:    {self.compliance_report.compliance_details.get('validations', 0):.1%} ({len(self.compliance_report.validations_implemented)}/{len(self.compliance_report.validations_expected)})")
+            
+            # Calculate extra validations (found but not explicitly expected)
+            extra_validations = len(self.compliance_report.validations_found) - len(self.compliance_report.validations_implemented)
+            if extra_validations > 0:
+                print(f"       + Extra:        {extra_validations} additional validations found (robustness)")
 
             # Calculate Spec-to-App Precision (weighted average of all components)
             # This metric shows how well the generated app matches the spec and works correctly
