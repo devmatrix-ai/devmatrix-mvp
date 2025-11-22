@@ -274,7 +274,38 @@ Your task is to generate high-quality, production-ready code that:
 2. Includes proper type hints and docstrings
 3. Is atomic and focused (single responsibility)
 4. Uses dependencies correctly
-5. Passes all validation checks"""
+5. Passes all validation checks
+
+CRITICAL UUID HANDLING RULES (FastAPI/Pydantic):
+1. All Pydantic response models MUST inherit from a BaseSchema with json_encoders = {{UUID: str}}
+2. Exception handlers MUST use fastapi.encoders.jsonable_encoder for all error responses
+3. Create schemas MUST NOT include server-generated fields (id, created_at, updated_at)
+4. Split entity schemas into:
+   - {{Entity}}BaseFields: client-provided fields only (no id, no created_at)
+   - {{Entity}}Base: adds server-generated fields (id, created_at)
+   - {{Entity}}Create: inherits from {{Entity}}BaseFields
+   - {{Entity}}Response: inherits from {{Entity}}Base
+5. Example structure:
+   ```python
+   class BaseSchema(BaseModel):
+       class Config:
+           json_encoders = {{UUID: str}}
+           from_attributes = True
+   
+   class ProductBaseFields(BaseSchema):
+       name: str
+       price: Decimal
+   
+   class ProductBase(ProductBaseFields):
+       id: UUID
+       created_at: datetime
+   
+   class ProductCreate(ProductBaseFields):
+       pass  # No id, no created_at
+   
+   class ProductResponse(ProductBase):
+       pass
+   ```"""
 
     def _build_prompt(
         self,

@@ -80,6 +80,7 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 tests/
+!tests/e2e/generated_apps/**
 # Virtual environments
 venv/
 env/

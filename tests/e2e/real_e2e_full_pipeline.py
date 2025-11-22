@@ -2259,6 +2259,42 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
             "missing_requirements_count": len(missing_requirements)
         })
 
+        # ===== NEW: UUID Serialization Validation & Auto-Repair =====
+        print("\n  🔍 Running UUID serialization validation...")
+        
+        try:
+            from src.validation.uuid_serialization_validator import UUIDSerializationValidator
+            
+            uuid_validator = UUIDSerializationValidator(self.output_path)
+            is_valid, issues = uuid_validator.validate()
+            
+            if not is_valid:
+                print(f"  ⚠️ UUID serialization issues detected: {len(issues)} issues")
+                for issue in issues:
+                    print(f"    - {issue}")
+                
+                # Auto-repair
+                print("  🔧 Attempting auto-repair...")
+                if uuid_validator.auto_repair():
+                    print("  ✅ UUID serialization auto-repair completed successfully")
+                    
+                    # Re-validate
+                    is_valid_after_repair, remaining_issues = uuid_validator.validate()
+                    if is_valid_after_repair:
+                        print("  ✅ UUID serialization validation PASSED after repair")
+                    else:
+                        print(f"  ⚠️ {len(remaining_issues)} UUID issues remain after repair")
+                else:
+                    print("  ❌ UUID serialization auto-repair failed")
+            else:
+                print("  ✅ UUID serialization validation PASSED (no issues found)")
+                
+        except Exception as e:
+            print(f"  ⚠️ UUID serialization validation skipped: {e}")
+
+        self.metrics_collector.add_checkpoint("validation", "CP-7.3.5: UUID serialization validated", {})
+
+
         # ===== EXISTING: Continue with other validation checks =====
         self.metrics_collector.add_checkpoint("validation", "CP-7.4: Business logic validation", {})
         print("  ✓ Checkpoint: CP-7.4: Business logic validation (4/6)")

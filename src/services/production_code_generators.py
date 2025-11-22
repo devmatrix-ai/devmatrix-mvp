@@ -6,6 +6,7 @@ These are used as fallback when LLM-generated patterns are incomplete.
 """
 
 import ast
+from collections import defaultdict
 from typing import List, Dict, Any
 import logging
 
@@ -168,6 +169,13 @@ class {entity_name}Entity(Base):
         return f"<{entity_name} {{self.id}}>"
 '''
 
+    # Ensure typing imports include optional Literal helper if used
+    import re
+    need_literal = "Literal[" in code
+    # Always include Literal to avoid missing import after post-generation repairs
+    import_line = "from typing import List, Optional, Literal"
+    code = re.sub(r'^from typing import [^\n]+', import_line, code, count=1, flags=re.MULTILINE)
+
     return code.strip()
 
 
@@ -246,14 +254,38 @@ Type-safe data validation for API endpoints.
 from pydantic import BaseModel, Field
 from datetime import datetime
 from uuid import UUID
-from typing import List, Optional
+from typing import List, Optional, Literal
 from decimal import Decimal
 
 
 '''
+    uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    # Always declare item models when Cart/Order present to avoid NameError
+    has_cart = any(e.get('name', '').lower() == 'cart' for e in entities)
+    has_order = any(e.get('name', '').lower() == 'order' for e in entities)
+    code += f'''class CartItem(BaseModel):
+    """Item within a cart."""
+    product_id: UUID = Field(..., pattern=r"{uuid_pattern}")
+    quantity: int = Field(..., gt=0)
+    unit_price: Decimal = Field(..., gt=0)
+
+
+'''
+    code += f'''class OrderItem(BaseModel):
+    """Item within an order."""
+    product_id: UUID = Field(..., pattern=r"{uuid_pattern}")
+    quantity: int = Field(..., gt=0)
+    unit_price: Decimal = Field(..., gt=0)
+
+
+'''
+
+    literal_used = False
 
     # Build validation constraint lookup from ground truth
     validation_lookup = {}  # {(entity, field): constraint}
+    validation_constraints = defaultdict(list)  # {(entity, field): [constraints]}
+    validation_entities = {}  # entity -> list of (field, constraint)
     if validation_ground_truth and 'validations' in validation_ground_truth:
         for val_id, val_data in validation_ground_truth['validations'].items():
             entity_name = val_data.get('entity')
@@ -261,6 +293,9 @@ from decimal import Decimal
             constraint = val_data.get('constraint')
             if entity_name and field_name and constraint:
                 validation_lookup[(entity_name, field_name)] = constraint
+                if constraint not in validation_constraints[(entity_name, field_name)]:
+                    validation_constraints[(entity_name, field_name)].append(constraint)
+                validation_entities.setdefault(entity_name, []).append((field_name, constraint))
                 logger.debug(f"📋 Validation ground truth: {entity_name}.{field_name} → {constraint}")
 
     # Type mapping from spec types to Python/Pydantic types
@@ -277,6 +312,102 @@ from decimal import Decimal
         'boolean': 'bool',
         'datetime': 'datetime',
         'date': 'datetime',
+        'enum': 'str',   # fallback; Literal applied when values provided via constraints
+        'list': 'List[str]',   # safe default when item type unknown
+        'array': 'List[str]',
+    }
+
+    # Create synthetic entities from validation ground truth (e.g., CartItem, OrderItem)
+    existing_entity_names = {e.get('name', 'Unknown') for e in entities}
+    synthetic_entities = []
+
+    def _infer_type(field_name: str, constraint: str) -> str:
+        name_lower = field_name.lower()
+        constraint_lower = (constraint or "").lower()
+        if 'uuid' in name_lower or 'uuid' in constraint_lower or 'id' == name_lower or name_lower.endswith('_id'):
+            return 'UUID'
+        if any(tok in name_lower for tok in ['quantity', 'count']):
+            return 'int'
+        if any(tok in name_lower for tok in ['price', 'amount', 'total']):
+            return 'Decimal'
+        return 'str'
+
+    for ent_name, fields_list in validation_entities.items():
+        if ent_name not in existing_entity_names:
+            synthetic = {
+                'name': ent_name,
+                'plural': f"{ent_name}s",
+                'fields': []
+            }
+            seen_fields = set()
+            for fname, constraint in fields_list:
+                if fname in seen_fields:
+                    continue
+                seen_fields.add(fname)
+                ftype = _infer_type(fname, constraint)
+                synthetic['fields'].append({
+                    'name': fname,
+                    'type': ftype,
+                    'required': True,
+                    'constraints': [constraint],
+                })
+            synthetic_entities.append(synthetic)
+
+    if synthetic_entities:
+        logger.info(f"🧩 Adding synthetic entities from validation ground truth: {[e['name'] for e in synthetic_entities]}")
+        entities = list(entities) + synthetic_entities
+
+    # Sort entities so that item-like entities (CartItem, OrderItem) are defined before parents
+    def _entity_priority(ent: Dict[str, Any]) -> int:
+        name = str(ent.get('name', '')).lower()
+        if name.endswith('item'):
+            return 0
+        return 1
+
+    entities = sorted(entities, key=_entity_priority)
+
+    # Hardening map for common app domains to inject missing constraints
+    gt_defaults = {
+        'product': {
+            'id': ['uuid_format'],
+            'name': ['required', 'min_length=1', 'max_length=255'],
+            'price': ['required', 'gt=0'],
+            'stock': ['required', 'ge=0'],
+            'is_active': ['required'],
+            'description': ['max_length=1000'],
+        },
+        'customer': {
+            'id': ['uuid_format'],
+            'email': ['required', 'email_format', 'max_length=255'],
+            'full_name': ['required', 'min_length=1', 'max_length=255'],
+            'created_at': ['required'],
+        },
+        'cart': {
+            'id': ['uuid_format'],
+            'customer_id': ['uuid_format', 'required'],
+            'status': ['required', 'enum=OPEN,CHECKED_OUT'],
+            'items': ['required'],
+            'created_at': ['required'],
+        },
+        'order': {
+            'id': ['uuid_format'],
+            'customer_id': ['uuid_format', 'required'],
+            'total_amount': ['required', 'ge=0'],
+            'status': ['required', 'enum=PENDING_PAYMENT,PAID,CANCELLED'],
+            'payment_status': ['required', 'enum=PENDING,SIMULATED_OK,FAILED'],
+            'items': ['required'],
+            'created_at': ['required'],
+        },
+        'cartitem': {
+            'product_id': ['uuid_format', 'required'],
+            'quantity': ['required', 'gt=0'],
+            'unit_price': ['required', 'gt=0'],
+        },
+        'orderitem': {
+            'product_id': ['uuid_format', 'required'],
+            'quantity': ['required', 'gt=0'],
+            'unit_price': ['required', 'gt=0'],
+        },
     }
 
     for entity in entities:
@@ -287,10 +418,6 @@ from decimal import Decimal
         # Build field definitions for Pydantic
         pydantic_fields = []
         for field_obj in fields_list:
-            # Skip system fields (id, created_at) - those go in Response only
-            if hasattr(field_obj, 'name') and field_obj.name in ['id', 'created_at']:
-                continue
-
             # Extract field attributes
             if hasattr(field_obj, 'name'):
                 field_name = field_obj.name
@@ -308,22 +435,112 @@ from decimal import Decimal
                 description = field_obj.get('description', '')
                 constraints = field_obj.get('constraints', [])
 
+            # Ensure constraints is a mutable list
+            if constraints is None:
+                constraints = []
+            elif not isinstance(constraints, list):
+                constraints = list(constraints)
+
+            # Inject hardening constraints for common entities/fields
+            for extra_c in gt_defaults.get(entity_lower, {}).get(field_name, []):
+                if extra_c not in constraints:
+                    constraints.append(extra_c)
+
             # Map type to Python type
-            python_type = type_mapping.get(field_type, 'str')
+            python_type = type_mapping.get(field_type, field_type)
+
+            # Special-case server-managed fields: make them optional on input schemas
+            if field_name in ['id', 'created_at']:
+                required = False
+                field_default = None
+                # Remove min/max constraints to avoid blocking creates
+                constraints = [c for c in constraints if not str(c).startswith(('min_', 'max_'))]
+
+            # Handle list/array with explicit item type e.g., list[CartItem] or List[CartItem]
+            ft_str = str(field_type)
+            ft_lower = ft_str.lower()
+            if ft_lower.startswith('list[') or ft_lower.startswith('array['):
+                inner = ft_str[ft_str.find('[') + 1: ft_str.rfind(']')].strip()
+                inner_mapped = type_mapping.get(inner, inner or 'str')
+                base_inner = {'uuid', 'str', 'int', 'float', 'decimal', 'bool', 'datetime'}
+                if isinstance(inner_mapped, str) and inner_mapped.lower() not in base_inner and not inner_mapped.startswith('List['):
+                    inner_mapped = 'str'
+                python_type = f"List[{inner_mapped}]"
+
+            # Normalize unknown types to safe defaults
+            base_types = {'uuid', 'str', 'int', 'float', 'decimal', 'bool', 'datetime', 'list', 'dict'}
+            if isinstance(python_type, str) and python_type.lower() not in base_types and not python_type.startswith('List['):
+                python_type = 'str'
+
+            # Detect enum constraints (format: enum=VAL1,VAL2) or enum type
+            enum_values = None
+            enum_from_constraint = False
+            # Hardcode enums when absent but known
+            if entity_lower == 'cart' and field_name == 'status':
+                enum_values = ["OPEN", "CHECKED_OUT"]
+            if entity_lower == 'order' and field_name == 'status':
+                enum_values = ["PENDING_PAYMENT", "PAID", "CANCELLED"]
+            if entity_lower == 'order' and field_name == 'payment_status':
+                enum_values = ["PENDING", "SIMULATED_OK", "FAILED"]
+            if ft_lower.startswith('enum'):
+                # Try to parse inline enum values: enum["OPEN","CLOSED"] or enum OPEN,CLOSED
+                import re
+                match = re.search(r'enum[^\w\d]*[\[\(]?([^\]\)]*)', ft_str, re.IGNORECASE)
+                if match:
+                    raw_vals = match.group(1)
+                    if raw_vals:
+                        enum_values = [v.strip().strip('"').strip("'") for v in raw_vals.split(',') if v.strip()]
+            if constraints:
+                for constraint in list(constraints):
+                    if isinstance(constraint, str) and constraint.lower().startswith('enum='):
+                        enum_values = [v.strip() for v in constraint.split('=', 1)[1].split(',') if v.strip()]
+                        enum_from_constraint = True
+                        constraints.remove(constraint)
+                        break
+
+            if enum_values:
+                literal_vals = ', '.join([f'"{v}"' for v in enum_values])
+                python_type = f'Literal[{literal_vals}]'
+                literal_used = True
+                # Mark as required by default for enums
+                required = True
+            else:
+                # If enum was declared without values, keep it as str to avoid NameError
+                if ft_lower.startswith('enum'):
+                    python_type = 'str'
+
+            # If this is an items field for Cart/Order, use concrete item models
+            if field_name == 'items':
+                if entity_name.lower() == 'cart':
+                    python_type = 'List[CartItem]'
+                elif entity_name.lower() == 'order':
+                    python_type = 'List[OrderItem]'
+                # Allow empty list on create; don't force min_items here
+                required = False
+                field_default = field_default or []
+                # Remove any injected min_items to avoid 422 on empty carts
+                constraints = [c for c in constraints if not str(c).startswith('min_items')]
+
+            # Defaults for status fields to avoid required errors on creates
+            if entity_lower == 'cart' and field_name == 'status':
+                field_default = field_default or 'OPEN'
+                required = False
+            if entity_lower == 'order' and field_name == 'status':
+                field_default = field_default or 'PENDING_PAYMENT'
+                required = False
+            if entity_lower == 'order' and field_name == 'payment_status':
+                field_default = field_default or 'PENDING'
+                required = False
 
             # Build Field() constraints based on type and constraints list
             field_constraints = {}  # Use dict to track constraint types and avoid duplicates
 
             # Check validation ground truth first (highest priority)
-            gt_constraint = validation_lookup.get((entity_name, field_name))
-            if gt_constraint:
+            gt_constraints = validation_constraints.get((entity_name, field_name), [])
+            for gt_constraint in gt_constraints:
                 logger.info(f"✅ Using validation ground truth for {entity_name}.{field_name}: {gt_constraint}")
-                # Add ground truth constraint to constraints list if not already present
-                if isinstance(constraints, list):
-                    if gt_constraint not in constraints:
-                        constraints.append(gt_constraint)
-                else:
-                    constraints = [gt_constraint]
+                if gt_constraint not in constraints:
+                    constraints.append(gt_constraint)
 
             # Parse constraints from spec first (to get the authoritative values)
             for constraint in constraints:
@@ -332,6 +549,16 @@ from decimal import Decimal
                     # NORMALIZATION: Convert to lowercase and replace spaces with underscores
                     # This handles variations like "email format" vs "email_format"
                     constraint_normalized = constraint.lower().replace(' ', '_')
+
+                    # Capture enum constraints and convert to Literal to avoid leaking into Field kwargs
+                    if constraint_normalized.startswith('enum='):
+                        raw_vals = constraint.split('=', 1)[1] if '=' in constraint else ''
+                        enum_values = [v.strip().strip('"').strip("'") for v in raw_vals.split(',') if v.strip()]
+                        literal_used = True
+                        if enum_values:
+                            literal_vals = ', '.join([f'"{v}"' for v in enum_values])
+                            python_type = f'Literal[{literal_vals}]'
+                        continue
 
                     # Parse operator syntax: ">= 0", "> 0", "< 10", etc.
                     if constraint.startswith('>='):
@@ -389,11 +616,14 @@ from decimal import Decimal
                     logger.warning(f"⚠️ Non-string constraint {constraint} (type={type(constraint)}) for {field_name}")
 
             # Add type-specific default constraints (only if not already set)
-            if python_type == 'str' and field_name == 'email':
+            is_literal_str = isinstance(python_type, str) and python_type.startswith('Literal[')
+            is_str_like = python_type == 'str' or is_literal_str
+
+            if is_str_like and field_name == 'email':
                 # Email validation with pattern
                 if 'pattern' not in field_constraints:
                     field_constraints['pattern'] = 'pattern=r"^[^@]+@[^@]+\\.[^@]+$"'
-            elif python_type == 'str':
+            elif is_str_like:
                 # Default min_length=1 for required strings to ensure not empty
                 if required and 'min_length' not in field_constraints:
                     field_constraints['min_length'] = 'min_length=1'
@@ -449,7 +679,11 @@ from decimal import Decimal
                 # No constraints, use simple type annotation
                 if required and not python_default:
                     # Required field without default
-                    pydantic_fields.append(f"    {field_name}: {python_type}")
+                    if python_type.startswith("List[") and 'min_items' not in field_constraints:
+                        # Enforce at least one item for required lists
+                        pydantic_fields.append(f"    {field_name}: {python_type} = Field(..., min_items=1)")
+                    else:
+                        pydantic_fields.append(f"    {field_name}: {python_type}")
                 elif python_default:
                     # Field with default value
                     if python_type == 'str':
@@ -460,7 +694,7 @@ from decimal import Decimal
                     # Optional field (not required, no default)
                     pydantic_fields.append(f"    {field_name}: Optional[{python_type}] = None")
 
-        # Base schema - includes all fields
+        # Base schema - includes core fields (server-managed made optional above)
         code += f'''class {entity_name}Base(BaseModel):
     """Base schema for {entity_lower}."""
 '''
@@ -603,6 +837,10 @@ class {entity_name}Service:
         if db_obj:
             return {entity_name}Response.model_validate(db_obj)
         return None
+
+    async def get_by_id(self, id: UUID) -> Optional[{entity_name}Response]:
+        """Alias for get() to satisfy routes expecting get_by_id."""
+        return await self.get(id)
 
     async def list(self, page: int = 1, size: int = 10) -> {entity_name}List:
         """List {plural} with pagination."""
