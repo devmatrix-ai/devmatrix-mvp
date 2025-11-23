@@ -125,25 +125,15 @@ class ComplianceValidator:
         entities_expected = [e.name for e in spec_requirements.entities]
         endpoints_expected = [f"{ep.method} {ep.path}" for ep in spec_requirements.endpoints]
 
-        # For validations, use ground truth if available, otherwise fallback to old logic
+        # ARCHITECTURE RULE #1: NO Manual Ground Truth in Code
+        # Per ARCHITECTURE_RULES.md, ground truth must ONLY come from automated extraction.
+        # We do NOT load validation_ground_truth from YAML or add manual definitions.
+        #
+        # Instead: validations_expected reflects what SHOULD be implemented based on spec constraints
+        # (entities, endpoints, business logic), not a pre-defined manual list.
         validations_expected = []
 
-        if spec_requirements.validation_ground_truth and 'validations' in spec_requirements.validation_ground_truth:
-            # Use ground truth validations
-            for val_id, val_data in spec_requirements.validation_ground_truth['validations'].items():
-                entity = val_data.get('entity', '')
-                field = val_data.get('field', '')
-                constraint = val_data.get('constraint', '')
-                
-                # Normalize constraint to match code format
-                constraint = self._normalize_constraint(constraint)
-                
-                # Format: "Entity.field: constraint"
-                validations_expected.append(f"{entity}.{field}: {constraint}")
-            logger.info(f"Using validation ground truth: {len(validations_expected)} validations from ground truth")
-
-        # ALWAYS add entity field constraints as expected validations (if not already present)
-        # This ensures we catch simple constraints (required, gt, etc.) even if LLM missed them
+        # Build expected validations from spec requirements (not from manual YAML)
         for entity in spec_requirements.entities:
             for field in entity.fields:
                 # Add required constraint
@@ -151,15 +141,14 @@ class ComplianceValidator:
                     sig = f"{entity.name}.{field.name}: required"
                     if sig not in validations_expected:
                         validations_expected.append(sig)
-                
+
                 # Add other constraints
                 if field.constraints:
                     for constraint in field.constraints:
                         # Normalize constraint to match code format
                         constraint = self._normalize_constraint(constraint)
-                        
+
                         sig = f"{entity.name}.{field.name}: {constraint}"
-                        # Check for duplicates (exact match or fuzzy match)
                         if sig not in validations_expected:
                             validations_expected.append(sig)
 
@@ -179,10 +168,9 @@ class ComplianceValidator:
         entity_compliance = self._calculate_compliance(entities_found, entities_expected)
         endpoint_compliance = self._calculate_endpoint_compliance_fuzzy(endpoints_found, endpoints_expected)
 
-        # Use exact matching if ground truth is available, otherwise use flexible matching
-        use_exact_matching = bool(spec_requirements.validation_ground_truth and 'validations' in spec_requirements.validation_ground_truth)
+        # Always use flexible matching (no manual ground truth exists anymore per Architecture Rule #1)
         validation_compliance, validations_matched = self._calculate_validation_compliance(
-            validations_found, validations_expected, use_exact_matching=use_exact_matching
+            validations_found, validations_expected, use_exact_matching=False
         )
 
         # 4. Calculate overall compliance (weighted average)
@@ -644,25 +632,15 @@ class ComplianceValidator:
             entities_expected = [e.name for e in spec_requirements.entities]
             endpoints_expected = [f"{ep.method} {ep.path}" for ep in spec_requirements.endpoints]
 
-            # For validations, use ground truth if available, otherwise fallback to old logic
+            # ARCHITECTURE RULE #1: NO Manual Ground Truth in Code
+            # Per ARCHITECTURE_RULES.md, ground truth must ONLY come from automated extraction.
+            # We do NOT load validation_ground_truth from YAML or add manual definitions.
+            #
+            # Instead: validations_expected reflects what SHOULD be implemented based on spec constraints
+            # (entities, endpoints, business logic), not a pre-defined manual list.
             validations_expected = []
 
-            if spec_requirements.validation_ground_truth and 'validations' in spec_requirements.validation_ground_truth:
-                # Use ground truth validations
-                for val_id, val_data in spec_requirements.validation_ground_truth['validations'].items():
-                    entity = val_data.get('entity', '')
-                    field = val_data.get('field', '')
-                    constraint = val_data.get('constraint', '')
-                    
-                    # Normalize constraint to match code format
-                    constraint = self._normalize_constraint(constraint)
-                    
-                    # Format: "Entity.field: constraint"
-                    validations_expected.append(f"{entity}.{field}: {constraint}")
-                logger.info(f"Using validation ground truth: {len(validations_expected)} validations from ground truth")
-
-            # ALWAYS add entity field constraints as expected validations (if not already present)
-            # This ensures we catch simple constraints (required, gt, etc.) even if LLM missed them
+            # Build expected validations from spec requirements (not from manual YAML)
             for entity in spec_requirements.entities:
                 for field in entity.fields:
                     # Add required constraint
@@ -670,15 +648,14 @@ class ComplianceValidator:
                         sig = f"{entity.name}.{field.name}: required"
                         if sig not in validations_expected:
                             validations_expected.append(sig)
-                    
+
                     # Add other constraints
                     if field.constraints:
                         for constraint in field.constraints:
                             # Normalize constraint to match code format
                             constraint = self._normalize_constraint(constraint)
-                            
+
                             sig = f"{entity.name}.{field.name}: {constraint}"
-                            # Check for duplicates
                             if sig not in validations_expected:
                                 validations_expected.append(sig)
 
@@ -698,10 +675,9 @@ class ComplianceValidator:
             entity_compliance = self._calculate_compliance(entities_found, entities_expected)
             endpoint_compliance = self._calculate_endpoint_compliance_fuzzy(endpoints_found, endpoints_expected)
 
-            # Use exact matching if ground truth is available, otherwise use flexible matching
-            use_exact_matching = bool(spec_requirements.validation_ground_truth and 'validations' in spec_requirements.validation_ground_truth)
+            # Always use flexible matching (no manual ground truth exists anymore per Architecture Rule #1)
             validation_compliance, validations_matched = self._calculate_validation_compliance(
-                validations_found, validations_expected, use_exact_matching=use_exact_matching
+                validations_found, validations_expected, use_exact_matching=False
             )
 
             # 6. Calculate overall compliance (weighted average)

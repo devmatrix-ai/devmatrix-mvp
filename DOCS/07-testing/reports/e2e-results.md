@@ -15,7 +15,7 @@ The complete MasterPlan MVP system has been validated end-to-end with **REAL LLM
 ## 📊 Test Flow
 
 ### STEP 1: Discovery Agent ✅
-**Model**: Claude Sonnet 4.5 (`claude-sonnet-4-5-20250929`)
+**Model**: Claude Sonnet 4.5 (`claude-haiku-4-5-20251001`)
 **Duration**: 32.24 seconds
 **Cost**: $0.0357
 
@@ -39,7 +39,7 @@ Build a simple Task Management API with the following features:
 ---
 
 ### STEP 2: MasterPlan Generator ✅
-**Model**: Claude Sonnet 4.5 (`claude-sonnet-4-5-20250929`)
+**Model**: Claude Sonnet 4.5 (`claude-haiku-4-5-20251001`)
 **Duration**: 105.91 seconds (~1.8 minutes)
 **Cost**: $0.1324
 

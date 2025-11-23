@@ -32,7 +32,7 @@ class BusinessLogicExtractor:
 
     def __init__(self):
         self.client = anthropic.Anthropic()
-        self.model = "claude-3-5-sonnet-20241022"
+        self.model = "claude-haiku-4-5-20251001"
         self.validation_patterns = {
             'email': re.compile(r'\bemail\b', re.IGNORECASE),
             'unique': re.compile(r'\bunique\b|\bdistinct\b', re.IGNORECASE),

@@ -15,11 +15,11 @@ logger = logging.getLogger(__name__)
 class ClaudeModel(str, Enum):
     """Available Claude models (Oct 2025)"""
     OPUS_4_1 = "claude-opus-4-20250514"
-    SONNET_4_5 = "claude-sonnet-4-5-20250929"
+    SONNET_4_5 = "claude-haiku-4-5-20251001"
     HAIKU_4_5 = "claude-haiku-4-5-20251001"  # Released Oct 15, 2025
 
     # Legacy (for compatibility)
-    SONNET_3_5 = "claude-sonnet-4-5-20250929"
+    SONNET_3_5 = "claude-haiku-4-5-20251001"
     HAIKU_3_5 = "claude-3-5-haiku-20241022"
 
 

@@ -56,7 +56,7 @@ class LLMValidationExtractor:
             api_key: Optional Anthropic API key (defaults to env var)
         """
         self.client = Anthropic(api_key=api_key) if api_key else Anthropic()
-        self.model = "claude-3-5-sonnet-20241022"
+        self.model = "claude-haiku-4-5-20251001"
         self.max_retries = 3
         self.retry_delay_base = 1.0  # seconds
         self.batch_size = 12  # fields per batch for optimal token usage

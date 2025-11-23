@@ -106,7 +106,7 @@ Do not include explanations outside the code block."""
         """
         self.logger = get_logger("testing_agent")
         # Use Claude Sonnet 4.5 for fast test generation
-        self.llm = AnthropicClient(api_key=api_key, model="claude-sonnet-4-5-20250929")
+        self.llm = AnthropicClient(api_key=api_key, model="claude-haiku-4-5-20251001")
         self.name = "TestingAgent"
 
         # Initialize RAG components

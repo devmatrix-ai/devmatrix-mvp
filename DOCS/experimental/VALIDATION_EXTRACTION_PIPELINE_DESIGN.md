@@ -345,7 +345,7 @@ class BusinessLogicExtractor:
 
     def __init__(self):
         self.client = anthropic.Anthropic()
-        self.model = "claude-3-5-sonnet-20241022"
+        self.model = "claude-haiku-4-5-20251001"
 
         # NEW: Initialize pattern-based validator
         self.pattern_validator = PatternBasedValidator(
@@ -561,7 +561,7 @@ extraction:
   # LLM configuration
   llm:
     enabled: true
-    model: "claude-3-5-sonnet-20241022"
+    model: "claude-haiku-4-5-20251001"
     max_tokens: 1000
     fallback_on_error: true
 
@@ -616,7 +616,7 @@ class LLMValidationExtractor(ValidationExtractor):
     """Phase 2: Enhanced LLM extraction with structured output."""
 
     def __init__(self, config: Dict[str, Any]):
-        self.model = config.get('model', 'claude-3-5-sonnet-20241022')
+        self.model = config.get('model', 'claude-haiku-4-5-20251001')
         self.use_structured_output = True
 
     def extract_validation_rules(

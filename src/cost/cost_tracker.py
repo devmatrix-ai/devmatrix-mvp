@@ -49,7 +49,7 @@ class CostTracker:
 
     # Claude 3.5 Sonnet pricing (per 1M tokens)
     MODEL_PRICING = {
-        'claude-sonnet-4-5-20250929': {
+        'claude-haiku-4-5-20251001': {
             'input': 3.00,   # $3 per 1M input tokens
             'output': 15.00  # $15 per 1M output tokens
         },
@@ -93,7 +93,7 @@ class CostTracker:
             masterplan_id: Masterplan UUID
             input_tokens: Input tokens used
             output_tokens: Output tokens generated
-            model: Model name (e.g., 'claude-sonnet-4-5-20250929')
+            model: Model name (e.g., 'claude-haiku-4-5-20251001')
             wave_id: Optional wave UUID
             atom_id: Optional atom UUID
         """
@@ -164,7 +164,7 @@ class CostTracker:
         """
         if model not in self.MODEL_PRICING:
             logger.warning(f"Unknown model {model}, using default pricing")
-            model = 'claude-sonnet-4-5-20250929'
+            model = 'claude-haiku-4-5-20251001'
 
         pricing = self.MODEL_PRICING[model]
 

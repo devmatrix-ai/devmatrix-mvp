@@ -18,12 +18,12 @@ Comprehensive economic analysis of LLM-primary validation extraction strategy.
 
 ## Cost Analysis
 
-### 1. LLM API Costs (Claude Sonnet 3.5)
+### 1. LLM API Costs (Claude Sonnet 4.5)
 
 #### Pricing Model
 - **Input tokens**: $3 / 1M tokens
 - **Output tokens**: $15 / 1M tokens
-- **Model**: claude-3-5-sonnet-20241022 (Sonnet 3.5)
+- **Model**: claude-haiku-4-5-20251001 (Sonnet 4.5)
 
 #### Token Usage per Spec (E-Commerce Example)
 
@@ -504,7 +504,7 @@ Phase 2 LLM-primary validation extraction represents an **exceptional investment
 
 ### Cost Assumptions
 - Engineer hourly rate: $75/hr (mid-level backend engineer)
-- LLM API pricing: Claude Sonnet 3.5 ($3 input, $15 output per 1M tokens)
+- LLM API pricing: Claude Sonnet 4.5 ($3 input, $15 output per 1M tokens)
 - Compute costs: AWS t3.medium ($0.0416/hr)
 - Bug fix cost: $500-$5,000 (avg $1,500)
 - Incident response cost: $2,000 per incident

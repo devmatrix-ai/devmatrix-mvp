@@ -173,7 +173,7 @@ Important:
             enable_rag: Enable RAG for task decomposition enhancement (default: True)
         """
         # Use Claude Opus 4.1 for complex orchestration reasoning
-        self.llm = AnthropicClient(api_key=api_key, model="claude-opus-4-1-20250805")
+        self.llm = AnthropicClient(api_key=api_key, model="claude-haiku-4-5-20251001")
         self.console = Console()
         self.logger = get_logger("orchestrator")
         self.registry = agent_registry or AgentRegistry()

@@ -14,7 +14,7 @@ class ValidationCodeGenerator:
 
     def __init__(self):
         self.client = anthropic.Anthropic()
-        self.model = "claude-3-5-sonnet-20241022"
+        self.model = "claude-haiku-4-5-20251001"
 
     def generate_validation_code(self, validation_model: ValidationModelIR) -> Dict[str, str]:
         """

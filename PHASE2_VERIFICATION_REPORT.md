@@ -258,7 +258,7 @@ All existing Phase 1 tests continue to pass:
    - `token_count`: Total tokens used in extraction
 
 2. `LLMValidationExtractor` - Main extractor class
-   - Model: `claude-3-5-sonnet-20241022`
+   - Model: `claude-haiku-4-5-20251001`
    - Batch size: 12 fields per batch
    - Max retries: 3 with exponential backoff
    - Timeout: 60 seconds per request

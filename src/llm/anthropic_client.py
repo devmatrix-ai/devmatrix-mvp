@@ -63,7 +63,7 @@ class AnthropicClient:
 
         Args:
             api_key: Anthropic API key (defaults to env var)
-            model: Model to use (default: claude-sonnet-4-5-20250929)
+            model: Model to use (default: claude-haiku-4-5-20251001)
             enable_cache: Enable response caching (default: True)
             cache_manager: CacheManager instance (creates new if None)
             enable_retry: Enable retry with exponential backoff (default: True)

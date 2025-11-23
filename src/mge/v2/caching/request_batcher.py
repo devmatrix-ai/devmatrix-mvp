@@ -110,7 +110,7 @@ class RequestBatcher:
         if not self.enabled:
             response = await self.llm_client.generate(
                 prompt=prompt,
-                model="claude-sonnet-4-5-20250929",
+                model="claude-haiku-4-5-20251001",
                 temperature=0.0  # Deterministic mode
             )
             return response.text
@@ -165,7 +165,7 @@ class RequestBatcher:
             # Send single LLM call
             response = await self.llm_client.generate(
                 prompt=combined_prompt,
-                model="claude-sonnet-4-5-20250929",  # Default model
+                model="claude-haiku-4-5-20251001",  # Default model
                 temperature=0.0  # Deterministic mode
             )
 

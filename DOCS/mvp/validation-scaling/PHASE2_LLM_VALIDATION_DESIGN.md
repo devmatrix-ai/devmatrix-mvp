@@ -843,7 +843,7 @@ call_llm(all_relationships)        # 1 call for cross-entity
 
 ### 7.2 Cost Estimation
 
-**Model**: Claude Sonnet 3.5 (claude-3-5-sonnet-20241022)
+**Model**: Claude Sonnet 4.5 (claude-haiku-4-5-20251001)
 
 **Token Usage**:
 - Input: ~1000 tokens per prompt (avg)

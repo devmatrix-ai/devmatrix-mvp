@@ -761,7 +761,7 @@ final_rule = {
 
 ### Cost Calculation
 
-**Model**: Claude Sonnet 3.5 (claude-3-5-sonnet-20241022)
+**Model**: Claude Sonnet 4.5 (claude-haiku-4-5-20251001)
 - **Input**: $3 / 1M tokens
 - **Output**: $15 / 1M tokens
 

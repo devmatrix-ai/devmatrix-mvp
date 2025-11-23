@@ -165,7 +165,7 @@ assert api_key and api_key.startswith('sk-ant-'), 'Invalid API key format'
 
 client = Anthropic(api_key=api_key)
 msg = client.messages.create(
-    model='claude-sonnet-4-5-20250929',
+    model='claude-haiku-4-5-20251001',
     max_tokens=50,
     messages=[{'role': 'user', 'content': 'Reply with: OK'}]
 )
@@ -418,7 +418,7 @@ def real_anthropic_client(anthropic_api_key):
     """Create real Anthropic client (no mocks)."""
     return AnthropicClient(
         api_key=anthropic_api_key,
-        model="claude-sonnet-4-5-20250929",
+        model="claude-haiku-4-5-20251001",
         enable_cache=False,  # Disable cache for tests to get fresh responses
         enable_retry=True,
         enable_circuit_breaker=False  # Disable for faster test failures
@@ -1484,7 +1484,7 @@ def validate_anthropic_api():
         client = Anthropic(api_key=api_key)
 
         response = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+            model="claude-haiku-4-5-20251001",
             max_tokens=50,
             messages=[{"role": "user", "content": "Reply with: API OK"}]
         )

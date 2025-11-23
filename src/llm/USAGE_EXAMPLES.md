@@ -94,7 +94,7 @@ model = client.get_model_for_task(
     task_type="discovery",
     complexity="high"
 )
-# Returns: "claude-sonnet-4-5-20250929" (always Sonnet for discovery)
+# Returns: "claude-haiku-4-5-20251001" (always Sonnet for discovery)
 
 model = client.get_model_for_task(
     task_type="task_execution",
@@ -147,14 +147,14 @@ print(f"Total tokens cached: {stats['total_tokens_cached']}")
 ```python
 task_type = "discovery"
 complexity = "high"
-# → Always selects: claude-sonnet-4-5-20250929
+# → Always selects: claude-haiku-4-5-20251001
 ```
 
 ### MasterPlan Generation
 ```python
 task_type = "masterplan_generation"
 complexity = "high"
-# → Always selects: claude-sonnet-4-5-20250929
+# → Always selects: claude-haiku-4-5-20251001
 ```
 
 ### Task Execution
@@ -170,7 +170,7 @@ complexity = "medium"
 
 # High complexity
 complexity = "high"
-# → Selects: claude-sonnet-4-5-20250929 (better quality)
+# → Selects: claude-haiku-4-5-20251001 (better quality)
 ```
 
 ---
@@ -340,7 +340,7 @@ response = await client.generate_with_caching(
 response = await client.generate_with_caching(
     task_type="task_execution",
     complexity="medium",
-    force_model="claude-sonnet-4-5-20250929"  # Override
+    force_model="claude-haiku-4-5-20251001"  # Override
 )
 ```
 

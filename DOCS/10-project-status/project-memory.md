@@ -141,7 +141,7 @@
 - **Click**: Command-line interface framework
 
 ### AI & LLM
-- **Anthropic Claude**: Claude 3.5 Sonnet (claude-sonnet-4-5-20250929)
+- **Anthropic Claude**: Claude 3.5 Sonnet (claude-haiku-4-5-20251001)
 - **LangGraph**: State management y workflow orchestration
 
 ---

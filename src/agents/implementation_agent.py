@@ -108,7 +108,7 @@ Do not include explanations outside the code block."""
             enable_rag: Whether to enable RAG for enhanced code generation
         """
         # Use Claude Sonnet 4.5 for fast code generation
-        self.llm = AnthropicClient(api_key=api_key, model="claude-sonnet-4-5-20250929")
+        self.llm = AnthropicClient(api_key=api_key, model="claude-haiku-4-5-20251001")
         self.name = "ImplementationAgent"
         self.logger = get_logger("agents.implementation")
 

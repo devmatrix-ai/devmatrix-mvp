@@ -457,7 +457,7 @@ def __init__(self, api_key: str = None, ...):
     # Use Claude Opus 4.1 for complex orchestration reasoning
     self.llm = AnthropicClient(
         api_key=api_key,
-        model="claude-opus-4-1-20250805"
+        model="claude-haiku-4-5-20251001"
     )
 ```
 
@@ -468,7 +468,7 @@ def __init__(self, api_key: str = None):
     # Use Claude Sonnet 4.5 for faster execution
     self.llm = AnthropicClient(
         api_key=api_key,
-        model="claude-sonnet-4-5-20250929"
+        model="claude-haiku-4-5-20251001"
     )
 ```
 

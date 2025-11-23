@@ -708,7 +708,7 @@ graph TD
 - **python-socketio 5.11**: WebSocket server integration
 - **LangGraph**: State machine workflow orchestration
 - **LangChain**: LLM integration and tooling
-- **Anthropic Claude**: Sonnet 3.5 (current), targeting Opus 4.1 + Sonnet 4.5
+- **Anthropic Claude**: Sonnet 4.5 (current), targeting Opus 4.1 + Sonnet 4.5
 
 ### State Management
 - **Redis**: In-memory caching (Docker container)

@@ -112,7 +112,7 @@ def validate_anthropic_api():
         client = Anthropic(api_key=api_key)
 
         response = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+            model="claude-haiku-4-5-20251001",
             max_tokens=50,
             messages=[{"role": "user", "content": "Reply with: API OK"}]
         )
