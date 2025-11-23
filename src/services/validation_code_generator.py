@@ -18,7 +18,7 @@ class ValidationCodeGenerator:
 
     def generate_validation_code(self, validation_model: ValidationModelIR) -> Dict[str, str]:
         """
-        Generate validation code for all rules.
+        Generate validation code for ALL rule types.
         Returns dict mapping entity names to their validation code.
         """
         validation_code = {}
@@ -30,8 +30,17 @@ class ValidationCodeGenerator:
             code_blocks = []
 
             for rule in rules:
-                if rule.type == ValidationType.UNIQUENESS:
+                code = None
+
+                # Route to appropriate handler based on type
+                if rule.type == ValidationType.PRESENCE:
+                    code = self._generate_presence_validation(rule)
+                elif rule.type == ValidationType.UNIQUENESS:
                     code = self._generate_uniqueness_validation(rule)
+                elif rule.type == ValidationType.FORMAT:
+                    code = self._generate_format_validation(rule)
+                elif rule.type == ValidationType.RANGE:
+                    code = self._generate_range_validation(rule)
                 elif rule.type == ValidationType.RELATIONSHIP:
                     code = self._generate_relationship_validation(rule)
                 elif rule.type == ValidationType.STOCK_CONSTRAINT:
@@ -61,6 +70,64 @@ class ValidationCodeGenerator:
                 grouped[rule.entity] = []
             grouped[rule.entity].append(rule)
         return grouped
+
+    def _generate_presence_validation(self, rule: ValidationRule) -> str:
+        """Generate required field presence validation code."""
+        attr = rule.attribute
+        error_msg = rule.error_message or f"{attr} is required"
+
+        return f"""# Validate {attr} is present (not None/null)
+if not hasattr(data, '{attr}') or getattr(data, '{attr}') is None:
+    raise ValueError("{error_msg}")"""
+
+    def _generate_format_validation(self, rule: ValidationRule) -> str:
+        """Generate format validation code (email, URL, phone, etc.)."""
+        attr = rule.attribute
+        condition = rule.condition or "email format"
+        error_msg = rule.error_message or f"{attr} has invalid format"
+
+        if "email" in condition.lower():
+            import_stmt = "import re"
+            pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+            return f"""# Validate {attr} is valid email
+if not re.match(r'{pattern}', data.{attr}):
+    raise ValueError("{error_msg}")"""
+        elif "url" in condition.lower():
+            return f"""# Validate {attr} is valid URL
+if not (data.{attr}.startswith('http://') or data.{attr}.startswith('https://')):
+    raise ValueError("{error_msg}")"""
+        elif "phone" in condition.lower():
+            return f"""# Validate {attr} is valid phone
+phone_pattern = r'^\\+?1?\\d{{9,15}}$'
+if not re.match(phone_pattern, data.{attr}):
+    raise ValueError("{error_msg}")"""
+        else:
+            return f"""# Validate {attr} format
+# Condition: {condition}
+if not self._validate_format(data.{attr}, '{condition}'):
+    raise ValueError("{error_msg}")"""
+
+    def _generate_range_validation(self, rule: ValidationRule) -> str:
+        """Generate range constraint validation code (min/max)."""
+        attr = rule.attribute
+        condition = rule.condition or "0 <= value <= 100"
+        error_msg = rule.error_message or f"{attr} is out of valid range"
+
+        # Try to extract min/max from condition
+        import re
+        min_match = re.search(r'(\d+)\s*<=', condition)
+        max_match = re.search(r'<=\s*(\d+)', condition)
+
+        if min_match and max_match:
+            min_val = min_match.group(1)
+            max_val = max_match.group(1)
+            return f"""# Validate {attr} is within range [{min_val}, {max_val}]
+if not ({min_val} <= data.{attr} <= {max_val}):
+    raise ValueError("{error_msg}")"""
+        else:
+            return f"""# Validate {attr} is within valid range
+if not ({condition}):
+    raise ValueError("{error_msg}")"""
 
     def _generate_uniqueness_validation(self, rule: ValidationRule) -> str:
         """Generate uniqueness validation code."""

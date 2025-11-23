@@ -4,44 +4,70 @@ Business Logic Extractor
 Analyzes specifications and extracts business logic validation rules
 that should be included in ValidationModelIR.
 
-Patterns it recognizes:
-- unique: email, username
-- references: customer_id, product_id (FK constraints)
-- stock/inventory: quantity, available
-- status transitions: pending -> processing -> completed
-- workflows: multi-step sequences
+Comprehensive extraction of:
+- Uniqueness constraints (email, username, etc.)
+- Foreign key relationships (customer_id, product_id, etc.)
+- Stock/inventory management
+- Status transitions and workflows
+- Email/format validation
+- Range constraints (min/max)
+- Required fields and data types
+- Business rule patterns from spec text
 """
 from typing import List, Dict, Any, Optional
 from src.cognitive.ir.validation_model import ValidationRule, ValidationType, ValidationModelIR
 import re
 import anthropic
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class BusinessLogicExtractor:
-    """Extracts business logic constraints from specifications."""
+    """Extracts business logic constraints from specifications - Comprehensive."""
 
     def __init__(self):
         self.client = anthropic.Anthropic()
         self.model = "claude-3-5-sonnet-20241022"
+        self.validation_patterns = {
+            'email': re.compile(r'\bemail\b', re.IGNORECASE),
+            'unique': re.compile(r'\bunique\b|\bdistinct\b', re.IGNORECASE),
+            'stock': re.compile(r'\bstock\b|\binventory\b|\bquantity\b|\bavailable\b', re.IGNORECASE),
+            'status': re.compile(r'\bstatus\b|\bstate\b', re.IGNORECASE),
+            'required': re.compile(r'\brequired\b|\bmandatory\b', re.IGNORECASE),
+            'reference': re.compile(r'_id$|foreign key|references', re.IGNORECASE),
+        }
 
     def extract_validation_rules(self, spec: Dict[str, Any]) -> ValidationModelIR:
         """
-        Extract validation rules from specification.
-        Uses LLM to intelligently identify business logic constraints.
+        Extract ALL validation rules from specification.
+        Multi-stage approach:
+        1. Pattern-based extraction (fast, reliable)
+        2. LLM-based extraction (comprehensive, flexible)
+        3. Relationship inference (FK, cross-entity)
         """
         rules = []
 
-        # Extract from entities
+        # Stage 1: Extract from entities (pattern-based)
         if "entities" in spec:
             rules.extend(self._extract_from_entities(spec["entities"]))
 
-        # Extract from endpoints/workflows
+        # Stage 2: Extract from field descriptions and constraints
+        rules.extend(self._extract_from_field_descriptions(spec.get("entities", [])))
+
+        # Stage 3: Extract from endpoints/workflows
         if "endpoints" in spec or "workflows" in spec:
             rules.extend(self._extract_from_workflows(spec))
 
-        # Use LLM for complex business logic extraction
-        llm_rules = self._extract_with_llm(spec)
-        rules.extend(llm_rules)
+        # Stage 4: Use LLM for comprehensive business logic extraction
+        try:
+            llm_rules = self._extract_with_llm(spec)
+            rules.extend(llm_rules)
+        except Exception as e:
+            logger.warning(f"LLM extraction failed: {e}, continuing with pattern-based rules")
+
+        # Stage 5: Deduplicate rules (same entity+attribute+type = duplicate)
+        rules = self._deduplicate_rules(rules)
 
         return ValidationModelIR(rules=rules)
 
@@ -174,6 +200,83 @@ Return ONLY the JSON array, no other text."""
             # The pattern-based extraction above already caught common cases
             return []
 
+    def _extract_from_field_descriptions(self, entities: List[Dict[str, Any]]) -> List[ValidationRule]:
+        """Extract validation rules from field descriptions and names."""
+        rules = []
+
+        for entity in entities:
+            entity_name = entity.get("name")
+            for field in entity.get("fields", []):
+                field_name = field.get("name")
+                field_desc = field.get("description", "").lower()
+                field_type = field.get("type", "").lower()
+
+                # Email validation
+                if "email" in field_name.lower() or "email" in field_desc:
+                    rules.append(ValidationRule(
+                        entity=entity_name,
+                        attribute=field_name,
+                        type=ValidationType.FORMAT,
+                        condition="email format",
+                        error_message=f"{field_name} must be a valid email address"
+                    ))
+
+                # URL validation
+                if "url" in field_name.lower() or "url" in field_desc:
+                    rules.append(ValidationRule(
+                        entity=entity_name,
+                        attribute=field_name,
+                        type=ValidationType.FORMAT,
+                        condition="url format",
+                        error_message=f"{field_name} must be a valid URL"
+                    ))
+
+                # Phone validation
+                if "phone" in field_name.lower() or "phone" in field_desc:
+                    rules.append(ValidationRule(
+                        entity=entity_name,
+                        attribute=field_name,
+                        type=ValidationType.FORMAT,
+                        condition="phone format",
+                        error_message=f"{field_name} must be a valid phone number"
+                    ))
+
+                # Range constraints from description
+                if "min" in field_desc or "maximum" in field_desc:
+                    rules.append(ValidationRule(
+                        entity=entity_name,
+                        attribute=field_name,
+                        type=ValidationType.RANGE,
+                        condition="extract from description",
+                        error_message=f"{field_name} is out of valid range"
+                    ))
+
+                # Enum/Status validation
+                if "enum" in field or "values" in field:
+                    allowed_values = field.get("enum") or field.get("values", [])
+                    rules.append(ValidationRule(
+                        entity=entity_name,
+                        attribute=field_name,
+                        type=ValidationType.STATUS_TRANSITION,
+                        condition=f"in {allowed_values}",
+                        error_message=f"{field_name} must be one of {allowed_values}"
+                    ))
+
+        return rules
+
+    def _deduplicate_rules(self, rules: List[ValidationRule]) -> List[ValidationRule]:
+        """Remove duplicate rules (same entity+attribute+type)."""
+        seen = {}
+        deduplicated = []
+
+        for rule in rules:
+            key = (rule.entity, rule.attribute, rule.type)
+            if key not in seen:
+                seen[key] = rule
+                deduplicated.append(rule)
+
+        return deduplicated
+
     def _spec_to_string(self, spec: Dict[str, Any]) -> str:
         """Convert spec to readable string format."""
         result = []
@@ -184,9 +287,17 @@ Return ONLY the JSON array, no other text."""
         if "entities" in spec:
             result.append("\nEntities:")
             for entity in spec["entities"]:
-                result.append(f"  - {entity.get('name')}:")
+                entity_name = entity.get('name')
+                result.append(f"  - {entity_name}:")
                 for field in entity.get("fields", []):
-                    result.append(f"    - {field.get('name')}: {field.get('type')}")
+                    field_name = field.get('name')
+                    field_type = field.get('type')
+                    field_desc = field.get('description', '')
+                    unique_marker = " (unique)" if field.get('unique') else ""
+                    req_marker = " (required)" if field.get('required') else ""
+                    result.append(f"    - {field_name}: {field_type}{unique_marker}{req_marker}")
+                    if field_desc:
+                        result.append(f"      Description: {field_desc}")
 
         if "workflows" in spec:
             result.append("\nWorkflows:")
