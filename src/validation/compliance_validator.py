@@ -14,6 +14,7 @@ Threshold: FAIL if overall < 0.80 (80%)
 """
 
 import logging
+import re
 from typing import List, Dict, Any
 from dataclasses import dataclass, field as dataclass_field
 
@@ -492,7 +493,9 @@ class ComplianceValidator:
 
             def record_validation(entity_name: str, field_name: str, constraint: str) -> None:
                 """Add a validation signature once."""
-                sig = f"{entity_name}.{field_name}: {constraint}"
+                normalized_entity = self._normalize_entity_name(entity_name)
+                normalized_constraint = self._normalize_constraint(constraint)
+                sig = f"{normalized_entity}.{field_name}: {normalized_constraint}"
                 if sig not in validations_seen:
                     validations_seen.add(sig)
                     validations_found.append(sig)
@@ -566,7 +569,7 @@ class ComplianceValidator:
                 schemas_content = schemas_file.read_text()
 
                 # Track current class to know which entity
-                class_pattern = r'class\s+(\w+)(?:Base|Create|Update|Response)\(BaseModel\):'
+                class_pattern = r'class\s+(\w+)(?:Base|Create|Update|Response)\((?:BaseModel|BaseSchema)\):'
                 
                 # Regex to match field definitions:
                 # 1. With Field(): name: type = Field(...)
@@ -792,6 +795,30 @@ class ComplianceValidator:
         logger.info(f"Compliance validation PASSED: {report.overall_compliance:.1%}")
         return report
 
+    def _normalize_entity_name(self, name: str) -> str:
+        """
+        Normalize entity/schema names coming from OpenAPI component names.
+
+        Handles variations like CartItem-Input / CartItem-Output so they match
+        the base entity name used in ground truth and spec parsing.
+        """
+        normalized = name.strip()
+        suffixes = [
+            "-Input",
+            "-Output",
+            "-Request",
+            "-Response",
+            "Input",
+            "Output",
+            "Request",
+            "Response",
+            "Model",
+        ]
+        for suffix in suffixes:
+            if normalized.endswith(suffix):
+                normalized = normalized[: -len(suffix)]
+        return normalized or name
+
     def _normalize_constraint(self, constraint: str) -> str:
         """
         Normalize constraint string to standard format used in code analysis
@@ -823,6 +850,14 @@ class ComplianceValidator:
             return f"le={c[2:].strip()}"
         if c.startswith("<"):
             return f"lt={c[1:].strip()}"
+
+        # Normalize numeric values like gt=0.0 -> gt=0
+        numeric_match = re.match(r"^(gt|ge|lt|le)=(-?\d+(?:\.\d+)?)$", c)
+        if numeric_match:
+            key, value = numeric_match.groups()
+            if value.endswith(".0"):
+                value = value[:-2]
+            return f"{key}={value}"
             
         # Map common terms
         if c == "email format":

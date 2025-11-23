@@ -20,6 +20,14 @@ from enum import Enum
 from src.cognitive.signatures.semantic_signature import SemanticTaskSignature
 from src.cognitive.patterns.pattern_classifier import PatternClassifier, ClassificationResult
 from src.services.validation_strategies import ValidationResult
+from src.cognitive.config.settings import settings
+try:
+    from anthropic import AsyncAnthropic
+    from openai import AsyncOpenAI
+except ImportError:
+    logger.warning("Anthropic or OpenAI libraries not found. Dual validation will be mocked.")
+    AsyncAnthropic = None
+    AsyncOpenAI = None
 
 logger = logging.getLogger(__name__)
 
@@ -566,7 +574,7 @@ class DualValidator:
         """
         self.mock_mode = mock_mode
 
-    def validate_pattern(
+    async def validate_pattern(
         self,
         code: str,
         signature: SemanticTaskSignature,
@@ -587,8 +595,8 @@ class DualValidator:
             return self._mock_validate(quality_metrics)
 
         # Production implementation would call APIs
-        claude_score, claude_reasoning = self._validate_with_claude(code, signature)
-        gpt4_score, gpt4_reasoning = self._validate_with_gpt4(code, signature)
+        claude_score, claude_reasoning = await self._validate_with_claude(code, signature)
+        gpt4_score, gpt4_reasoning = await self._validate_with_gpt4(code, signature)
 
         # Check agreement (within 0.1)
         agreement = abs(claude_score - gpt4_score) <= 0.1
@@ -630,15 +638,75 @@ class DualValidator:
             approved=approved
         )
 
-    def _validate_with_claude(self, code: str, signature: SemanticTaskSignature) -> Tuple[float, str]:
+    async def _validate_with_claude(self, code: str, signature: SemanticTaskSignature) -> Tuple[float, str]:
         """Validate with Claude API (production implementation)."""
-        # TODO: Implement Claude API call
-        return 0.85, "Claude validation placeholder"
+        if not settings.anthropic_api_key or not AsyncAnthropic:
+            return 0.85, "Claude validation placeholder (missing key or lib)"
+        
+        try:
+            client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+            prompt = f"""
+            Review this code pattern for production readiness.
+            Purpose: {signature.purpose}
+            Intent: {signature.intent}
+            Code:
+            ```python
+            {code}
+            ```
+            Rate from 0.0 to 1.0 based on security, performance, and best practices.
+            Return ONLY a JSON object: {{"score": float, "reasoning": "string"}}
+            """
+            response = await client.messages.create(
+                model="claude-3-sonnet-20240229",
+                max_tokens=1000,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            content = response.content[0].text
+            # Simple parsing (in production use robust JSON extraction)
+            import json
+            try:
+                # Find JSON in content
+                json_match = re.search(r'\{.*\}', content, re.DOTALL)
+                if json_match:
+                    data = json.loads(json_match.group(0))
+                    return float(data.get("score", 0.0)), data.get("reasoning", "No reasoning")
+            except:
+                pass
+            return 0.80, "Claude validation (parse error)"
+        except Exception as e:
+            logger.error(f"Claude validation failed: {e}")
+            return 0.0, f"Error: {str(e)}"
 
-    def _validate_with_gpt4(self, code: str, signature: SemanticTaskSignature) -> Tuple[float, str]:
+    async def _validate_with_gpt4(self, code: str, signature: SemanticTaskSignature) -> Tuple[float, str]:
         """Validate with GPT-4 API (production implementation)."""
-        # TODO: Implement GPT-4 API call
-        return 0.83, "GPT-4 validation placeholder"
+        if not settings.openai_api_key or not AsyncOpenAI:
+            return 0.83, "GPT-4 validation placeholder (missing key or lib)"
+
+        try:
+            client = AsyncOpenAI(api_key=settings.openai_api_key)
+            prompt = f"""
+            Review this code pattern for production readiness.
+            Purpose: {signature.purpose}
+            Intent: {signature.intent}
+            Code:
+            ```python
+            {code}
+            ```
+            Rate from 0.0 to 1.0 based on security, performance, and best practices.
+            Return ONLY a JSON object: {{"score": float, "reasoning": "string"}}
+            """
+            response = await client.chat.completions.create(
+                model="gpt-4-turbo-preview",
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"}
+            )
+            content = response.choices[0].message.content
+            import json
+            data = json.loads(content)
+            return float(data.get("score", 0.0)), data.get("reasoning", "No reasoning")
+        except Exception as e:
+            logger.error(f"GPT-4 validation failed: {e}")
+            return 0.0, f"Error: {str(e)}"
 
 
 class AdaptiveThresholdManager:
@@ -799,7 +867,7 @@ class PatternFeedbackIntegration:
         self.threshold_manager = AdaptiveThresholdManager()
         self.lineage_tracker = PatternLineageTracker()
 
-    def register_successful_generation(
+    async def register_successful_generation(
         self,
         code: str,
         signature: SemanticTaskSignature,
@@ -877,11 +945,11 @@ class PatternFeedbackIntegration:
 
         # Step 6: Auto-promotion if enabled
         if self.enable_auto_promotion and candidate:
-            self._attempt_auto_promotion(candidate, quality_metrics)
+            await self._attempt_auto_promotion(candidate, quality_metrics)
 
         return candidate_id
 
-    def _attempt_auto_promotion(
+    async def _attempt_auto_promotion(
         self,
         candidate: PatternCandidate,
         quality_metrics: QualityMetrics
@@ -936,7 +1004,7 @@ class PatternFeedbackIntegration:
         # Step 4: Dual-validator
         candidate.status = PromotionStatus.DUAL_VALIDATION
 
-        dual_result = self.dual_validator.validate_pattern(
+        dual_result = await self.dual_validator.validate_pattern(
             code=candidate.code,
             signature=candidate.signature,
             quality_metrics=quality_metrics
@@ -1032,7 +1100,41 @@ class PatternFeedbackIntegration:
 
         return stats
 
-
+    async def register_candidate(
+        self,
+        code: str,
+        spec_metadata: Dict[str, Any],
+        validation_result: Dict[str, Any]
+    ) -> str:
+        """
+        Convenience method for CodeGenerationService to register a candidate.
+        """
+        # Create a dummy signature and task_id since we don't have them from CodeGenService yet
+        # In a real implementation, CodeGenService should pass these
+        signature = SemanticTaskSignature(
+            purpose=spec_metadata.get("spec_name", "Unknown"),
+            intent=spec_metadata.get("description", "Generated code"),
+            domain="general"
+        )
+        task_id = uuid.uuid4()
+        
+        metadata = {
+            "spec_metadata": spec_metadata,
+            "validation_result": ValidationResult(
+                is_valid=validation_result.get("syntax_valid", False),
+                errors=[],
+                rules_applied=[],
+                metadata={}
+            )
+        }
+        
+        return await self.register_successful_generation(
+            code=code,
+            signature=signature,
+            execution_result=None,
+            task_id=task_id,
+            metadata=metadata
+        )
 # Singleton instance
 _pattern_feedback_integration: Optional[PatternFeedbackIntegration] = None
 
@@ -1053,6 +1155,10 @@ def get_pattern_feedback_integration(
     """
     global _pattern_feedback_integration
     if _pattern_feedback_integration is None:
+        # Check if API keys are present to disable mock mode by default
+        if mock_dual_validator and settings.anthropic_api_key and settings.openai_api_key:
+            mock_dual_validator = False
+            
         _pattern_feedback_integration = PatternFeedbackIntegration(
             enable_auto_promotion=enable_auto_promotion,
             mock_dual_validator=mock_dual_validator

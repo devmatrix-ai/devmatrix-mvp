@@ -155,6 +155,16 @@ class CodeGenerationService:
         except Exception as e:
             logger.warning(f"Could not initialize PatternBank: {e}")
 
+        # Initialize Unified RAG Retriever (Milestone 4 - Learning Layer)
+        self.rag_retriever = None
+        if enable_feedback_loop:
+            try:
+                from src.rag.unified_retriever import create_unified_retriever
+                self.rag_retriever = create_unified_retriever()
+                logger.info("Unified RAG Retriever initialized (Neo4j + Qdrant)")
+            except Exception as e:
+                logger.warning(f"Could not initialize Unified RAG Retriever: {e}")
+
         logger.info(
             "CodeGenerationService initialized",
             extra={
@@ -163,6 +173,7 @@ class CodeGenerationService:
                 "pattern_promotion": self.enable_pattern_promotion,
                 "dag_sync": self.enable_dag_sync,
                 "pattern_bank_enabled": self.pattern_bank is not None,
+                "rag_enabled": self.rag_retriever is not None,
             },
         )
 
@@ -344,6 +355,34 @@ class CodeGenerationService:
         if repair_context:
             prompt = repair_context + "\n\n" + prompt
 
+        # UNIFIED RAG RETRIEVAL (Milestone 4)
+        # Retrieve relevant code patterns and examples from Neo4j + Qdrant
+        if self.rag_retriever:
+            try:
+                logger.info("Retrieving RAG context for requirements generation")
+                # Create a search query from the spec summary
+                search_query = f"FastAPI application with {len(spec_requirements.entities)} entities: "
+                search_query += ", ".join([e.name for e in spec_requirements.entities[:5]])
+                
+                rag_results = await self.rag_retriever.retrieve(
+                    query=search_query,
+                    top_k=3,
+                    qdrant_weight=0.7,
+                    neo4j_weight=0.3
+                )
+                
+                if rag_results:
+                    logger.info(f"Retrieved {len(rag_results)} RAG examples")
+                    rag_context = "\n\n## REFERENCE EXAMPLES (Use these patterns if relevant):\n"
+                    for i, result in enumerate(rag_results, 1):
+                        rag_context += f"\n### Example {i} (Source: {result.source})\n"
+                        rag_context += f"```python\n{result.content[:1500]}...\n```\n"
+                    
+                    # Append RAG context to prompt
+                    prompt += rag_context
+            except Exception as e:
+                logger.warning(f"RAG retrieval failed (continuing without context): {e}")
+
         # Call LLM with requirements context
         try:
             response = await asyncio.wait_for(
@@ -359,17 +398,66 @@ class CodeGenerationService:
             )
         except asyncio.TimeoutError:
             logger.error("LLM call timed out for requirements generation")
+            
+            # RECORD ERROR (Milestone 4)
+            if self.enable_feedback_loop and self.pattern_store:
+                error_id = str(uuid.uuid4())
+                await self.pattern_store.store_error(
+                    ErrorPattern(
+                        error_id=error_id,
+                        task_id="requirements_gen",
+                        task_description=spec_requirements.metadata.get('spec_name', 'API'),
+                        error_type="timeout",
+                        error_message="LLM generation timed out after 120s",
+                        failed_code="",
+                        attempt=1,
+                        timestamp=datetime.now(),
+                        metadata={"spec_requirements": str(len(spec_requirements.entities))}
+                    )
+                )
+            
             raise ValueError("Code generation from requirements timed out after 120 seconds")
 
         # Extract code from response
         generated_code = self._extract_code(response.get("content", ""))
 
         if not generated_code:
+            # RECORD ERROR (Milestone 4)
+            if self.enable_feedback_loop and self.pattern_store:
+                error_id = str(uuid.uuid4())
+                await self.pattern_store.store_error(
+                    ErrorPattern(
+                        error_id=error_id,
+                        task_id="requirements_gen",
+                        task_description=spec_requirements.metadata.get('spec_name', 'API'),
+                        error_type="empty_response",
+                        error_message="No code extracted from LLM response",
+                        failed_code=response.get("content", "")[:1000],
+                        attempt=1,
+                        timestamp=datetime.now()
+                    )
+                )
             raise ValueError("No code generated from requirements")
 
         # Validate syntax
         is_valid, syntax_error = self._validate_generated_code_syntax(generated_code)
         if not is_valid:
+            # RECORD ERROR (Milestone 4)
+            if self.enable_feedback_loop and self.pattern_store:
+                error_id = str(uuid.uuid4())
+                await self.pattern_store.store_error(
+                    ErrorPattern(
+                        error_id=error_id,
+                        task_id="requirements_gen",
+                        task_description=spec_requirements.metadata.get('spec_name', 'API'),
+                        error_type="syntax_error",
+                        error_message=syntax_error,
+                        failed_code=generated_code,
+                        attempt=1,
+                        timestamp=datetime.now()
+                    )
+                )
+
             if allow_syntax_errors:
                 # Log warning but continue - repair loop will fix it
                 logger.warning(
@@ -379,6 +467,18 @@ class CodeGenerationService:
             else:
                 # Strict mode - fail immediately
                 raise ValueError(f"Generated code has syntax errors: {syntax_error}")
+
+        # RECORD SUCCESS CANDIDATE (Milestone 4 - Pattern Promotion)
+        if self.enable_pattern_promotion and self.pattern_feedback:
+            try:
+                await self.pattern_feedback.register_candidate(
+                    code=generated_code,
+                    spec_metadata=spec_requirements.metadata,
+                    validation_result={"syntax_valid": True}
+                )
+                logger.info("Registered pattern candidate for promotion")
+            except Exception as e:
+                logger.warning(f"Failed to register pattern candidate: {e}")
 
         logger.info(
             "Code generation from requirements successful",

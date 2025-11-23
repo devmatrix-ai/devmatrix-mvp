@@ -132,6 +132,16 @@ class CognitiveSettings(BaseSettings):
         description="Complexity threshold to trigger LRM (0.8 = top 20%)"
     )
 
+    # API Keys (Loaded from .env)
+    anthropic_api_key: str = Field(
+        default="",
+        description="Anthropic API Key for Claude"
+    )
+    openai_api_key: str = Field(
+        default="",
+        description="OpenAI API Key for GPT-4"
+    )
+
     class Config:
         env_file = ".env"
         env_prefix = ""
