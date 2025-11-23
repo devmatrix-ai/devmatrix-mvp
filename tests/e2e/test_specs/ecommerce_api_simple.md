@@ -827,19 +827,19 @@ validations:
   V080_404_Not_Found:
     entity: null
     field: api_response
-    constraint: 404_on_missing
+    constraint: "404_on_missing"
     description: "API returns 404 when resource not found"
 
   V081_400_Invalid_Input:
     entity: null
     field: api_response
-    constraint: 400_on_invalid
+    constraint: "400_on_invalid"
     description: "API returns 400 on invalid input (e.g., invalid email, duplicate customer)"
 
   V082_422_Validation_Error:
     entity: null
     field: api_response
-    constraint: 422_on_validation
+    constraint: "422_on_validation"
     description: "API returns 422 on validation error (e.g., price <= 0, quantity <= 0)"
 
 ```
