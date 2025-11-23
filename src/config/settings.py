@@ -293,12 +293,13 @@ class Settings(BaseSettings):
     def validate_database_url(cls, v: str) -> str:
         """
         Validate DATABASE_URL is not empty and has proper format.
+        Automatically converts legacy sync drivers to async (asyncpg).
 
         Args:
             v: DATABASE_URL value
 
         Returns:
-            Validated DATABASE_URL
+            Validated DATABASE_URL with async driver
 
         Raises:
             ValueError: If DATABASE_URL is invalid
@@ -306,10 +307,20 @@ class Settings(BaseSettings):
         if not v:
             raise ValueError("DATABASE_URL cannot be empty")
 
-        if not v.startswith(("postgresql://", "postgres://")):
+        # Auto-convert legacy sync drivers to async (asyncpg)
+        if "+psycopg2" in v or "+psycopg" in v or (v.startswith("postgresql://") and "+psycopg" not in v and "+asyncpg" not in v):
+            # Convert: postgresql+psycopg2:// → postgresql+asyncpg://
+            # Convert: postgresql+psycopg:// → postgresql+asyncpg://
+            # Convert: postgresql:// → postgresql+asyncpg://
+            v = v.replace("postgresql+psycopg2://", "postgresql+asyncpg://")
+            v = v.replace("postgresql+psycopg://", "postgresql+asyncpg://")
+            if v.startswith("postgresql://") and "+asyncpg" not in v:
+                v = v.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+        if not v.startswith(("postgresql://", "postgresql+asyncpg://", "postgres://")):
             raise ValueError(
-                "DATABASE_URL must be a PostgreSQL connection string. "
-                "Format: postgresql://user:pass@host:port/db"
+                "DATABASE_URL must be a PostgreSQL connection string with async driver. "
+                "Format: postgresql+asyncpg://user:pass@host:port/db"
             )
 
         return v
