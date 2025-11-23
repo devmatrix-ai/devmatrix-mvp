@@ -189,21 +189,41 @@ Phase 7: Compliance Validation
 
 ---
 
-## Recommendations
+## Recommendations - CRITICAL FIXES
 
-1. **Update ComplianceValidator** to use LLM-extracted validations as baseline, not just YAML
-2. **Separate ground truth systems** - Classification GT separate from Validation GT
-3. **Update reporting** to show both:
-   - Extracted validations (what LLM found)
-   - Implemented validations (what code has)
-   - Gap analysis (what's missing)
-4. **Fix validation_count model**:
-   - `validation_count: unlimited` ✅ Correct
-   - `minimum_required: 30` ✅ Correct
-   - But needs to reference the 133 extracted, not 82 defined
-5. **Document the gap**: Why 133 extracted but only 82 in YAML?
-   - Are the 51 extra validations false positives?
-   - Or are they legitimate validations the YAML missed?
+### 1. **REMOVE Manual YAML Ground Truth Entirely** 🚨
+**DO NOT DO THIS:**
+- ✗ Keep 82-validation YAML as "source of truth"
+- ✗ Use YAML as "fallback" to LLM extraction
+- ✗ Manually define validation baselines in code
+
+**DO THIS INSTEAD:**
+- ✅ Delete the YAML block entirely from spec
+- ✅ Let LLM extraction (133) be the ONLY source of truth
+- ✅ Measure compliance only against what LLM extracts
+- ✅ NO manual intervention in ground truth definition
+
+### 2. **Update ComplianceValidator**
+- Use only LLM-extracted validations as baseline
+- Remove the 82-validation YAML load logic
+- Remove the +8 programmatic additions
+- Direct comparison: `validations_implemented / validations_extracted_by_llm`
+
+### 3. **Separate Ground Truth Systems**
+- Classification GT ≠ Validation GT
+- Each has its own loader and validator
+- No mixing of types
+
+### 4. **Update Reporting**
+- Show: validations extracted by LLM (133)
+- Show: validations implemented in code (43)
+- Calculate: 43/133 = 32.3% (actual compliance)
+
+### 5. **Keep validation_count Model**
+- `validation_count: unlimited` ✅ Correct philosophy
+- `minimum_required: 30` ✅ Correct threshold
+- BUT: This documents the APPROACH, not the actual baseline
+- Baseline is always the LLM extraction result, never manual
 
 ---
 
