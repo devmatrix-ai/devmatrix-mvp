@@ -141,6 +141,7 @@ class SpecRequirements:
     entities: List[Entity] = field(default_factory=list)
     endpoints: List[Endpoint] = field(default_factory=list)
     business_logic: List[BusinessLogic] = field(default_factory=list)
+    validations: List[Validation] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     classification_ground_truth: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     dag_ground_truth: Dict[str, Any] = field(default_factory=dict)
@@ -206,13 +207,22 @@ class SpecParser:
         # Pattern for paths: /products, /cart/{id}
         self.path_pattern = re.compile(r"`?(/[\w/{}\-]+)`?")
 
+        # --- Enhanced Patterns for Human/Spanish Specs ---
+        
+        # Entity: "### 1. Producto (Product)" -> Product
+        self.entity_human_pattern = re.compile(r"^###\s+\d+\.\s+.*\((?P<name>\w+)\)", re.MULTILINE)
+        
+        # Field: "- **ID único** (UUID...)"
+        self.field_human_pattern = re.compile(r"^\s*-\s+\*\*(?P<name>[^*]+)\*\*\s*(?P<info>.*)$", re.MULTILINE)
+
+
     def parse(self, spec_path: Path) -> SpecRequirements:
         """
         Parse specification markdown file
-
+        
         Args:
             spec_path: Path to markdown specification file
-
+            
         Returns:
             SpecRequirements with all extracted components
         """
@@ -224,56 +234,204 @@ class SpecParser:
 
         logger.info(f"Parsing specification: {spec_path.name}")
 
-        result = SpecRequirements()
+        # Try LLM-based extraction (Exclusive method)
+        try:
+            logger.info("Attempting LLM-based extraction...")
+            result = self._extract_with_llm(content)
+            if result and (result.entities or result.endpoints):
+                logger.info("LLM extraction successful")
+                # Add metadata
+                result.metadata = {
+                    "source_file": str(spec_path),
+                    "total_requirements": len(result.requirements),
+                    "functional_count": sum(1 for r in result.requirements if r.type == "functional"),
+                    "non_functional_count": sum(1 for r in result.requirements if r.type == "non_functional"),
+                    "entity_count": len(result.entities),
+                    "endpoint_count": len(result.endpoints),
+                    "business_logic_count": len(result.business_logic),
+                    "extraction_method": "llm"
+                }
+                
+                # Extract ground truth (optional sections for validation)
+                # We still parse these manually as they are specific YAML blocks in the spec
+                result.classification_ground_truth = self._parse_classification_ground_truth(content)
+                result.dag_ground_truth = self._parse_dag_ground_truth(content)
+                result.validation_ground_truth = self._parse_validation_ground_truth(content)
 
-        # Extract all components
-        result.requirements = self._extract_requirements(content)
-        result.entities = self._extract_entities(content)
-        result.endpoints = self._extract_endpoints(content, result.requirements)
-        result.business_logic = self._extract_business_logic(content, result.requirements)
+                # If classification ground truth is missing, generate it with LLM from natural language
+                if not result.classification_ground_truth and result.endpoints:
+                    logger.info("Classification ground truth not found, generating from endpoints with LLM...")
+                    result.classification_ground_truth = self._generate_classification_ground_truth_with_llm(
+                        content, result.endpoints
+                    )
 
-        # Extract ground truth (optional sections for validation)
-        result.classification_ground_truth = self._parse_classification_ground_truth(content)
-        result.dag_ground_truth = self._parse_dag_ground_truth(content)
-        result.validation_ground_truth = self._parse_validation_ground_truth(content)
+                # If validation ground truth is missing, generate it with LLM from natural language
+                if not result.validation_ground_truth and result.business_logic:
+                    logger.info("Validation ground truth not found, generating from business logic with LLM...")
+                    result.validation_ground_truth = self._generate_validation_ground_truth_with_llm(
+                        content, result.business_logic
+                    )
+                
+                logger.info(
+                    f"Parsed {result.metadata['total_requirements']} requirements "
+                    f"({result.metadata['functional_count']} functional, "
+                    f"{result.metadata['non_functional_count']} non-functional), "
+                    f"{result.metadata['entity_count']} entities, "
+                    f"{result.metadata['endpoint_count']} endpoints, "
+                    f"{result.metadata['business_logic_count']} business rules"
+                )
+                
+                return result
+            else:
+                raise ValueError("LLM extraction returned empty results")
+                
+        except Exception as e:
+            logger.error(f"LLM extraction failed: {e}")
+            # No fallback as requested
+            raise e
 
-        # If classification ground truth is missing, generate it with LLM from natural language
-        if not result.classification_ground_truth and result.endpoints:
-            logger.info("Classification ground truth not found, generating from endpoints with LLM...")
-            result.classification_ground_truth = self._generate_classification_ground_truth_with_llm(
-                content, result.endpoints
-            )
+    def _extract_with_llm(self, content: str) -> Optional[SpecRequirements]:
+        """Extract spec requirements using LLM"""
+        try:
+            from src.llm.enhanced_anthropic_client import EnhancedAnthropicClient
+            from src.config.constants import DEFAULT_MODEL
+            import json
+            import asyncio
 
-        # If validation ground truth is missing, generate it with LLM from natural language
-        if not result.validation_ground_truth and result.business_logic:
-            logger.info("Validation ground truth not found, generating from business logic with LLM...")
-            result.validation_ground_truth = self._generate_validation_ground_truth_with_llm(
-                content, result.business_logic
-            )
+            prompt = f"""You are an expert API architect. Analyze this specification and extract structured requirements.
+            
+            # Specification
+            {content[:8000]}
+            
+            # Task
+            Extract the following components into a JSON structure:
+            1. entities: List of data models with fields (name, type, required, constraints)
+            2. endpoints: List of API endpoints (method, path, description, params)
+            3. validations: List of business validations (entity, field, rule)
+            4. requirements: List of functional requirements (id, description)
+            
+            # JSON Format
+            {{
+                "entities": [
+                    {{
+                        "name": "EntityName",
+                        "fields": [
+                            {{"name": "fieldName", "type": "DataType", "required": true, "constraints": ["constraint1"]}}
+                        ]
+                    }}
+                ],
+                "endpoints": [
+                    {{
+                        "method": "POST",
+                        "path": "/resource",
+                        "description": "Description",
+                        "entity": "EntityName",
+                        "operation": "create"
+                    }}
+                ],
+                "validations": [
+                    {{"field": "fieldName", "rule": "validation rule description"}}
+                ],
+                "requirements": [
+                    {{"id": "F1", "description": "Requirement description"}}
+                ]
+            }}
+            
+            Return ONLY valid JSON. No markdown formatting.
+            """
 
-        # Metadata
-        result.metadata = {
-            "source_file": str(spec_path),
-            "total_requirements": len(result.requirements),
-            "functional_count": sum(1 for r in result.requirements if r.type == "functional"),
-            "non_functional_count": sum(
-                1 for r in result.requirements if r.type == "non_functional"
-            ),
-            "entity_count": len(result.entities),
-            "endpoint_count": len(result.endpoints),
-            "business_logic_count": len(result.business_logic),
-        }
+            client = EnhancedAnthropicClient()
+            
+            # Run sync
+            try:
+                loop = asyncio.get_running_loop()
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(
+                        asyncio.run,
+                        client.generate(prompt=prompt, model=DEFAULT_MODEL, max_tokens=4000, temperature=0.0)
+                    )
+                    response = future.result(timeout=60)
+            except RuntimeError:
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                response = loop.run_until_complete(
+                    client.generate(prompt=prompt, model=DEFAULT_MODEL, max_tokens=4000, temperature=0.0)
+                )
 
-        logger.info(
-            f"Parsed {result.metadata['total_requirements']} requirements "
-            f"({result.metadata['functional_count']} functional, "
-            f"{result.metadata['non_functional_count']} non-functional), "
-            f"{result.metadata['entity_count']} entities, "
-            f"{result.metadata['endpoint_count']} endpoints, "
-            f"{result.metadata['business_logic_count']} business rules"
-        )
+            # Parse response
+            if hasattr(response, 'text'):
+                response_text = response.text
+            elif hasattr(response, 'content'):
+                response_text = response.content
+            elif isinstance(response, dict):
+                response_text = response.get('content', '')
+            else:
+                response_text = str(response)
 
-        return result
+            # Clean up JSON
+            response_text = response_text.strip()
+            if response_text.startswith("```json"):
+                response_text = response_text[7:]
+            if response_text.endswith("```"):
+                response_text = response_text[:-3]
+            
+            data = json.loads(response_text)
+            
+            # Map to objects
+            reqs = SpecRequirements()
+            
+            # Entities
+            for e_data in data.get("entities", []):
+                fields = [
+                    Field(
+                        name=f["name"], 
+                        type=f["type"], 
+                        required=f.get("required", True),
+                        constraints=f.get("constraints", [])
+                    ) for f in e_data.get("fields", [])
+                ]
+                reqs.entities.append(Entity(name=e_data["name"], fields=fields))
+                
+            # Endpoints
+            for ep_data in data.get("endpoints", []):
+                reqs.endpoints.append(Endpoint(
+                    method=ep_data["method"],
+                    path=ep_data["path"],
+                    entity=ep_data.get("entity", "Unknown"),
+                    operation=ep_data.get("operation", "custom"),
+                    description=ep_data["description"]
+                ))
+                
+            # Validations
+            for v_data in data.get("validations", []):
+                reqs.validations.append(Validation(
+                    field=v_data.get("field", "unknown"),
+                    rule=v_data["rule"]
+                ))
+                # Also add to business logic
+                reqs.business_logic.append(BusinessLogic(
+                    type="validation",
+                    description=v_data["rule"]
+                ))
+                
+            # Requirements
+            for r_data in data.get("requirements", []):
+                reqs.requirements.append(Requirement(
+                    id=r_data.get("id", f"F{len(reqs.requirements)+1}"),
+                    type="functional",
+                    priority="MUST",
+                    description=r_data["description"]
+                ))
+                
+            return reqs
+
+        except Exception as e:
+            logger.error(f"Error in _extract_with_llm: {e}")
+            raise e
 
     def _extract_requirements(self, content: str) -> List[Requirement]:
         """Extract functional and non-functional requirements from markdown"""
@@ -360,11 +518,15 @@ class SpecParser:
             if not entity_match:
                 # Try alternative format: "**Task**:"
                 entity_match = self.entity_alt_pattern.search(line)
+            
+            if not entity_match:
+                # Try human format: "### 1. Producto (Product)"
+                entity_match = self.entity_human_pattern.search(line)
 
             if entity_match:
                 entity_name = entity_match.group(1)
                 # Common entity names (exclude nested/sub-entities like CartItem, OrderItem)
-                main_entities = ["Product", "Customer", "Cart", "Order", "Task", "User"]
+                main_entities = ["Product", "Customer", "Cart", "Order", "Task", "User", "CartItem", "OrderItem", "Item"]
                 if entity_name in main_entities:
                     if current_entity:
                         entities.append(current_entity)
@@ -400,6 +562,21 @@ class SpecParser:
                         field_info = field_alt_match.group(2)
                         field_obj = self._parse_field_alt(field_name, field_info)
                         current_entity.fields.append(field_obj)
+                        continue
+
+                # Try human field format: "- **Name** info"
+                field_human_match = self.field_human_pattern.search(line)
+                if field_human_match:
+                    field_name = field_human_match.group("name").strip()
+                    field_info = field_human_match.group("info").strip()
+                    # Clean up field name (e.g. "ID único" -> "id_unico")
+                    # But if it contains "ID", map to "id"
+                    if "ID" in field_name.upper() and len(field_name) < 10:
+                         if "UNICO" in field_name.upper() or "UNIQUE" in field_name.upper() or field_name.upper() == "ID":
+                             field_name = "id"
+                    
+                    field_obj = self._parse_field(field_name, field_info)
+                    current_entity.fields.append(field_obj)
 
         # Add last entity
         if current_entity:
