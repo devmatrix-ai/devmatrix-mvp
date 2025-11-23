@@ -1145,9 +1145,10 @@ Generate code that is ready to run with `uvicorn main:app --reload` without any 
 
         # Get appropriate strategy and generate prompt
         strategy = PromptStrategyFactory.get_strategy(file_type_detection.file_type)
-        prompt = strategy.generate_prompt(context)
+        generated_prompt = strategy.generate_prompt(context)
 
-        return prompt
+        # Extract prompt text from GeneratedPrompt object
+        return generated_prompt.prompt if hasattr(generated_prompt, 'prompt') else generated_prompt
 
     def _build_prompt_with_feedback(
         self, task: MasterPlanTask, similar_errors: list, successful_patterns: list, last_error: str
@@ -1194,9 +1195,10 @@ Generate code that is ready to run with `uvicorn main:app --reload` without any 
 
         # Get appropriate strategy and generate prompt with feedback
         strategy = PromptStrategyFactory.get_strategy(file_type_detection.file_type)
-        prompt = strategy.generate_prompt_with_feedback(context)
+        generated_prompt = strategy.generate_prompt_with_feedback(context)
 
-        return prompt
+        # Extract prompt text from GeneratedPrompt object
+        return generated_prompt.prompt if hasattr(generated_prompt, 'prompt') else generated_prompt
 
     def _get_system_prompt(self) -> str:
         """Get system prompt for code generation."""
