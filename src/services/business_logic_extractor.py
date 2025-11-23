@@ -41,10 +41,13 @@ class BusinessLogicExtractor:
     def extract_validation_rules(self, spec: Dict[str, Any]) -> ValidationModelIR:
         """
         Extract ALL validation rules from specification.
-        Multi-stage approach:
-        1. Pattern-based extraction (fast, reliable)
-        2. LLM-based extraction (comprehensive, flexible)
-        3. Relationship inference (FK, cross-entity)
+        Exhaustive 6-stage approach for comprehensive coverage:
+        1. Entity field validation (constraints, types)
+        2. Endpoint validation (request/response parameters)
+        3. Field type inference (implicit validations)
+        4. Constraint inference (CHECK, UNIQUE, FK, schema)
+        5. Business rule extraction (explicit rules)
+        6. LLM-based extraction (comprehensive, flexible)
         """
         rules = []
 
@@ -55,18 +58,33 @@ class BusinessLogicExtractor:
         # Stage 2: Extract from field descriptions and constraints
         rules.extend(self._extract_from_field_descriptions(spec.get("entities", [])))
 
-        # Stage 3: Extract from endpoints/workflows
+        # Stage 3: Extract from endpoints (request/response validation)
+        if "endpoints" in spec:
+            try:
+                rules.extend(self._extract_from_endpoints(spec.get("endpoints", []), spec.get("entities", [])))
+            except Exception as e:
+                logger.warning(f"Endpoint extraction failed: {e}")
+
+        # Stage 4: Extract from workflows/status transitions
         if "endpoints" in spec or "workflows" in spec:
             rules.extend(self._extract_from_workflows(spec))
 
-        # Stage 4: Use LLM for comprehensive business logic extraction
+        # Stage 5: Extract implicit constraint validations from schema
+        if "schema" in spec or "database_schema" in spec:
+            rules.extend(self._extract_constraint_validations(spec))
+
+        # Stage 6: Extract explicit business rules
+        if "validation_rules" in spec or "business_rules" in spec:
+            rules.extend(self._extract_business_rules(spec))
+
+        # Stage 7: Use LLM for comprehensive business logic extraction
         try:
             llm_rules = self._extract_with_llm(spec)
             rules.extend(llm_rules)
         except Exception as e:
             logger.warning(f"LLM extraction failed: {e}, continuing with pattern-based rules")
 
-        # Stage 5: Deduplicate rules (same entity+attribute+type = duplicate)
+        # Stage 8: Deduplicate rules (same entity+attribute+type = duplicate)
         rules = self._deduplicate_rules(rules)
 
         return ValidationModelIR(rules=rules)
@@ -385,3 +403,156 @@ Return ONLY the JSON array, no other text."""
                     result.append(f"    - {step.get('name')}")
 
         return "\n".join(result)
+
+    def _extract_from_endpoints(self, endpoints: List[Dict[str, Any]], entities: List[Dict[str, Any]] = None) -> List[ValidationRule]:
+        """Extract validation rules from API endpoints (request/response parameters)."""
+        rules = []
+        entities = entities or []
+
+        for endpoint in endpoints:
+            endpoint_path = endpoint.get("path", "")
+            endpoint_method = endpoint.get("method", "").upper()
+            endpoint_entity = endpoint.get("entity") or self._infer_entity_from_path(endpoint_path, entities)
+
+            # Path parameter validation
+            if "{" in endpoint_path:
+                param_name = endpoint_path.split("{")[1].split("}")[0]
+                rules.append(ValidationRule(
+                    entity=endpoint_entity or "Endpoint",
+                    attribute=f"{endpoint_method}_{param_name}",
+                    type=ValidationType.PRESENCE,
+                    error_message=f"{param_name} path parameter is required"
+                ))
+                rules.append(ValidationRule(
+                    entity=endpoint_entity or "Endpoint",
+                    attribute=f"{endpoint_method}_{param_name}",
+                    type=ValidationType.FORMAT,
+                    condition="uuid format",
+                    error_message=f"{param_name} must be a valid UUID"
+                ))
+
+            # Query parameter validation
+            if endpoint_method == "GET" and "query_params" in endpoint:
+                for param in endpoint.get("query_params", []):
+                    param_name = param.get("name")
+                    rules.append(ValidationRule(
+                        entity=endpoint_entity or "Endpoint",
+                        attribute=f"{endpoint_method}_query_{param_name}",
+                        type=ValidationType.FORMAT,
+                        error_message=f"Query parameter {param_name} has invalid format"
+                    ))
+
+            # Request body validation
+            if endpoint_method in ["POST", "PUT", "PATCH"]:
+                rules.append(ValidationRule(
+                    entity=endpoint_entity or "Endpoint",
+                    attribute=f"{endpoint_method}_body",
+                    type=ValidationType.PRESENCE,
+                    error_message=f"Request body is required for {endpoint_method} {endpoint_path}"
+                ))
+
+        return rules
+
+    def _extract_constraint_validations(self, spec: Dict[str, Any]) -> List[ValidationRule]:
+        """Extract validation rules from database schema constraints (CHECK, UNIQUE, FK)."""
+        rules = []
+
+        schema = spec.get("schema") or spec.get("database_schema") or ""
+        if not schema:
+            return rules
+
+        # Extract CHECK constraints
+        check_pattern = re.compile(r'CHECK\s*\(([^)]+)\)', re.IGNORECASE)
+        for match in check_pattern.finditer(str(schema)):
+            constraint = match.group(1)
+            if "IN" in constraint.upper():
+                rules.append(ValidationRule(
+                    entity="Database",
+                    attribute=constraint[:50],
+                    type=ValidationType.STATUS_TRANSITION,
+                    condition=constraint,
+                    error_message=f"Value violates CHECK constraint: {constraint}"
+                ))
+
+        # Extract UNIQUE constraints
+        unique_pattern = re.compile(r'UNIQUE\s*\(([^)]+)\)', re.IGNORECASE)
+        for match in unique_pattern.finditer(str(schema)):
+            field = match.group(1).strip()
+            rules.append(ValidationRule(
+                entity="Database",
+                attribute=field,
+                type=ValidationType.UNIQUENESS,
+                error_message=f"{field} must be unique"
+            ))
+
+        # Extract foreign key constraints
+        fk_pattern = re.compile(r'FOREIGN\s+KEY\s*\(([^)]+)\)\s+REFERENCES\s+(\w+)', re.IGNORECASE)
+        for match in fk_pattern.finditer(str(schema)):
+            field = match.group(1).strip()
+            ref_table = match.group(2).strip()
+            rules.append(ValidationRule(
+                entity="Database",
+                attribute=field,
+                type=ValidationType.RELATIONSHIP,
+                error_message=f"{field} must reference valid {ref_table} record"
+            ))
+
+        return rules
+
+    def _extract_business_rules(self, spec: Dict[str, Any]) -> List[ValidationRule]:
+        """Extract validation rules from explicit business rules section."""
+        rules = []
+
+        # Get business rules from different possible fields
+        business_rules = spec.get("validation_rules") or spec.get("business_rules") or []
+
+        if isinstance(business_rules, str):
+            # Parse string rules
+            for i, rule_text in enumerate(business_rules.split("\n")):
+                if rule_text.strip():
+                    rules.append(ValidationRule(
+                        entity="BusinessRule",
+                        attribute=f"rule_{i}",
+                        type=ValidationType.PRESENCE,
+                        condition=rule_text.strip(),
+                        error_message=f"Business rule violated: {rule_text.strip()[:100]}"
+                    ))
+        elif isinstance(business_rules, list):
+            # Parse list rules
+            for i, rule in enumerate(business_rules):
+                if isinstance(rule, dict):
+                    rules.append(ValidationRule(
+                        entity=rule.get("entity", "BusinessRule"),
+                        attribute=rule.get("attribute", f"rule_{i}"),
+                        type=ValidationType.PRESENCE,
+                        condition=rule.get("description", ""),
+                        error_message=rule.get("error", "Business rule violated")
+                    ))
+                else:
+                    rules.append(ValidationRule(
+                        entity="BusinessRule",
+                        attribute=f"rule_{i}",
+                        type=ValidationType.PRESENCE,
+                        condition=str(rule),
+                        error_message=f"Business rule violated: {str(rule)[:100]}"
+                    ))
+
+        return rules
+
+    def _infer_entity_from_path(self, path: str, entities: List[Dict[str, Any]]) -> str:
+        """Infer entity name from API endpoint path."""
+        # Extract resource name from path (e.g., /todos/{id} -> todos)
+        parts = path.strip("/").split("/")
+        if parts and parts[0]:
+            resource_name = parts[0].rstrip("s")  # Remove trailing 's' for pluralization
+
+            # Try to find matching entity
+            for entity in entities:
+                entity_name = entity.get("name", "").lower()
+                if resource_name.lower() == entity_name.lower():
+                    return entity.get("name")
+
+            # Return capitalized resource name if no match found
+            return resource_name.capitalize()
+
+        return "Endpoint"
