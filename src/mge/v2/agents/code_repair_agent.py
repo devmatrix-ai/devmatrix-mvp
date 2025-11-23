@@ -950,11 +950,20 @@ from datetime import datetime, timezone
                 else:
                     # Field() doesn't exist, need to add it
                     # Pattern: field_name: Type = default_value
-                    simple_field_pattern = rf'(\s+{field_name}:\s*[\w\[\]]+)\s*=\s*([^\n]+)'
+                    simple_field_pattern = rf'(\s+{field_name}:\s*[\w\[\]\"\']+)\s*=\s*([^\n]+)'
 
                     def add_field_with_constraint(match):
                         field_def = match.group(1)
                         default_val = match.group(2).strip()
+
+                        # Check if this is a Literal type - skip string constraints for Literal fields
+                        is_literal = 'Literal' in field_def
+                        is_string_constraint = constraint_type in ['min_length', 'max_length', 'pattern']
+
+                        # Skip string validation constraints for Literal fields
+                        if is_literal and is_string_constraint:
+                            logger.debug(f"Skipping {constraint_type} constraint for Literal field {field_name}")
+                            return match.group(0)  # Return unchanged
 
                         # Create Field() with constraint and default
                         if default_val and not default_val.startswith('Field'):

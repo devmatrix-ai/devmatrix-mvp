@@ -59,6 +59,7 @@ from src.core.database import Base
     # Type mapping from spec types to SQLAlchemy types
     type_mapping = {
         'UUID': 'UUID(as_uuid=True)',
+        'uuid': 'UUID(as_uuid=True)',
         'str': 'String(255)',
         'string': 'String(255)',
         'int': 'Integer',
@@ -310,6 +311,7 @@ class BaseSchema(BaseModel):
     # Type mapping from spec types to Python/Pydantic types
     type_mapping = {
         'UUID': 'UUID',
+        'uuid': 'UUID',
         'str': 'str',
         'string': 'str',
         'int': 'int',
@@ -649,8 +651,8 @@ class BaseSchema(BaseModel):
                     logger.warning(f"⚠️ Non-string constraint {constraint} (type={type(constraint)}) for {field_name}")
 
             # Add type-specific default constraints (only if not already set)
-            is_literal_str = isinstance(python_type, str) and python_type.startswith('Literal[')
-            is_str_like = python_type == 'str' or is_literal_str
+            is_literal = isinstance(python_type, str) and python_type.startswith('Literal[')
+            is_str_like = python_type == 'str'  # ← FIXED: Literal types are NOT string-like
 
             if is_str_like and field_name == 'email':
                 # Email validation with pattern
@@ -658,6 +660,7 @@ class BaseSchema(BaseModel):
                     field_constraints['pattern'] = 'pattern=r"^[^@]+@[^@]+\\.[^@]+$"'
             elif is_str_like:
                 # Default min_length=1 for required strings to ensure not empty
+                # NOTE: NOT applied to Literal types (enums) - they don't need length validation
                 if required and 'min_length' not in field_constraints:
                     field_constraints['min_length'] = 'min_length=1'
                 # Add reasonable max_length to trigger validation in OpenAPI
@@ -962,6 +965,7 @@ def upgrade() -> None:
     # Map spec types to Alembic/SQLAlchemy column types
     type_mapping = {
         'UUID': 'postgresql.UUID(as_uuid=True)',
+        'uuid': 'postgresql.UUID(as_uuid=True)',
         'str': 'sa.String(255)',
         'string': 'sa.String(255)',
         'text': 'sa.Text',
