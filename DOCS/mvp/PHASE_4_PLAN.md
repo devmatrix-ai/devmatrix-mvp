@@ -25,18 +25,18 @@ Phase 4 focuses on transforming the validated MVP (99.6% compliance) into a prod
 
 | Área | Entregas | Criticality |
 |---|---|---|
-| 🔐 **Seguridad** | OWASP Top 10 audit, fix vulnerabilidades | MUST |
-| ⚡ **Rendimiento** | Caching, indexing, async operations | MUST |
-| 📊 **Load Testing** | Validar 100+ concurrent users | MUST |
-| 🚀 **Deployment** | Pipeline automático + blue-green | MUST |
+| 📈 **Monitoring** | Prometheus + Grafana operacional | MUST |
+| 💼 **Business Logic** | 5 constraints críticos validados | MUST |
+| 📚 **Docs** | OpenAPI 3.0 + runbooks completos | MUST |
 
 #### 🟡 DELAYED - Implementación Posterior (Post-Phase 4)
 
 | Área | Entregas | Target Phase |
 |---|---|---|
-| 📈 **Monitoring** | Prometheus + Grafana operacional | Phase 4.1 |
-| 💼 **Business Logic** | 5 constraints críticos validados | Phase 4.1 |
-| 📚 **Docs** | OpenAPI 3.0 + runbooks completos | Phase 4.1 |
+| 🔐 **Seguridad** | OWASP Top 10 audit, fix vulnerabilidades | Phase 4.1 |
+| ⚡ **Rendimiento** | Caching, indexing, async operations | Phase 4.1 |
+| 📊 **Load Testing** | Validar 100+ concurrent users | Phase 4.1 |
+| 🚀 **Deployment** | Pipeline automático + blue-green | Phase 4.1 |
 
 ---
 
