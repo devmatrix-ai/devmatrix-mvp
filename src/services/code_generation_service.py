@@ -39,7 +39,6 @@ from src.services.modular_architecture_generator import ModularArchitectureGener
 # Pattern Bank for Production-Ready Code Generation (Task Group 8)
 from src.cognitive.patterns.pattern_bank import PatternBank
 from src.cognitive.services.neo4j_ir_repository import Neo4jIRRepository
-from src.services.prompt_builder import PromptBuilder
 from src.cognitive.patterns.production_patterns import (
     PRODUCTION_PATTERN_CATEGORIES,
     get_composition_order,
