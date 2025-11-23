@@ -20,7 +20,7 @@ workspace_test/
 output/
 temp/
 .cache/
-
+backups/
 # ========================================
 # Node.js / Frontend
 # ========================================

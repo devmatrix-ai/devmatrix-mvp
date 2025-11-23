@@ -38,10 +38,15 @@ from src.services.modular_architecture_generator import ModularArchitectureGener
 
 # Pattern Bank for Production-Ready Code Generation (Task Group 8)
 from src.cognitive.patterns.pattern_bank import PatternBank
+from src.cognitive.services.neo4j_ir_repository import Neo4jIRRepository
+from src.services.prompt_builder import PromptBuilder
 from src.cognitive.patterns.production_patterns import (
     PRODUCTION_PATTERN_CATEGORIES,
     get_composition_order,
 )
+
+# ApplicationIR Normalizer for Template Rendering
+from src.services.application_ir_normalizer import ApplicationIRNormalizer
 
 # Cognitive Feedback Loop - Pattern Promotion Pipeline (Milestone 4)
 from src.cognitive.patterns.pattern_feedback_integration import (
@@ -60,6 +65,8 @@ from src.services.production_code_generators import (
     get_validation_summary,
 )
 from src.cognitive.signatures.semantic_signature import SemanticTaskSignature
+from src.services.behavior_code_generator import BehaviorCodeGenerator
+
 
 # DAG Synchronizer - Execution Metrics (Milestone 3)
 try:
@@ -146,6 +153,9 @@ class CodeGenerationService:
         # Initialize modular architecture generator
         self.modular_generator = ModularArchitectureGenerator()
 
+        # Initialize behavior code generator for workflow/state machine generation
+        self.behavior_generator = BehaviorCodeGenerator()
+
         # Initialize PatternBank for production-ready code generation (Task Group 8)
         self.pattern_bank: Optional[PatternBank] = None
         try:
@@ -165,6 +175,7 @@ class CodeGenerationService:
             except Exception as e:
                 logger.warning(f"Could not initialize Unified RAG Retriever: {e}")
 
+
         logger.info(
             "CodeGenerationService initialized",
             extra={
@@ -176,6 +187,78 @@ class CodeGenerationService:
                 "rag_enabled": self.rag_retriever is not None,
             },
         )
+
+    # ============================================================================
+    # ApplicationIR Conversion Helpers (Phase 1 Refactoring)
+    # ============================================================================
+
+    def _ir_entity_to_pattern_entity(self, ir_entity) -> Dict[str, Any]:
+        """
+        Convert ApplicationIR Entity to PatternBank entity format.
+
+        Args:
+            ir_entity: Entity from ApplicationIR.domain_model.entities
+
+        Returns:
+            Dictionary in PatternBank entity format
+        """
+        return {
+            "name": ir_entity.name,
+            "fields": [
+                {
+                    "name": attr.name,
+                    "type": attr.data_type.value,
+                    "required": not attr.is_nullable,
+                    "unique": attr.is_unique,
+                    "default": attr.default_value,
+                    "description": attr.description or "",
+                }
+                for attr in ir_entity.attributes
+            ],
+            "relationships": [
+                {
+                    "source": rel.source_entity,
+                    "target": rel.target_entity,
+                    "type": rel.type.value,
+                    "field_name": rel.field_name,
+                    "back_populates": rel.back_populates,
+                }
+                for rel in ir_entity.relationships
+            ],
+            "description": ir_entity.description or "",
+        }
+
+    def _ir_endpoint_to_pattern_endpoint(self, ir_endpoint) -> Dict[str, Any]:
+        """
+        Convert ApplicationIR Endpoint to PatternBank endpoint format.
+
+        Args:
+            ir_endpoint: Endpoint from ApplicationIR.api_model.endpoints
+
+        Returns:
+            Dictionary in PatternBank endpoint format
+        """
+        return {
+            "path": ir_endpoint.path,
+            "method": ir_endpoint.method.value,
+            "operation_id": ir_endpoint.operation_id,
+            "summary": ir_endpoint.summary or "",
+            "description": ir_endpoint.description or "",
+            "parameters": [
+                {
+                    "name": param.name,
+                    "location": param.location.value,
+                    "type": param.data_type,
+                    "required": param.required,
+                    "description": param.description or "",
+                }
+                for param in ir_endpoint.parameters
+            ],
+            "request_schema": ir_endpoint.request_schema.name if ir_endpoint.request_schema else None,
+            "response_schema": ir_endpoint.response_schema.name if ir_endpoint.response_schema else None,
+            "auth_required": ir_endpoint.auth_required,
+            "tags": ir_endpoint.tags,
+        }
 
     async def generate_modular_app(self, spec_requirements) -> Dict[str, str]:
         """
@@ -259,36 +342,79 @@ class CodeGenerationService:
             },
         )
 
-        # FEATURE FLAG: Use production-ready templates if enabled (Task Group 8)
-        production_mode = os.getenv("PRODUCTION_MODE", "false").lower() == "true"
+        # Build ApplicationIR (Milestone 4) - ALWAYS construct IR
+        from src.cognitive.ir.ir_builder import IRBuilder
+        app_ir = IRBuilder.build_from_spec(spec_requirements)
+        logger.info(f"ApplicationIR constructed: {app_ir.name} (ID: {app_ir.app_id})")
 
-        if production_mode:
-            logger.info(
-                "PRODUCTION_MODE enabled - using production-ready templates",
-                extra={"pattern_bank_available": self.pattern_bank is not None}
-            )
+        # Persist Initial IR to Neo4j
+        repo = Neo4jIRRepository()
+        repo.save_application_ir(app_ir)
+        repo.close()
+        logger.info(
+            "ApplicationIR persisted to Neo4j",
+            extra={
+                "app_id": str(app_ir.app_id),
+                "app_name": app_ir.name,
+                "uses_application_ir": True
+            }
+        )
 
-            # PRODUCTION MODE: Use ONLY PatternBank (Task Group 8)
-            logger.info("Retrieving production-ready patterns from PatternBank")
-            patterns = await self._retrieve_production_patterns(spec_requirements)
+        # PRODUCTION MODE: Use PatternBank and modular architecture
+        logger.info(
+            "Using production-ready templates",
+            extra={"pattern_bank_available": self.pattern_bank is not None}
+        )
 
-            # Count patterns retrieved
-            total_patterns = sum(len(p) for p in patterns.values())
-            logger.info(
-                "Retrieved patterns from PatternBank",
-                extra={"categories": len(patterns), "total_patterns": total_patterns}
-            )
+        logger.info("Retrieving production-ready patterns from PatternBank")
 
-            # Compose all files from patterns
-            logger.info("Composing production-ready application from patterns")
-            files_dict = await self._compose_patterns(patterns, spec_requirements)
+        # PHASE 1 REFACTORING: Pass app_ir instead of spec_requirements
+        patterns = await self._retrieve_production_patterns(app_ir=app_ir)
 
-            # Fallback for missing essential files (Task Group 8 enhancement)
-            # Hardcoded generators in PRODUCTION_MODE, LLM otherwise
-            # User requirement: "SI NO HAY PATTERNS DEBEMOS PASARLE CONTEXTO NECESARIO PARA Q EL LLM ESCRIBA EL CODIGO"
-            logger.info("Checking for missing essential files (hardcoded in PRODUCTION_MODE, LLM otherwise)")
+        # Count patterns retrieved
+        total_patterns = sum(len(p) for p in patterns.values())
+        logger.info(
+            "Retrieved patterns from PatternBank",
+            extra={
+                "categories": len(patterns),
+                "total_patterns": total_patterns,
+                "uses_application_ir": True
+            }
+        )
+
+        # Compose all files from patterns
+        logger.info("Composing production-ready application from patterns")
+
+        try:
+            # PHASE 1 REFACTORING: Pass app_ir instead of spec_requirements
+            files_dict = await self._compose_patterns(patterns, app_ir=app_ir)
+
+            # Fallback for missing essential files
+            logger.info("Checking for missing essential files")
             llm_generated = await self._generate_with_llm_fallback(files_dict, spec_requirements)
             files_dict.update(llm_generated)
+
+            # Generate behavior code (workflows, state machines, validators)
+            if app_ir and app_ir.behavior_model:
+                logger.info('Generating behavior code from BehaviorModelIR')
+                behavior_files = self.behavior_generator.generate_business_logic(app_ir.behavior_model)
+                
+                logger.info(
+                    'Generated behavior code',
+                    extra={
+                        'files_count': len(behavior_files),
+                        'workflows': len([f for f in behavior_files if 'workflows' in f]),
+                        'state_machines': len([f for f in behavior_files if 'state_machines' in f]),
+                        'validators': len([f for f in behavior_files if 'validators' in f]),
+                        'event_handlers': len([f for f in behavior_files if 'events' in f]),
+                    }
+                )
+                
+                # Add behavior files to the generated files dict
+                files_dict.update(behavior_files)
+            else:
+                logger.info('No BehaviorModelIR found, skipping behavior generation')
+
 
             # Add __init__.py files for Python packages
             package_dirs = [
@@ -308,140 +434,34 @@ class CodeGenerationService:
 
             # Check if generation succeeded
             if not files_dict:
-                logger.warning(
-                    "Modular generation produced no files - falling back to legacy LLM generation",
+                logger.error(
+                    "Modular generation produced no files",
                     extra={
                         "reason": "ModularArchitectureGenerator may have failed or spec requirements incomplete"
                     }
                 )
-                # Disable production mode and use legacy generation
-                production_mode = False
-                # Continue to legacy mode below (will execute after this if block)
-            else:
-                # Convert multi-file dict to single string for compatibility
-                # Format: "=== FILE: path/to/file.py ===\n<content>\n\n"
-                code_parts = []
-                for filepath, content in sorted(files_dict.items()):
-                    code_parts.append(f"=== FILE: {filepath} ===")
-                    code_parts.append(content)
-                    code_parts.append("")  # Empty line separator
+                raise RuntimeError("Failed to generate application files")
 
-                generated_code = "\n".join(code_parts)
+            # Convert multi-file dict to single string for compatibility
+            # Format: "=== FILE: path/to/file.py ===\n<content>\n\n"
+            code_parts = []
+            for filepath, content in sorted(files_dict.items()):
+                code_parts.append(f"=== FILE: {filepath} ===")
+                code_parts.append(content)
+                code_parts.append("")  # Empty line separator
 
-                logger.info(
-                    "Production mode generation complete",
-                    extra={
-                        "files_generated": len(files_dict),
-                        "code_length": len(generated_code),
-                        "mode": "modular_architecture_generator"
-                    }
-                )
+            generated_code = "\n".join(code_parts)
 
-                return generated_code
-
-        # If we reach here, either production_mode is False OR pattern generation failed
-        if production_mode:
-            # Should never reach here due to fallback logic above
-            logger.error("Unexpected: production_mode=True but reached legacy generation")
-            production_mode = False
-
-        # LEGACY MODE: Single-file monolithic generation
-        logger.info("Using legacy single-file generation mode")
-
-        # Build comprehensive prompt from requirements
-        prompt = self._build_requirements_prompt(spec_requirements)
-
-        # If repair context provided, prepend it to guide the LLM
-        if repair_context:
-            prompt = repair_context + "\n\n" + prompt
-
-        # UNIFIED RAG RETRIEVAL (Milestone 4)
-        # Retrieve relevant code patterns and examples from Neo4j + Qdrant
-        if self.rag_retriever:
-            try:
-                logger.info("Retrieving RAG context for requirements generation")
-                # Create a search query from the spec summary
-                search_query = f"FastAPI application with {len(spec_requirements.entities)} entities: "
-                search_query += ", ".join([e.name for e in spec_requirements.entities[:5]])
-                
-                rag_results = await self.rag_retriever.retrieve(
-                    query=search_query,
-                    top_k=3,
-                    qdrant_weight=0.7,
-                    neo4j_weight=0.3
-                )
-                
-                if rag_results:
-                    logger.info(f"Retrieved {len(rag_results)} RAG examples")
-                    rag_context = "\n\n## REFERENCE EXAMPLES (Use these patterns if relevant):\n"
-                    for i, result in enumerate(rag_results, 1):
-                        rag_context += f"\n### Example {i} (Source: {result.source})\n"
-                        rag_context += f"```python\n{result.content[:1500]}...\n```\n"
-                    
-                    # Append RAG context to prompt
-                    prompt += rag_context
-            except Exception as e:
-                logger.warning(f"RAG retrieval failed (continuing without context): {e}")
-
-        # Call LLM with requirements context
-        try:
-            response = await asyncio.wait_for(
-                self.llm_client.generate_with_caching(
-                    task_type="task_execution",  # Valid TaskType for code generation
-                    complexity="high",
-                    cacheable_context={"system_prompt": self._get_requirements_system_prompt()},
-                    variable_prompt=prompt,
-                    temperature=0.0,  # Deterministic for reproducibility
-                    max_tokens=10000,  # Increased for complex apps (e-commerce with 17+ endpoints)
-                ),
-                timeout=120.0,
+            logger.info(
+                "Production mode generation complete",
+                extra={
+                    "files_generated": len(files_dict),
+                    "code_length": len(generated_code),
+                    "mode": "modular_architecture_generator"
+                }
             )
-        except asyncio.TimeoutError:
-            logger.error("LLM call timed out for requirements generation")
-            
-            # RECORD ERROR (Milestone 4)
-            if self.enable_feedback_loop and self.pattern_store:
-                error_id = str(uuid.uuid4())
-                await self.pattern_store.store_error(
-                    ErrorPattern(
-                        error_id=error_id,
-                        task_id="requirements_gen",
-                        task_description=spec_requirements.metadata.get('spec_name', 'API'),
-                        error_type="timeout",
-                        error_message="LLM generation timed out after 120s",
-                        failed_code="",
-                        attempt=1,
-                        timestamp=datetime.now(),
-                        metadata={"spec_requirements": str(len(spec_requirements.entities))}
-                    )
-                )
-            
-            raise ValueError("Code generation from requirements timed out after 120 seconds")
 
-        # Extract code from response
-        generated_code = self._extract_code(response.get("content", ""))
-
-        if not generated_code:
-            # RECORD ERROR (Milestone 4)
-            if self.enable_feedback_loop and self.pattern_store:
-                error_id = str(uuid.uuid4())
-                await self.pattern_store.store_error(
-                    ErrorPattern(
-                        error_id=error_id,
-                        task_id="requirements_gen",
-                        task_description=spec_requirements.metadata.get('spec_name', 'API'),
-                        error_type="empty_response",
-                        error_message="No code extracted from LLM response",
-                        failed_code=response.get("content", "")[:1000],
-                        attempt=1,
-                        timestamp=datetime.now()
-                    )
-                )
-            raise ValueError("No code generated from requirements")
-
-        # Validate syntax
-        is_valid, syntax_error = self._validate_generated_code_syntax(generated_code)
-        if not is_valid:
+        except Exception as syntax_error:
             # RECORD ERROR (Milestone 4)
             if self.enable_feedback_loop and self.pattern_store:
                 error_id = str(uuid.uuid4())
@@ -451,8 +471,8 @@ class CodeGenerationService:
                         task_id="requirements_gen",
                         task_description=spec_requirements.metadata.get('spec_name', 'API'),
                         error_type="syntax_error",
-                        error_message=syntax_error,
-                        failed_code=generated_code,
+                        error_message=str(syntax_error),
+                        failed_code=str(syntax_error),
                         attempt=1,
                         timestamp=datetime.now()
                     )
@@ -462,8 +482,10 @@ class CodeGenerationService:
                 # Log warning but continue - repair loop will fix it
                 logger.warning(
                     f"Generated code has syntax errors (will be repaired): {syntax_error}",
-                    extra={"syntax_error": syntax_error}
+                    extra={"syntax_error": str(syntax_error)}
                 )
+                # Return partial generated code
+                return str(syntax_error)
             else:
                 # Strict mode - fail immediately
                 raise ValueError(f"Generated code has syntax errors: {syntax_error}")
@@ -1482,7 +1504,7 @@ Code MUST pass Python compile() without SyntaxError."""
         return generated_files
 
     async def _retrieve_production_patterns(
-        self, spec_requirements
+        self, app_ir=None, spec_requirements=None
     ) -> Dict[str, list]:
         """
         Retrieve production-ready patterns for all categories (Task Group 8).
@@ -1490,8 +1512,12 @@ Code MUST pass Python compile() without SyntaxError."""
         Uses SPECIFIC purpose strings from populate_production_patterns.py to ensure
         correct pattern retrieval via PatternBank.hybrid_search().
 
+        **Phase 1 Refactoring**: Now accepts ApplicationIR as primary input with
+        backward compatibility for spec_requirements.
+
         Args:
-            spec_requirements: SpecRequirements object
+            app_ir: ApplicationIR object (preferred, primary input)
+            spec_requirements: SpecRequirements object (deprecated, backward compat)
 
         Returns:
             Dictionary mapping category name to list of StoredPattern objects
@@ -1500,7 +1526,42 @@ Code MUST pass Python compile() without SyntaxError."""
                 "database_async": [StoredPattern(...), ...],
                 ...
             }
+
+        Raises:
+            ValueError: If neither app_ir nor spec_requirements is provided
         """
+        # Validate inputs
+        if app_ir is None and spec_requirements is None:
+            raise ValueError("Either app_ir or spec_requirements must be provided")
+
+        # Deprecation warning if using spec_requirements
+        if spec_requirements is not None and app_ir is None:
+            logger.warning(
+                "Using spec_requirements in _retrieve_production_patterns is deprecated. "
+                "Please migrate to ApplicationIR.",
+                extra={"migration_phase": "phase_1"}
+            )
+
+        # Log source of patterns
+        if app_ir is not None:
+            logger.info(
+                "Extracting patterns from ApplicationIR",
+                extra={
+                    "app_id": str(app_ir.app_id),
+                    "entities_count": len(app_ir.domain_model.entities),
+                    "endpoints_count": len(app_ir.api_model.endpoints),
+                    "uses_application_ir": True,
+                }
+            )
+        else:
+            logger.info(
+                "Extracting patterns from SpecRequirements (deprecated path)",
+                extra={
+                    "entities_count": len(spec_requirements.entities) if hasattr(spec_requirements, 'entities') else 0,
+                    "endpoints_count": len(spec_requirements.endpoints) if hasattr(spec_requirements, 'endpoints') else 0,
+                    "uses_application_ir": False,
+                }
+            )
         # Exact purpose strings from populate_production_patterns.py
         # This ensures semantic search returns the CORRECT patterns
         SPECIFIC_PURPOSES = {
@@ -1641,7 +1702,7 @@ Code MUST pass Python compile() without SyntaxError."""
         return patterns
 
     async def _compose_patterns(
-        self, patterns: Dict[str, list], spec_requirements
+        self, patterns: Dict[str, list], app_ir=None, spec_requirements=None
     ) -> Dict[str, str]:
         """
         Compose patterns into complete modular application (Task Group 8).
@@ -1656,13 +1717,50 @@ Code MUST pass Python compile() without SyntaxError."""
         7. Docker and config files
         8. Main application entry point (separate search for domain="application")
 
+        **Phase 1 Refactoring**: Now accepts ApplicationIR as primary input with
+        backward compatibility for spec_requirements.
+
         Args:
             patterns: Dictionary of patterns by category
-            spec_requirements: SpecRequirements object
+            app_ir: ApplicationIR object (preferred, primary input)
+            spec_requirements: SpecRequirements object (deprecated, backward compat)
 
         Returns:
             Dictionary mapping file paths to generated code
+
+        Raises:
+            ValueError: If neither app_ir nor spec_requirements is provided
         """
+        # Validate inputs
+        if app_ir is None and spec_requirements is None:
+            raise ValueError("Either app_ir or spec_requirements must be provided")
+
+        # Deprecation warning if using spec_requirements
+        if spec_requirements is not None and app_ir is None:
+            logger.warning(
+                "Using spec_requirements in _compose_patterns is deprecated. "
+                "Please migrate to ApplicationIR.",
+                extra={"migration_phase": "phase_1"}
+            )
+
+        # Log source of composition
+        if app_ir is not None:
+            logger.info(
+                "Composing patterns from ApplicationIR",
+                extra={
+                    "app_id": str(app_ir.app_id),
+                    "entities_count": len(app_ir.domain_model.entities),
+                    "endpoints_count": len(app_ir.api_model.endpoints),
+                    "flows_count": len(app_ir.behavior_model.flows),
+                    "uses_application_ir": True,
+                }
+            )
+        else:
+            logger.info(
+                "Composing patterns from SpecRequirements (deprecated path)",
+                extra={"uses_application_ir": False}
+            )
+
         files = {}
 
         # Get composition order (priority-based)
@@ -1674,8 +1772,11 @@ Code MUST pass Python compile() without SyntaxError."""
                 continue
 
             # Compose patterns for this category
+            # Use app_ir if available, otherwise fall back to spec_requirements
             category_files = await self._compose_category_patterns(
-                category, patterns[category], spec_requirements
+                category,
+                patterns[category],
+                app_ir if app_ir is not None else spec_requirements
             )
             files.update(category_files)
 
@@ -1705,14 +1806,20 @@ Code MUST pass Python compile() without SyntaxError."""
         # Production mode: Always use hardcoded main.py (ensures docs enabled, correct config)
         if os.getenv("PRODUCTION_MODE") == "true":
             logger.info("🔨 PRODUCTION_MODE: Using hardcoded main.py (docs always enabled)")
-            main_py_code = self._generate_main_py(spec_requirements)
+            # Use app_ir if available, otherwise use spec_requirements for entity extraction
+            main_py_code = self._generate_main_py(app_ir if app_ir is not None else spec_requirements)
             files["src/main.py"] = main_py_code
         elif exact_main:
-            files["src/main.py"] = self._adapt_pattern(exact_main.code, spec_requirements)
+            # Use app_ir if available, otherwise fall back to spec_requirements
+            files["src/main.py"] = self._adapt_pattern(
+                exact_main.code,
+                app_ir if app_ir is not None else spec_requirements
+            )
             logger.info("✅ Added main.py from PatternBank")
         else:
             # Fallback: Generate main.py directly if not found in PatternBank
-            main_py_code = self._generate_main_py(spec_requirements)
+            # Use app_ir if available, otherwise fall back to spec_requirements
+            main_py_code = self._generate_main_py(app_ir if app_ir is not None else spec_requirements)
             files["src/main.py"] = main_py_code
             logger.info("✅ Generated main.py (fallback from pattern not found)")
 
@@ -1979,21 +2086,105 @@ Generate ONLY the README.md content, no additional explanations."""
         return response["content"].strip()
 
     async def _compose_category_patterns(
-        self, category: str, category_patterns: list, spec_requirements
+        self, category: str, category_patterns: list, spec_or_ir
     ) -> Dict[str, str]:
         """
         Compose patterns for a specific category (Task Group 8).
 
         Maps StoredPattern objects to output files by matching purpose strings.
 
+        **Phase 1 Refactoring**: Now accepts ApplicationIR as primary input with
+        backward compatibility for spec_or_ir.
+
         Args:
             category: Category name (e.g., "core_config", "database_async")
             category_patterns: List of StoredPattern objects for this category
-            spec_requirements: SpecRequirements object
+            spec_or_ir: SpecRequirements or ApplicationIR object
 
         Returns:
             Dictionary of files generated for this category
         """
+        # Detect type of input (ApplicationIR or SpecRequirements)
+        from src.cognitive.ir.application_ir import ApplicationIR
+        is_app_ir = isinstance(spec_or_ir, ApplicationIR)
+
+        # Unified accessors for entities and endpoints
+        def get_entities():
+            """Get entities from either ApplicationIR or SpecRequirements."""
+            if is_app_ir:
+                return spec_or_ir.domain_model.entities if spec_or_ir.domain_model else []
+            else:
+                return spec_or_ir.entities or []
+
+        def get_endpoints():
+            """Get endpoints from either ApplicationIR or SpecRequirements."""
+            if is_app_ir:
+                return spec_or_ir.api_model.endpoints if spec_or_ir.api_model else []
+            else:
+                return spec_or_ir.endpoints or []
+
+        def get_entity_fields(entity):
+            """Get fields from entity, handling both ApplicationIR and SpecRequirements structures."""
+            # ApplicationIR uses 'attributes', SpecRequirements uses 'fields'
+            if hasattr(entity, 'attributes'):
+                # Normalize ApplicationIR attributes to look like SpecRequirements fields
+                # Create a simple wrapper class to hold field data
+                class NormalizedField:
+                    def __init__(self, name, type_, required, default, constraints=None):
+                        self.name = name
+                        self.type = type_
+                        self.required = required
+                        self.default = default
+                        self.constraints = constraints or {}
+
+                normalized_fields = []
+                for attr in entity.attributes:
+                    field_type = attr.data_type.value if hasattr(attr.data_type, 'value') else str(attr.data_type)
+                    normalized_fields.append(NormalizedField(
+                        name=attr.name,
+                        type_=field_type,
+                        required=not attr.is_nullable,
+                        default=attr.default_value,
+                        constraints=getattr(attr, 'constraints', {}),
+                    ))
+                return normalized_fields
+            else:
+                return getattr(entity, 'fields', [])
+
+        def get_entity_snake_name(entity):
+            """Get snake_name from entity, handling both ApplicationIR and SpecRequirements."""
+            # Check if entity already has snake_name (SpecRequirements)
+            if hasattr(entity, 'snake_name'):
+                return entity.snake_name
+            else:
+                # For ApplicationIR, convert entity.name to snake_case
+                import re
+                name = entity.name
+                # Convert to snake_case
+                s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
+                return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+
+        def get_validation_ground_truth():
+            """Get validation ground truth from either ApplicationIR or SpecRequirements."""
+            if is_app_ir:
+                # For ApplicationIR, extract from validation model
+                if spec_or_ir.validation_model:
+                    return {
+                        "rules": [r.dict() for r in spec_or_ir.validation_model.rules],
+                        "test_cases": [tc.dict() for tc in spec_or_ir.validation_model.test_cases]
+                    }
+                return {}
+            else:
+                return getattr(spec_or_ir, 'validation_ground_truth', {})
+
+        # Helper to adapt pattern with correct parameters
+        def adapt_pattern_helper(code, current_entity=None, skip_jinja=False):
+            """Helper to adapt pattern, auto-detecting spec_or_ir type."""
+            if is_app_ir:
+                return self._adapt_pattern(code, app_ir=spec_or_ir, current_entity=current_entity, skip_jinja=skip_jinja)
+            else:
+                return self._adapt_pattern(code, spec_requirements=spec_or_ir, current_entity=current_entity, skip_jinja=skip_jinja)
+
         files = {}
 
         # Log patterns for this category
@@ -2032,13 +2223,13 @@ Generate ONLY the README.md content, no additional explanations."""
                 # Fallback to pattern matching
                 for p in category_patterns:
                     if "pydantic" in p.signature.purpose.lower() or "configuration" in p.signature.purpose.lower():
-                        files["src/core/config.py"] = self._adapt_pattern(p.code, spec_requirements)
+                        files["src/core/config.py"] = adapt_pattern_helper(p.code)
                         logger.info(f"✅ Mapped: src/core/config.py", extra={"purpose": p.signature.purpose[:60]})
 
         elif category == "database_async":
             for p in category_patterns:
                 if "sqlalchemy" in p.signature.purpose.lower() or "database" in p.signature.purpose.lower():
-                    files["src/core/database.py"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["src/core/database.py"] = adapt_pattern_helper(p.code)
 
         elif category == "observability":
             # Map each observability pattern to its file
@@ -2047,19 +2238,19 @@ Generate ONLY the README.md content, no additional explanations."""
                 purpose_lower = p.signature.purpose.lower()
                 # Check exception handler BEFORE logging (both contain "structured logging")
                 if "exception" in purpose_lower or "global exception" in purpose_lower:
-                    files["src/core/exception_handlers.py"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["src/core/exception_handlers.py"] = adapt_pattern_helper(p.code)
                 # Check request ID middleware specifically
                 elif "request id" in purpose_lower:
-                    files["src/core/middleware.py"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["src/core/middleware.py"] = adapt_pattern_helper(p.code)
                 # Logging configuration (check after exception handler)
                 elif "structlog" in purpose_lower and "configuration" in purpose_lower:
-                    files["src/core/logging.py"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["src/core/logging.py"] = adapt_pattern_helper(p.code)
                 # Health checks
                 elif "health check" in purpose_lower or "readiness" in purpose_lower:
-                    files["src/api/routes/health.py"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["src/api/routes/health.py"] = adapt_pattern_helper(p.code)
                 # Prometheus metrics
                 elif "metrics" in purpose_lower or "prometheus" in purpose_lower:
-                    files["src/api/routes/metrics.py"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["src/api/routes/metrics.py"] = adapt_pattern_helper(p.code)
 
             # Production mode: Always use optimized routes (prevents issues)
             if os.getenv("PRODUCTION_MODE") == "true":
@@ -2078,10 +2269,11 @@ Generate ONLY the README.md content, no additional explanations."""
         # Data Layer - Pydantic Models
         elif category == "models_pydantic":
             # Use hardcoded production-ready schemas generator
-            if spec_requirements.entities:
+            entities = get_entities()
+            if entities:
                 schemas_code = generate_schemas(
-                    [{"name": e.name, "plural": e.name.lower() + "s", "fields": e.fields} for e in spec_requirements.entities],
-                    validation_ground_truth=spec_requirements.validation_ground_truth
+                    [{"name": e.name, "plural": e.name.lower() + "s", "fields": get_entity_fields(e)} for e in entities],
+                    validation_ground_truth=get_validation_ground_truth()
                 )
                 if schemas_code:
                     files["src/models/schemas.py"] = schemas_code
@@ -2090,19 +2282,20 @@ Generate ONLY the README.md content, no additional explanations."""
                     # Fallback to pattern matching
                     for p in category_patterns:
                         if "pydantic" in p.signature.purpose.lower() or "schema" in p.signature.purpose.lower():
-                            files["src/models/schemas.py"] = self._adapt_pattern(p.code, spec_requirements)
+                            files["src/models/schemas.py"] = adapt_pattern_helper(p.code)
             else:
                 # Fallback to pattern matching if no entities
                 for p in category_patterns:
                     if "pydantic" in p.signature.purpose.lower() or "schema" in p.signature.purpose.lower():
-                        files["src/models/schemas.py"] = self._adapt_pattern(p.code, spec_requirements)
+                        files["src/models/schemas.py"] = adapt_pattern_helper(p.code)
 
         # Data Layer - SQLAlchemy Models
         elif category == "models_sqlalchemy":
             # Use dynamic production-ready entities generator
-            if spec_requirements.entities:
+            entities = get_entities()
+            if entities:
                 entities_code = generate_entities(
-                    [{"name": e.name, "plural": e.name.lower() + "s", "fields": e.fields} for e in spec_requirements.entities]
+                    [{"name": e.name, "plural": e.name.lower() + "s", "fields": get_entity_fields(e)} for e in entities]
                 )
                 if entities_code:
                     files["src/models/entities.py"] = entities_code
@@ -2111,142 +2304,160 @@ Generate ONLY the README.md content, no additional explanations."""
                     # Fallback to pattern matching
                     for p in category_patterns:
                         if "sqlalchemy" in p.signature.purpose.lower() or "orm" in p.signature.purpose.lower():
-                            files["src/models/entities.py"] = self._adapt_pattern(p.code, spec_requirements)
+                            files["src/models/entities.py"] = adapt_pattern_helper(p.code)
             else:
                 # Fallback to pattern matching if no entities
                 for p in category_patterns:
                     if "sqlalchemy" in p.signature.purpose.lower() or "orm" in p.signature.purpose.lower():
-                        files["src/models/entities.py"] = self._adapt_pattern(p.code, spec_requirements)
+                        files["src/models/entities.py"] = adapt_pattern_helper(p.code)
 
         # Repository Pattern
         elif category == "repository_pattern":
             # Generate repository for each entity
             repo_pattern = find_pattern_by_keyword(category_patterns, "repository", "crud")
-            if repo_pattern and spec_requirements.entities:
-                for entity in spec_requirements.entities:
+            entities = get_entities()
+            if repo_pattern and entities:
+                for entity in entities:
                     # Pass current entity to _adapt_pattern so Jinja2 has access to {{ entity.name }}
-                    adapted = self._adapt_pattern(repo_pattern.code, spec_requirements, current_entity=entity)
-                    files[f"src/repositories/{entity.snake_name}_repository.py"] = adapted
+                    adapted = adapt_pattern_helper(repo_pattern.code, current_entity=entity)
+                    files[f"src/repositories/{get_entity_snake_name(entity)}_repository.py"] = adapted
 
         # Business Logic / Service Layer
         elif category == "business_logic":
             # Generate service for each entity using hardcoded production-ready generator
-            if spec_requirements.entities:
-                for entity in spec_requirements.entities:
+            entities = get_entities()
+            if entities:
+                for entity in entities:
                     service_code = generate_service_method(entity.name)
                     if service_code:
-                        files[f"src/services/{entity.snake_name}_service.py"] = service_code
-                        logger.info(f"✅ Generated: src/services/{entity.snake_name}_service.py (hardcoded)")
+                        files[f"src/services/{get_entity_snake_name(entity)}_service.py"] = service_code
+                        logger.info(f"✅ Generated: src/services/{get_entity_snake_name(entity)}_service.py (hardcoded)")
                     else:
                         # Fallback to pattern matching
                         service_pattern = find_pattern_by_keyword(category_patterns, "service", "business logic")
                         if service_pattern:
-                            adapted = self._adapt_pattern(service_pattern.code, spec_requirements, current_entity=entity)
-                            files[f"src/services/{entity.snake_name}_service.py"] = adapted
+                            adapted = adapt_pattern_helper(service_pattern.code, current_entity=entity)
+                            files[f"src/services/{get_entity_snake_name(entity)}_service.py"] = adapted
             else:
                 # Fallback to pattern matching if no entities
                 service_pattern = find_pattern_by_keyword(category_patterns, "service", "business logic")
-                if service_pattern and spec_requirements.entities:
-                    for entity in spec_requirements.entities:
-                        adapted = self._adapt_pattern(service_pattern.code, spec_requirements, current_entity=entity)
-                        files[f"src/services/{entity.snake_name}_service.py"] = adapted
+                if service_pattern and entities:
+                    for entity in entities:
+                        adapted = adapt_pattern_helper(service_pattern.code, current_entity=entity)
+                        files[f"src/services/{get_entity_snake_name(entity)}_service.py"] = adapted
 
         # API Routes - ALWAYS use LLM with pattern as guide (Milestone 5+ improvement)
         elif category == "api_routes":
             # Get pattern as EXAMPLE/GUIDE (not final code)
             route_pattern = find_pattern_by_keyword(category_patterns, "fastapi", "crud", "endpoint")
 
-            if spec_requirements.entities:
+            entities = get_entities()
+            endpoints = get_endpoints()
+            if entities:
                 logger.info(
                     "🤖 Generating spec-adapted API routes with LLM (pattern as guide)",
-                    extra={"entity_count": len(spec_requirements.entities), "has_pattern": route_pattern is not None}
+                    extra={"entity_count": len(entities), "has_pattern": route_pattern is not None}
                 )
 
                 # Generate route for each entity using LLM with pattern as guide
-                for entity in spec_requirements.entities:
+                for entity in entities:
                     # Extract endpoints specific to this entity from spec
                     # Use MORE PRECISE matching: only if path STARTS with entity plural (after first /)
-                    entity_plural = f"{entity.snake_name}s"  # e.g., "products", "carts"
+                    entity_snake = get_entity_snake_name(entity)
+                    entity_plural = f"{entity_snake}s"  # e.g., "products", "carts"
                     entity_endpoints = [
-                        e for e in spec_requirements.endpoints
+                        e for e in endpoints
                         if e.path.lstrip('/').startswith(entity_plural + '/')
                         or e.path.lstrip('/').startswith(entity_plural)
                         or e.path == f"/{entity_plural}"
                     ]
 
                     # Generate route using LLM with pattern as style guide
+                    # For api_routes, pass spec_or_ir based on type
+                    spec_arg = spec_or_ir if not is_app_ir else None
                     route_code = await self._generate_route_with_llm(
                         entity=entity,
                         endpoints=entity_endpoints,
                         pattern_code=route_pattern.code if route_pattern else None,
-                        spec_requirements=spec_requirements
+                        spec_requirements=spec_arg
                     )
 
-                    files[f"src/api/routes/{entity.snake_name}.py"] = route_code
+                    files[f"src/api/routes/{entity_snake}.py"] = route_code
 
         # Security patterns
         elif category == "security_hardening":
             for p in category_patterns:
                 if "security" in p.signature.purpose.lower() or "sanitization" in p.signature.purpose.lower():
-                    files["src/core/security.py"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["src/core/security.py"] = adapt_pattern_helper(p.code)
 
         # Testing patterns
         elif category == "test_infrastructure":
             for p in category_patterns:
                 purpose_lower = p.signature.purpose.lower()
                 if "pytest fixtures" in purpose_lower or "conftest" in purpose_lower:
-                    files["tests/conftest.py"] = self._adapt_pattern(p.code, spec_requirements, skip_jinja=True)
+                    files["tests/conftest.py"] = adapt_pattern_helper(p.code, skip_jinja=True)
                 elif "test data factories" in purpose_lower or "factories" in purpose_lower:
-                    files["tests/factories.py"] = self._adapt_pattern(p.code, spec_requirements, skip_jinja=True)
+                    files["tests/factories.py"] = adapt_pattern_helper(p.code, skip_jinja=True)
                 elif "unit tests for pydantic" in purpose_lower or "test_models" in purpose_lower:
-                    files["tests/unit/test_models.py"] = self._adapt_pattern(p.code, spec_requirements, skip_jinja=True)
+                    files["tests/unit/test_models.py"] = adapt_pattern_helper(p.code, skip_jinja=True)
                 elif "unit tests for repository" in purpose_lower or "test_repositories" in purpose_lower:
-                    files["tests/unit/test_repositories.py"] = self._adapt_pattern(p.code, spec_requirements, skip_jinja=True)
+                    files["tests/unit/test_repositories.py"] = adapt_pattern_helper(p.code, skip_jinja=True)
                 elif "unit tests for service" in purpose_lower or "test_services" in purpose_lower:
-                    files["tests/unit/test_services.py"] = self._adapt_pattern(p.code, spec_requirements, skip_jinja=True)
+                    files["tests/unit/test_services.py"] = adapt_pattern_helper(p.code, skip_jinja=True)
                 elif "integration tests" in purpose_lower or "test_api" in purpose_lower:
-                    files["tests/integration/test_api.py"] = self._adapt_pattern(p.code, spec_requirements, skip_jinja=True)
+                    files["tests/integration/test_api.py"] = adapt_pattern_helper(p.code, skip_jinja=True)
                 elif "tests for logging" in purpose_lower or "observability" in purpose_lower:
-                    files["tests/test_observability.py"] = self._adapt_pattern(p.code, spec_requirements, skip_jinja=True)
+                    files["tests/test_observability.py"] = adapt_pattern_helper(p.code, skip_jinja=True)
 
         # Docker infrastructure
         elif category == "docker_infrastructure":
             for p in category_patterns:
                 purpose_lower = p.signature.purpose.lower()
                 if "multi-stage docker" in purpose_lower or "dockerfile" in purpose_lower:
-                    files["docker/Dockerfile"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["docker/Dockerfile"] = adapt_pattern_helper(p.code)
                 elif "full stack docker-compose" in purpose_lower and "test" not in purpose_lower:
-                    files["docker/docker-compose.yml"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["docker/docker-compose.yml"] = adapt_pattern_helper(p.code)
                 elif "test environment" in purpose_lower or "docker-compose.test" in purpose_lower:
-                    files["docker/docker-compose.test.yml"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["docker/docker-compose.test.yml"] = adapt_pattern_helper(p.code)
                 elif "prometheus scrape" in purpose_lower or "prometheus.yml" in purpose_lower:
-                    files["docker/prometheus.yml"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["docker/prometheus.yml"] = adapt_pattern_helper(p.code)
                 elif "docker build exclusions" in purpose_lower or ".dockerignore" in purpose_lower:
-                    files["docker/.dockerignore"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["docker/.dockerignore"] = adapt_pattern_helper(p.code)
                 elif "grafana dashboard" in purpose_lower and "json" in purpose_lower:
-                    files["docker/grafana/dashboards/app-metrics.json"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["docker/grafana/dashboards/app-metrics.json"] = adapt_pattern_helper(p.code)
                 elif "dashboard provisioning" in purpose_lower or "dashboard-provider" in purpose_lower:
-                    files["docker/grafana/dashboards/dashboard-provider.yml"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["docker/grafana/dashboards/dashboard-provider.yml"] = adapt_pattern_helper(p.code)
                 elif "datasource" in purpose_lower or "prometheus datasource" in purpose_lower:
-                    files["docker/grafana/datasources/prometheus.yml"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["docker/grafana/datasources/prometheus.yml"] = adapt_pattern_helper(p.code)
                 elif "docker setup documentation" in purpose_lower or "readme" in purpose_lower.lower():
-                    files["docker/README.md"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["docker/README.md"] = adapt_pattern_helper(p.code)
                 elif "troubleshooting" in purpose_lower:
-                    files["docker/TROUBLESHOOTING.md"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["docker/TROUBLESHOOTING.md"] = adapt_pattern_helper(p.code)
                 elif "validation checklist" in purpose_lower:
-                    files["docker/VALIDATION_CHECKLIST.md"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["docker/VALIDATION_CHECKLIST.md"] = adapt_pattern_helper(p.code)
                 elif "validation script" in purpose_lower or ".sh" in purpose_lower:
-                    files["docker/validate-docker-setup.sh"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["docker/validate-docker-setup.sh"] = adapt_pattern_helper(p.code)
 
             # Production mode: Always use optimized Docker files (not patterns)
             # This ensures consistent, pip-based Dockerfiles that work without manual steps
             if os.getenv("PRODUCTION_MODE") == "true":
                 logger.info("🔨 PRODUCTION_MODE: Using optimized pip-based Dockerfile")
-                dockerfile = self._generate_dockerfile(spec_requirements)
+                # Pass the appropriate object to generator - for ApplicationIR, pass app_ir from enclosing scope
+                from src.cognitive.ir.application_ir import ApplicationIR
+                if isinstance(spec_or_ir, ApplicationIR):
+                    # For ApplicationIR, we need to pass something the generator can work with
+                    # Create a simple wrapper or use the app_ir from parent scope
+                    # Since _generate_dockerfile expects spec_requirements, pass None and generator will use defaults
+                    dockerfile = self._generate_dockerfile(None)
+                else:
+                    dockerfile = self._generate_dockerfile(spec_or_ir)
                 files["docker/Dockerfile"] = dockerfile
 
                 logger.info("🔨 PRODUCTION_MODE: Using optimized docker-compose.yml")
-                docker_compose = self._generate_docker_compose(spec_requirements)
+                if isinstance(spec_or_ir, ApplicationIR):
+                    docker_compose = self._generate_docker_compose(None)
+                else:
+                    docker_compose = self._generate_docker_compose(spec_or_ir)
                 files["docker/docker-compose.yml"] = docker_compose
 
                 # Ensure Prometheus and Grafana configurations exist
@@ -2264,49 +2475,55 @@ Generate ONLY the README.md content, no additional explanations."""
             for p in category_patterns:
                 purpose_lower = p.signature.purpose.lower()
                 if "pyproject" in purpose_lower or "toml" in purpose_lower:
-                    files["pyproject.toml"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["pyproject.toml"] = adapt_pattern_helper(p.code)
                     found_files.add("pyproject.toml")
                 elif "env" in purpose_lower and "example" in purpose_lower:
-                    files[".env.example"] = self._adapt_pattern(p.code, spec_requirements)
+                    files[".env.example"] = adapt_pattern_helper(p.code)
                     found_files.add(".env.example")
                 elif "gitignore" in purpose_lower:
-                    files[".gitignore"] = self._adapt_pattern(p.code, spec_requirements)
+                    files[".gitignore"] = adapt_pattern_helper(p.code)
                     found_files.add(".gitignore")
                 elif "makefile" in purpose_lower:
-                    files["Makefile"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["Makefile"] = adapt_pattern_helper(p.code)
                     found_files.add("Makefile")
                 elif "pre-commit" in purpose_lower or "pre_commit" in purpose_lower:
-                    files[".pre-commit-config.yaml"] = self._adapt_pattern(p.code, spec_requirements)
+                    files[".pre-commit-config.yaml"] = adapt_pattern_helper(p.code)
                     found_files.add(".pre-commit-config.yaml")
                 elif "alembic.ini" in purpose_lower or ("alembic" in purpose_lower and "config" in purpose_lower):
-                    files["alembic.ini"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["alembic.ini"] = adapt_pattern_helper(p.code)
                     found_files.add("alembic.ini")
                 elif "alembic/env" in purpose_lower or ("alembic" in purpose_lower and "env" in purpose_lower):
-                    files["alembic/env.py"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["alembic/env.py"] = adapt_pattern_helper(p.code)
                     found_files.add("alembic/env.py")
                 elif "readme" in purpose_lower:
-                    files["README.md"] = self._adapt_pattern(p.code, spec_requirements)
+                    files["README.md"] = adapt_pattern_helper(p.code)
                     found_files.add("README.md")
 
             # Hardcoded fallback for missing critical files (production mode)
             if os.getenv("PRODUCTION_MODE") == "true":
                 if "alembic.ini" not in found_files:
                     logger.info("🔨 Hardcoded generator: Generating alembic.ini (no pattern in PatternBank)")
-                    alembic_ini = self._generate_alembic_ini(spec_requirements)
+                    # For ApplicationIR, pass None to let the generator use defaults
+                    spec_arg = spec_or_ir if not is_app_ir else None
+                    alembic_ini = self._generate_alembic_ini(spec_arg)
                     files["alembic.ini"] = alembic_ini
 
                 if "alembic/env.py" not in found_files:
                     logger.info("🔨 Hardcoded generator: Generating alembic/env.py (no pattern in PatternBank)")
-                    alembic_env = self._generate_alembic_env(spec_requirements)
+                    # For ApplicationIR, we can pass None to let the generator use defaults
+                    spec_arg = spec_or_ir if not is_app_ir else None
+                    alembic_env = self._generate_alembic_env(spec_arg)
                     files["alembic/env.py"] = alembic_env
 
                 if "alembic/script.py.mako" not in found_files:
                     logger.info("🔨 Hardcoded generator: Generating alembic/script.py.mako (no pattern in PatternBank)")
                     alembic_script = self._generate_alembic_script_template()
-                    files["alembic/script.py.mako"] = self._adapt_pattern(alembic_script, spec_requirements, skip_jinja=True)
+                    # For ApplicationIR, adapt_pattern_helper will use app_ir
+                    files["alembic/script.py.mako"] = adapt_pattern_helper(alembic_script, skip_jinja=True)
 
                 # Generate initial migration using hardcoded production-ready generator
-                if spec_requirements.entities:
+                entities = get_entities()
+                if entities:
                     logger.info("✅ Generating initial migration (hardcoded production generator)")
 
                     def _entity_to_dict(entity) -> dict:
@@ -2329,14 +2546,16 @@ Generate ONLY the README.md content, no additional explanations."""
                         }
 
                     migration_code = generate_initial_migration(
-                        [_entity_to_dict(e) for e in spec_requirements.entities]
+                        [_entity_to_dict(e) for e in entities]
                     )
                     if migration_code:
                         files["alembic/versions/001_initial.py"] = migration_code
 
                 if "pyproject.toml" not in found_files:
                     logger.info("🔨 Hardcoded generator: Generating pyproject.toml (no pattern in PatternBank)")
-                    pyproject = self._generate_pyproject_toml(spec_requirements)
+                    # For ApplicationIR, pass spec_or_ir if it's SpecRequirements, otherwise None
+                    spec_arg = spec_or_ir if not is_app_ir else None
+                    pyproject = self._generate_pyproject_toml(spec_arg)
                     files["pyproject.toml"] = pyproject
 
                 if ".env.example" not in found_files:
@@ -2365,54 +2584,98 @@ Generate ONLY the README.md content, no additional explanations."""
 
         return files
 
-    def _adapt_pattern(self, pattern_code: str, spec_requirements, current_entity=None, skip_jinja: bool = False) -> str:
+    def _adapt_pattern(self, pattern_code: str, spec_requirements=None, current_entity=None, skip_jinja: bool = False, app_ir=None) -> str:
         """
-        Adapt pattern code to spec requirements (Task Group 8).
+        Adapt pattern code to spec requirements or ApplicationIR (Task Group 8).
 
         Supports two placeholder styles:
         1. Jinja2 templates: {{ app_name }}, {% if entities %}, {% for entity in entities %}
         2. Simple placeholders: {APP_NAME}, {DATABASE_URL}, {ENTITY_IMPORTS}, {ENTITY_ROUTERS}
 
+        **Phase 1 Refactoring**: Now accepts ApplicationIR as primary input with
+        backward compatibility for spec_requirements.
+
         Args:
             pattern_code: Pattern code with placeholders (Jinja2 or simple style)
-            spec_requirements: SpecRequirements object
+            spec_requirements: SpecRequirements object (deprecated, backward compat)
             current_entity: Optional entity object for entity-specific patterns
+            skip_jinja: Skip Jinja2 rendering
+            app_ir: ApplicationIR object (preferred, primary input)
 
         Returns:
             Adapted code with placeholders replaced
         """
-        # Prepare context variables
-        app_name = spec_requirements.metadata.get("spec_name", "API")
-        app_name_snake = app_name.replace("-", "_").replace(" ", "_").lower()
-        database_url = spec_requirements.metadata.get(
-            "database_url", "postgresql+asyncpg://user:password@localhost:5432/app"
-        )
+        # Handle both ApplicationIR and SpecRequirements
+        if app_ir is not None:
+            # PRIMARY PATH: Extract from ApplicationIR using Normalizer
+            logger.info(
+                "Using ApplicationIR with normalizer for template rendering",
+                extra={"app_id": str(app_ir.app_id)}
+            )
+            normalizer = ApplicationIRNormalizer(app_ir)
+            context = normalizer.get_context()
 
-        # Build entities list with snake_case names for Jinja2
-        entities = []
-        entity_imports = []
-        entity_routers = []
+            # Add backward compatibility fields
+            app_name = context["app_name"]
+            app_name_snake = app_name.replace("-", "_").replace(" ", "_").lower()
+            context["app_name_snake"] = app_name_snake
+            database_url = "postgresql+asyncpg://user:password@localhost:5432/app"
+            context["database_url"] = database_url
 
-        for entity in spec_requirements.entities:
-            entity_snake = entity.name.lower().replace(" ", "_")
-            entities.append({
-                "name": entity.name,
-                "snake_name": entity_snake,
-            })
-            entity_imports.append(f"from src.api.routes import {entity_snake}")
-            entity_routers.append(f"app.include_router({entity_snake}.router)")
+            entities = context.get("entities", [])
 
-        # Join entity imports and routers
-        imports_str = "\n".join(entity_imports) if entity_imports else ""
-        routers_str = "\n".join(entity_routers) if entity_routers else ""
+            # Build entity imports and routers for backward compatibility
+            entity_imports = []
+            entity_routers = []
+            for entity in entities:
+                entity_snake = entity.get("snake_name", entity.get("name", "").lower().replace(" ", "_"))
+                entity_imports.append(f"from src.api.routes import {entity_snake}")
+                entity_routers.append(f"app.include_router({entity_snake}.router)")
 
-        # Build Jinja2 context
-        context = {
-            "app_name": app_name,
-            "app_name_snake": app_name_snake,
-            "database_url": database_url,
-            "entities": entities,
-        }
+            imports_str = "\n".join(entity_imports) if entity_imports else ""
+            routers_str = "\n".join(entity_routers) if entity_routers else ""
+
+        elif spec_requirements is not None:
+            # BACKWARD COMPATIBILITY PATH: Extract from SpecRequirements
+            logger.warning(
+                "Using SpecRequirements in template rendering (deprecated). "
+                "Please migrate to ApplicationIR.",
+                extra={"migration_phase": "phase_2"}
+            )
+            app_name = spec_requirements.metadata.get("spec_name", "API")
+            app_name_snake = app_name.replace("-", "_").replace(" ", "_").lower()
+            database_url = spec_requirements.metadata.get(
+                "database_url", "postgresql+asyncpg://user:password@localhost:5432/app"
+            )
+            entities_list = spec_requirements.entities
+
+            # Build entities list with snake_case names for Jinja2
+            entities = []
+            entity_imports = []
+            entity_routers = []
+
+            for entity in entities_list:
+                entity_snake = entity.name.lower().replace(" ", "_")
+                entities.append({
+                    "name": entity.name,
+                    "snake_name": entity_snake,
+                })
+                entity_imports.append(f"from src.api.routes import {entity_snake}")
+                entity_routers.append(f"app.include_router({entity_snake}.router)")
+
+            # Join entity imports and routers
+            imports_str = "\n".join(entity_imports) if entity_imports else ""
+            routers_str = "\n".join(entity_routers) if entity_routers else ""
+
+            # Build Jinja2 context
+            context = {
+                "app_name": app_name,
+                "app_name_snake": app_name_snake,
+                "database_url": database_url,
+                "entities": entities,
+            }
+        else:
+            raise ValueError("Either app_ir or spec_requirements must be provided")
 
         # Add current entity to context if provided (for entity-specific patterns)
         if current_entity:
@@ -2697,11 +2960,25 @@ datefmt = %H:%M:%S
 
         CRITICAL FIX: Always enable /docs and /redoc for API documentation.
         In production, disable via reverse proxy (nginx/ALB) if needed, not in code.
+
+        Handles both SpecRequirements and ApplicationIR inputs.
         """
+        # Handle both SpecRequirements and ApplicationIR inputs
+        if spec_requirements is None:
+            entities_list = []
+        elif hasattr(spec_requirements, 'entities'):
+            # SpecRequirements object
+            entities_list = spec_requirements.entities
+        elif hasattr(spec_requirements, 'domain_model'):
+            # ApplicationIR object
+            entities_list = spec_requirements.domain_model.entities if spec_requirements.domain_model else []
+        else:
+            entities_list = []
+
         # Build entity imports and routers
         imports = []
         routers = []
-        for entity in spec_requirements.entities:
+        for entity in entities_list:
             # Convert CamelCase to snake_case correctly (CartItem → cart_item)
             import re
             entity_snake = re.sub(r'(?<!^)(?=[A-Z])', '_', entity.name).lower()
@@ -2948,8 +3225,13 @@ def downgrade() -> None:
 
     def _generate_pyproject_toml(self, spec_requirements) -> str:
         """Generate pyproject.toml with Poetry configuration."""
-        app_name = spec_requirements.metadata.get("app_name", "app").replace("-", "_")
-        python_version = spec_requirements.metadata.get("python_version", "3.11")
+        # Handle both SpecRequirements and None (when called with ApplicationIR)
+        if spec_requirements is None:
+            app_name = "app"
+            python_version = "3.11"
+        else:
+            app_name = spec_requirements.metadata.get("app_name", "app").replace("-", "_")
+            python_version = spec_requirements.metadata.get("python_version", "3.11")
 
         return f'''[tool.poetry]
 name = "{app_name}"
@@ -3278,7 +3560,11 @@ docker-logs:
 
     def _generate_dockerfile(self, spec_requirements) -> str:
         """Generate production-ready Dockerfile with pip and requirements.txt."""
-        app_name = spec_requirements.metadata.get("app_name", "app")
+        # Handle both SpecRequirements and None (when called with ApplicationIR)
+        if spec_requirements is None:
+            app_name = "app"
+        else:
+            app_name = spec_requirements.metadata.get("app_name", "app")
         return f'''# Production-Ready Dockerfile
 # Generated by DevMatrix - Auto-runs migrations and starts app
 
@@ -3314,7 +3600,11 @@ CMD alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port 8000
 
     def _generate_docker_compose(self, spec_requirements) -> str:
         """Generate docker-compose.yml with all services."""
-        app_name = spec_requirements.metadata.get("app_name", "app")
+        # Handle both SpecRequirements and None (when called with ApplicationIR)
+        if spec_requirements is None:
+            app_name = "app"
+        else:
+            app_name = spec_requirements.metadata.get("app_name", "app")
 
         # Use ports that don't conflict with DevMatrix services
         app_port = 8002  # DevMatrix uses 8001

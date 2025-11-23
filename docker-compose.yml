@@ -68,6 +68,76 @@ services:
     networks:
       - devmatrix-network
 
+  # NeoDash - Neo4j Dashboard UI for graph navigation and visualization
+  neodash:
+    image: neo4j/neodash:latest
+    container_name: devmatrix-neodash
+    restart: unless-stopped
+    ports:
+      - "${NEODASH_PORT:-5005}:5005"
+    environment:
+      NEODASH_CONNECTION_URI: bolt://neo4j:7687
+      NEODASH_CONNECTION_USERNAME: ${NEO4J_USER:-neo4j}
+      NEODASH_CONNECTION_PASSWORD: ${NEO4J_PASSWORD:-devmatrix}
+      NEODASH_STANDALONE_MODE: ${NEODASH_STANDALONE_MODE:-true}
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    networks:
+      - devmatrix-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5005"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Memgraph - High-performance Graph Database (Alternative to Neo4j)
+  memgraph:
+    image: memgraph/memgraph:latest
+    container_name: devmatrix-memgraph
+    restart: unless-stopped
+    ports:
+      - "${MEMGRAPH_BOLT_PORT:-7688}:7687"  # Bolt protocol (different port to avoid conflict)
+      - "${MEMGRAPH_HTTP_PORT:-7445}:7444"  # HTTP logs
+    volumes:
+      - memgraph_data:/var/lib/memgraph
+      - memgraph_logs:/var/log/memgraph
+    environment:
+      MEMGRAPH_BOLT_PORT: 7687
+      MEMGRAPH_HTTP_PORT: 7444
+    networks:
+      - devmatrix-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "7687"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - memgraph  # Only start with: docker compose --profile memgraph up
+
+  # Memgraph Lab - Graph Database UI Navigator (for Memgraph)
+  memgraph-lab:
+    image: memgraph/lab:latest
+    container_name: devmatrix-memgraph-lab
+    restart: unless-stopped
+    ports:
+      - "${MEMGRAPH_LAB_PORT:-3002}:3000"  # Different port to avoid UI conflict
+    environment:
+      MEMGRAPH_HOST: memgraph
+      MEMGRAPH_PORT: 7687
+    depends_on:
+      memgraph:
+        condition: service_healthy
+    networks:
+      - devmatrix-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - memgraph  # Only start with: docker compose --profile memgraph up
+
   # Qdrant Vector Database for Semantic Search
   qdrant:
     image: qdrant/qdrant:latest
@@ -157,7 +227,7 @@ services:
     ports:
       - "${APP_PORT:-8001}:8000"
     # Request all GPUs (Docker 19.03+ with nvidia-container-toolkit)
-    gpus: ${GPU_REQUEST:-all}
+    gpus: all
     volumes:
       - ./src:/app/src:ro
       - ./tests:/app/tests:ro
@@ -286,6 +356,10 @@ volumes:
     name: devmatrix-neo4j-import
   neo4j_plugins:
     name: devmatrix-neo4j-plugins
+  memgraph_data:
+    name: devmatrix-memgraph-data
+  memgraph_logs:
+    name: devmatrix-memgraph-logs
   qdrant_data:
     name: devmatrix-qdrant-data
   pgadmin_data:

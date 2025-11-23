@@ -1,0 +1,473 @@
+#!/bin/bash
+
+# Docker Setup Validation Script for {{ app_name }}
+# This script performs automated validation of Docker setup
+# Exit codes:
+#   0 - All validations passed
+#   1 - Critical failures found
+#   2 - Warnings found (non-critical)
+
+set -euo pipefail
+
+# Color codes for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Configuration
+APP_NAME="{{ app_name }}"
+COMPOSE_FILE="docker-compose.yml"
+TEST_COMPOSE_FILE="docker-compose.test.yml"
+REPORT_FILE="validation-report.txt"
+REQUIRED_SERVICES=({% for service in services_list %}"{{ service }}" {% endfor %})
+
+# Counters
+PASSED=0
+FAILED=0
+WARNINGS=0
+
+# Initialize report
+echo "Docker Validation Report for ${APP_NAME}" > ${REPORT_FILE}
+echo "Generated: $(date)" >> ${REPORT_FILE}
+echo "================================================" >> ${REPORT_FILE}
+echo "" >> ${REPORT_FILE}
+
+# Helper functions
+log_pass() {
+    echo -e "${GREEN}✓${NC} $1"
+    echo "[PASS] $1" >> ${REPORT_FILE}
+    ((PASSED++))
+}
+
+log_fail() {
+    echo -e "${RED}✗${NC} $1"
+    echo "[FAIL] $1" >> ${REPORT_FILE}
+    ((FAILED++))
+}
+
+log_warn() {
+    echo -e "${YELLOW}⚠${NC} $1"
+    echo "[WARN] $1" >> ${REPORT_FILE}
+    ((WARNINGS++))
+}
+
+log_info() {
+    echo -e "${BLUE}ℹ${NC} $1"
+    echo "[INFO] $1" >> ${REPORT_FILE}
+}
+
+section() {
+    echo ""
+    echo -e "${BLUE}$1${NC}"
+    echo "" >> ${REPORT_FILE}
+    echo "$1" >> ${REPORT_FILE}
+    echo "----------------------------------------" >> ${REPORT_FILE}
+}
+
+# Check if command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Main validation functions
+
+validate_prerequisites() {
+    section "1. Prerequisites Check"
+
+    if command_exists docker; then
+        log_pass "Docker is installed"
+        docker_version=$(docker --version | cut -d' ' -f3 | cut -d',' -f1)
+        log_info "Docker version: ${docker_version}"
+    else
+        log_fail "Docker is not installed"
+        return 1
+    fi
+
+    if command_exists docker-compose; then
+        log_pass "Docker Compose is installed"
+        compose_version=$(docker-compose --version | cut -d' ' -f3 | cut -d',' -f1)
+        log_info "Docker Compose version: ${compose_version}"
+    else
+        log_fail "Docker Compose is not installed"
+        return 1
+    fi
+
+    if docker info >/dev/null 2>&1; then
+        log_pass "Docker daemon is running"
+    else
+        log_fail "Docker daemon is not running"
+        return 1
+    fi
+
+    # Check disk space
+    available_space=$(df -BG . | awk 'NR==2 {print $4}' | sed 's/G//')
+    if [ "${available_space}" -gt 5 ]; then
+        log_pass "Sufficient disk space available (${available_space}GB)"
+    else
+        log_warn "Low disk space (${available_space}GB available)"
+    fi
+}
+
+validate_configuration() {
+    section "2. Configuration Validation"
+
+    # Check docker-compose.yml exists
+    if [ -f "${COMPOSE_FILE}" ]; then
+        log_pass "docker-compose.yml exists"
+    else
+        log_fail "docker-compose.yml not found"
+        return 1
+    fi
+
+    # Validate docker-compose syntax
+    if docker-compose -f ${COMPOSE_FILE} config >/dev/null 2>&1; then
+        log_pass "docker-compose.yml syntax is valid"
+    else
+        log_fail "docker-compose.yml has syntax errors"
+        docker-compose -f ${COMPOSE_FILE} config 2>&1 | head -10 >> ${REPORT_FILE}
+        return 1
+    fi
+
+    # Check for .env file
+    if [ -f ".env" ]; then
+        log_pass ".env file exists"
+    else
+        if [ -f ".env.example" ]; then
+            log_warn ".env file not found (but .env.example exists)"
+        else
+            log_fail ".env file not found"
+        fi
+    fi
+
+    # Check Dockerfile
+    if [ -f "docker/Dockerfile" ] || [ -f "Dockerfile" ]; then
+        log_pass "Dockerfile exists"
+    else
+        log_fail "Dockerfile not found"
+    fi
+
+    # Check .dockerignore
+    if [ -f ".dockerignore" ] || [ -f "docker/.dockerignore" ]; then
+        log_pass ".dockerignore exists"
+    else
+        log_warn ".dockerignore not found (may include unnecessary files)"
+    fi
+}
+
+validate_build() {
+    section "3. Build Validation"
+
+    log_info "Building Docker images..."
+
+    if docker-compose build --quiet 2>/dev/null; then
+        log_pass "Docker images built successfully"
+    else
+        log_fail "Docker build failed"
+        docker-compose build 2>&1 | tail -20 >> ${REPORT_FILE}
+        return 1
+    fi
+
+    # Check image sizes
+    for service in "${REQUIRED_SERVICES[@]}"; do
+        if docker images | grep -q "${APP_NAME}.*${service}"; then
+            size=$(docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" | grep "${APP_NAME}.*${service}" | awk '{print $NF}')
+            log_info "Image ${service} size: ${size}"
+
+            # Parse size and check if it's reasonable
+            size_mb=$(echo ${size} | sed 's/MB//' | sed 's/GB/*1024/' | bc 2>/dev/null || echo "0")
+            if [ "${size_mb:-0}" -gt 1000 ]; then
+                log_warn "Image ${service} is large (${size})"
+            fi
+        fi
+    done
+}
+
+validate_services() {
+    section "4. Service Validation"
+
+    log_info "Starting services..."
+
+    # Start services
+    if docker-compose up -d >/dev/null 2>&1; then
+        log_pass "Services started successfully"
+    else
+        log_fail "Failed to start services"
+        docker-compose logs --tail=50 >> ${REPORT_FILE}
+        return 1
+    fi
+
+    # Wait for services to initialize
+    sleep 10
+
+    # Check each required service
+    for service in "${REQUIRED_SERVICES[@]}"; do
+        container_name="${APP_NAME}-${service}"
+
+        # Check if container is running
+        if docker ps | grep -q "${container_name}"; then
+            log_pass "Service ${service} is running"
+
+            # Check container health if healthcheck is defined
+            health_status=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' "${container_name}" 2>/dev/null || echo "unknown")
+
+            case ${health_status} in
+                healthy)
+                    log_pass "Service ${service} is healthy"
+                    ;;
+                unhealthy)
+                    log_fail "Service ${service} is unhealthy"
+                    docker inspect --format='{{json .State.Health.Log}}' "${container_name}" | tail -3 >> ${REPORT_FILE}
+                    ;;
+                starting)
+                    log_warn "Service ${service} health check still starting"
+                    ;;
+                no-healthcheck)
+                    log_info "Service ${service} has no health check defined"
+                    ;;
+                *)
+                    log_warn "Service ${service} health status unknown"
+                    ;;
+            esac
+        else
+            log_fail "Service ${service} is not running"
+            docker-compose logs ${service} | tail -20 >> ${REPORT_FILE}
+        fi
+    done
+}
+
+validate_networking() {
+    section "5. Network Validation"
+
+    # Check if network exists
+    network_name="${APP_NAME}_default"
+    if docker network ls | grep -q "${network_name}"; then
+        log_pass "Docker network ${network_name} exists"
+    else
+        log_warn "Expected network ${network_name} not found"
+    fi
+
+    # Test inter-service connectivity
+    if docker-compose exec -T ${APP_NAME} ping -c 1 postgres >/dev/null 2>&1; then
+        log_pass "Container can reach postgres service"
+    else
+        log_warn "Container cannot reach postgres service"
+    fi
+
+    if docker-compose exec -T ${APP_NAME} nc -zv postgres 5432 2>/dev/null; then
+        log_pass "PostgreSQL port is accessible"
+    else
+        log_fail "PostgreSQL port is not accessible"
+    fi
+
+    if docker-compose exec -T ${APP_NAME} nc -zv redis 6379 2>/dev/null; then
+        log_pass "Redis port is accessible"
+    else
+        log_warn "Redis port is not accessible"
+    fi
+}
+
+validate_application() {
+    section "6. Application Validation"
+
+    # Check if application is responding
+    max_retries=5
+    retry_count=0
+
+    while [ ${retry_count} -lt ${max_retries} ]; do
+        if curl -sf http://localhost:8000/health >/dev/null 2>&1; then
+            log_pass "Health endpoint is responding"
+            break
+        else
+            retry_count=$((retry_count + 1))
+            if [ ${retry_count} -eq ${max_retries} ]; then
+                log_fail "Health endpoint is not responding after ${max_retries} attempts"
+            else
+                log_info "Waiting for application to start (attempt ${retry_count}/${max_retries})..."
+                sleep 5
+            fi
+        fi
+    done
+
+    # Check metrics endpoint
+    if curl -sf http://localhost:8000/metrics >/dev/null 2>&1; then
+        log_pass "Metrics endpoint is responding"
+    else
+        log_warn "Metrics endpoint is not responding"
+    fi
+
+    # Check database connectivity
+    if docker-compose exec -T ${APP_NAME} python -c "from core.database import SessionLocal; db = SessionLocal(); db.execute('SELECT 1'); print('DB OK')" 2>/dev/null | grep -q "DB OK"; then
+        log_pass "Database connection successful"
+    else
+        log_fail "Database connection failed"
+    fi
+}
+
+validate_data_persistence() {
+    section "7. Data Persistence Validation"
+
+    # Check for named volumes
+    for volume in $(docker-compose config --volumes 2>/dev/null); do
+        if docker volume ls | grep -q "${APP_NAME}.*${volume}"; then
+            log_pass "Volume ${volume} exists"
+        else
+            log_warn "Volume ${volume} not found"
+        fi
+    done
+
+    # Test data persistence
+    test_file="/app/test_persistence.txt"
+    test_content="persistence_test_$(date +%s)"
+
+    if docker-compose exec -T ${APP_NAME} sh -c "echo '${test_content}' > ${test_file}" 2>/dev/null; then
+        docker-compose restart ${APP_NAME} >/dev/null 2>&1
+        sleep 5
+
+        if docker-compose exec -T ${APP_NAME} cat ${test_file} 2>/dev/null | grep -q "${test_content}"; then
+            log_pass "File persistence test passed"
+            docker-compose exec -T ${APP_NAME} rm -f ${test_file} 2>/dev/null
+        else
+            log_fail "File persistence test failed"
+        fi
+    else
+        log_warn "Could not test file persistence"
+    fi
+}
+
+validate_security() {
+    section "8. Security Validation"
+
+    # Check if running as non-root
+    user=$(docker-compose exec -T ${APP_NAME} whoami 2>/dev/null | tr -d '\r\n')
+    if [ "${user}" != "root" ]; then
+        log_pass "Application runs as non-root user (${user})"
+    else
+        log_fail "Application runs as root user (security risk)"
+    fi
+
+    # Check exposed ports
+    exposed_ports=$(docker-compose port ${APP_NAME} 8000 2>/dev/null || echo "")
+    if [[ "${exposed_ports}" == *"0.0.0.0"* ]]; then
+        log_warn "Application port is exposed to all interfaces"
+    elif [[ "${exposed_ports}" == *"127.0.0.1"* ]]; then
+        log_pass "Application port is only exposed to localhost"
+    else
+        log_info "Port exposure: ${exposed_ports}"
+    fi
+
+    # Check for sensitive data in logs
+    if docker-compose logs ${APP_NAME} 2>/dev/null | grep -E "(password|secret|token|key)" | grep -v "PASSWORD"; then
+        log_warn "Potentially sensitive data found in logs"
+    else
+        log_pass "No obvious sensitive data in logs"
+    fi
+
+    # Check environment variables
+    if docker-compose exec -T ${APP_NAME} env 2>/dev/null | grep -E "PASSWORD|SECRET|KEY|TOKEN" | grep -q "=."; then
+        log_info "Sensitive environment variables are set"
+    else
+        log_warn "Some sensitive environment variables might be missing"
+    fi
+}
+
+validate_performance() {
+    section "9. Performance Validation"
+
+    # Check memory usage
+    memory_usage=$(docker stats --no-stream --format "table {{.Container}}\t{{.MemUsage}}" | grep ${APP_NAME} | awk '{print $2}' || echo "unknown")
+    log_info "Memory usage: ${memory_usage}"
+
+    # Check CPU usage
+    cpu_usage=$(docker stats --no-stream --format "table {{.Container}}\t{{.CPUPerc}}" | grep ${APP_NAME} | awk '{print $2}' || echo "unknown")
+    log_info "CPU usage: ${cpu_usage}"
+
+    # Simple load test
+    log_info "Performing basic load test..."
+    success_count=0
+    total_requests=10
+
+    for i in $(seq 1 ${total_requests}); do
+        if curl -sf http://localhost:8000/health >/dev/null 2>&1; then
+            ((success_count++))
+        fi
+    done
+
+    if [ ${success_count} -eq ${total_requests} ]; then
+        log_pass "Basic load test passed (${success_count}/${total_requests} requests succeeded)"
+    else
+        log_warn "Some requests failed in load test (${success_count}/${total_requests} succeeded)"
+    fi
+}
+
+cleanup() {
+    section "10. Cleanup"
+
+    log_info "Stopping services..."
+    docker-compose down >/dev/null 2>&1
+    log_pass "Services stopped"
+}
+
+generate_summary() {
+    section "Validation Summary"
+
+    total=$((PASSED + FAILED + WARNINGS))
+
+    echo ""
+    echo "================================================"
+    echo -e "${GREEN}Passed:${NC} ${PASSED}"
+    echo -e "${RED}Failed:${NC} ${FAILED}"
+    echo -e "${YELLOW}Warnings:${NC} ${WARNINGS}"
+    echo "Total checks: ${total}"
+    echo "================================================"
+
+    echo "" >> ${REPORT_FILE}
+    echo "Summary" >> ${REPORT_FILE}
+    echo "----------------------------------------" >> ${REPORT_FILE}
+    echo "Passed: ${PASSED}" >> ${REPORT_FILE}
+    echo "Failed: ${FAILED}" >> ${REPORT_FILE}
+    echo "Warnings: ${WARNINGS}" >> ${REPORT_FILE}
+    echo "Total checks: ${total}" >> ${REPORT_FILE}
+
+    if [ ${FAILED} -gt 0 ]; then
+        echo -e "\n${RED}Validation FAILED${NC} - Critical issues found"
+        echo "See ${REPORT_FILE} for details"
+        exit 1
+    elif [ ${WARNINGS} -gt 0 ]; then
+        echo -e "\n${YELLOW}Validation PASSED with warnings${NC}"
+        echo "See ${REPORT_FILE} for details"
+        exit 2
+    else
+        echo -e "\n${GREEN}Validation PASSED${NC} - All checks successful"
+        exit 0
+    fi
+}
+
+# Main execution
+main() {
+    echo "Starting Docker validation for ${APP_NAME}..."
+    echo "Results will be saved to ${REPORT_FILE}"
+    echo ""
+
+    # Run all validations
+    validate_prerequisites || true
+    validate_configuration || true
+    validate_build || true
+    validate_services || true
+    validate_networking || true
+    validate_application || true
+    validate_data_persistence || true
+    validate_security || true
+    validate_performance || true
+
+    # Cleanup and generate summary
+    cleanup
+    generate_summary
+}
+
+# Handle script interruption
+trap cleanup EXIT
+
+# Run main function
+main "$@"

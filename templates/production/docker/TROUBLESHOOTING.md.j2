@@ -1,0 +1,409 @@
+# Docker Troubleshooting Guide for {{ app_name }}
+
+This guide helps you debug common Docker-related issues for the {{ app_name }} application.
+
+## Table of Contents
+- [Common Issues](#common-issues)
+- [Container Issues](#container-issues)
+- [Network Issues](#network-issues)
+- [Database Issues](#database-issues)
+- [Performance Issues](#performance-issues)
+- [Debugging Commands](#debugging-commands)
+- [Health Check Failures](#health-check-failures)
+
+## Common Issues
+
+### 1. Container Won't Start
+
+**Symptoms:**
+- Container exits immediately after starting
+- Container restart loop
+- Exit code non-zero
+
+**Solutions:**
+
+```bash
+# Check container logs
+docker-compose logs {{ app_name }}
+
+# Check exit code
+docker-compose ps
+
+# Start with verbose output
+docker-compose up --verbose
+
+# Check for port conflicts
+netstat -tulpn | grep -E '(8000|5432|6379)'
+lsof -i :8000
+
+# Validate docker-compose file
+docker-compose config
+```
+
+### 2. "Cannot connect to Docker daemon"
+
+**Symptoms:**
+- Error: "Cannot connect to the Docker daemon"
+- Permission denied errors
+
+**Solutions:**
+
+```bash
+# Check Docker daemon status
+sudo systemctl status docker
+
+# Start Docker daemon
+sudo systemctl start docker
+
+# Add user to docker group
+sudo usermod -aG docker $USER
+newgrp docker
+
+# Check Docker socket permissions
+ls -la /var/run/docker.sock
+
+# Reset Docker
+sudo systemctl restart docker
+```
+
+### 3. Build Failures
+
+**Symptoms:**
+- Docker build fails at specific step
+- Package installation errors
+- Network timeout during build
+
+**Solutions:**
+
+```bash
+# Clean build (no cache)
+docker-compose build --no-cache {{ app_name }}
+
+# Build with verbose output
+docker-compose build --progress=plain {{ app_name }}
+
+# Check available disk space
+df -h
+
+# Clean up Docker resources
+docker system prune -a --volumes
+
+# Build with specific platform
+docker-compose build --platform linux/amd64 {{ app_name }}
+```
+
+## Container Issues
+
+### Application Container Crashes
+
+```bash
+# Get detailed container info
+docker inspect {{ app_name }}-app
+
+# Check resource limits
+docker stats {{ app_name }}-app
+
+# Run container interactively for debugging
+docker-compose run --rm {{ app_name }} /bin/bash
+
+# Check file permissions inside container
+docker-compose exec {{ app_name }} ls -la /app
+
+# Test application directly
+docker-compose exec {{ app_name }} python -c "from main import app; print('Import successful')"
+```
+
+### Environment Variable Issues
+
+```bash
+# Verify environment variables
+docker-compose exec {{ app_name }} env | grep -E '(DATABASE|REDIS|API)'
+
+# Override environment variables
+docker-compose run -e DEBUG=true {{ app_name }}
+
+# Check .env file is being loaded
+docker-compose config | grep -A5 environment
+```
+
+## Network Issues
+
+### Container Can't Reach Database
+
+**Symptoms:**
+- "Connection refused" errors
+- "Host not found" errors
+- Timeout errors
+
+**Solutions:**
+
+```bash
+# Check network configuration
+docker network ls
+docker network inspect {{ app_name }}_default
+
+# Test connectivity between containers
+docker-compose exec {{ app_name }} ping postgres
+docker-compose exec {{ app_name }} nc -zv postgres 5432
+
+# Check DNS resolution
+docker-compose exec {{ app_name }} nslookup postgres
+docker-compose exec {{ app_name }} cat /etc/hosts
+
+# Recreate network
+docker-compose down
+docker network prune
+docker-compose up
+```
+
+### Port Already in Use
+
+```bash
+# Find process using port
+sudo lsof -i :8000
+sudo netstat -tulpn | grep 8000
+
+# Kill process using port
+sudo kill -9 $(sudo lsof -t -i:8000)
+
+# Use different port
+# Edit docker-compose.yml
+# Change: "8000:8000" to "8001:8000"
+```
+
+## Database Issues
+
+### Database Connection Failed
+
+```bash
+# Check PostgreSQL is running
+docker-compose exec postgres pg_isready
+
+# Test database connection
+docker-compose exec postgres psql -U postgres -c "SELECT 1"
+
+# Check database logs
+docker-compose logs postgres
+
+# Reset database
+docker-compose down -v
+docker-compose up -d postgres
+docker-compose exec postgres psql -U postgres -c "CREATE DATABASE {{ app_name }}"
+
+# Run migrations manually
+docker-compose exec {{ app_name }} alembic upgrade head
+```
+
+### Database Permission Issues
+
+```bash
+# Fix ownership issues
+docker-compose exec postgres chown -R postgres:postgres /var/lib/postgresql/data
+
+# Reset database password
+docker-compose exec postgres psql -U postgres -c "ALTER USER postgres PASSWORD 'newpassword'"
+
+# Check pg_hba.conf
+docker-compose exec postgres cat /var/lib/postgresql/data/pg_hba.conf
+```
+
+## Performance Issues
+
+### Slow Container Startup
+
+```bash
+# Monitor container startup
+docker-compose up --timestamps
+
+# Check resource allocation
+docker system df
+docker system info
+
+# Increase memory limits in docker-compose.yml
+# deploy:
+#   resources:
+#     limits:
+#       memory: 2G
+
+# Use faster DNS
+# Add to docker-compose.yml:
+# dns:
+#   - 8.8.8.8
+#   - 8.8.4.4
+```
+
+### High Memory/CPU Usage
+
+```bash
+# Monitor resource usage
+docker stats
+
+# Check for memory leaks
+docker-compose exec {{ app_name }} pip install memory_profiler
+docker-compose exec {{ app_name }} python -m memory_profiler app.py
+
+# Limit resources
+docker-compose run --memory="1g" --cpus="1.0" {{ app_name }}
+```
+
+## Debugging Commands
+
+### Essential Debugging Commands
+
+```bash
+# View all containers (including stopped)
+docker ps -a
+
+# Follow logs in real-time
+docker-compose logs -f {{ app_name }}
+
+# Execute commands in running container
+docker-compose exec {{ app_name }} bash
+
+# Copy files from container
+docker cp {{ app_name }}-app:/app/logs ./local-logs
+
+# Check container filesystem
+docker-compose exec {{ app_name }} df -h
+
+# List running processes in container
+docker-compose exec {{ app_name }} ps aux
+
+# Check network interfaces
+docker-compose exec {{ app_name }} ip addr
+
+# Test internal services
+docker-compose exec {{ app_name }} curl -I http://localhost:8000/health
+```
+
+### Advanced Debugging
+
+```bash
+# Start container with debugging
+docker-compose run --rm -e PYTHONDEBUG=1 {{ app_name }}
+
+# Attach to running container
+docker attach {{ app_name }}-app
+
+# Export container for analysis
+docker export {{ app_name }}-app > container.tar
+
+# Check container differences
+docker diff {{ app_name }}-app
+
+# View container events
+docker events --filter container={{ app_name }}-app
+
+# Debug with strace
+docker-compose run --cap-add SYS_PTRACE {{ app_name }} strace python main.py
+```
+
+## Health Check Failures
+
+### Debugging Health Checks
+
+```bash
+# Check health status
+docker inspect {{ app_name }}-app --format='{{json .State.Health}}'
+
+# Run health check manually
+docker-compose exec {{ app_name }} curl -f http://localhost:8000/health || exit 1
+
+# View health check logs
+docker inspect {{ app_name }}-app | jq '.State.Health.Log'
+
+# Override health check
+docker-compose run --no-healthcheck {{ app_name }}
+```
+
+### Common Health Check Issues
+
+1. **Timeout Issues**
+   ```yaml
+   # Increase timeout in docker-compose.yml
+   healthcheck:
+     test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+     interval: 30s
+     timeout: 10s  # Increase this
+     retries: 5
+     start_period: 60s  # Add grace period
+   ```
+
+2. **Dependencies Not Ready**
+   ```bash
+   # Add wait script
+   docker-compose exec {{ app_name }} /wait-for-it.sh postgres:5432 -- python main.py
+   ```
+
+## Recovery Procedures
+
+### Complete Reset
+
+```bash
+# Stop all containers
+docker-compose down
+
+# Remove all volumes
+docker-compose down -v
+
+# Remove all images
+docker-compose down --rmi all
+
+# Clean everything
+docker system prune -a --volumes
+
+# Rebuild from scratch
+docker-compose build --no-cache
+docker-compose up
+```
+
+### Data Recovery
+
+```bash
+# Backup database before reset
+docker-compose exec postgres pg_dump -U postgres {{ app_name }} > backup.sql
+
+# Restore database
+docker-compose exec -T postgres psql -U postgres {{ app_name }} < backup.sql
+
+# Backup volumes
+docker run --rm -v {{ app_name }}_postgres-data:/data -v $(pwd):/backup alpine tar czf /backup/postgres-backup.tar.gz /data
+
+# Restore volumes
+docker run --rm -v {{ app_name }}_postgres-data:/data -v $(pwd):/backup alpine tar xzf /backup/postgres-backup.tar.gz -C /
+```
+
+## Getting Help
+
+### Collect Diagnostic Information
+
+```bash
+# Generate diagnostic bundle
+mkdir {{ app_name }}-diagnostics
+cd {{ app_name }}-diagnostics
+
+# Collect system info
+docker version > docker-version.txt
+docker-compose version > compose-version.txt
+docker system info > system-info.txt
+
+# Collect logs
+docker-compose logs > all-logs.txt
+docker-compose logs {{ app_name }} > app-logs.txt
+docker-compose logs postgres > db-logs.txt
+
+# Collect configuration
+docker-compose config > effective-config.yml
+docker inspect {{ app_name }}-app > container-inspect.json
+
+# Create archive
+cd ..
+tar czf {{ app_name }}-diagnostics.tar.gz {{ app_name }}-diagnostics/
+```
+
+### Resources
+
+- [Docker Documentation](https://docs.docker.com/)
+- [Docker Compose Documentation](https://docs.docker.com/compose/)
+- [{{ app_name }} Issues](https://github.com/yourorg/{{ app_name }}/issues)
+- [Stack Overflow Docker Tag](https://stackoverflow.com/questions/tagged/docker)

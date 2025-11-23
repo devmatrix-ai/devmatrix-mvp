@@ -339,7 +339,7 @@ class MetricsCollector:
         """Mark phase as started"""
         if phase_name in self.metrics.phases:
             self.metrics.phases[phase_name].start()
-            print(f"📍 Phase Started: {phase_name}")
+            # Removed redundant "Phase Started" message - phase info printed by phase methods
 
     def complete_phase(self, phase_name: str):
         """Mark phase as completed"""

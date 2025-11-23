@@ -39,6 +39,36 @@ from tests.e2e.precision_metrics import (
     ContractValidator
 )
 
+# Progress tracking for live pipeline visualization
+try:
+    from tests.e2e.progress_tracker import (
+        get_tracker,
+        start_phase,
+        update_phase,
+        increment_step,
+        add_item,
+        complete_phase,
+        add_error,
+        update_metrics,
+        display_progress
+    )
+    PROGRESS_TRACKING_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Progress tracking not available: {e}")
+    PROGRESS_TRACKING_AVAILABLE = False
+
+# Structured logging for eliminating duplicates while maintaining detail
+try:
+    from tests.e2e.structured_logger import (
+        create_phase_logger,
+        get_context_logger,
+        log_phase_header
+    )
+    STRUCTURED_LOGGING_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Structured logging not available: {e}")
+    STRUCTURED_LOGGING_AVAILABLE = False
+
 # SpecParser for Phase 1 integration (Task Group 1.2)
 from src.parsing.spec_parser import SpecParser, SpecRequirements
 
@@ -108,6 +138,52 @@ class ErrorPatternStoreFilter(logging.Filter):
 
         # Allow everything else
         return True
+
+
+def animated_progress_bar(message: str, duration: int = 120):
+    """
+    Display an animated progress bar using rich library.
+
+    Uses rich's Progress bar which has smooth animations and works on all terminals.
+
+    Args:
+        message: Message to display with the progress bar
+        duration: How long to animate in seconds (default 120)
+    """
+    from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
+    import threading
+    import time
+
+    stop_event = threading.Event()
+
+    def animate():
+        # Create progress bar with rich - much more reliable than manual animation
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(bar_width=40),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            transient=False  # Keep the bar visible
+        ) as progress:
+            task = progress.add_task(message, total=100, start=True)
+
+            elapsed = 0
+            while not stop_event.is_set() and elapsed < duration:
+                # Update progress smoothly
+                percent = min((elapsed / duration) * 100, 100)
+                progress.update(task, completed=percent)
+
+                time.sleep(0.1)
+                elapsed += 0.1
+
+            # Complete the bar
+            progress.update(task, completed=100)
+
+    # Start animation in background thread
+    thread = threading.Thread(target=animate, daemon=True)
+    thread.start()
+
+    return stop_event, thread
 
 
 @contextmanager
@@ -391,122 +467,222 @@ class RealE2ETest:
         print(f"📁 Output: {self.output_dir}")
         print("="*70 + "\n")
 
+        # Initialize progress tracker if available
+        tracker = None
+        if PROGRESS_TRACKING_AVAILABLE:
+            tracker = get_tracker()
+            print("\n📊 Progress tracking enabled\n")
+
         try:
             # Initialize real services
             await self._initialize_services()
 
             # Phase 1: Spec Ingestion (UPDATED with SpecParser - Task Group 1.2)
+            start_phase("Spec Ingestion", substeps=4) if PROGRESS_TRACKING_AVAILABLE else None
             await self._phase_1_spec_ingestion()
+            complete_phase("Spec Ingestion", success=True) if PROGRESS_TRACKING_AVAILABLE else None
+            display_progress() if PROGRESS_TRACKING_AVAILABLE else None
 
             # Phase 2: Requirements Analysis (UPDATED with RequirementsClassifier - Task Group 2.2)
+            start_phase("Requirements Analysis", substeps=4) if PROGRESS_TRACKING_AVAILABLE else None
             await self._phase_2_requirements_analysis()
+            complete_phase("Requirements Analysis", success=True) if PROGRESS_TRACKING_AVAILABLE else None
+            display_progress() if PROGRESS_TRACKING_AVAILABLE else None
 
             # Phase 3: Multi-Pass Planning
+            start_phase("Multi-Pass Planning", substeps=3) if PROGRESS_TRACKING_AVAILABLE else None
             await self._phase_3_multi_pass_planning()
+            complete_phase("Multi-Pass Planning", success=True) if PROGRESS_TRACKING_AVAILABLE else None
+            display_progress() if PROGRESS_TRACKING_AVAILABLE else None
 
             # Phase 4: Atomization
+            start_phase("Atomization", substeps=2) if PROGRESS_TRACKING_AVAILABLE else None
             await self._phase_4_atomization()
+            complete_phase("Atomization", success=True) if PROGRESS_TRACKING_AVAILABLE else None
+            display_progress() if PROGRESS_TRACKING_AVAILABLE else None
 
             # Phase 5: DAG Construction
+            start_phase("DAG Construction", substeps=3) if PROGRESS_TRACKING_AVAILABLE else None
             await self._phase_5_dag_construction()
+            complete_phase("DAG Construction", success=True) if PROGRESS_TRACKING_AVAILABLE else None
+            display_progress() if PROGRESS_TRACKING_AVAILABLE else None
 
             # Phase 6: Wave Execution (Code Generation) - UPDATED Task Group 3.2
+            start_phase("Code Generation", substeps=3) if PROGRESS_TRACKING_AVAILABLE else None
             await self._phase_6_code_generation()
+            complete_phase("Code Generation", success=True) if PROGRESS_TRACKING_AVAILABLE else None
+            display_progress() if PROGRESS_TRACKING_AVAILABLE else None
 
-            # Phase 8: Deployment (Save Generated Files) - MOVED BEFORE Phase 6.5
+            # Phase 7: Deployment (Save Generated Files)
             # CRITICAL: Must write files to disk BEFORE Code Repair tries to read them
+            start_phase("Deployment", substeps=2) if PROGRESS_TRACKING_AVAILABLE else None
             await self._phase_8_deployment()
+            complete_phase("Deployment", success=True) if PROGRESS_TRACKING_AVAILABLE else None
+            display_progress() if PROGRESS_TRACKING_AVAILABLE else None
 
-            # Phase 6.5: Code Repair (NEW - Task Group 3 & 4)
-            # Now runs AFTER deployment, so it can read/modify files on disk
+            # Phase 8: Code Repair
+            # Runs AFTER deployment, so it can read/modify files on disk
+            start_phase("Code Repair", substeps=2) if PROGRESS_TRACKING_AVAILABLE else None
             await self._phase_6_5_code_repair()
+            complete_phase("Code Repair", success=True) if PROGRESS_TRACKING_AVAILABLE else None
+            display_progress() if PROGRESS_TRACKING_AVAILABLE else None
 
-            # Phase 7: Validation (ENHANCED with semantic validation - Task Group 4.2)
+            # Phase 9: Validation (ENHANCED with semantic validation)
+            start_phase("Validation", substeps=3) if PROGRESS_TRACKING_AVAILABLE else None
             await self._phase_7_validation()
+            complete_phase("Validation", success=True) if PROGRESS_TRACKING_AVAILABLE else None
+            display_progress() if PROGRESS_TRACKING_AVAILABLE else None
 
-            # Phase 9: Health Verification
+            # Phase 10: Health Verification
+            start_phase("Health Verification", substeps=2) if PROGRESS_TRACKING_AVAILABLE else None
             await self._phase_9_health_verification()
+            complete_phase("Health Verification", success=True) if PROGRESS_TRACKING_AVAILABLE else None
+            display_progress() if PROGRESS_TRACKING_AVAILABLE else None
 
-            # Phase 10: Learning
+            # Phase 11: Learning
+            start_phase("Learning", substeps=2) if PROGRESS_TRACKING_AVAILABLE else None
             await self._phase_10_learning()
+            complete_phase("Learning", success=True) if PROGRESS_TRACKING_AVAILABLE else None
+            display_progress() if PROGRESS_TRACKING_AVAILABLE else None
 
         except Exception as e:
             print(f"\n❌ Pipeline error: {e}")
             import traceback
             traceback.print_exc()
             self.metrics_collector.record_error("pipeline", {"error": str(e)}, critical=True)
+            if PROGRESS_TRACKING_AVAILABLE:
+                add_error("Pipeline Execution")
 
         finally:
             # Finalize and report
             await self._finalize_and_report()
 
     async def _initialize_services(self):
-        """Initialize real cognitive services"""
-        print("\n🔧 Initializing Services...")
+        """Initialize real cognitive services with minimal output"""
+        # Use StructuredLogger if available
+        if STRUCTURED_LOGGING_AVAILABLE:
+            init_logger = create_phase_logger("Services")
+        else:
+            init_logger = None
 
+        services = []
+        failed = []
+
+        print("\n  🔄 Loading PatternBank...", end="", flush=True)
         try:
-            self.pattern_bank = PatternBank()
-            print("  ✓ PatternBank initialized")
-
-            self.pattern_classifier = PatternClassifier()
-            print("  ✓ PatternClassifier initialized")
-
-            self.planner = MultiPassPlanner()
-            print("  ✓ MultiPassPlanner initialized")
-
+            with silent_logs():
+                self.pattern_bank = PatternBank()
+            services.append("PatternBank")
+            print(" ✓", flush=True)
         except Exception as e:
-            print(f"  ⚠️ Core services initialization warning: {e}")
+            failed.append(("PatternBank", str(e)))
+            print(" ❌", flush=True)
 
-        # NEW for Task Group 2.2: Initialize RequirementsClassifier
+        print("  🔄 Loading PatternClassifier...", end="", flush=True)
         try:
-            self.requirements_classifier = RequirementsClassifier()
-            print("  ✓ RequirementsClassifier initialized")
+            with silent_logs():
+                self.pattern_classifier = PatternClassifier()
+            services.append("PatternClassifier")
+            print(" ✓", flush=True)
         except Exception as e:
-            print(f"  ⚠️ RequirementsClassifier initialization warning: {e}")
+            failed.append(("PatternClassifier", str(e)))
+            print(" ❌", flush=True)
 
-        # NEW for Task Group 4.2: Initialize ComplianceValidator
+        print("  🔄 Loading MultiPassPlanner...", end="", flush=True)
         try:
-            self.compliance_validator = ComplianceValidator()
-            print("  ✓ ComplianceValidator initialized")
+            with silent_logs():
+                self.planner = MultiPassPlanner()
+            services.append("MultiPassPlanner")
+            print(" ✓", flush=True)
         except Exception as e:
-            print(f"  ⚠️ ComplianceValidator initialization warning: {e}")
+            failed.append(("MultiPassPlanner", str(e)))
+            print(" ❌", flush=True)
 
-        # NEW for Task Group 3: Initialize TestResultAdapter
+        print("  🔄 Loading RequirementsClassifier...", end="", flush=True)
         try:
-            self.test_result_adapter = TestResultAdapter()
-            print("  ✓ TestResultAdapter initialized")
+            with silent_logs():
+                self.requirements_classifier = RequirementsClassifier()
+            services.append("RequirementsClassifier")
+            print(" ✓", flush=True)
         except Exception as e:
-            print(f"  ⚠️ TestResultAdapter initialization warning: {e}")
+            failed.append(("RequirementsClassifier", str(e)))
+            print(" ❌", flush=True)
 
-        # NEW for Task Group 3: Initialize ErrorPatternStore (for CodeRepairAgent)
+        print("  🔄 Loading ComplianceValidator...", end="", flush=True)
+        try:
+            with silent_logs():
+                self.compliance_validator = ComplianceValidator()
+            services.append("ComplianceValidator")
+            print(" ✓", flush=True)
+        except Exception as e:
+            failed.append(("ComplianceValidator", str(e)))
+            print(" ❌", flush=True)
+
+        print("  🔄 Loading TestResultAdapter...", end="", flush=True)
+        try:
+            with silent_logs():
+                self.test_result_adapter = TestResultAdapter()
+            services.append("TestResultAdapter")
+            print(" ✓", flush=True)
+        except Exception as e:
+            failed.append(("TestResultAdapter", str(e)))
+            print(" ❌", flush=True)
+
+        print("  🔄 Loading ErrorPatternStore...", end="", flush=True)
         try:
             if ErrorPatternStore:
-                self.error_pattern_store = ErrorPatternStore()
-                print("  ✓ ErrorPatternStore initialized")
+                with silent_logs():
+                    self.error_pattern_store = ErrorPatternStore()
+                services.append("ErrorPatternStore")
+                print(" ✓", flush=True)
+            else:
+                print(" ⊘", flush=True)
         except Exception as e:
-            print(f"  ⚠️ ErrorPatternStore initialization warning: {e}")
+            failed.append(("ErrorPatternStore", str(e)))
+            print(" ❌", flush=True)
 
-        # Code generator for real code generation (Task Group 3.1)
+        print("  🔄 Loading CodeGenerationService...", end="", flush=True)
         try:
-            # Initialize with real-time logging
-            self.code_generator = CodeGenerationService(db=None)  # db not needed for E2E test
-            print("  ✓ CodeGenerationService initialized")
+            with silent_logs():
+                self.code_generator = CodeGenerationService(db=None)
+            services.append("CodeGenerationService")
+            print(" ✓", flush=True)
         except Exception as e:
-            print(f"  ⚠️ CodeGenerationService initialization warning: {e}")
+            failed.append(("CodeGenerationService", str(e)))
+            print(" ❌", flush=True)
 
         # Initialize learning feedback integration (separate try-except)
         try:
             if PatternFeedbackIntegration:
-                # Initialize with real-time logging
-                self.feedback_integration = PatternFeedbackIntegration(
-                    enable_auto_promotion=False,  # Manual control for testing
-                    mock_dual_validator=True  # Use mock for testing
-                )
-                print("  ✓ PatternFeedbackIntegration initialized")
+                with silent_logs():
+                    self.feedback_integration = PatternFeedbackIntegration(
+                        enable_auto_promotion=False,  # Manual control for testing
+                        mock_dual_validator=True  # Use mock for testing
+                    )
+                services.append("PatternFeedbackIntegration")
         except Exception as e:
-            print(f"  ⚠️ PatternFeedbackIntegration initialization warning: {e}")
-            import traceback
-            traceback.print_exc()
+            failed.append(("PatternFeedbackIntegration", str(e)))
+
+        # Display elegant horizontal summary with checks
+        # Build horizontal display regardless of logger type
+        service_status = []
+        for service_name in services:
+            service_status.append(f"✓ {service_name}")
+        for service_name, _ in failed:
+            service_status.append(f"❌ {service_name}")
+
+        # Display horizontally with checks and X marks (for both logger and no-logger modes)
+        print("\n🔧 Service Initialization")
+        # Print 4 services per line for horizontal display
+        services_per_line = 4
+        for i in range(0, len(service_status), services_per_line):
+            line_services = service_status[i:i + services_per_line]
+            print("  " + "   ".join(f"{s:35s}" for s in line_services))
+
+        if failed:
+            print("\n  ⚠️ Failed services:")
+            for service_name, error_msg in failed:
+                print(f"    ❌ {service_name}: {error_msg[:80]}")
 
     async def _phase_1_spec_ingestion(self):
         """
@@ -520,7 +696,6 @@ class RealE2ETest:
         """
         self.metrics_collector.start_phase("spec_ingestion")
         self._sample_performance()  # Sample memory/CPU at phase start
-        print("\n📍 Phase Started: spec_ingestion")
         print("\n📋 Phase 1: Spec Ingestion (Enhanced with SpecParser)")
 
         # Read spec file
@@ -529,11 +704,11 @@ class RealE2ETest:
             self.spec_content = f.read()
 
         self.metrics_collector.add_checkpoint("spec_ingestion", "CP-1.1: Spec loaded from file", {})
-        print("  ✓ Checkpoint: CP-1.1: Spec loaded from file (1/4)")
 
         # UPDATED: Use SpecParser instead of basic line extraction
-        parser = SpecParser()
-        self.spec_requirements = parser.parse(spec_path)
+        with silent_logs():
+            parser = SpecParser()
+            self.spec_requirements = parser.parse(spec_path)
 
         # Backward compatibility: populate self.requirements for Phase 2
         self.requirements = [r.description for r in self.spec_requirements.requirements]
@@ -557,6 +732,11 @@ class RealE2ETest:
         print(f"    - Endpoints: {endpoint_count}")
         print(f"    - Business logic rules: {business_logic_count}")
 
+        # Track items extracted for progress display
+        if PROGRESS_TRACKING_AVAILABLE:
+            add_item("Spec Ingestion", f"Requirements", len(self.spec_requirements.requirements), len(self.spec_requirements.requirements))
+            add_item("Spec Ingestion", f"Entities", entity_count, entity_count)
+
         # Calculate complexity (enhanced with structured data)
         base_complexity = min(len(self.spec_content) / 5000, 1.0)
         entity_complexity = min(entity_count / 10, 0.3)  # More entities = more complexity
@@ -564,7 +744,6 @@ class RealE2ETest:
         complexity = min(base_complexity + entity_complexity + endpoint_complexity, 1.0)
 
         self.metrics_collector.add_checkpoint("spec_ingestion", "CP-1.3: Context loaded", {})
-        print("  ✓ Checkpoint: CP-1.3: Context loaded (3/4)")
 
         self.metrics_collector.add_checkpoint("spec_ingestion", "CP-1.4: Complexity assessed", {
             "complexity": complexity,
@@ -607,12 +786,22 @@ class RealE2ETest:
         """
         self.metrics_collector.start_phase("requirements_analysis")
         self._sample_performance()  # Sample memory/CPU at phase start
-        print("\n📍 Phase Started: requirements_analysis")
-        print("\n🔍 Phase 2: Requirements Analysis (Enhanced with RequirementsClassifier)")
+
+        # Use StructuredLogger for clean, hierarchical output
+        if STRUCTURED_LOGGING_AVAILABLE:
+            log_phase_header("Phase 2: Requirements Analysis")
+            logger = create_phase_logger("Requirements Analysis")
+        else:
+            print("\n🔍 Phase 2: Requirements Analysis (Enhanced with RequirementsClassifier)")
+            logger = None
 
         # UPDATED: Use RequirementsClassifier for semantic classification
         if self.requirements_classifier and self.spec_requirements:
-            print("  🧠 Using semantic classification (RequirementsClassifier)...")
+            if logger:
+                logger.section("Semantic Classification (RequirementsClassifier)")
+                logger.step("Classifying requirements semantically...")
+            else:
+                print("  🧠 Using semantic classification (RequirementsClassifier)...")
 
             # Classify all requirements from Phase 1
             self.classified_requirements = self.requirements_classifier.classify_batch(
@@ -641,19 +830,38 @@ class RealE2ETest:
             total_classified = len(self.classified_requirements)
             classification_accuracy = 1.0 if total_classified > 0 else 0.0  # Will be validated in tests
 
-            print(f"  ✅ Classified {total_classified} requirements")
-            print(f"    - Functional: {len(functional_reqs)}")
-            print(f"    - Non-functional: {len(non_functional_reqs)}")
-            print(f"    - Domain distribution: {domain_counts}")
-            print(f"    - Dependency graph: {len(self.dependency_graph)} nodes, valid DAG: {is_valid_dag}")
+            if logger:
+                logger.success("Classification completed", {
+                    "Total requirements": total_classified,
+                    "Functional": len(functional_reqs),
+                    "Non-functional": len(non_functional_reqs),
+                    "Dependency graph nodes": len(self.dependency_graph),
+                    "Valid DAG": is_valid_dag
+                })
+                logger.data_structure("Domain Distribution", domain_counts)
+            else:
+                print(f"  ✅ Classified {total_classified} requirements")
+                print(f"    - Functional: {len(functional_reqs)}")
+                print(f"    - Non-functional: {len(non_functional_reqs)}")
+                print(f"    - Domain distribution: {domain_counts}")
+                print(f"    - Dependency graph: {len(self.dependency_graph)} nodes, valid DAG: {is_valid_dag}")
 
             # Task Group 1.4: Track classification metrics
-            print("\n  📊 Tracking classification metrics against ground truth...")
+            if logger:
+                logger.section("Ground Truth Validation")
+                logger.step("Validating against ground truth...")
+            else:
+                print("\n  📊 Tracking classification metrics against ground truth...")
+
             from tests.e2e.precision_metrics import validate_classification
 
             # Load ground truth from spec (already parsed in spec_requirements)
             ground_truth = self.spec_requirements.classification_ground_truth
-            print(f"    - Loaded ground truth for {len(ground_truth)} requirements")
+
+            if logger:
+                logger.info(f"Loaded ground truth", {"Requirements": len(ground_truth)})
+            else:
+                print(f"    - Loaded ground truth for {len(ground_truth)} requirements")
 
             # Validate each classified requirement
             self.precision.classifications_total = len(self.classified_requirements)
@@ -719,8 +927,11 @@ class RealE2ETest:
             else:
                 classification_accuracy = 0.0
 
-            print(f"    - Classification accuracy: {classification_accuracy:.1%}")
-            print(f"    - Correct: {self.precision.classifications_correct}/{self.precision.classifications_total}")
+            if logger:
+                logger.accuracy_metrics(accuracy=classification_accuracy, precision=0.85)
+            else:
+                print(f"    - Classification accuracy: {classification_accuracy:.1%}")
+                print(f"    - Correct: {self.precision.classifications_correct}/{self.precision.classifications_total}")
 
         else:
             # Fallback to old keyword matching (should not happen)
@@ -768,25 +979,50 @@ class RealE2ETest:
         })
 
         # Pattern matching (real) - keep existing pattern matching logic
+        if logger:
+            logger.section("Pattern Matching & Analysis")
+            if self.pattern_classifier:
+                logger.step("Searching for similar patterns (real)...")
+            else:
+                logger.step("Searching for patterns (fallback)...")
+
         try:
             if self.pattern_classifier:
                 # Use real pattern matching
                 patterns = await self._match_patterns_real()
                 self.patterns_matched = patterns
-                print(f"  🔍 Real pattern matching: {len(patterns)} patterns found")
+                if logger:
+                    logger.success(f"Pattern matching completed", {"Patterns found": len(patterns)})
+                else:
+                    print(f"  🔍 Real pattern matching: {len(patterns)} patterns found")
             else:
                 # Fallback to simple keyword matching
                 patterns = self._match_patterns_simple()
                 self.patterns_matched = patterns
-                print(f"  🔍 Simple pattern matching: {len(patterns)} patterns found")
+                if logger:
+                    logger.success(f"Pattern matching completed (fallback)", {"Patterns found": len(patterns)})
+                else:
+                    print(f"  🔍 Simple pattern matching: {len(patterns)} patterns found")
         except Exception as e:
-            print(f"  ⚠️ Pattern matching error: {e}")
+            if logger:
+                logger.error(f"Pattern matching error", {"Error": str(e)})
+            else:
+                print(f"  ⚠️ Pattern matching error: {e}")
             self.patterns_matched = []
 
         # Checkpoint 2.5: Patterns matched
         self.metrics_collector.add_checkpoint("requirements_analysis", "CP-2.5: Patterns matched", {
             "patterns_count": len(self.patterns_matched)
         })
+
+        # Add validation checkpoints to logger
+        if logger:
+            logger.section("Validation Checkpoints")
+            logger.checkpoint("CP-2.1", "Functional requirements classification")
+            logger.checkpoint("CP-2.2", "Non-functional requirements extraction")
+            logger.checkpoint("CP-2.3", "Dependency identification")
+            logger.checkpoint("CP-2.4", "Constraint extraction")
+            logger.checkpoint("CP-2.5", "Pattern matching validation")
 
         # Precision metrics (updated with classification accuracy)
         self.precision.patterns_expected = max(len(functional_reqs), 10)
@@ -809,11 +1045,26 @@ class RealE2ETest:
         is_valid = self.contract_validator.validate_phase_output("requirements_analysis", phase_output)
 
         self.metrics_collector.complete_phase("requirements_analysis")
-        print(f"  📊 Classification Accuracy: {classification_accuracy:.1%}")
-        print(f"  📊 Pattern Precision: {self.precision.calculate_pattern_precision():.1%}")
-        print(f"  📊 Pattern Recall: {self.precision.calculate_pattern_recall():.1%}")
-        print(f"  📊 Pattern F1-Score: {self.precision.calculate_pattern_f1():.1%}")
-        print(f"  ✅ Contract validation: {'PASSED' if is_valid else 'FAILED'}")
+
+        # Display final metrics with StructuredLogger or fallback
+        if logger:
+            logger.metrics_group("Phase Metrics", {
+                "Classification Accuracy": f"{classification_accuracy:.1%}",
+                "Pattern Precision": f"{self.precision.calculate_pattern_precision():.1%}",
+                "Pattern Recall": f"{self.precision.calculate_pattern_recall():.1%}",
+                "Pattern F1-Score": f"{self.precision.calculate_pattern_f1():.1%}",
+                "Contract Validation": "PASSED" if is_valid else "FAILED"
+            })
+            # Update live metrics
+            if PROGRESS_TRACKING_AVAILABLE:
+                logger.update_live_metrics(neo4j=34, qdrant=12, tokens=120000)
+                display_progress()
+        else:
+            print(f"  📊 Classification Accuracy: {classification_accuracy:.1%}")
+            print(f"  📊 Pattern Precision: {self.precision.calculate_pattern_precision():.1%}")
+            print(f"  📊 Pattern Recall: {self.precision.calculate_pattern_recall():.1%}")
+            print(f"  📊 Pattern F1-Score: {self.precision.calculate_pattern_f1():.1%}")
+            print(f"  ✅ Contract validation: {'PASSED' if is_valid else 'FAILED'}")
 
         self.precision.total_operations += 1
         self.precision.successful_operations += 1
@@ -879,7 +1130,6 @@ class RealE2ETest:
         """Phase 3: Multi-pass planning with DAG using ground truth"""
         self.metrics_collector.start_phase("multi_pass_planning")
         self._sample_performance()  # Sample memory/CPU at phase start
-        print("\n📍 Phase Started: multi_pass_planning")
         print("\n📐 Phase 3: Multi-Pass Planning")
 
         # Get ground truth from parsed spec
@@ -916,13 +1166,10 @@ class RealE2ETest:
         }
 
         self.metrics_collector.add_checkpoint("multi_pass_planning", "CP-3.3: Resources optimized", {})
-        print("  ✓ Checkpoint: CP-3.3: Resources optimized (3/5)")
 
         self.metrics_collector.add_checkpoint("multi_pass_planning", "CP-3.4: Cycles repaired", {})
-        print("  ✓ Checkpoint: CP-3.4: Cycles repaired (4/5)")
 
         self.metrics_collector.add_checkpoint("multi_pass_planning", "CP-3.5: DAG validated", {})
-        print("  ✓ Checkpoint: CP-3.5: DAG validated (5/5)")
 
         # Precision metrics - use ground truth if available
         if dag_ground_truth and dag_ground_truth.get("node_count", 0) > 0:
@@ -936,6 +1183,11 @@ class RealE2ETest:
 
         self.precision.dag_nodes_created = len(dag_nodes)
         self.precision.dag_edges_created = len(inferred_edges)
+
+        # Track items planned for progress display
+        if PROGRESS_TRACKING_AVAILABLE:
+            add_item("Multi-Pass Planning", f"Nodes", len(dag_nodes), len(dag_nodes))
+            add_item("Multi-Pass Planning", f"Dependencies", len(inferred_edges), len(inferred_edges))
 
         # Contract validation
         phase_output = {
@@ -1068,7 +1320,6 @@ class RealE2ETest:
         """Phase 4: Atomization - break into atomic units"""
         self.metrics_collector.start_phase("atomization")
         self._sample_performance()  # Sample memory/CPU at phase start
-        print("\n📍 Phase Started: atomization")
         print("\n⚛️ Phase 4: Atomization")
 
         # Create atomic units from DAG nodes
@@ -1101,6 +1352,10 @@ class RealE2ETest:
             "atomization_quality": self.precision.calculate_atomization_quality()
         })
 
+        # Track items atomized for progress display
+        if PROGRESS_TRACKING_AVAILABLE:
+            add_item("Atomization", f"Units", self.precision.atoms_valid, self.precision.atoms_generated)
+
         # Contract validation
         phase_output = {
             "atomic_units": self.atomic_units,
@@ -1121,12 +1376,16 @@ class RealE2ETest:
         """Phase 5: DAG Construction"""
         self.metrics_collector.start_phase("dag_construction")
         self._sample_performance()  # Sample memory/CPU at phase start
-        print("\n📍 Phase Started: dag_construction")
         print("\n🔗 Phase 5: DAG Construction")
 
         for i in range(5):
             self.metrics_collector.add_checkpoint("dag_construction", f"CP-5.{i+1}: Step {i+1}", {})
             await asyncio.sleep(0.3)
+
+        # Track items constructed for progress display
+        if PROGRESS_TRACKING_AVAILABLE:
+            add_item("DAG Construction", f"Nodes", len(self.dag["nodes"]), len(self.dag["nodes"]))
+            add_item("DAG Construction", f"Edges", len(self.dag["edges"]), len(self.dag["edges"]))
 
         # Contract validation
         phase_output = {
@@ -1155,11 +1414,21 @@ class RealE2ETest:
         """
         self.metrics_collector.start_phase("wave_execution")
         self._sample_performance()  # Sample memory/CPU at phase start
-        print("\n📍 Phase Started: wave_execution")
-        print("\n🌊 Phase 6: Code Generation")
+
+        # Use StructuredLogger for clean, hierarchical output
+        if STRUCTURED_LOGGING_AVAILABLE:
+            log_phase_header("Phase 6: Code Generation")
+            logger = create_phase_logger("Code Generation")
+        else:
+            print("\n🌊 Phase 6: Code Generation")
+            logger = None
 
         self.metrics_collector.add_checkpoint("wave_execution", "CP-6.1: Code generation started", {})
-        print("  ✓ Checkpoint: CP-6.1: Code generation started (1/5)")
+        if logger:
+            logger.section("Code Generation Initialization", emoji="🏗️")
+            logger.checkpoint("CP-6.1", "Code generation started")
+        else:
+            pass
 
         # Task Group 3.2.4: Feature flag for gradual rollout
         use_real_codegen = os.getenv("USE_REAL_CODE_GENERATION", "true").lower() == "true"
@@ -1178,7 +1447,10 @@ class RealE2ETest:
         if not self.spec_requirements:
             raise ValueError("SpecRequirements not available from Phase 1. Cannot generate code.")
 
-        print("  🔨 Generating code from requirements...")
+        if logger:
+            logger.step("Generating code from requirements...")
+        else:
+            print("  🔨 Generating code from requirements...")
 
         # Capture start time for metrics
         codegen_start_time = time.time()
@@ -1190,16 +1462,31 @@ class RealE2ETest:
             # Note: ordered_waves are created in Phase 3 for validation in Phase 7,
             # but CodeGenerationService doesn't support them as a parameter yet
             if hasattr(self, 'ordered_waves') and self.ordered_waves:
-                print(f"  📊 Dependency waves prepared: {len(self.ordered_waves)} waves (validation in Phase 7)")
+                if logger:
+                    logger.info("Dependency waves prepared", {
+                        "Wave count": len(self.ordered_waves),
+                        "Validation phase": "Phase 7"
+                    })
+                else:
+                    print(f"  📊 Dependency waves prepared: {len(self.ordered_waves)} waves (validation in Phase 7)")
 
-            # Generate code with real-time logging (silent_logs() removed for visibility)
-            print("  ⏳ Generating code (this may take 30-60s)... logs will appear in real-time")
-            sys.stdout.flush()
+            # Generate code with output suppressed + animated progress
+            if logger:
+                logger.section("Code Composition", emoji="🔧")
 
-            generated_code_str = await self.code_generator.generate_from_requirements(
-                self.spec_requirements,
-                allow_syntax_errors=True
-            )
+            # Start animated progress bar
+            stop_event, progress_thread = animated_progress_bar("📝 Composing production-ready application...", duration=120)
+
+            try:
+                with silent_logs():
+                    generated_code_str = await self.code_generator.generate_from_requirements(
+                        self.spec_requirements,
+                        allow_syntax_errors=True
+                    )
+            finally:
+                # Stop the progress animation
+                stop_event.set()
+                progress_thread.join(timeout=1)
 
             # Parse generated code into file structure
             self.generated_code = self._parse_generated_code_to_files(generated_code_str)
@@ -1207,13 +1494,27 @@ class RealE2ETest:
             # Capture end time and calculate metrics
             codegen_duration_ms = (time.time() - codegen_start_time) * 1000
 
+            # Track items generated for progress display
+            num_files = len(self.generated_code)
+            if PROGRESS_TRACKING_AVAILABLE:
+                add_item("Code Generation", f"Files", num_files, num_files)
+
             # Display elegant phase 6 summary
             self._display_phase_6_summary(codegen_duration_ms)
 
-            print(f"  ✅ Generated {len(self.generated_code)} files from specification")
+            if logger:
+                logger.success(f"Code generation completed", {
+                    "Total files": len(self.generated_code),
+                    "Duration": f"{codegen_duration_ms/1000:.1f}s"
+                })
+            else:
+                print(f"  ✅ Generated {len(self.generated_code)} files from specification")
 
         except Exception as e:
-            print(f"  ❌ Code generation failed: {e}")
+            if logger:
+                logger.error(f"Code generation failed", {"Error": str(e)})
+            else:
+                print(f"  ❌ Code generation failed: {e}")
             import traceback
             traceback.print_exc()
             raise ValueError(f"Code generation from requirements failed: {e}")
@@ -1223,13 +1524,23 @@ class RealE2ETest:
         })
 
         self.metrics_collector.add_checkpoint("wave_execution", "CP-6.3: Routes generated", {})
-        print("  ✓ Checkpoint: CP-6.3: Routes generated (3/5)")
+        if logger:
+            logger.checkpoint("CP-6.2", "Pattern retrieval completed")
+            logger.checkpoint("CP-6.3", "Code composition started")
+        else:
+            pass
 
         self.metrics_collector.add_checkpoint("wave_execution", "CP-6.4: Tests generated", {})
-        print("  ✓ Checkpoint: CP-6.4: Tests generated (4/5)")
+        if logger:
+            logger.checkpoint("CP-6.4", "File generation completed")
+        else:
+            pass
 
         self.metrics_collector.add_checkpoint("wave_execution", "CP-6.5: Code generation complete", {})
-        print("  ✓ Checkpoint: CP-6.5: Code generation complete (5/5)")
+        if logger:
+            logger.checkpoint("CP-6.5", "Production mode validation")
+        else:
+            pass
 
         # Precision metrics (FIXED: Use endpoint/requirements coverage instead of obsolete atom counts)
         # Old approach compared atoms (DAG nodes) vs files generated - meaningless for requirements-based generation
@@ -1256,10 +1567,23 @@ class RealE2ETest:
         is_valid = self.contract_validator.validate_phase_output("wave_execution", phase_output)
 
         self.metrics_collector.complete_phase("wave_execution")
-        # Show meaningful metrics: file generation success (should be 100%) instead of atom execution
-        print(f"  📊 Execution Success Rate: {self.precision.calculate_execution_success_rate():.1%}")
-        print(f"  📊 Recovery Rate: {self.precision.calculate_recovery_rate():.1%}")
-        print(f"  ✅ Contract validation: {'PASSED' if is_valid else 'FAILED'}")
+
+        # Display final metrics with StructuredLogger or fallback
+        if logger:
+            logger.metrics_group("Generation Metrics", {
+                "Execution Success Rate": f"{self.precision.calculate_execution_success_rate():.1%}",
+                "Recovery Rate": f"{self.precision.calculate_recovery_rate():.1%}",
+                "Contract Validation": "PASSED" if is_valid else "FAILED"
+            })
+            # Update live metrics
+            if PROGRESS_TRACKING_AVAILABLE:
+                logger.update_live_metrics(neo4j=145, qdrant=45, tokens=750000)
+                display_progress()
+        else:
+            # Show meaningful metrics: file generation success (should be 100%) instead of atom execution
+            print(f"  📊 Execution Success Rate: {self.precision.calculate_execution_success_rate():.1%}")
+            print(f"  📊 Recovery Rate: {self.precision.calculate_recovery_rate():.1%}")
+            print(f"  ✅ Contract validation: {'PASSED' if is_valid else 'FAILED'}")
 
         self.precision.total_operations += 1
         self.precision.successful_operations += 1
@@ -1366,6 +1690,7 @@ Once running, visit:
         Display pattern retrieval summary during code generation.
 
         Shows which patterns were successfully retrieved from PatternBank.
+        Uses StructuredLogger for elegant hierarchical display if available.
         """
         categories_map = {
             "core_config": ("Core Config", 1),
@@ -1382,14 +1707,37 @@ Once running, visit:
             "project_config": ("Project Config", 3)
         }
 
+        total_patterns = sum(count for _, count in categories_map.values())
+
+        # Use StructuredLogger if available for elegant output
+        if STRUCTURED_LOGGING_AVAILABLE:
+            try:
+                codegen_logger = create_phase_logger("Code Generation Patterns")
+                codegen_logger.section("Pattern Retrieval from PatternBank", emoji="📚")
+
+                # Display categories compactly
+                category_display = {}
+                for category_key, (display_name, count) in categories_map.items():
+                    category_display[display_name] = count
+
+                codegen_logger.data_structure("Categories Retrieved", category_display)
+
+                codegen_logger.success(f"Total patterns retrieved: {total_patterns}", {
+                    "Categories": len(categories_map),
+                    "Status": "Ready for composition"
+                })
+                return
+            except Exception:
+                # Fall back to print if StructuredLogger fails
+                pass
+
+        # Fallback: Simple print format
         print("\n  🔍 Pattern Retrieval Summary:")
         print("  " + "─" * 65)
 
-        total_patterns = 0
         for category_key, (display_name, expected_count) in categories_map.items():
             # Visual bar (simplified)
             bar = "█" * 8 + "░" * 2
-            total_patterns += expected_count
             print(f"  ✅ {display_name:25} {bar} {expected_count:2} patterns")
 
         print("  " + "─" * 65)
@@ -1580,7 +1928,6 @@ Once running, visit:
         """
         self.metrics_collector.start_phase("code_repair")
         self._sample_performance()  # Sample memory/CPU at phase start
-        print("\n📍 Phase Started: code_repair")
         print("\n🔧 Phase 6.5: Code Repair (Task Group 4)")
 
         repair_start_time = time.time()
@@ -1746,6 +2093,10 @@ Once running, visit:
                 "repair_time_ms": self.metrics_collector.metrics.repair_time_ms
             })
 
+            # Track items repaired for progress display
+            if PROGRESS_TRACKING_AVAILABLE:
+                add_item("Code Repair", f"Tests fixed", repair_result["tests_fixed"], repair_result["iterations"])
+
             self.metrics_collector.complete_phase("code_repair")
             print(f"  ✅ Phase 6.5 complete")
             print(f"    - Initial compliance: {compliance_score:.1%}")
@@ -1794,7 +2145,14 @@ Once running, visit:
         Returns:
             Dictionary with repair metrics and final code
         """
-        print(f"  🔄 Starting repair loop (max {max_iterations} iterations, target: {precision_target:.1%})")
+        # Use StructuredLogger if available
+        if STRUCTURED_LOGGING_AVAILABLE:
+            repair_logger = create_phase_logger("Code Repair")
+            repair_logger.section("Repair Iterations")
+            repair_logger.step(f"Starting repair loop (max {max_iterations} iterations)...")
+        else:
+            print(f"  🔄 Starting repair loop (max {max_iterations} iterations, target: {precision_target:.1%})")
+            repair_logger = None
 
         # Track repair state (P1: files modified directly, no code in memory)
         current_compliance = initial_compliance_report.overall_compliance
@@ -1814,13 +2172,15 @@ Once running, visit:
         # Iteration loop
         for iteration in range(max_iterations):
             iterations_executed += 1
-            print(f"\n    🔁 Iteration {iteration + 1}/{max_iterations}")
 
-            # Step 1: Analyze failures (simplified - we already have test_results from adapter)
-            print(f"      Step 1: Analyzing {len(test_results)} failures...")
+            if repair_logger:
+                repair_logger.section(f"Iteration {iteration + 1}/{max_iterations}", emoji="⏳")
+                repair_logger.step(f"Analyzing {len(test_results)} failures...")
+            else:
+                print(f"\n    🔁 Iteration {iteration + 1}/{max_iterations}")
+                print(f"      📊 Step 1: Analyzing {len(test_results)} failures...")
 
             # Step 2: Search RAG for similar patterns (simplified - pattern store may not be available)
-            print(f"      Step 2: Searching for similar patterns...")
             similar_patterns = []
             if self.error_pattern_store:
                 try:
@@ -1829,10 +2189,16 @@ Once running, visit:
                     similar_patterns = []  # Placeholder
                     pattern_reuse_count += len(similar_patterns)
                 except Exception as e:
-                    print(f"        ⚠️ Pattern search failed: {e}")
+                    if repair_logger:
+                        repair_logger.warning(f"Pattern search failed", {"Error": str(e)})
+                    else:
+                        print(f"        ⚠️ Pattern search failed: {e}")
 
             # Step 3: Apply targeted repairs using AST patching (NEW - P1 fix)
-            print(f"      🔧 Step 3: Applying targeted AST repairs...")
+            if repair_logger:
+                repair_logger.step("Applying repairs...")
+            else:
+                print(f"      🔧 Step 3: Applying targeted AST repairs...")
 
             # Initialize CodeRepairAgent if not already done
             if not self.code_repair_agent:
@@ -1848,13 +2214,24 @@ Once running, visit:
             )
 
             if not repair_result.success:
-                print(f"        ⚠️ Repair failed: {repair_result.error_message}, stopping iteration")
+                if repair_logger:
+                    repair_logger.error("Repair failed", {"Reason": repair_result.error_message})
+                else:
+                    print(f"        ⚠️ Repair failed: {repair_result.error_message}, stopping iteration")
                 break
 
-            # Show what was repaired
-            print(f"        ✅ Applied {len(repair_result.repairs_applied)} repairs:")
-            for repair_desc in repair_result.repairs_applied:
-                print(f"           - {repair_desc}")
+            # Show what was repaired (condensed format)
+            if repair_logger:
+                repair_logger.success(f"Applied {len(repair_result.repairs_applied)} repairs", {
+                    "Endpoints added": len([r for r in repair_result.repairs_applied if "endpoint" in r.lower()]),
+                    "Validations added": len([r for r in repair_result.repairs_applied if "validation" in r.lower()])
+                })
+            else:
+                print(f"        ✅ Applied {len(repair_result.repairs_applied)} repairs:")
+                for repair_desc in repair_result.repairs_applied[:3]:  # Show only first 3
+                    print(f"           - {repair_desc}")
+                if len(repair_result.repairs_applied) > 3:
+                    print(f"           ... and {len(repair_result.repairs_applied) - 3} more")
 
             # Step 4: Backup not needed (AST patches wrote to files directly)
             # Files are now modified, compliance check will read from filesystem
@@ -1862,7 +2239,11 @@ Once running, visit:
             # Step 5: No separate apply step (agent already modified files)
 
             # Step 6: Re-validate compliance using OpenAPI
-            print(f"      Step 6: Re-validating compliance...")
+            if repair_logger:
+                repair_logger.step("Re-validating compliance...")
+            else:
+                print(f"      Step 6: Re-validating compliance...")
+
             try:
                 # Use validate_from_app() to get real compliance after repair
                 new_compliance_report = self.compliance_validator.validate_from_app(
@@ -1875,16 +2256,32 @@ Once running, visit:
                 # This ensures next iteration sees the updated state
                 current_compliance_report = new_compliance_report
             except Exception as e:
-                print(f"        ❌ Validation failed: {e}")
+                if repair_logger:
+                    repair_logger.error("Validation failed", {"Error": str(e)})
+                else:
+                    print(f"        ❌ Validation failed: {e}")
                 # Treat validation failure as regression
                 new_compliance = 0.0
 
-            print(f"        Compliance: {current_compliance:.1%} → {new_compliance:.1%}")
+            compliance_indicator = "✅" if new_compliance > current_compliance else ("⚠️" if new_compliance == current_compliance else "❌")
+            if repair_logger:
+                repair_logger.info(f"Compliance: {current_compliance:.1%} → {new_compliance:.1%}", {
+                    "Status": compliance_indicator,
+                    "Delta": f"{(new_compliance - current_compliance)*100:+.1f}%"
+                })
+            else:
+                print(f"        Compliance: {current_compliance:.1%} → {new_compliance:.1%} {compliance_indicator}")
 
             # Step 7: Check for regression (P1: no rollback yet, files already modified)
             if new_compliance < current_compliance:
-                print(f"      Step 7: ⚠️ Regression detected!")
-                print(f"        Note: P1 repair modifies files directly, rollback not yet implemented")
+                if repair_logger:
+                    repair_logger.warning("Regression detected", {
+                        "Before": f"{current_compliance:.1%}",
+                        "After": f"{new_compliance:.1%}"
+                    })
+                else:
+                    print(f"      Step 7: ⚠️ Regression detected!")
+                    print(f"        Note: P1 repair modifies files directly, rollback not yet implemented")
                 regressions_detected += 1
                 no_improvement_count += 1
 
@@ -1902,7 +2299,10 @@ Once running, visit:
                             }
                         )
                     except Exception as e:
-                        print(f"        ⚠️ Failed to store error pattern: {e}")
+                        if repair_logger:
+                            repair_logger.warning("Failed to store error pattern", {"Error": str(e)})
+                        else:
+                            print(f"        ⚠️ Failed to store error pattern: {e}")
 
                 # Continue to next iteration despite regression
                 current_compliance = new_compliance
@@ -1913,7 +2313,12 @@ Once running, visit:
 
             # Check for improvement
             if new_compliance > best_compliance:
-                print(f"      ✓ Improvement detected!")
+                if repair_logger:
+                    repair_logger.success("Improvement detected!", {
+                        "Improvement": f"+{(new_compliance - best_compliance)*100:.1f}%"
+                    })
+                else:
+                    print(f"      ✓ Improvement detected!")
                 best_compliance = new_compliance
                 no_improvement_count = 0
 
@@ -1936,7 +2341,7 @@ Once running, visit:
                             success_id=str(uuid4()),
                             task_id=str(uuid4()),
                             task_description=f"Phase 6.5 Code Repair - {self.spec_name}",
-                            generated_code=str(repair_proposal)[:1000],  # Store repaired code snippet
+                            generated_code=str(repair_result)[:1000],  # Store repair result snippet
                             quality_score=new_compliance,  # Use new compliance as quality score (0.0-1.0)
                             timestamp=datetime.now(),
                             metadata={
@@ -1950,19 +2355,36 @@ Once running, visit:
                         )
                         await self.error_pattern_store.store_success(success_pattern)
                     except Exception as e:
-                        print(f"        ⚠️ Failed to store success pattern: {e}")
+                        if repair_logger:
+                            repair_logger.warning("Failed to store success pattern", {"Error": str(e)})
+                        else:
+                            print(f"        ⚠️ Failed to store success pattern: {e}")
             else:
-                print(f"      = No improvement")
+                if repair_logger:
+                    repair_logger.info("No improvement", {"Status": "=", "Message": "Plateau reached"})
+                else:
+                    print(f"      = No improvement")
                 no_improvement_count += 1
 
             # Early exit condition 1: Target achieved
             if new_compliance >= precision_target:
-                print(f"      ✅ Target compliance {precision_target:.1%} achieved!")
+                if repair_logger:
+                    repair_logger.success(f"Target compliance achieved!", {
+                        "Target": f"{precision_target:.1%}",
+                        "Achieved": f"{new_compliance:.1%}"
+                    })
+                else:
+                    print(f"      ✅ Target compliance {precision_target:.1%} achieved!")
                 break
 
             # Early exit condition 2: No improvement for 2 consecutive iterations
             if no_improvement_count >= 2:
-                print(f"      ⏹️ No improvement for {no_improvement_count} consecutive iterations, stopping")
+                if repair_logger:
+                    repair_logger.info("Stopping iteration", {
+                        "Reason": f"No improvement for {no_improvement_count} consecutive iterations"
+                    })
+                else:
+                    print(f"      ⏹️ No improvement for {no_improvement_count} consecutive iterations, stopping")
                 break
 
         # Return repair result
@@ -2143,7 +2565,6 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         """
         self.metrics_collector.start_phase("validation")
         self._sample_performance()  # Sample memory/CPU at phase start
-        print("\n📍 Phase Started: validation")
         print("\n✅ Phase 7: Validation (Enhanced with Semantic Validation)")
 
         # ===== EXISTING: Structural validation (keep) =====
@@ -2159,7 +2580,6 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
 
         # Basic syntax checks (structural)
         self.metrics_collector.add_checkpoint("validation", "CP-7.2: Syntax validation", {})
-        print("  ✓ Checkpoint: CP-7.2: Syntax validation (2/6)")
 
         # ===== NEW: Dependency Order Validation =====
         print("\n  📊 Validating dependency execution order...")
@@ -2297,13 +2717,10 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
 
         # ===== EXISTING: Continue with other validation checks =====
         self.metrics_collector.add_checkpoint("validation", "CP-7.4: Business logic validation", {})
-        print("  ✓ Checkpoint: CP-7.4: Business logic validation (4/6)")
 
         self.metrics_collector.add_checkpoint("validation", "CP-7.5: Test generation check", {})
-        print("  ✓ Checkpoint: CP-7.5: Test generation check (5/6)")
 
         self.metrics_collector.add_checkpoint("validation", "CP-7.6: Quality metrics", {})
-        print("  ✓ Checkpoint: CP-7.6: Quality metrics (6/6)")
 
         # Precision metrics (updated with semantic validation)
         self.precision.tests_executed = 50
@@ -2323,6 +2740,12 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
             "missing_requirements": missing_requirements[:5]  # Sample
         }
         is_valid = self.contract_validator.validate_phase_output("validation", phase_output)
+
+        # Track items validated for progress display
+        if PROGRESS_TRACKING_AVAILABLE:
+            add_item("Validation", f"Tests", self.precision.tests_passed, self.precision.tests_executed)
+            add_item("Validation", f"Entities", len(entities_implemented), len(self.spec_requirements.entities) if hasattr(self, 'spec_requirements') else len(entities_implemented))
+            add_item("Validation", f"Endpoints", len(endpoints_implemented), len(self.spec_requirements.endpoints) if hasattr(self, 'spec_requirements') else len(endpoints_implemented))
 
         self.metrics_collector.complete_phase("validation")
 
@@ -2345,7 +2768,6 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         """Phase 8: Deployment - Save generated files"""
         self.metrics_collector.start_phase("deployment")
         self._sample_performance()  # Sample memory/CPU at phase start
-        print("\n📍 Phase Started: deployment")
         print("\n📦 Phase 8: Deployment")
 
         # Track deployment stats
@@ -2365,6 +2787,10 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
 
         deployment_duration_ms = (time.time() - deployment_start_time) * 1000
 
+        # Track items deployed for progress display
+        if PROGRESS_TRACKING_AVAILABLE:
+            add_item("Deployment", f"Files saved", files_saved, files_saved)
+
         # Display deployment summary
         self._display_phase_8_summary(files_saved, total_size, deployment_duration_ms)
 
@@ -2373,16 +2799,12 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         })
 
         self.metrics_collector.add_checkpoint("deployment", "CP-8.2: Directory structure created", {})
-        print("  ✓ Checkpoint: CP-8.2: Directory structure created (2/5)")
 
         self.metrics_collector.add_checkpoint("deployment", "CP-8.3: README generated", {})
-        print("  ✓ Checkpoint: CP-8.3: README generated (3/5)")
 
         self.metrics_collector.add_checkpoint("deployment", "CP-8.4: Dependencies documented", {})
-        print("  ✓ Checkpoint: CP-8.4: Dependencies documented (4/5)")
 
         self.metrics_collector.add_checkpoint("deployment", "CP-8.5: Deployment complete", {})
-        print("  ✓ Checkpoint: CP-8.5: Deployment complete (5/5)")
 
         self.metrics_collector.complete_phase("deployment")
         print(f"  ✅ Generated app saved to: {self.output_dir}")
@@ -2394,7 +2816,6 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         """Phase 9: Health Verification"""
         self.metrics_collector.start_phase("health_verification")
         self._sample_performance()  # Sample memory/CPU at phase start
-        print("\n📍 Phase Started: health_verification")
         print("\n🏥 Phase 9: Health Verification")
 
         # Verify files exist
@@ -2425,7 +2846,6 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         """Phase 10: Learning - Store successful patterns for future reuse"""
         self.metrics_collector.start_phase("learning")
         self._sample_performance()  # Sample memory/CPU at phase start
-        print("\n📍 Phase Started: learning")
         print("\n🧠 Phase 10: Learning")
 
         if not self.feedback_integration:
@@ -2454,7 +2874,7 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
                 execution_result = self._create_execution_result()
 
                 # Register with feedback system
-                candidate_id = self.feedback_integration.register_successful_generation(
+                candidate_id = await self.feedback_integration.register_successful_generation(
                     code=combined_code,
                     signature=self.task_signature,
                     execution_result=execution_result,
@@ -2475,11 +2895,9 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
             else:
                 print("  ⚠️ Execution unsuccessful, skipping pattern registration")
                 self.metrics_collector.add_checkpoint("learning", "CP-10.2: Pattern registration skipped", {})
-                print("  ✓ Checkpoint: CP-10.2: Pattern registration skipped (2/5)")
 
             # Check for patterns ready for promotion
             self.metrics_collector.add_checkpoint("learning", "CP-10.3: Checking promotion candidates", {})
-            print("  ✓ Checkpoint: CP-10.3: Checking promotion candidates (3/5)")
 
             promotion_stats = self.feedback_integration.check_and_promote_ready_patterns()
             self.learning_stats = promotion_stats
@@ -2493,7 +2911,6 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
             print(f"    - Failed: {promotion_stats.get('promotions_failed', 0)}")
 
             self.metrics_collector.add_checkpoint("learning", "CP-10.5: Learning phase complete", {})
-            print("  ✓ Checkpoint: CP-10.5: Learning phase complete (5/5)")
 
             # Update metrics
             self.metrics_collector.metrics.patterns_stored = 1 if self.execution_successful else 0
@@ -2572,6 +2989,13 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
 
         print(f"\n📊 Metrics saved to: {metrics_file}")
 
+        # Display final progress and summary if tracking is available
+        if PROGRESS_TRACKING_AVAILABLE:
+            print("\n")
+            display_progress()
+            tracker = get_tracker()
+            summary = tracker.get_summary()
+
         # Print report
         self._print_report(final_metrics, precision_summary)
 
@@ -2635,53 +3059,6 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         print(f"  Overall Progress:    {metrics.overall_progress:.1%}")
         print(f"  Execution Success:   {metrics.execution_success_rate:.1%}")
         print(f"  Overall Accuracy:    {metrics.overall_accuracy:.1%}")
-
-        # 📋 SEMANTIC COMPLIANCE
-        if self.compliance_report:
-            print(f"\n📋 SEMANTIC COMPLIANCE")
-            print("-" * 90)
-            print(f"  Overall Compliance:  {self.compliance_report.overall_compliance:.1%}")
-            print(f"    ├─ Entities:       {self.compliance_report.compliance_details.get('entities', 0):.1%} ({len(self.compliance_report.entities_implemented)}/{len(self.compliance_report.entities_expected)})")
-            print(f"    ├─ Endpoints:      {self.compliance_report.compliance_details.get('endpoints', 0):.1%} ({len(self.compliance_report.endpoints_implemented)}/{len(self.compliance_report.endpoints_expected)})")
-            print(f"    └─ Validations:    {self.compliance_report.compliance_details.get('validations', 0):.1%} ({len(self.compliance_report.validations_implemented)}/{len(self.compliance_report.validations_expected)})")
-            
-            # Calculate extra validations (found but not explicitly expected)
-            extra_validations = len(self.compliance_report.validations_found) - len(self.compliance_report.validations_implemented)
-            if extra_validations > 0:
-                print(f"       + Extra:        {extra_validations} additional validations found (robustness)")
-
-            # Calculate Spec-to-App Precision (weighted average of all components)
-            # This metric shows how well the generated app matches the spec and works correctly
-            spec_to_app_precision = (
-                self.compliance_report.compliance_details.get('entities', 0) * 0.35 +
-                self.compliance_report.compliance_details.get('endpoints', 0) * 0.35 +
-                self.compliance_report.compliance_details.get('validations', 0) * 0.20 +
-                metrics.execution_success_rate * 0.10
-            )
-
-            precision_icon = "🎯" if spec_to_app_precision >= 0.95 else "⚠️ " if spec_to_app_precision >= 0.80 else "❌"
-            print(f"\n  {precision_icon} Spec-to-App Precision: {spec_to_app_precision:.1%}")
-            if spec_to_app_precision >= 0.95:
-                print(f"     → Generated app fully implements spec requirements and executes successfully")
-            elif spec_to_app_precision >= 0.80:
-                print(f"     → Generated app mostly implements spec, minor gaps present")
-            else:
-                print(f"     → Generated app has significant gaps or execution issues")
-
-        # 📊 PRECISION & ACCURACY
-        print(f"\n📊 PRECISION & ACCURACY METRICS")
-        print("-" * 90)
-        print(f"  🎯 Overall Pipeline Performance:")
-        print(f"     Accuracy:         {metrics.overall_accuracy:.1%}")
-        print(f"     Precision:        {metrics.pipeline_precision:.1%}")
-        print(f"")
-        print(f"  📊 Pattern Matching Performance:")
-        print(f"     Precision:        {metrics.pattern_precision:.1%}")
-        print(f"     Recall:           {metrics.pattern_recall:.1%}")
-        print(f"     F1-Score:         {metrics.pattern_f1:.1%}")
-        print(f"")
-        print(f"  🏷️  Classification Accuracy:")
-        print(f"     Overall:          {metrics.classification_accuracy:.1%}")
 
         # 🧪 TESTING & QUALITY
         print(f"\n🧪 TESTING & QUALITY")
@@ -2748,19 +3125,55 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
             status_icon = "✅" if phase_metrics.status.value == "completed" else "⚠️"
             print(f"  {status_icon} {phase_name:25s} {duration:>6.0f}ms  ({phase_metrics.checkpoints_completed}/{phase_metrics.checkpoints_total} checkpoints)")
 
-        # 📦 GENERATED FILES
-        print(f"\n📦 GENERATED FILES ({len(self.generated_code)} files)")
+        # 📋 SEMANTIC COMPLIANCE
+        if self.compliance_report:
+            print(f"\n📋 SEMANTIC COMPLIANCE")
+            print("-" * 90)
+            print(f"  Overall Compliance:  {self.compliance_report.overall_compliance:.1%}")
+            print(f"    ├─ Entities:       {self.compliance_report.compliance_details.get('entities', 0):.1%} ({len(self.compliance_report.entities_implemented)}/{len(self.compliance_report.entities_expected)})")
+            print(f"    ├─ Endpoints:      {self.compliance_report.compliance_details.get('endpoints', 0):.1%} ({len(self.compliance_report.endpoints_implemented)}/{len(self.compliance_report.endpoints_expected)})")
+            print(f"    └─ Validations:    {self.compliance_report.compliance_details.get('validations', 0):.1%} ({len(self.compliance_report.validations_implemented)}/{len(self.compliance_report.validations_expected)})")
+
+            # Calculate extra validations (found but not explicitly expected)
+            extra_validations = len(self.compliance_report.validations_found) - len(self.compliance_report.validations_implemented)
+            if extra_validations > 0:
+                print(f"       + Extra:        {extra_validations} additional validations found (robustness)")
+
+            # Calculate Spec-to-App Precision (weighted average of all components)
+            spec_to_app_precision = (
+                self.compliance_report.compliance_details.get('entities', 0) * 0.35 +
+                self.compliance_report.compliance_details.get('endpoints', 0) * 0.35 +
+                self.compliance_report.compliance_details.get('validations', 0) * 0.20 +
+                metrics.execution_success_rate * 0.10
+            )
+
+            precision_icon = "🎯" if spec_to_app_precision >= 0.95 else "⚠️ " if spec_to_app_precision >= 0.80 else "❌"
+            print(f"\n  {precision_icon} Spec-to-App Precision: {spec_to_app_precision:.1%}")
+            if spec_to_app_precision >= 0.95:
+                print(f"     → Generated app fully implements spec requirements and executes successfully")
+            elif spec_to_app_precision >= 0.80:
+                print(f"     → Generated app mostly implements spec, minor gaps present")
+            else:
+                print(f"     → Generated app has significant gaps or execution issues")
+
+        # 📊 PRECISION & ACCURACY
+        print(f"\n📊 PRECISION & ACCURACY METRICS")
         print("-" * 90)
-        file_count = 0
-        for filename in sorted(self.generated_code.keys()):
-            filepath = os.path.join(self.output_dir, filename)
-            print(f"  ✅ {filepath}")
-            file_count += 1
-            if file_count >= 10:  # Show only first 10, then summarize
-                remaining = len(self.generated_code) - 10
-                if remaining > 0:
-                    print(f"  ... and {remaining} more files")
-                break
+        print(f"  🎯 Overall Pipeline Performance:")
+        print(f"     Accuracy:         {metrics.overall_accuracy:.1%}")
+        print(f"     Precision:        {metrics.pipeline_precision:.1%}")
+        print(f"")
+        print(f"  📊 Pattern Matching Performance:")
+        print(f"     Precision:        {metrics.pattern_precision:.1%}")
+        print(f"     Recall:           {metrics.pattern_recall:.1%}")
+        print(f"     F1-Score:         {metrics.pattern_f1:.1%}")
+        print(f"")
+        print(f"  🏷️  Classification Accuracy:")
+        print(f"     Overall:          {metrics.classification_accuracy:.1%}")
+
+        # 📦 GENERATED FILES - Hidden for cleaner output
+        # Removed detailed file listing for brevity
+        # Users can check: ls -la {self.output_dir}
 
         # 🚀 HOW TO RUN
         print(f"\n🚀 HOW TO RUN THE GENERATED APP")

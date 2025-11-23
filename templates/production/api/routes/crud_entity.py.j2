@@ -1,0 +1,195 @@
+"""
+{{ entity.name }} API Routes
+
+RESTful CRUD endpoints for {{ entity.name }} entity.
+"""
+from typing import Optional
+from uuid import UUID
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
+import structlog
+
+from src.core.database import get_db
+from src.services.service import {{ entity.name }}Service
+from src.models.schemas import (
+    {{ entity.name }}Create,
+    {{ entity.name }}Update,
+    {{ entity.name }}Response,
+    {{ entity.name }}ListResponse
+)
+
+router = APIRouter(prefix="/{{ entity.plural | lower }}", tags=["{{ entity.plural | lower }}"])
+logger = structlog.get_logger(__name__)
+
+
+@router.post("/", response_model={{ entity.name }}Response, status_code=status.HTTP_201_CREATED)
+async def create_{{ entity.name | lower }}(
+    data: {{ entity.name }}Create,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Create a new {{ entity.name | lower }}.
+
+    Args:
+        data: {{ entity.name }} creation data
+        db: Database session
+
+    Returns:
+        Created {{ entity.name | lower }}
+
+    Raises:
+        HTTPException: 400 if validation fails
+    """
+    service = {{ entity.name }}Service(db)
+    try:
+        result = await service.create_{{ entity.name | lower }}(data)
+        return result
+    except ValueError as e:
+        logger.warning(f"Validation error creating {{ entity.name | lower }}", error=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error creating {{ entity.name | lower }}", error=str(e), exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+
+
+@router.get("/", response_model={{ entity.name }}ListResponse)
+async def list_{{ entity.plural | lower }}(
+    page: int = Query(1, ge=1, description="Page number"),
+    size: int = Query(10, ge=1, le=100, description="Items per page"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    List {{ entity.plural | lower }} with pagination.
+
+    Args:
+        page: Page number (1-indexed)
+        size: Items per page
+        db: Database session
+
+    Returns:
+        Paginated list of {{ entity.plural | lower }}
+    """
+    service = {{ entity.name }}Service(db)
+    return await service.list_{{ entity.plural | lower }}(page, size)
+
+
+@router.get("/{id}", response_model={{ entity.name }}Response)
+async def get_{{ entity.name | lower }}(
+    id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get a {{ entity.name | lower }} by ID.
+
+    Args:
+        id: {{ entity.name }} ID
+        db: Database session
+
+    Returns:
+        {{ entity.name }} details
+
+    Raises:
+        HTTPException: 404 if not found
+    """
+    service = {{ entity.name }}Service(db)
+    result = await service.get_{{ entity.name | lower }}(id)
+    if not result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="{{ entity.name }} not found")
+    return result
+
+
+@router.put("/{id}", response_model={{ entity.name }}Response)
+async def update_{{ entity.name | lower }}(
+    id: UUID,
+    data: {{ entity.name }}Update,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update a {{ entity.name | lower }}.
+
+    Args:
+        id: {{ entity.name }} ID
+        data: Update data
+        db: Database session
+
+    Returns:
+        Updated {{ entity.name | lower }}
+
+    Raises:
+        HTTPException: 404 if not found, 400 if validation fails
+    """
+    service = {{ entity.name }}Service(db)
+    try:
+        result = await service.update_{{ entity.name | lower }}(id, data)
+        if not result:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="{{ entity.name }} not found")
+        return result
+    except ValueError as e:
+        logger.warning(f"Validation error updating {{ entity.name | lower }}", id=str(id), error=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating {{ entity.name | lower }}", id=str(id), error=str(e), exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+
+
+@router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_{{ entity.name | lower }}(
+    id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Delete a {{ entity.name | lower }}.
+
+    Args:
+        id: {{ entity.name }} ID
+        db: Database session
+
+    Raises:
+        HTTPException: 404 if not found
+    """
+    service = {{ entity.name }}Service(db)
+    success = await service.delete_{{ entity.name | lower }}(id)
+    if not success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="{{ entity.name }} not found")
+
+{% if 'name' in entity.fields | map(attribute='name') %}
+
+@router.get("/search/", response_model=list[{{ entity.name }}Response])
+async def search_{{ entity.plural | lower }}(
+    query: str = Query(..., min_length=1, description="Search query"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Search {{ entity.plural | lower }} by name.
+
+    Args:
+        query: Search query
+        db: Database session
+
+    Returns:
+        List of matching {{ entity.plural | lower }}
+    """
+    service = {{ entity.name }}Service(db)
+    return await service.search(query)
+{% endif %}
+
+{% if 'status' in entity.fields | map(attribute='name') %}
+
+@router.get("/status/{status}", response_model=list[{{ entity.name }}Response])
+async def get_by_status(
+    status: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get {{ entity.plural | lower }} by status.
+
+    Args:
+        status: Status value
+        db: Database session
+
+    Returns:
+        List of {{ entity.plural | lower }} with the given status
+    """
+    service = {{ entity.name }}Service(db)
+    return await service.get_by_status(status)
+{% endif %}

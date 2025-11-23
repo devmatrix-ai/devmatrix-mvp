@@ -1,0 +1,295 @@
+version: '3.8'
+
+# Test environment Docker Compose configuration for {{ app_name }}
+# This setup provides an isolated environment for running tests
+
+services:
+  # Test Database
+  test-postgres:
+    image: postgres:{{ postgres_version | default('15-alpine') }}
+    container_name: {{ app_name }}-test-db
+    environment:
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+      POSTGRES_DB: {{ app_name }}_test
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5433:5432"  # Different port to avoid conflicts
+    volumes:
+      - test-postgres-data:/var/lib/postgresql/data
+    tmpfs:
+      - /var/lib/postgresql/data  # Use RAM for faster tests
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d {{ app_name }}_test"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - test-network
+
+  # Test Redis Cache
+  test-redis:
+    image: redis:7-alpine
+    container_name: {{ app_name }}-test-cache
+    ports:
+      - "6380:6379"  # Different port to avoid conflicts
+    command: redis-server --appendonly no --save ""  # No persistence for tests
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - test-network
+
+  # Test Application
+  {{ app_name }}-test:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: test  # Use test stage from multi-stage Dockerfile
+      args:
+        ENVIRONMENT: test
+    container_name: {{ app_name }}-test-app
+    environment:
+      # Application settings
+      APP_NAME: {{ app_name }}
+      ENVIRONMENT: test
+      DEBUG: "true"
+      TESTING: "true"
+
+      # Database settings
+      DATABASE_URL: postgresql://test_user:test_password@test-postgres:5432/{{ app_name }}_test
+      DATABASE_POOL_SIZE: "5"
+      DATABASE_MAX_OVERFLOW: "0"
+
+      # Redis settings
+      REDIS_URL: redis://test-redis:6379/1
+      CACHE_TTL: "60"
+
+      # Test-specific settings
+      TEST_MODE: "true"
+      DISABLE_AUTH: "true"
+      DISABLE_RATE_LIMITING: "true"
+      LOG_LEVEL: DEBUG
+
+      # Coverage settings
+      COVERAGE: "true"
+      COVERAGE_REPORT: "html,xml,term"
+      COVERAGE_MIN: "80"
+    volumes:
+      - ../:/app
+      - ./test-results:/app/test-results
+      - ./coverage:/app/coverage
+      - /app/__pycache__
+      - /app/.pytest_cache
+    depends_on:
+      test-postgres:
+        condition: service_healthy
+      test-redis:
+        condition: service_healthy
+    networks:
+      - test-network
+    command: |
+      sh -c "
+        echo 'Waiting for services...' &&
+        sleep 5 &&
+        echo 'Running database migrations...' &&
+        alembic upgrade head &&
+        echo 'Starting tests...' &&
+        pytest -v --cov=/app --cov-report=html:/app/coverage --cov-report=xml:/app/coverage/coverage.xml --cov-report=term
+      "
+
+  # Test Runner (alternative to running tests in app container)
+  test-runner:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.test
+    container_name: {{ app_name }}-test-runner
+    environment:
+      DATABASE_URL: postgresql://test_user:test_password@test-postgres:5432/{{ app_name }}_test
+      REDIS_URL: redis://test-redis:6379/1
+      TEST_ENV: docker
+    volumes:
+      - ../:/app
+      - ./test-results:/test-results
+      - ./coverage:/coverage
+    depends_on:
+      - test-postgres
+      - test-redis
+    networks:
+      - test-network
+    profiles:
+      - test-runner
+    command: |
+      sh -c "
+        pytest tests/ \
+          -v \
+          --tb=short \
+          --strict-markers \
+          --cov=app \
+          --cov-branch \
+          --cov-report=term-missing \
+          --cov-report=html:/coverage/html \
+          --cov-report=xml:/coverage/coverage.xml \
+          --junitxml=/test-results/junit.xml \
+          --html=/test-results/report.html \
+          --self-contained-html
+      "
+
+  # Integration Test Suite
+  integration-tests:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.test
+    container_name: {{ app_name }}-integration-tests
+    environment:
+      TEST_TYPE: integration
+      API_BASE_URL: http://{{ app_name }}-test:8000
+      DATABASE_URL: postgresql://test_user:test_password@test-postgres:5432/{{ app_name }}_test
+      REDIS_URL: redis://test-redis:6379/1
+    volumes:
+      - ../tests/integration:/tests
+      - ./test-results:/test-results
+    depends_on:
+      - {{ app_name }}-test
+    networks:
+      - test-network
+    profiles:
+      - integration
+    command: |
+      sh -c "
+        echo 'Waiting for API to be ready...' &&
+        ./scripts/wait-for-it.sh {{ app_name }}-test:8000 --timeout=60 &&
+        pytest /tests \
+          -v \
+          --tb=short \
+          --junitxml=/test-results/integration-junit.xml
+      "
+
+  # E2E Test Suite with Playwright
+  e2e-tests:
+    image: mcr.microsoft.com/playwright:v1.40.0-focal
+    container_name: {{ app_name }}-e2e-tests
+    environment:
+      BASE_URL: http://{{ app_name }}-test:8000
+      HEADLESS: "true"
+      BROWSER: chromium
+    volumes:
+      - ../tests/e2e:/tests
+      - ./test-results:/test-results
+      - ./screenshots:/screenshots
+    depends_on:
+      - {{ app_name }}-test
+    networks:
+      - test-network
+    profiles:
+      - e2e
+    command: |
+      sh -c "
+        cd /tests &&
+        npm ci &&
+        npx playwright test --reporter=html:/test-results/e2e-report
+      "
+
+  # Load Testing with Locust
+  load-tests:
+    image: locustio/locust:2.17.0
+    container_name: {{ app_name }}-load-tests
+    environment:
+      LOCUST_HOST: http://{{ app_name }}-test:8000
+      LOCUST_USERS: "10"
+      LOCUST_SPAWN_RATE: "2"
+      LOCUST_RUN_TIME: "60s"
+      LOCUST_HEADLESS: "true"
+    volumes:
+      - ../tests/load:/tests
+      - ./test-results:/test-results
+    depends_on:
+      - {{ app_name }}-test
+    networks:
+      - test-network
+    profiles:
+      - load
+    command: |
+      -f /tests/locustfile.py \
+      --html /test-results/load-test-report.html \
+      --csv /test-results/load-test
+
+  # Security Testing with OWASP ZAP
+  security-tests:
+    image: owasp/zap2docker-stable:2.14.0
+    container_name: {{ app_name }}-security-tests
+    environment:
+      TARGET_URL: http://{{ app_name }}-test:8000
+    volumes:
+      - ./test-results:/zap/reports
+    depends_on:
+      - {{ app_name }}-test
+    networks:
+      - test-network
+    profiles:
+      - security
+    command: |
+      zap-baseline.py \
+        -t http://{{ app_name }}-test:8000 \
+        -r /zap/reports/security-report.html \
+        -w /zap/reports/security-report.md \
+        -J /zap/reports/security-report.json
+
+  # Test Database Admin (optional, for debugging)
+  test-adminer:
+    image: adminer:4.8.1
+    container_name: {{ app_name }}-test-adminer
+    ports:
+      - "8081:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: test-postgres
+      ADMINER_DESIGN: pepa-linha
+    depends_on:
+      - test-postgres
+    networks:
+      - test-network
+    profiles:
+      - debug
+
+networks:
+  test-network:
+    driver: bridge
+    name: {{ app_name }}-test-network
+
+volumes:
+  test-postgres-data:
+    driver: local
+    name: {{ app_name }}-test-postgres-data
+
+# Usage Instructions:
+# ==================
+#
+# Run all tests:
+#   docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit
+#
+# Run specific test suites:
+#   docker-compose -f docker-compose.test.yml --profile integration up
+#   docker-compose -f docker-compose.test.yml --profile e2e up
+#   docker-compose -f docker-compose.test.yml --profile load up
+#   docker-compose -f docker-compose.test.yml --profile security up
+#
+# Debug with database admin:
+#   docker-compose -f docker-compose.test.yml --profile debug up
+#
+# Clean up after tests:
+#   docker-compose -f docker-compose.test.yml down -v
+#
+# View test results:
+#   open ./test-results/report.html
+#   open ./coverage/html/index.html
+#
+# Run tests with specific pytest options:
+#   docker-compose -f docker-compose.test.yml run --rm test-runner pytest tests/unit -v
+#
+# Run tests in watch mode:
+#   docker-compose -f docker-compose.test.yml run --rm test-runner pytest-watch
+#
+# Generate coverage report only:
+#   docker-compose -f docker-compose.test.yml run --rm test-runner coverage report

@@ -1,0 +1,280 @@
+# Docker Validation Checklist for {{ app_name }}
+
+Complete validation checklist to ensure Docker setup is production-ready.
+
+## Pre-Deployment Checklist
+
+### 🔧 Configuration
+
+#### Environment Variables
+- [ ] All required environment variables are documented in `.env.example`
+- [ ] Sensitive values are not committed to repository
+- [ ] Default values are safe for production
+- [ ] Environment-specific configs are separated (dev/staging/prod)
+- [ ] Database connection strings use environment variables
+- [ ] API keys and secrets are properly managed
+
+#### Docker Configuration
+- [ ] `Dockerfile` uses specific base image versions (not `latest`)
+- [ ] Multi-stage build is optimized for size
+- [ ] Build arguments are documented
+- [ ] `.dockerignore` excludes unnecessary files
+- [ ] Docker Compose version is specified
+- [ ] Service dependencies are correctly defined
+
+### 🏗️ Build Validation
+
+#### Image Building
+- [ ] `docker-compose build` completes without errors
+- [ ] Build uses cache effectively
+- [ ] No security warnings from package installations
+- [ ] Final image size is reasonable (< 500MB for Python apps)
+- [ ] Vulnerabilities scanned with `docker scan`
+- [ ] Base images are from trusted registries
+
+```bash
+# Validate build
+docker-compose build --no-cache
+docker images | grep {{ app_name }}
+docker scan {{ app_name }}:latest
+```
+
+### 🚀 Startup Validation
+
+#### Service Startup
+- [ ] All services start without errors
+- [ ] Services start in correct order
+- [ ] Health checks pass for all services
+- [ ] Logs show expected initialization messages
+- [ ] No permission errors in logs
+- [ ] Database migrations run successfully
+
+```bash
+# Validate startup
+docker-compose up -d
+docker-compose ps
+docker-compose logs --tail=100
+```
+
+### 🔗 Connectivity Validation
+
+#### Network Communication
+- [ ] Application can connect to database
+- [ ] Application can connect to Redis cache
+- [ ] Inter-service communication works
+- [ ] External API calls succeed (if applicable)
+- [ ] DNS resolution works correctly
+- [ ] No firewall/iptables issues
+
+```bash
+# Test connectivity
+docker-compose exec {{ app_name }} ping postgres
+docker-compose exec {{ app_name }} nc -zv postgres 5432
+docker-compose exec {{ app_name }} nc -zv redis 6379
+```
+
+### 📊 Health & Monitoring
+
+#### Health Checks
+- [ ] `/health` endpoint returns 200 OK
+- [ ] Database health check passes
+- [ ] Redis health check passes
+- [ ] All component health checks pass
+- [ ] Metrics endpoint is accessible
+- [ ] Prometheus can scrape metrics
+
+```bash
+# Test health endpoints
+curl -f http://localhost:8000/health
+curl -f http://localhost:8000/metrics
+docker-compose exec {{ app_name }} python -c "from core.database import check_db_health; print(check_db_health())"
+```
+
+### 🔒 Security Validation
+
+#### Security Checklist
+- [ ] Non-root user runs application in container
+- [ ] Sensitive ports are not exposed unnecessarily
+- [ ] Database is not accessible from outside Docker network
+- [ ] SSL/TLS is configured for production
+- [ ] Security headers are implemented
+- [ ] Rate limiting is enabled
+- [ ] CORS is properly configured
+- [ ] SQL injection protection is active
+- [ ] Input validation is enforced
+
+```bash
+# Security checks
+docker-compose exec {{ app_name }} whoami  # Should not be root
+docker-compose port postgres 5432  # Should only bind to 127.0.0.1
+```
+
+### 📈 Performance Validation
+
+#### Performance Metrics
+- [ ] Application responds within acceptable time (< 200ms for simple queries)
+- [ ] Database queries are optimized (< 100ms)
+- [ ] Memory usage is stable over time
+- [ ] CPU usage is reasonable
+- [ ] No memory leaks detected
+- [ ] Connection pools are properly sized
+
+```bash
+# Performance monitoring
+docker stats --no-stream
+docker-compose exec {{ app_name }} python -c "import psutil; print(f'CPU: {psutil.cpu_percent()}%, Memory: {psutil.virtual_memory().percent}%')"
+```
+
+### 📦 Data Persistence
+
+#### Volume Management
+- [ ] Database data persists across container restarts
+- [ ] Uploaded files persist (if applicable)
+- [ ] Log files are accessible
+- [ ] Backup scripts work correctly
+- [ ] Volume permissions are correct
+- [ ] Named volumes are used (not anonymous)
+
+```bash
+# Check volumes
+docker volume ls | grep {{ app_name }}
+docker-compose down
+docker-compose up -d
+# Verify data still exists
+```
+
+### 🧪 Testing
+
+#### Test Execution
+- [ ] Unit tests pass in container
+- [ ] Integration tests pass with Docker services
+- [ ] E2E tests pass against containerized application
+- [ ] Test database is separate from development
+- [ ] Test data is properly isolated
+- [ ] Coverage meets requirements (>80%)
+
+```bash
+# Run tests
+docker-compose -f docker-compose.test.yml up --abort-on-container-exit
+```
+
+### 📝 Logging
+
+#### Log Management
+- [ ] Application logs are visible via `docker-compose logs`
+- [ ] Log levels are appropriate for environment
+- [ ] Structured logging is implemented
+- [ ] No sensitive data in logs
+- [ ] Log rotation is configured
+- [ ] Logs are accessible for debugging
+
+```bash
+# Check logging
+docker-compose logs {{ app_name }} --tail=50
+docker-compose exec {{ app_name }} tail -f /app/logs/app.log
+```
+
+### 🔄 Updates & Rollback
+
+#### Deployment Process
+- [ ] Zero-downtime deployment strategy defined
+- [ ] Database migration strategy is safe
+- [ ] Rollback procedure is documented
+- [ ] Version tags are used for images
+- [ ] Backup created before updates
+- [ ] Health checks validate new deployment
+
+### 📋 Service-Specific Checks
+
+{% for service in services_list %}
+#### {{ service }} Service
+- [ ] Service starts successfully
+- [ ] Health check endpoint responds
+- [ ] Logs show normal operation
+- [ ] Resource usage is acceptable
+- [ ] Communication with other services works
+- [ ] Service-specific features function correctly
+
+{% endfor %}
+
+## Production Readiness
+
+### Final Validation
+- [ ] All checklist items above are completed
+- [ ] Documentation is up to date
+- [ ] Team has been trained on Docker operations
+- [ ] Monitoring alerts are configured
+- [ ] Incident response plan exists
+- [ ] Backup and recovery tested
+- [ ] Load testing completed
+- [ ] Security audit passed
+
+### Sign-off
+
+| Role | Name | Date | Signature |
+|------|------|------|-----------|
+| Developer | | | |
+| DevOps | | | |
+| Security | | | |
+| Product Owner | | | |
+
+## Automated Validation
+
+Run the validation script to automatically check many of these items:
+
+```bash
+./docker/validate-docker-setup.sh
+```
+
+Results will be saved to `validation-report.txt`
+
+## Common Issues Found During Validation
+
+### Issue: Services fail to start
+**Solution**: Check logs, ensure all dependencies are available, verify environment variables
+
+### Issue: Database connection refused
+**Solution**: Ensure postgres service is healthy, check connection string, verify network
+
+### Issue: High memory usage
+**Solution**: Adjust memory limits, check for memory leaks, optimize application
+
+### Issue: Slow performance
+**Solution**: Check resource allocation, optimize database queries, enable caching
+
+### Issue: Permission denied errors
+**Solution**: Check file ownership, ensure correct user in Dockerfile, fix volume permissions
+
+## Next Steps After Validation
+
+1. **If all checks pass**: Proceed to deployment
+2. **If issues found**:
+   - Document issues in issue tracker
+   - Fix identified problems
+   - Re-run validation
+3. **Create validation report**:
+   - Save checklist results
+   - Document any exceptions
+   - Get sign-offs
+
+## Continuous Validation
+
+Set up CI/CD pipeline to run validation automatically:
+
+```yaml
+# .github/workflows/docker-validation.yml
+name: Docker Validation
+on: [push, pull_request]
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Run validation
+        run: ./docker/validate-docker-setup.sh
+      - name: Upload results
+        uses: actions/upload-artifact@v3
+        with:
+          name: validation-report
+          path: validation-report.txt
+```

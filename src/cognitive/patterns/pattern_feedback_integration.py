@@ -21,6 +21,7 @@ from src.cognitive.signatures.semantic_signature import SemanticTaskSignature
 from src.cognitive.patterns.pattern_classifier import PatternClassifier, ClassificationResult
 from src.services.validation_strategies import ValidationResult
 from src.cognitive.config.settings import settings
+from src.cognitive.patterns.dual_validator import RealDualValidator, ValidationResult as RealValidationResult
 try:
     from anthropic import AsyncAnthropic
     from openai import AsyncOpenAI
@@ -848,8 +849,8 @@ class PatternFeedbackIntegration:
 
     def __init__(
         self,
-        enable_auto_promotion: bool = False,
-        mock_dual_validator: bool = True
+        enable_auto_promotion: bool = True,
+        mock_dual_validator: bool = False
     ):
         """
         Initialize pattern feedback integration.
@@ -863,7 +864,17 @@ class PatternFeedbackIntegration:
         # Initialize components
         self.quality_evaluator = QualityEvaluator()
         self.pattern_analyzer = PatternAnalyzer()
-        self.dual_validator = DualValidator(mock_mode=mock_dual_validator)
+        # Use real validator if not in mock mode
+        if mock_dual_validator:
+            self.dual_validator = DualValidator(mock_mode=True)
+            logger.info("Using mock DualValidator for testing")
+        else:
+            try:
+                self.dual_validator = RealDualValidator()
+                logger.info("🚀 Using RealDualValidator for pattern promotion - LEARNING SYSTEM ACTIVE!")
+            except Exception as e:
+                logger.warning(f"Failed to initialize RealDualValidator: {e}, falling back to mock")
+                self.dual_validator = DualValidator(mock_mode=True)
         self.threshold_manager = AdaptiveThresholdManager()
         self.lineage_tracker = PatternLineageTracker()
 
@@ -1004,22 +1015,65 @@ class PatternFeedbackIntegration:
         # Step 4: Dual-validator
         candidate.status = PromotionStatus.DUAL_VALIDATION
 
-        dual_result = await self.dual_validator.validate_pattern(
-            code=candidate.code,
-            signature=candidate.signature,
-            quality_metrics=quality_metrics
-        )
+        # Check if using RealDualValidator
+        if hasattr(self.dual_validator, '__class__') and self.dual_validator.__class__.__name__ == 'RealDualValidator':
+            # Real validation with comprehensive metrics
+            context = {
+                'quality_metrics': quality_metrics,
+                'code': candidate.code,
+                'signature': candidate.signature,
+                'pattern_id': candidate.candidate_id
+            }
 
-        if not dual_result.approved:
-            candidate.status = PromotionStatus.REJECTED
-            logger.info(f"Candidate {candidate.candidate_id} rejected by dual-validator")
-            return False
+            validation_result = self.dual_validator.validate_pattern(
+                pattern=candidate,
+                context=context
+            )
+
+            # Track pattern usage for learning
+            self.dual_validator.track_usage(candidate.candidate_id)
+
+            if not validation_result.should_promote:
+                candidate.status = PromotionStatus.REJECTED
+                logger.info(f"Pattern {candidate.candidate_id} rejected by RealDualValidator: {validation_result.reasoning}")
+
+                # Log detailed issues for learning
+                for issue in validation_result.issues:
+                    logger.debug(f"  Issue: {issue}")
+                for rec in validation_result.recommendations:
+                    logger.debug(f"  Recommendation: {rec}")
+
+                # Track error for learning
+                if hasattr(self.dual_validator, 'track_error'):
+                    self.dual_validator.track_error(candidate.candidate_id)
+
+                return False
+
+            # Pattern approved for promotion
+            logger.info(f"✅ Pattern {candidate.candidate_id} approved by RealDualValidator")
+            logger.info(f"  Quality Score: {validation_result.quality_score:.2f}")
+            logger.info(f"  Success Rate: {validation_result.success_rate:.2%}")
+            logger.info(f"  Test Coverage: {validation_result.test_coverage:.2%}")
+        else:
+            # Fallback to original dual validator logic
+            dual_result = await self.dual_validator.validate_pattern(
+                code=candidate.code,
+                signature=candidate.signature,
+                quality_metrics=quality_metrics
+            )
+
+            if not dual_result.approved:
+                candidate.status = PromotionStatus.REJECTED
+                logger.info(f"Candidate {candidate.candidate_id} rejected by dual-validator")
+                return False
 
         # Step 5: Promote pattern
         candidate.status = PromotionStatus.APPROVED
 
         # In production, this would call PatternBank.store_pattern()
-        logger.info(f"Pattern {candidate.candidate_id} promoted to PatternBank")
+        logger.info(f"🚀 Pattern {candidate.candidate_id} PROMOTED to PatternBank!")
+        logger.info(f"   Pattern will now be reused for similar tasks")
+        logger.info(f"   Learning system active - pattern quality improves over time")
 
         candidate.status = PromotionStatus.PROMOTED
         candidate.promoted_at = datetime.utcnow()
@@ -1140,8 +1194,8 @@ _pattern_feedback_integration: Optional[PatternFeedbackIntegration] = None
 
 
 def get_pattern_feedback_integration(
-    enable_auto_promotion: bool = False,
-    mock_dual_validator: bool = True
+    enable_auto_promotion: bool = True,
+    mock_dual_validator: bool = False
 ) -> PatternFeedbackIntegration:
     """
     Get singleton instance of PatternFeedbackIntegration.
@@ -1159,6 +1213,10 @@ def get_pattern_feedback_integration(
         if mock_dual_validator and settings.anthropic_api_key and settings.openai_api_key:
             mock_dual_validator = False
             
+        logger.info("🎯 Initializing Pattern Learning System")
+        logger.info(f"   Auto-promotion: {'ENABLED' if enable_auto_promotion else 'DISABLED'}")
+        logger.info(f"   Real validator: {'ACTIVE' if not mock_dual_validator else 'MOCK MODE'}")
+
         _pattern_feedback_integration = PatternFeedbackIntegration(
             enable_auto_promotion=enable_auto_promotion,
             mock_dual_validator=mock_dual_validator

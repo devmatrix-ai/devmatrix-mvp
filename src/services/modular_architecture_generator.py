@@ -670,15 +670,24 @@ uvicorn src.main:app --reload
         """Map spec field type to Python type"""
         type_map = {
             'string': 'str',
+            'str': 'str',
             'integer': 'int',
+            'int': 'int',
             'boolean': 'bool',
+            'bool': 'bool',
             'float': 'float',
             'decimal': 'Decimal',
             'datetime': 'datetime',
+            'date': 'datetime',
             'uuid': 'UUID',
-            'email': 'EmailStr'
+            'UUID': 'UUID',
+            'email': 'EmailStr',
+            'text': 'str'
         }
-        return type_map.get(type_str.lower(), 'str')
+        # Normalize input and look up in map - ensure return values are always correct case
+        normalized = type_str.lower().strip() if isinstance(type_str, str) else 'str'
+        result = type_map.get(normalized, 'str')
+        return result
 
     def _map_sqlalchemy_type(self, type_str: str) -> str:
         """Map spec field type to SQLAlchemy column type"""

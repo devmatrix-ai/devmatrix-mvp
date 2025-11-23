@@ -1,0 +1,98 @@
+"""
+Pydantic Request/Response Schemas
+
+Type-safe data validation for API endpoints.
+"""
+from pydantic import BaseModel, Field, ConfigDict
+from datetime import datetime
+from uuid import UUID
+from typing import List, Optional, Literal
+from decimal import Decimal
+
+
+class BaseSchema(BaseModel):
+    """Base schema with UUID-friendly JSON encoding."""
+
+    model_config = ConfigDict(
+        json_encoders={UUID: str},
+        from_attributes=True,
+    )
+
+{% for entity in entities %}
+# {{ entity.name }} Schemas
+
+class {{ entity.name }}Base(BaseSchema):
+    """Base schema for {{ entity.name }} with common fields."""
+    {%- for field in entity.fields %}
+    {%- if field.name not in ['id', 'created_at', 'updated_at'] %}
+    {%- set field_type = {
+        'UUID': 'UUID',
+        'uuid': 'UUID',
+        'str': 'str',
+        'string': 'str',
+        'int': 'int',
+        'integer': 'int',
+        'float': 'float',
+        'Decimal': 'Decimal',
+        'decimal': 'Decimal',
+        'bool': 'bool',
+        'boolean': 'bool',
+        'datetime': 'datetime',
+        'date': 'datetime',
+        'text': 'str'
+    }[field.type] | default('str') %}
+    {%- if field.required %}
+    {{ field.name }}: {{ field_type }}
+    {%- else %}
+    {{ field.name }}: Optional[{{ field_type }}] = None
+    {%- endif %}
+    {%- endif %}
+    {%- endfor %}
+
+
+class {{ entity.name }}Create({{ entity.name }}Base):
+    """Schema for creating a new {{ entity.name }}."""
+    pass
+
+
+class {{ entity.name }}Update(BaseSchema):
+    """Schema for updating an existing {{ entity.name }}."""
+    {%- for field in entity.fields %}
+    {%- if field.name not in ['id', 'created_at', 'updated_at'] %}
+    {%- set field_type = {
+        'UUID': 'UUID',
+        'uuid': 'UUID',
+        'str': 'str',
+        'string': 'str',
+        'int': 'int',
+        'integer': 'int',
+        'float': 'float',
+        'Decimal': 'Decimal',
+        'decimal': 'Decimal',
+        'bool': 'bool',
+        'boolean': 'bool',
+        'datetime': 'datetime',
+        'date': 'datetime',
+        'text': 'str'
+    }[field.type] | default('str') %}
+    {{ field.name }}: Optional[{{ field_type }}] = None
+    {%- endif %}
+    {%- endfor %}
+
+
+class {{ entity.name }}Response({{ entity.name }}Base):
+    """Schema for {{ entity.name }} response including ID and timestamps."""
+    id: UUID
+    created_at: datetime
+    {%- if entity.fields | selectattr("name", "equalto", "updated_at") | list %}
+    updated_at: Optional[datetime] = None
+    {%- endif %}
+
+
+class {{ entity.name }}ListResponse(BaseSchema):
+    """Schema for paginated list of {{ entity.plural | lower }}."""
+    items: List[{{ entity.name }}Response]
+    total: int
+    page: int
+    size: int
+{% endfor %}

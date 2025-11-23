@@ -1,0 +1,203 @@
+"""
+Business Logic Service Layer
+
+Service layer implementing business rules and orchestrating repository operations.
+"""
+from typing import List, Optional
+from uuid import UUID
+from sqlalchemy.ext.asyncio import AsyncSession
+import structlog
+{% for entity in entities %}
+from src.repositories.repository import {{ entity.name }}Repository
+from src.models.schemas import (
+    {{ entity.name }}Create,
+    {{ entity.name }}Update,
+    {{ entity.name }}Response,
+    {{ entity.name }}ListResponse
+)
+{% endfor %}
+
+logger = structlog.get_logger(__name__)
+
+
+class BaseService:
+    """Base service with common business logic."""
+
+    def __init__(self, repository):
+        self.repository = repository
+
+    async def create(self, data: dict) -> Any:
+        """Create with business logic validation."""
+        # Add any common business rules here
+        return await self.repository.create(data)
+
+    async def get(self, id: UUID) -> Optional[Any]:
+        """Get with authorization checks."""
+        # Add authorization logic here
+        return await self.repository.get(id)
+
+    async def list(self, page: int = 1, size: int = 10) -> dict:
+        """List with pagination."""
+        skip = (page - 1) * size
+        items = await self.repository.list(skip=skip, limit=size)
+        total = await self.repository.count()
+
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "size": size
+        }
+
+    async def update(self, id: UUID, data: dict) -> Optional[Any]:
+        """Update with validation."""
+        # Add validation logic here
+        return await self.repository.update(id, data)
+
+    async def delete(self, id: UUID) -> bool:
+        """Soft delete or hard delete based on requirements."""
+        # Add soft delete logic if needed
+        return await self.repository.delete(id)
+
+{% for entity in entities %}
+
+class {{ entity.name }}Service(BaseService):
+    """Service layer for {{ entity.name }} entity."""
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.repository = {{ entity.name }}Repository(db)
+        super().__init__(self.repository)
+
+    async def create_{{ entity.name | lower }}(self, data: {{ entity.name }}Create) -> {{ entity.name }}Response:
+        """
+        Create a new {{ entity.name | lower }} with business validation.
+
+        Args:
+            data: Creation data
+
+        Returns:
+            Created {{ entity.name | lower }}
+
+        Raises:
+            ValueError: If validation fails
+        """
+        # Add business validation here
+        {%- if 'email' in entity.fields | map(attribute='name') %}
+        # Check for duplicate email
+        existing = await self.repository.get_by_email(data.email)
+        if existing:
+            raise ValueError(f"Email {data.email} already registered")
+        {%- endif %}
+
+        {%- if 'price' in entity.fields | map(attribute='name') %}
+        # Validate price
+        if data.price <= 0:
+            raise ValueError("Price must be greater than 0")
+        {%- endif %}
+
+        {%- if 'stock' in entity.fields | map(attribute='name') %}
+        # Validate stock
+        if data.stock < 0:
+            raise ValueError("Stock cannot be negative")
+        {%- endif %}
+
+        result = await self.repository.create_{{ entity.name | lower }}(data)
+        logger.info(f"Created {{ entity.name | lower }}", id=str(result.id))
+
+        return {{ entity.name }}Response.model_validate(result)
+
+    async def get_{{ entity.name | lower }}(self, id: UUID) -> Optional[{{ entity.name }}Response]:
+        """
+        Get a {{ entity.name | lower }} by ID.
+
+        Args:
+            id: {{ entity.name }} ID
+
+        Returns:
+            {{ entity.name }} if found, None otherwise
+        """
+        result = await self.repository.get(id)
+        if result:
+            return {{ entity.name }}Response.model_validate(result)
+        return None
+
+    async def list_{{ entity.plural | lower }}(self, page: int = 1, size: int = 10) -> {{ entity.name }}ListResponse:
+        """
+        List {{ entity.plural | lower }} with pagination.
+
+        Args:
+            page: Page number (1-indexed)
+            size: Items per page
+
+        Returns:
+            Paginated list of {{ entity.plural | lower }}
+        """
+        result = await self.list(page, size)
+
+        return {{ entity.name }}ListResponse(
+            items=[{{ entity.name }}Response.model_validate(item) for item in result["items"]],
+            total=result["total"],
+            page=result["page"],
+            size=result["size"]
+        )
+
+    async def update_{{ entity.name | lower }}(self, id: UUID, data: {{ entity.name }}Update) -> Optional[{{ entity.name }}Response]:
+        """
+        Update a {{ entity.name | lower }}.
+
+        Args:
+            id: {{ entity.name }} ID
+            data: Update data
+
+        Returns:
+            Updated {{ entity.name | lower }} if found, None otherwise
+        """
+        # Add update validation here
+        {%- if 'price' in entity.fields | map(attribute='name') %}
+        if data.price is not None and data.price <= 0:
+            raise ValueError("Price must be greater than 0")
+        {%- endif %}
+
+        {%- if 'stock' in entity.fields | map(attribute='name') %}
+        if data.stock is not None and data.stock < 0:
+            raise ValueError("Stock cannot be negative")
+        {%- endif %}
+
+        result = await self.repository.update_{{ entity.name | lower }}(id, data)
+        if result:
+            logger.info(f"Updated {{ entity.name | lower }}", id=str(id))
+            return {{ entity.name }}Response.model_validate(result)
+        return None
+
+    async def delete_{{ entity.name | lower }}(self, id: UUID) -> bool:
+        """
+        Delete a {{ entity.name | lower }}.
+
+        Args:
+            id: {{ entity.name }} ID
+
+        Returns:
+            True if deleted, False if not found
+        """
+        success = await self.repository.delete(id)
+        if success:
+            logger.info(f"Deleted {{ entity.name | lower }}", id=str(id))
+        return success
+
+    {%- if 'status' in entity.fields | map(attribute='name') %}
+
+    async def get_by_status(self, status: str) -> List[{{ entity.name }}Response]:
+        """Get all {{ entity.plural | lower }} with a specific status."""
+        results = await self.repository.get_by_status(status)
+        return [{{ entity.name }}Response.model_validate(r) for r in results]
+    {%- endif %}
+
+    {%- if 'name' in entity.fields | map(attribute='name') %}
+
+    async def search(self, query: str) -> List[{{ entity.name }}Response]:
+        """Search {{ entity.plural | lower }} by name."""
+        results = await self.repository.search_by_name(query)
+        return [{{ entity.name }}Response.model_validate(r) for r in results]
+    {%- endif %}
+{% endfor %}
