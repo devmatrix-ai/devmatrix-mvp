@@ -814,10 +814,42 @@ class RealE2ETest:
 
         try:
             # Extract spec as dict for BusinessLogicExtractor
+            # IMPORTANT: Format must match extractor expectations:
+            # - entities as LIST (not dict)
+            # - with "name" and "fields" keys (not "attributes")
             spec_dict = {
-                "entities": {e.name: {
-                    "attributes": {attr.name: {"type": attr.type} for attr in e.attributes} if hasattr(e, 'attributes') else {}
-                } for e in self.spec_requirements.entities},
+                "entities": [
+                    {
+                        "name": e.name,
+                        "fields": [
+                            {
+                                "name": attr.name,
+                                "type": attr.type,
+                                "required": getattr(attr, 'required', False),
+                                "unique": getattr(attr, 'unique', False),
+                                "is_primary_key": getattr(attr, 'is_primary_key', False),
+                                "minimum": getattr(attr, 'minimum', None),
+                                "maximum": getattr(attr, 'maximum', None),
+                                "min_length": getattr(attr, 'min_length', None),
+                                "max_length": getattr(attr, 'max_length', None),
+                                "allowed_values": getattr(attr, 'allowed_values', None)
+                            }
+                            for attr in (e.attributes if hasattr(e, 'attributes') else [])
+                        ]
+                    }
+                    for e in self.spec_requirements.entities
+                ],
+                "relationships": [
+                    {
+                        "from": getattr(r, 'from_entity', ''),
+                        "to": getattr(r, 'to_entity', ''),
+                        "type": getattr(r, 'relationship_type', 'one-to-many'),
+                        "foreign_key": getattr(r, 'foreign_key', None),
+                        "required": getattr(r, 'required', False),
+                        "cascade_delete": getattr(r, 'cascade_delete', False)
+                    }
+                    for r in (self.spec_requirements.relationships if hasattr(self.spec_requirements, 'relationships') else [])
+                ],
                 "endpoints": [{"method": ep.method, "path": ep.path} for ep in self.spec_requirements.endpoints],
                 "business_logic": [bl.description for bl in self.spec_requirements.business_logic] if hasattr(self.spec_requirements, 'business_logic') else []
             }
