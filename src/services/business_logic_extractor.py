@@ -305,6 +305,20 @@ Return ONLY the JSON array, no other text."""
                         error_message=f"{field_name} must be a valid decimal number"
                     ))
 
+                # String type validation (fallback for basic string fields)
+                if field_type == "string" and field_name not in ["description", "notes", "comment"]:
+                    # Already covered by more specific rules above
+                    pass
+                elif field_type == "string" and field_name in ["description", "notes", "comment", "comments", "text"]:
+                    # Generic string field - add basic string format validation
+                    rules.append(ValidationRule(
+                        entity=entity_name,
+                        attribute=field_name,
+                        type=ValidationType.FORMAT,
+                        condition="non-empty string",
+                        error_message=f"{field_name} must be a valid string"
+                    ))
+
                 # Range constraints from description
                 if "min" in field_desc or "maximum" in field_desc or "range" in field_desc:
                     rules.append(ValidationRule(
