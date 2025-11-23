@@ -9,10 +9,10 @@ from typing import List, Optional, Dict, Any
 from enum import Enum
 
 from src.services.graph_models import (
-    EntityRelationshipGraph,
     InferredValidation,
     RelationshipEdge
 )
+from src.services.entity_relationship_graph_builder import EntityRelationshipGraph
 from src.cognitive.ir.validation_model import ValidationRule, ValidationType
 
 
