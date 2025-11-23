@@ -78,6 +78,15 @@ from src.classification.requirements_classifier import RequirementsClassifier
 # ComplianceValidator for Phase 7 integration (Task Group 4.2)
 from src.validation.compliance_validator import ComplianceValidator, ComplianceValidationError
 
+# Validation Scaling Integration (Phase 1, 2, 3)
+try:
+    from src.services.business_logic_extractor import BusinessLogicExtractor
+    VALIDATION_SCALING_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: BusinessLogicExtractor not available: {e}")
+    VALIDATION_SCALING_AVAILABLE = False
+    BusinessLogicExtractor = None
+
 # Phase 6.5 Code Repair Integration (Task Group 3)
 from tests.e2e.adapters.test_result_adapter import TestResultAdapter
 
@@ -483,6 +492,12 @@ class RealE2ETest:
             complete_phase("Spec Ingestion", success=True) if PROGRESS_TRACKING_AVAILABLE else None
             display_progress() if PROGRESS_TRACKING_AVAILABLE else None
 
+            # Phase 1.5: Validation Scaling (NEW - Phase 1, 2, 3 validation extraction)
+            start_phase("Validation Scaling", substeps=3) if PROGRESS_TRACKING_AVAILABLE else None
+            await self._phase_1_5_validation_scaling()
+            complete_phase("Validation Scaling", success=True) if PROGRESS_TRACKING_AVAILABLE else None
+            display_progress() if PROGRESS_TRACKING_AVAILABLE else None
+
             # Phase 2: Requirements Analysis (UPDATED with RequirementsClassifier - Task Group 2.2)
             start_phase("Requirements Analysis", substeps=4) if PROGRESS_TRACKING_AVAILABLE else None
             await self._phase_2_requirements_analysis()
@@ -773,6 +788,115 @@ class RealE2ETest:
         # Precision metrics
         self.precision.total_operations += 1
         self.precision.successful_operations += 1
+
+    async def _phase_1_5_validation_scaling(self):
+        """
+        Phase 1.5: Validation Scaling - Multi-phase validation extraction
+
+        NEW INTEGRATION: Validation Scaling Project
+        - Phase 1: Pattern-based extraction (50+ YAML patterns)
+        - Phase 2: LLM-based extraction (3 specialized prompts)
+        - Phase 3: Graph-based inference (entity relationships) [PLANNED]
+
+        Extracts ALL validations from spec:
+        - PRESENCE, FORMAT, RANGE, UNIQUENESS validations
+        - RELATIONSHIP, STATUS_TRANSITION, WORKFLOW_CONSTRAINT validations
+        - STOCK_CONSTRAINT and cross-entity validations
+        """
+        self.metrics_collector.start_phase("validation_scaling")
+        self._sample_performance()
+        print("\n✨ Phase 1.5: Validation Scaling (Pattern + LLM + Graph)")
+
+        if not VALIDATION_SCALING_AVAILABLE:
+            print("    ⚠️  BusinessLogicExtractor not available - skipping validation scaling")
+            self.metrics_collector.complete_phase("validation_scaling")
+            return
+
+        try:
+            # Extract spec as dict for BusinessLogicExtractor
+            spec_dict = {
+                "entities": {e.name: {
+                    "attributes": {attr.name: {"type": attr.type} for attr in e.attributes} if hasattr(e, 'attributes') else {}
+                } for e in self.spec_requirements.entities},
+                "endpoints": [{"method": ep.method, "path": ep.path} for ep in self.spec_requirements.endpoints],
+                "business_logic": [bl.description for bl in self.spec_requirements.business_logic] if hasattr(self.spec_requirements, 'business_logic') else []
+            }
+
+            # Phase 1.5.1: Extract validations using BusinessLogicExtractor (all phases)
+            extractor = BusinessLogicExtractor()
+            with silent_logs():
+                validations = extractor.extract_validations(spec_dict)
+
+            # Track metrics
+            validation_types = {}
+            for validation in validations:
+                v_type = getattr(validation, 'type', 'UNKNOWN')
+                validation_types[v_type] = validation_types.get(v_type, 0) + 1
+
+            self.metrics_collector.add_checkpoint("validation_scaling", "CP-1.5.1: Validations extracted", {
+                "total_validations": len(validations),
+                "validation_types": validation_types
+            })
+
+            print(f"    - Total validations extracted: {len(validations)}")
+            for v_type, count in sorted(validation_types.items()):
+                print(f"      • {v_type}: {count}")
+
+            # Phase 1.5.2: Calculate coverage metrics
+            # Expected targets:
+            # Phase 1 (patterns): 45/62 = 73%
+            # Phase 2 (LLM): 60-62/62 = 97-100%
+            # Phase 3 (graph): 62/62 = 100%
+            expected_total = 62  # Standard benchmark
+            coverage_percent = (len(validations) / expected_total) * 100 if expected_total > 0 else 0
+
+            self.metrics_collector.add_checkpoint("validation_scaling", "CP-1.5.2: Coverage calculated", {
+                "detected": len(validations),
+                "expected": expected_total,
+                "coverage_percent": coverage_percent
+            })
+
+            print(f"    - Coverage: {len(validations)}/{expected_total} ({coverage_percent:.1f}%)")
+
+            # Phase 1.5.3: Analyze confidence scores
+            confidences = []
+            for validation in validations:
+                confidence = getattr(validation, 'confidence', 0.8)
+                confidences.append(confidence)
+
+            avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+            self.metrics_collector.add_checkpoint("validation_scaling", "CP-1.5.3: Confidence analyzed", {
+                "average_confidence": avg_confidence,
+                "min_confidence": min(confidences) if confidences else 0,
+                "max_confidence": max(confidences) if confidences else 1
+            })
+
+            print(f"    - Average confidence: {avg_confidence:.2f}")
+
+            # Store validations for downstream phases
+            self.validation_rules = validations
+
+            # Contract validation
+            phase_output = {
+                "total_validations": len(validations),
+                "coverage": coverage_percent,
+                "average_confidence": avg_confidence,
+                "validation_types": validation_types
+            }
+            is_valid = self.contract_validator.validate_phase_output("validation_scaling", phase_output)
+
+            self.metrics_collector.complete_phase("validation_scaling")
+            print(f"  ✅ Contract validation: {'PASSED' if is_valid else 'FAILED'}")
+
+            # Precision metrics
+            self.precision.total_operations += 1
+            self.precision.successful_operations += 1
+
+        except Exception as e:
+            print(f"    ❌ Validation scaling failed: {e}")
+            self.metrics_collector.add_checkpoint("validation_scaling", "CP-1.5.ERROR: Failed", {"error": str(e)})
+            self.metrics_collector.complete_phase("validation_scaling")
+            self.precision.total_operations += 1
 
     async def _phase_2_requirements_analysis(self):
         """
