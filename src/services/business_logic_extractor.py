@@ -719,3 +719,64 @@ class BusinessLogicExtractor:
         if pattern.endswith("*"):
             return value.startswith(pattern[:-1])
         return value == pattern
+
+    def extract_validations(self, spec: Dict[str, Any]) -> List[ValidationRule]:
+        """
+        Extract validations using all three phases.
+
+        Phase 1: Pattern-based extraction (50+ YAML patterns)
+        Phase 2: LLM-based extraction (3 specialized prompts)
+        Phase 3: Graph-based inference (entity relationships) [NEW]
+
+        Called from E2E tests to measure validation coverage.
+        """
+        # Extract using standard method (includes Phase 1+2)
+        validation_ir = self.extract_validation_rules(spec)
+        rules = validation_ir.rules
+
+        # Phase 3: Graph-based inference (NEW)
+        try:
+            graph_rules = self._extract_graph_rules(spec)
+            rules.extend(graph_rules)
+            logger.info(f"Phase 3 graph-based extraction: {len(graph_rules)} validations")
+        except Exception as e:
+            logger.warning(f"Graph-based extraction failed: {e}, continuing with Phase 1+2 rules")
+
+        # Final deduplication
+        rules = self._deduplicate_rules(rules)
+
+        return rules
+
+    def _extract_graph_rules(self, spec: Dict[str, Any]) -> List[ValidationRule]:
+        """
+        Extract validations from entity relationship graph (Phase 3).
+
+        NEW: Graph-based inference for relationship-dependent validations
+        """
+        try:
+            from src.services.entity_relationship_graph_builder import EntityRelationshipGraphBuilder
+            from src.services.constraint_inference_engine import ConstraintInferenceEngine
+        except ImportError:
+            logger.warning("Graph building libraries not available, skipping Phase 3")
+            return []
+
+        try:
+            # Build entity relationship graph
+            graph_builder = EntityRelationshipGraphBuilder(spec)
+            graph = graph_builder.build()
+
+            # Infer constraints from graph
+            inference_engine = ConstraintInferenceEngine(graph)
+            inferred_validations = inference_engine.infer_all_constraints()
+
+            # Convert to ValidationRule objects
+            rules = inference_engine.convert_to_validation_rules()
+
+            logger.info(f"Phase 3: Built graph with {graph.metrics.total_entities} entities, "
+                       f"inferred {len(rules)} validations")
+
+            return rules
+
+        except Exception as e:
+            logger.error(f"Phase 3 graph inference failed: {e}")
+            return []
