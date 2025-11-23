@@ -84,13 +84,47 @@ class BusinessLogicExtractor:
                 field_type = field.get("type")
                 constraints = field.get("constraints", {})
 
-                # Check for uniqueness constraints
-                if constraints.get("unique"):
+                # Check for required/presence constraints
+                if field.get("required") or constraints.get("required"):
+                    rules.append(ValidationRule(
+                        entity=entity_name,
+                        attribute=field_name,
+                        type=ValidationType.PRESENCE,
+                        error_message=f"{field_name} is required"
+                    ))
+
+                # Check for uniqueness constraints (both direct and nested)
+                if field.get("unique") or constraints.get("unique"):
                     rules.append(ValidationRule(
                         entity=entity_name,
                         attribute=field_name,
                         type=ValidationType.UNIQUENESS,
                         error_message=f"{field_name} must be unique"
+                    ))
+
+                # Check for range constraints (min/max length/value)
+                min_length = field.get("min_length") or constraints.get("min_length")
+                max_length = field.get("max_length") or constraints.get("max_length")
+                minimum = field.get("minimum") or constraints.get("minimum")
+                maximum = field.get("maximum") or constraints.get("maximum")
+
+                if min_length or max_length or minimum or maximum:
+                    condition_parts = []
+                    if min_length is not None:
+                        condition_parts.append(f"length >= {min_length}")
+                    if max_length is not None:
+                        condition_parts.append(f"length <= {max_length}")
+                    if minimum is not None:
+                        condition_parts.append(f"value >= {minimum}")
+                    if maximum is not None:
+                        condition_parts.append(f"value <= {maximum}")
+
+                    rules.append(ValidationRule(
+                        entity=entity_name,
+                        attribute=field_name,
+                        type=ValidationType.RANGE,
+                        condition=" AND ".join(condition_parts),
+                        error_message=f"{field_name} is out of valid range"
                     ))
 
                 # Check for foreign key constraints
@@ -211,7 +245,7 @@ Return ONLY the JSON array, no other text."""
                 field_desc = field.get("description", "").lower()
                 field_type = field.get("type", "").lower()
 
-                # Email validation
+                # Email validation (from name or description)
                 if "email" in field_name.lower() or "email" in field_desc:
                     rules.append(ValidationRule(
                         entity=entity_name,
@@ -241,8 +275,38 @@ Return ONLY the JSON array, no other text."""
                         error_message=f"{field_name} must be a valid phone number"
                     ))
 
+                # UUID validation for UUID types
+                if field_type == "uuid":
+                    rules.append(ValidationRule(
+                        entity=entity_name,
+                        attribute=field_name,
+                        type=ValidationType.FORMAT,
+                        condition="uuid v4 format",
+                        error_message=f"{field_name} must be a valid UUID"
+                    ))
+
+                # Datetime validation
+                if field_type == "datetime" or "timestamp" in field_name.lower():
+                    rules.append(ValidationRule(
+                        entity=entity_name,
+                        attribute=field_name,
+                        type=ValidationType.FORMAT,
+                        condition="ISO 8601 datetime format",
+                        error_message=f"{field_name} must be a valid datetime"
+                    ))
+
+                # Decimal/currency validation
+                if field_type == "decimal" or "price" in field_name.lower() or "amount" in field_name.lower():
+                    rules.append(ValidationRule(
+                        entity=entity_name,
+                        attribute=field_name,
+                        type=ValidationType.FORMAT,
+                        condition="decimal format with up to 2 decimal places",
+                        error_message=f"{field_name} must be a valid decimal number"
+                    ))
+
                 # Range constraints from description
-                if "min" in field_desc or "maximum" in field_desc:
+                if "min" in field_desc or "maximum" in field_desc or "range" in field_desc:
                     rules.append(ValidationRule(
                         entity=entity_name,
                         attribute=field_name,
