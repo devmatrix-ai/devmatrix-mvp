@@ -18,6 +18,7 @@ Comprehensive extraction of:
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from src.cognitive.ir.validation_model import ValidationRule, ValidationType, ValidationModelIR
+from src.services.llm_validation_extractor import LLMValidationExtractor
 import re
 import yaml
 import anthropic
@@ -44,16 +45,21 @@ class BusinessLogicExtractor:
         # Load validation patterns from YAML (Phase 1)
         self.yaml_patterns = self._load_yaml_patterns()
 
+        # Initialize LLM extractor (Phase 2)
+        self.llm_extractor = LLMValidationExtractor()
+
     def extract_validation_rules(self, spec: Dict[str, Any]) -> ValidationModelIR:
         """
         Extract ALL validation rules from specification.
-        Exhaustive 6-stage approach for comprehensive coverage:
+        Comprehensive 8-stage approach with Phase 2 aggressive LLM extraction:
         1. Entity field validation (constraints, types)
         2. Endpoint validation (request/response parameters)
         3. Field type inference (implicit validations)
         4. Constraint inference (CHECK, UNIQUE, FK, schema)
         5. Business rule extraction (explicit rules)
-        6. LLM-based extraction (comprehensive, flexible)
+        6. Pattern-based validation (Phase 1 - YAML patterns)
+        7. LLM-based extraction (Phase 2 - PRIMARY comprehensive extraction)
+        8. Deduplication
         """
         rules = []
 
@@ -87,19 +93,26 @@ class BusinessLogicExtractor:
         try:
             pattern_rules = self._extract_pattern_rules(spec)
             rules.extend(pattern_rules)
-            logger.info(f"Pattern-based extraction added {len(pattern_rules)} validations")
+            logger.info(f"Phase 1 pattern-based extraction: {len(pattern_rules)} validations")
         except Exception as e:
             logger.warning(f"Pattern-based extraction failed: {e}, continuing with LLM")
 
-        # Stage 7: Use LLM for comprehensive business logic extraction
+        # Stage 7: Use AGGRESSIVE LLM extraction (Phase 2 - PRIMARY extractor)
         try:
-            llm_rules = self._extract_with_llm(spec)
+            llm_rules = self.llm_extractor.extract_all_validations(spec)
             rules.extend(llm_rules)
+            logger.info(
+                f"Phase 2 LLM extraction: {len(llm_rules)} validations, "
+                f"{self.llm_extractor.total_tokens_used} tokens, "
+                f"{self.llm_extractor.total_api_calls} API calls"
+            )
         except Exception as e:
-            logger.warning(f"LLM extraction failed: {e}, continuing with pattern-based rules")
+            logger.error(f"LLM extraction failed: {e}, continuing with pattern-based rules only")
 
         # Stage 8: Deduplicate rules (same entity+attribute+type = duplicate)
+        initial_count = len(rules)
         rules = self._deduplicate_rules(rules)
+        logger.info(f"Deduplication: {initial_count} → {len(rules)} rules ({initial_count - len(rules)} duplicates removed)")
 
         return ValidationModelIR(rules=rules)
 
@@ -216,55 +229,6 @@ class BusinessLogicExtractor:
 
         return rules
 
-    def _extract_with_llm(self, spec: Dict[str, Any]) -> List[ValidationRule]:
-        """Use LLM to intelligently extract complex business logic rules."""
-        prompt = f"""Analyze this application specification and identify business logic validation rules.
-
-Specification:
-{self._spec_to_string(spec)}
-
-Return a JSON list of validation rules with this structure:
-[
-  {{
-    "entity": "EntityName",
-    "attribute": "field_name",
-    "type": "uniqueness|relationship|stock_constraint|status_transition|workflow_constraint",
-    "condition": "description or code condition",
-    "error_message": "user-friendly error message"
-  }}
-]
-
-Focus on:
-1. Unique constraints (email, username, etc.)
-2. Foreign key relationships (references to other entities)
-3. Inventory/stock constraints
-4. Status transition rules
-5. Workflow/process constraints
-
-Return ONLY the JSON array, no other text."""
-
-        try:
-            message = self.client.messages.create(
-                model=self.model,
-                max_tokens=1000,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
-            )
-
-            response_text = message.content[0].text
-            import json
-            rules_data = json.loads(response_text)
-
-            rules = []
-            for rule_data in rules_data:
-                rules.append(ValidationRule(**rule_data))
-
-            return rules
-        except Exception as e:
-            # If LLM extraction fails, return empty list
-            # The pattern-based extraction above already caught common cases
-            return []
 
     def _extract_from_field_descriptions(self, entities: List[Dict[str, Any]]) -> List[ValidationRule]:
         """Extract validation rules from field descriptions and names."""

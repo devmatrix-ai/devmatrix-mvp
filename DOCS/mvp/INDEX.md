@@ -51,21 +51,72 @@
   - Database operations
   - Deployment guide
 
-### Core Documentation
+## Complete Technical Documentation 📚
 
-#### Architecture & Design
-- **[COGNITIVE_ENGINE_ARCHITECTURE.md](COGNITIVE_ENGINE_ARCHITECTURE.md)** - System architecture and motor cognitivo
-- **[APPLICATION_IR.md](APPLICATION_IR.md)** - Application Intermediate Representation (now active in production)
-- **[ARCHITECTURE_DECISION.md](ARCHITECTURE_DECISION.md)** - Phase 3 cleanup completed
+### Real Pipeline Documentation (VERIFIED - 2025-11-23)
 
-#### Implementation & Features
-- **[E2E_PIPELINE.md](E2E_PIPELINE.md)** - End-to-end pipeline (10 phases)
+⭐ **[REAL_PIPELINE_ARCHITECTURE.md](REAL_PIPELINE_ARCHITECTURE.md)** - **10-PHASE REAL PIPELINE** (Source: tests/e2e/real_e2e_full_pipeline.py)
+  - Actual 10-phase pipeline (not 11)
+  - Markdown specification input format
+  - Verified component usage analysis
+  - Graceful degradation for optional services
+  - Complete data flow and integration
+
+### Pipeline Phases - Individual Documentation
+
+**Phase 1-10 Detailed Documentation:**
+- **[PHASE_1_SPEC_INGESTION.md](PHASE_1_SPEC_INGESTION.md)** - Parse Markdown specs into structured requirements
+- **[PHASE_2_REQUIREMENTS_ANALYSIS.md](PHASE_2_REQUIREMENTS_ANALYSIS.md)** - Classify requirements by domain/priority
+- **[PHASE_3_MULTIPASS_PLANNING.md](PHASE_3_MULTIPASS_PLANNING.md)** - Create 100+ task plan with execution waves
+- **[PHASE_4_ATOMIZATION.md](PHASE_4_ATOMIZATION.md)** - Break tasks into atomic units (~10 LOC each)
+- **[PHASE_5_DAG_CONSTRUCTION.md](PHASE_5_DAG_CONSTRUCTION.md)** - Build execution DAG with dependency validation
+- **[PHASE_6_CODE_GENERATION.md](PHASE_6_CODE_GENERATION.md)** - Generate production-ready Python code
+- **[PHASE_6_5_CODE_REPAIR.md](PHASE_6_5_CODE_REPAIR.md)** - Fix syntax errors and test failures (optional)
+- **[PHASE_7_VALIDATION.md](PHASE_7_VALIDATION.md)** - Validate code against original spec
+- **[PHASE_8_DEPLOYMENT.md](PHASE_8_DEPLOYMENT.md)** - Write validated code to disk
+- **[PHASE_9_HEALTH_VERIFICATION.md](PHASE_9_HEALTH_VERIFICATION.md)** - Verify deployed project health
+- **[PHASE_10_LEARNING.md](PHASE_10_LEARNING.md)** - Record execution and update patterns (optional)
+
+### Pipeline Components - Individual Documentation
+
+⭐ **[COMPONENTS_REFERENCE.md](COMPONENTS_REFERENCE.md)** - **COMPLETE COMPONENT GUIDE**
+
+- All components overview and interaction map
+- Data flow through components
+- Dependency graph and initialization status
+- Quick component selection guide
+
+**Core Components:**
+
+- **[COMPONENT_SPECPARSER.md](COMPONENT_SPECPARSER.md)** - Parse Markdown specifications into structured requirements
+- **[COMPONENT_REQUIREMENTSCLASSIFIER.md](COMPONENT_REQUIREMENTSCLASSIFIER.md)** - Classify requirements by domain and priority
+- **[COMPONENT_CODEGENERATIONSERVICE.md](COMPONENT_CODEGENERATIONSERVICE.md)** - Generate production-ready Python code (⚠️ ApplicationIRNormalizer required)
+- **[COMPONENT_COMPLIANCEVALIDATOR.md](COMPONENT_COMPLIANCEVALIDATOR.md)** - Validate generated code against specification
+
+**Optional Components:**
+
+- COMPONENT_MULTIPASSPLANNER.md - Create task plan with execution waves
+- COMPONENT_DAGBUILDER.md - Build execution DAG with dependency validation
+- COMPONENT_CODEREPAIRAGENT.md - Fix syntax errors and test failures
+- COMPONENT_PATTERNFEEDBACKINTEGRATION.md - Record execution feedback and promote patterns
+- COMPONENT_ERRORPATTERNSTORE.md - Store and retrieve error patterns
+- COMPONENT_PATTERNBANK.md - Centralized pattern repository
+
+### Core Architecture & Design
+
+- **[COGNITIVE_ENGINE_ARCHITECTURE.md](COGNITIVE_ENGINE_ARCHITECTURE.md)** - Cognitive engine design and multi-phase orchestration
+- **[APPLICATION_IR.md](APPLICATION_IR.md)** - Application Intermediate Representation (data model foundation)
+- **[E2E_PIPELINE.md](E2E_PIPELINE.md)** - End-to-end pipeline with corrected 11-phase sequence
+
+### Implementation & Features
+
 - **[LEARNING_LAYER_INTEGRATION.md](LEARNING_LAYER_INTEGRATION.md)** - Active learning system with DualValidator
-- **[BEHAVIOR_CODE_GENERATION.md](BEHAVIOR_CODE_GENERATION.md)** 🆕 - Workflow and state machine generation
-- **[PATTERN_LEARNING_GUIDE.md](PATTERN_LEARNING_GUIDE.md)** 🆕 - How the learning system works
+- **[BEHAVIOR_CODE_GENERATION.md](BEHAVIOR_CODE_GENERATION.md)** - Workflow and state machine generation
+- **[PATTERN_LEARNING_GUIDE.md](PATTERN_LEARNING_GUIDE.md)** - How the learning system works
 
-#### User Documentation
-- **[USER_GUIDE.md](USER_GUIDE.md)** - How to use DevMatrix
+### User Documentation
+
+- **[USER_GUIDE.md](USER_GUIDE.md)** - How to use the system
 
 ---
 
@@ -91,32 +142,40 @@
 
 ```
 DOCS/mvp/
-├── 00_MVP_MASTER_PLAN.md          ⭐ MVP Roadmap & Phase Breakdown
-├── DEVMATRIX_FINAL_STATUS.md      ⭐ System Status Overview
-├── INDEX.md                        ← You are here
+├── 00_MVP_MASTER_PLAN.md                  ⭐ MVP Roadmap & Phase Breakdown
+├── DEVMATRIX_FINAL_STATUS.md              ⭐ System Status Overview
+├── INDEX.md                                ← You are here
 │
-├── Phase 3: E2E Validation & Fixes (🔄 COMPLETE)
-│   ├── FINAL_E2E_VALIDATION_REPORT_2025-11-23.md   (99.6% compliance achieved)
-│   ├── E2E_ERROR_ANALYSIS_2025-11-23.md             (15 errors identified)
-│   ├── E2E_FIXES_APPLIED_2025-11-23.md              (4 critical fixes)
-│   └── LITERAL_FIELDS_CLEANUP_2025-11-23.md         (Constraint analysis)
+├── 🆕 Complete Technical Documentation (2025-11-23)
+│   ├── SYSTEM_ARCHITECTURE.md             ⭐ 11-phase pipeline + all layers
+│   ├── RAG_SYSTEM.md                      ⭐ Retrieval-augmented generation
+│   └── COMPONENTS_REFERENCE.md            ⭐ Complete component reference
 │
 ├── Core Architecture Documentation
 │   ├── COGNITIVE_ENGINE_ARCHITECTURE.md
 │   ├── APPLICATION_IR.md
-│   ├── ARCHITECTURE_DECISION.md
-│   ├── E2E_PIPELINE.md                 (10-phase pipeline)
+│   ├── E2E_PIPELINE.md                    (11-phase pipeline, corrected)
 │   └── LEARNING_LAYER_INTEGRATION.md
 │
 ├── Implementation Features
-│   ├── BEHAVIOR_CODE_GENERATION.md     🆕 (Workflows, state machines)
-│   └── PATTERN_LEARNING_GUIDE.md       🆕 (Learning system)
+│   ├── BEHAVIOR_CODE_GENERATION.md
+│   └── PATTERN_LEARNING_GUIDE.md
+│
+├── Phase 3: E2E Validation & Fixes (✅ COMPLETE)
+│   ├── FINAL_E2E_VALIDATION_REPORT_2025-11-23.md
+│   ├── E2E_ERROR_ANALYSIS_2025-11-23.md
+│   ├── E2E_FIXES_APPLIED_2025-11-23.md
+│   └── LITERAL_FIELDS_CLEANUP_2025-11-23.md
 │
 ├── User Documentation
 │   └── USER_GUIDE.md
 │
-└── OLD/ (Archived)
-    └── Historical documentation
+└── OLD/ (📦 Archived Reports & Analysis)
+    ├── ARCHITECTURE_DECISION.md
+    ├── BEHAVIOR_CODE_GENERATION.md
+    ├── COHERENCE_VALIDATION.md
+    ├── ... (18 other archived documents)
+    └── README.md (Archive index)
 ```
 
 ---

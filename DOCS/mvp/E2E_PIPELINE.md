@@ -234,21 +234,21 @@ generated_code_str = await code_generator.generate_from_requirements(
 
 ---
 
-### Phase 8: Deployment
+### Phase 7: Deployment
 **Purpose**: Write generated code to disk before repair phase.
 
 **Process**:
-1. **CP-8.1**: Create output directory structure
-2. **CP-8.2**: Write all generated files to disk
-3. **CP-8.3**: Set proper file permissions
+1. **CP-7.1**: Create output directory structure
+2. **CP-7.2**: Write all generated files to disk
+3. **CP-7.3**: Set proper file permissions
 
-**Critical Note**: Phase 8 runs **BEFORE** Phase 6.5 (Code Repair) because repair needs to read/modify files from disk.
+**Critical Note**: Phase 7 runs **BEFORE** Phase 8 (Code Repair) because repair needs to read/modify files from disk.
 
 **Output**: Files written to `tests/e2e/generated_apps/{spec_name}_{timestamp}/`
 
 ---
 
-### Phase 6.5: Code Repair (NEW)
+### Phase 8: Code Repair
 **Purpose**: Automatically fix code quality issues through iterative repair loop.
 
 **Components**:
@@ -257,20 +257,20 @@ generated_code_str = await code_generator.generate_from_requirements(
 - `ErrorPatternStore` ([src/services/error_pattern_store.py](../src/services/error_pattern_store.py))
 
 **Process**:
-1. **CP-6.5.1**: Run compliance pre-check
+1. **CP-8.1**: Run compliance pre-check
    - Validate entities and endpoints against spec
    - Calculate compliance score (0.0-1.0)
    - Skip repair if compliance ≥ 1.00 (perfect)
 
-2. **CP-6.5.2**: Initialize repair dependencies
+2. **CP-8.2**: Initialize repair dependencies
    - ErrorPatternStore (RAG for similar errors)
    - Repair configuration (max_iterations=3, precision_target=1.00)
 
-3. **CP-6.5.3**: Convert ComplianceReport to TestResult format
+3. **CP-8.3**: Convert ComplianceReport to TestResult format
    - Adapter pattern: ComplianceReport → List[TestResult]
    - Enables repair loop to process compliance failures
 
-4. **CP-6.5.4**: Execute repair loop (iterative)
+4. **CP-8.4**: Execute repair loop (iterative)
    - Step 1: Analyze failures from compliance report
    - Step 2: Search RAG for similar error patterns
    - Step 3: Generate repair proposal (LLM-based)
@@ -280,7 +280,7 @@ generated_code_str = await code_generator.generate_from_requirements(
    - Step 7: Check for regression (compliance decreased)
    - Step 8: Store repair attempt in ErrorPatternStore
 
-5. **CP-6.5.5**: Collect metrics
+5. **CP-8.5**: Collect metrics
    - Repair iterations executed
    - Tests fixed
    - Regressions detected
@@ -333,7 +333,7 @@ for iteration in range(max_iterations):
 
 ---
 
-### Phase 7: Validation
+### Phase 9: Validation
 **Purpose**: Comprehensive structural and semantic validation.
 
 **Components**:
@@ -342,25 +342,25 @@ for iteration in range(max_iterations):
 - `UUIDSerializationValidator` ([src/validation/uuid_serialization_validator.py](../src/validation/uuid_serialization_validator.py))
 
 **Process**:
-1. **CP-7.1**: File structure validation
+1. **CP-9.1**: File structure validation
    - Verify all expected files generated
    - Check directory structure
 
-2. **CP-7.2**: Syntax validation
+2. **CP-9.2**: Syntax validation
    - Python syntax check (`python -m py_compile`)
    - Import validation
 
-3. **CP-7.2.5**: Dependency order validation
+3. **CP-9.3**: Dependency order validation
    - Verify execution waves respect dependencies
    - Validate topological ordering
 
-4. **CP-7.3**: Semantic validation (ComplianceValidator)
+4. **CP-9.4**: Semantic validation (ComplianceValidator)
    - **Entity Validation**: Check all spec entities implemented
    - **Endpoint Validation**: Check all spec endpoints implemented
    - **Schema Validation**: Validate request/response schemas match spec
    - **Business Logic Validation**: Verify business rules implemented
 
-5. **CP-7.4**: UUID Serialization validation
+5. **CP-9.5**: UUID Serialization validation
    - Detect UUID serialization issues (e.g., `UUID()` instead of `UUID4`)
    - Auto-repair if issues found
    - Re-validate after repair
@@ -394,14 +394,14 @@ for iteration in range(max_iterations):
 
 ---
 
-### Phase 9: Health Verification
+### Phase 10: Health Verification
 **Purpose**: Verify generated application can start and respond.
 
 **Process**:
-1. **CP-9.1**: Import application module
-2. **CP-9.2**: Check FastAPI app instantiation
-3. **CP-9.3**: Verify routes registered
-4. **CP-9.4**: Test basic health endpoint (if available)
+1. **CP-10.1**: Import application module
+2. **CP-10.2**: Check FastAPI app instantiation
+3. **CP-10.3**: Verify routes registered
+4. **CP-10.4**: Test basic health endpoint (if available)
 
 **Health Checks**:
 - Application imports without errors
@@ -411,17 +411,17 @@ for iteration in range(max_iterations):
 
 ---
 
-### Phase 10: Learning
+### Phase 11: Learning
 **Purpose**: Store successful patterns for future reuse.
 
 **Component**: `PatternFeedbackIntegration` ([src/cognitive/patterns/pattern_feedback_integration.py](../src/cognitive/patterns/pattern_feedback_integration.py))
 
 **Process**:
-1. **CP-10.1**: Extract patterns from successful code
-2. **CP-10.2**: Calculate pattern quality scores
-3. **CP-10.3**: Store patterns in PatternBank
-4. **CP-10.4**: Update RAG embeddings (Qdrant)
-5. **CP-10.5**: Store success metadata in Neo4j
+1. **CP-11.1**: Extract patterns from successful code
+2. **CP-11.2**: Calculate pattern quality scores
+3. **CP-11.3**: Store patterns in PatternBank
+4. **CP-11.4**: Update RAG embeddings (Qdrant)
+5. **CP-11.5**: Store success metadata in Neo4j
 
 **Learning Metrics**:
 - Patterns extracted
