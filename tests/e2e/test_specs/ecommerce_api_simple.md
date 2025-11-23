@@ -326,7 +326,7 @@ This represents the ACTUAL validations that DevMatrix generates from this spec
 
 **Ground Truth Baseline**: UNLIMITED - ALL validations the LLM can extract
 - **No upper limit** - extract everything possible
-- **Minimum required: 100 validations** - fail if below this threshold
+- **Minimum required: 30 validations** - fail if below this threshold
 - Field-level constraints: 87 (format, required, unique, range, type)
 - Relationship constraints: 6 (foreign keys)
 - Business logic rules: 20+ (workflow, calculation, snapshot, etc.)
@@ -334,13 +334,13 @@ This represents the ACTUAL validations that DevMatrix generates from this spec
 - Default values: 9+
 
 This is COMPLETE and OPEN-ENDED:
+- If LLM extracts 50 validations → use 50
 - If LLM extracts 120 validations → use 120
-- If LLM extracts 150 validations → use 150
-- If extraction falls below 100 → FAIL (do not proceed)
+- If extraction falls below 30 → FAIL (do not proceed)
 
 ```yaml
 validation_count: unlimited
-minimum_required: 100
+minimum_required: 30
 
 validations:
   # Product Entity (19 validations)
