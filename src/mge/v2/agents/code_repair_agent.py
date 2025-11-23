@@ -631,7 +631,7 @@ from datetime import datetime, timezone
                         return False
 
                 # Format 4: Keywords without values
-                elif constraint_str.lower().replace(' ', '_') in ['required', 'uuid_format', 'email_format', 'enum']:
+                elif constraint_str.lower().replace(' ', '_') in ['required', 'unique', 'uuid_format', 'email_format', 'enum']:
                     constraint_normalized = constraint_str.lower().replace(' ', '_')
 
                     if constraint_normalized == 'uuid_format':
@@ -650,6 +650,12 @@ from datetime import datetime, timezone
                         constraint_type = 'required'
                         constraint_value = True
                         logger.info(f"Parsed GT validation '{validation_str}' → {entity_name}.{field_name} required")
+
+                    elif constraint_normalized == 'unique':
+                        # For 'unique', mark field as unique constraint
+                        constraint_type = 'unique'
+                        constraint_value = True
+                        logger.info(f"Parsed GT validation '{validation_str}' → {entity_name}.{field_name} unique")
 
                     elif constraint_normalized == 'enum':
                         # Enum without values - can't implement without knowing allowed values

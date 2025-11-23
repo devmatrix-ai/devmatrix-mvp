@@ -81,11 +81,14 @@ from src.validation.compliance_validator import ComplianceValidator, ComplianceV
 # Validation Scaling Integration (Phase 1, 2, 3)
 try:
     from src.services.business_logic_extractor import BusinessLogicExtractor
+    from src.services.llm_spec_normalizer import LLMSpecNormalizer, HybridSpecNormalizer
     VALIDATION_SCALING_AVAILABLE = True
 except ImportError as e:
     print(f"Warning: BusinessLogicExtractor not available: {e}")
     VALIDATION_SCALING_AVAILABLE = False
     BusinessLogicExtractor = None
+    LLMSpecNormalizer = None
+    HybridSpecNormalizer = None
 
 # Phase 6.5 Code Repair Integration (Task Group 3)
 from tests.e2e.adapters.test_result_adapter import TestResultAdapter
@@ -813,11 +816,78 @@ class RealE2ETest:
             return
 
         try:
-            # Extract spec as dict for BusinessLogicExtractor
-            # IMPORTANT: Format must match extractor expectations:
-            # - entities as LIST (not dict)
-            # - with "name" and "fields" keys (not "attributes")
-            spec_dict = {
+            # ===========================================================================
+            # TESTING: Uncomment ONE of the following options to test:
+            # ===========================================================================
+            # OPTION 1: LLM NORMALIZATION ONLY (no fallback)
+            # Uncomment this to test LLM alone
+            # ===========================================================================
+            USE_LLM_ONLY = True  # ✅ SELECTED APPROACH: LLM Normalization
+            if HybridSpecNormalizer and USE_LLM_ONLY:
+                print(f"    - Using OPTION 1: LLM NORMALIZATION (Selected)")
+                try:
+                    normalizer = LLMSpecNormalizer()  # NO fallback
+                    print(f"    - Normalizing with LLM...")
+                    normalized_spec = normalizer.normalize(self.spec_content)
+                    spec_dict = normalized_spec
+                    print(f"    - ✅ LLM normalization succeeded ({len(spec_dict.get('entities', []))} entities)")
+                except Exception as e:
+                    print(f"    - ❌ LLM normalization FAILED: {e}")
+                    spec_dict = None
+
+            # ===========================================================================
+            # OPTION 2: JSON FORMAL ONLY (no normalization, no LLM)
+            # Uncomment this to test JSON formal spec directly
+            # ===========================================================================
+            USE_JSON_FORMAL_ONLY = False  # DISABLED - now testing parsed spec baseline
+            if USE_JSON_FORMAL_ONLY:
+                print(f"    - Testing OPTION 2: JSON FORMAL ONLY")
+                formal_path = Path(self.spec_file).parent / "ecommerce_api_formal.json"
+                if formal_path.exists():
+                    with open(formal_path) as f:
+                        spec_dict = json.load(f)
+                    print(f"    - ✅ Loaded formal JSON spec ({len(spec_dict.get('entities', []))} entities)")
+                else:
+                    spec_dict = None
+
+            # ===========================================================================
+            # OPTION 3: HYBRID (DEFAULT - LLM with fallback)
+            # This is the default approach
+            # ===========================================================================
+            USE_HYBRID = False  # TEMPORARILY DISABLED - test parsed spec first
+
+            # Only initialize spec_dict if no option was selected above
+            if not USE_LLM_ONLY and not USE_JSON_FORMAL_ONLY:
+                spec_dict = None
+
+            if USE_HYBRID and HybridSpecNormalizer:
+                try:
+                    # Load fallback spec (ecommerce_api_formal.json)
+                    fallback_path = Path(self.spec_file).parent / "ecommerce_api_formal.json"
+                    if fallback_path.exists():
+                        with open(fallback_path) as f:
+                            fallback_spec = json.load(f)
+                        print(f"    - Fallback spec loaded: {fallback_path.name}")
+
+                    # Create normalizer with fallback
+                    normalizer = HybridSpecNormalizer(fallback_spec=fallback_spec, max_retries=1)
+
+                    # Try to normalize markdown spec to formal JSON
+                    print(f"    - Normalizing spec with HybridSpecNormalizer...")
+                    normalized_spec = normalizer.normalize(self.spec_content)
+                    spec_dict = normalized_spec
+                    print(f"    - ✅ Spec normalized successfully ({len(spec_dict.get('entities', []))} entities)")
+
+                except Exception as e:
+                    print(f"    - ⚠️  Spec normalization failed: {e}")
+                    spec_dict = None
+
+            # ===========================================================================
+            # If no option selected or all failed, use parsed spec (fallback)
+            # ===========================================================================
+            if not spec_dict:
+                print(f"    - Using parsed spec (fallback)")
+                spec_dict = {
                 "entities": [
                     {
                         "name": e.name,
@@ -855,9 +925,35 @@ class RealE2ETest:
             }
 
             # Phase 1.5.1: Extract validations using BusinessLogicExtractor (all phases)
+            print(f"    - Extracting validations from spec ({len(spec_dict.get('entities', []))} entities)...")
             extractor = BusinessLogicExtractor()
-            with silent_logs():
-                validations = extractor.extract_validations(spec_dict)
+
+            try:
+                # Extract with timeout protection
+                import signal
+
+                def timeout_handler(signum, frame):
+                    raise TimeoutError("Validation extraction timed out after 30 seconds")
+
+                # Set timeout of 30 seconds
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(30)
+
+                with silent_logs():
+                    validations = extractor.extract_validations(spec_dict)
+
+                # Cancel timeout
+                signal.alarm(0)
+
+                print(f"    - ✅ Extraction complete")
+            except TimeoutError as e:
+                print(f"    - ⚠️  Extraction TIMEOUT: {e}")
+                validations = []
+            except Exception as e:
+                print(f"    - ⚠️  Extraction ERROR: {e}")
+                import traceback
+                traceback.print_exc()
+                validations = []
 
             # Track metrics
             validation_types = {}
