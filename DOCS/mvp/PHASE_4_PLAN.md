@@ -25,8 +25,8 @@ Phase 4 focuses on transforming the validated MVP (99.6% compliance) into a prod
 
 | Área | Entregas | Criticality |
 |---|---|---|
-| 📈 **Monitoring** | Prometheus + Grafana operacional | MUST |
 | 💼 **Business Logic** | 5 constraints críticos validados | MUST |
+| 📈 **Monitoring** | Prometheus + Grafana operacional | MUST |
 | 📚 **Docs** | OpenAPI 3.0 + runbooks completos | MUST |
 
 #### 🟡 DELAYED - Implementación Posterior (Post-Phase 4)
