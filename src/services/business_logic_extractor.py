@@ -13,10 +13,13 @@ Comprehensive extraction of:
 - Range constraints (min/max)
 - Required fields and data types
 - Business rule patterns from spec text
+- Pattern-based validation (Phase 1)
 """
 from typing import List, Dict, Any, Optional
+from pathlib import Path
 from src.cognitive.ir.validation_model import ValidationRule, ValidationType, ValidationModelIR
 import re
+import yaml
 import anthropic
 import logging
 
@@ -37,6 +40,9 @@ class BusinessLogicExtractor:
             'required': re.compile(r'\brequired\b|\bmandatory\b', re.IGNORECASE),
             'reference': re.compile(r'_id$|foreign key|references', re.IGNORECASE),
         }
+
+        # Load validation patterns from YAML (Phase 1)
+        self.yaml_patterns = self._load_yaml_patterns()
 
     def extract_validation_rules(self, spec: Dict[str, Any]) -> ValidationModelIR:
         """
@@ -76,6 +82,14 @@ class BusinessLogicExtractor:
         # Stage 6: Extract explicit business rules
         if "validation_rules" in spec or "business_rules" in spec:
             rules.extend(self._extract_business_rules(spec))
+
+        # Stage 6.5: Extract pattern-based validation (Phase 1 - Pattern Rule System)
+        try:
+            pattern_rules = self._extract_pattern_rules(spec)
+            rules.extend(pattern_rules)
+            logger.info(f"Pattern-based extraction added {len(pattern_rules)} validations")
+        except Exception as e:
+            logger.warning(f"Pattern-based extraction failed: {e}, continuing with LLM")
 
         # Stage 7: Use LLM for comprehensive business logic extraction
         try:
@@ -556,3 +570,188 @@ Return ONLY the JSON array, no other text."""
             return resource_name.capitalize()
 
         return "Endpoint"
+
+    def _load_yaml_patterns(self) -> Dict[str, Any]:
+        """Load validation patterns from YAML file (Phase 1)."""
+        try:
+            patterns_file = Path(__file__).parent / "validation_patterns.yaml"
+            if patterns_file.exists():
+                with open(patterns_file, 'r') as f:
+                    patterns = yaml.safe_load(f) or {}
+                logger.info(f"Loaded validation patterns from {patterns_file}")
+                return patterns
+            else:
+                logger.warning(f"Patterns file not found: {patterns_file}")
+                return {}
+        except Exception as e:
+            logger.error(f"Failed to load YAML patterns: {e}")
+            return {}
+
+    def _extract_pattern_rules(self, spec: Dict[str, Any]) -> List[ValidationRule]:
+        """
+        Extract validation rules using pattern matching from validation_patterns.yaml.
+        Phase 1: Pattern-based extraction for 30-40% coverage improvement.
+        """
+        rules = []
+        if not self.yaml_patterns:
+            return rules
+
+        entities = spec.get("entities", [])
+        endpoints = spec.get("endpoints", [])
+
+        # Apply type-based patterns
+        type_patterns = self.yaml_patterns.get("type_patterns", {})
+        for entity in entities:
+            entity_name = entity.get("name", "")
+            for field in entity.get("fields", []):
+                field_name = field.get("name", "")
+                field_type = field.get("type", "")
+
+                # Match against type patterns
+                if field_type in type_patterns:
+                    type_config = type_patterns[field_type]
+                    for validation in type_config.get("validations", []):
+                        # Check applies_to_when conditions
+                        applies_to_when = validation.get("applies_to_when", [])
+                        if applies_to_when:
+                            # Check if field has any of the required conditions
+                            has_condition = False
+                            for condition in applies_to_when:
+                                if (field.get(condition) or
+                                    field.get("constraints", {}).get(condition)):
+                                    has_condition = True
+                                    break
+                            if not has_condition:
+                                continue
+
+                        # Check applies_to field name patterns
+                        applies_to = validation.get("applies_to", [])
+                        if applies_to:
+                            # Check if field name matches any pattern
+                            name_matches = False
+                            for pattern in applies_to:
+                                if self._matches_pattern(field_name, pattern):
+                                    name_matches = True
+                                    break
+                            if not name_matches and applies_to_when:
+                                # If applies_to specified but no match, skip
+                                continue
+
+                        # Create validation rule
+                        val_type = validation.get("type", "")
+                        error_msg = validation.get("error_message", "").format(
+                            attribute=field_name,
+                            entity=entity_name
+                        )
+
+                        try:
+                            rule = ValidationRule(
+                                entity=entity_name,
+                                attribute=field_name,
+                                type=ValidationType[val_type],
+                                condition=validation.get("condition", ""),
+                                error_message=error_msg
+                            )
+                            rules.append(rule)
+                        except (KeyError, ValueError) as e:
+                            logger.debug(f"Failed to create rule: {e}")
+
+        # Apply semantic patterns
+        semantic_patterns = self.yaml_patterns.get("semantic_patterns", {})
+        for entity in entities:
+            entity_name = entity.get("name", "")
+            for field in entity.get("fields", []):
+                field_name = field.get("name", "")
+
+                for semantic_name, semantic_config in semantic_patterns.items():
+                    pattern = semantic_config.get("pattern", "")
+                    if not pattern:
+                        continue
+
+                    # Match field name against semantic pattern
+                    if not re.search(pattern, field_name, re.IGNORECASE):
+                        continue
+
+                    # Apply validations for this semantic pattern
+                    for validation in semantic_config.get("validations", []):
+                        val_type = validation.get("type", "")
+                        error_msg = validation.get("error_message", "").format(
+                            attribute=field_name
+                        )
+
+                        try:
+                            rule = ValidationRule(
+                                entity=entity_name,
+                                attribute=field_name,
+                                type=ValidationType[val_type],
+                                condition=validation.get("condition", ""),
+                                error_message=error_msg
+                            )
+                            rules.append(rule)
+                        except (KeyError, ValueError) as e:
+                            logger.debug(f"Failed to create semantic rule: {e}")
+
+        # Apply endpoint patterns
+        endpoint_patterns = self.yaml_patterns.get("endpoint_patterns", {})
+        for endpoint in endpoints:
+            method = endpoint.get("method", "").upper()
+            if method not in endpoint_patterns:
+                continue
+
+            path = endpoint.get("path", "")
+            endpoint_config = endpoint_patterns[method]
+            path_patterns = endpoint_config.get("path_patterns", [])
+
+            # Check if endpoint path matches pattern
+            path_matches = False
+            for path_pattern in path_patterns:
+                if re.match(path_pattern, path):
+                    path_matches = True
+                    break
+
+            if not path_matches:
+                continue
+
+            # Apply validations for this endpoint method
+            for validation in endpoint_config.get("validations", []):
+                attribute = validation.get("attribute", "")
+                # Extract ID parameter from path if present
+                id_param_match = re.search(r'\{([^}]+)\}', path)
+                id_param = id_param_match.group(1) if id_param_match else "id"
+
+                # Replace placeholders
+                attribute = attribute.replace("{id_param}", id_param)
+                attribute = attribute.replace("{method}", method)
+                attribute = attribute.replace("{path}", path)
+
+                error_msg = validation.get("error_message", "").format(
+                    method=method,
+                    path=path,
+                    id_param=id_param
+                )
+
+                val_type = validation.get("type", "")
+                try:
+                    rule = ValidationRule(
+                        entity=f"Endpoint:{method}",
+                        attribute=attribute,
+                        type=ValidationType[val_type],
+                        condition=validation.get("condition", ""),
+                        error_message=error_msg
+                    )
+                    rules.append(rule)
+                except (KeyError, ValueError) as e:
+                    logger.debug(f"Failed to create endpoint rule: {e}")
+
+        logger.info(f"Pattern-based extraction found {len(rules)} validation rules")
+        return rules
+
+    def _matches_pattern(self, value: str, pattern: str) -> bool:
+        """Check if value matches a pattern (supports wildcards)."""
+        if pattern == "*":
+            return True
+        if pattern.startswith("*"):
+            return value.endswith(pattern[1:])
+        if pattern.endswith("*"):
+            return value.startswith(pattern[:-1])
+        return value == pattern

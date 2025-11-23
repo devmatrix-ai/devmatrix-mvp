@@ -1,0 +1,548 @@
+# Validation Patterns Library
+# Exhaustive patterns for automatic validation type detection
+# Phase 1: Pattern-based validation extraction for 30-40% coverage improvement
+
+# ==============================================================================
+# TYPE-BASED PATTERNS
+# ==============================================================================
+# These patterns apply based on field data type
+
+type_patterns:
+  UUID:
+    description: "UUID type field patterns"
+    validations:
+      - type: "FORMAT"
+        condition: "uuid"
+        error_message: "{attribute} must be a valid UUID (RFC 4122)"
+        confidence: 0.95
+        applies_to: ["id", "ID", "*_id", "*Id", "uuid", "UUID"]
+
+      - type: "PRESENCE"
+        error_message: "{attribute} UUID is required"
+        confidence: 0.90
+        applies_to_when: ["required", "primary_key", "not_null"]
+
+  String:
+    description: "String type field patterns"
+    validations:
+      - type: "FORMAT"
+        condition: "non_empty"
+        error_message: "{attribute} cannot be empty"
+        confidence: 0.85
+        applies_to_when: ["required"]
+
+      - type: "RANGE"
+        condition: "length"
+        error_message: "{attribute} must be between {min_length} and {max_length} characters"
+        confidence: 0.90
+        applies_to_when: ["min_length", "max_length"]
+
+      - type: "PRESENCE"
+        error_message: "{attribute} is required"
+        confidence: 0.90
+        applies_to_when: ["required", "not_null"]
+
+  Integer:
+    description: "Integer type field patterns"
+    validations:
+      - type: "RANGE"
+        condition: "numeric"
+        error_message: "{attribute} must be between {minimum} and {maximum}"
+        confidence: 0.90
+        applies_to_when: ["minimum", "maximum"]
+
+      - type: "PRESENCE"
+        error_message: "{attribute} is required"
+        confidence: 0.90
+        applies_to_when: ["required", "not_null"]
+
+  Decimal:
+    description: "Decimal/Float type field patterns"
+    validations:
+      - type: "RANGE"
+        condition: "numeric_precision"
+        error_message: "{attribute} must be a valid decimal with correct precision"
+        confidence: 0.85
+        applies_to_when: ["precision", "scale"]
+
+      - type: "PRESENCE"
+        error_message: "{attribute} is required"
+        confidence: 0.90
+        applies_to_when: ["required", "not_null"]
+
+  DateTime:
+    description: "DateTime type field patterns"
+    validations:
+      - type: "FORMAT"
+        condition: "iso8601_datetime"
+        error_message: "{attribute} must be a valid ISO 8601 datetime"
+        confidence: 0.90
+        applies_to: ["created_at", "updated_at", "*_at", "timestamp", "date"]
+
+      - type: "PRESENCE"
+        error_message: "{attribute} is required"
+        confidence: 0.90
+        applies_to_when: ["required", "not_null"]
+
+  Boolean:
+    description: "Boolean type field patterns"
+    validations:
+      - type: "FORMAT"
+        condition: "boolean"
+        error_message: "{attribute} must be true or false"
+        confidence: 0.95
+        applies_to: ["is_*", "has_*", "active", "enabled", "archived"]
+
+      - type: "PRESENCE"
+        error_message: "{attribute} is required"
+        confidence: 0.90
+        applies_to_when: ["required", "not_null"]
+
+# ==============================================================================
+# SEMANTIC PATTERNS
+# ==============================================================================
+# These patterns apply based on field name semantics
+
+semantic_patterns:
+  email:
+    pattern: "(?:email|mail|e_mail)"
+    description: "Email address field"
+    validations:
+      - type: "FORMAT"
+        condition: "email"
+        error_message: "{attribute} must be a valid email address"
+        confidence: 0.95
+
+      - type: "PRESENCE"
+        error_message: "{attribute} is required"
+        confidence: 0.90
+
+      - type: "UNIQUENESS"
+        error_message: "{attribute} must be unique"
+        confidence: 0.85
+
+  password:
+    pattern: "(?:password|pwd|pass)"
+    description: "Password field"
+    validations:
+      - type: "FORMAT"
+        condition: "strong_password"
+        error_message: "{attribute} must be at least 8 characters with uppercase, lowercase, and numbers"
+        confidence: 0.90
+
+      - type: "PRESENCE"
+        error_message: "{attribute} is required"
+        confidence: 0.95
+
+      - type: "RANGE"
+        condition: "length"
+        error_message: "{attribute} must be between 8 and 128 characters"
+        confidence: 0.90
+
+  phone:
+    pattern: "(?:phone|telephone|mobile|cell)"
+    description: "Phone number field"
+    validations:
+      - type: "FORMAT"
+        condition: "phone"
+        error_message: "{attribute} must be a valid phone number"
+        confidence: 0.85
+
+      - type: "PRESENCE"
+        error_message: "{attribute} is required"
+        confidence: 0.85
+
+  url:
+    pattern: "(?:url|website|link|homepage)"
+    description: "URL field"
+    validations:
+      - type: "FORMAT"
+        condition: "url"
+        error_message: "{attribute} must be a valid URL"
+        confidence: 0.90
+
+  status:
+    pattern: "(?:status|state|stage|mode)"
+    description: "Status/state field with enum values"
+    validations:
+      - type: "PRESENCE"
+        error_message: "{attribute} status is required"
+        confidence: 0.95
+
+      - type: "FORMAT"
+        condition: "enum"
+        error_message: "{attribute} must be one of the allowed values"
+        confidence: 0.90
+
+  quantity:
+    pattern: "(?:quantity|count|amount|stock|inventory|qty)"
+    description: "Quantity/stock field"
+    validations:
+      - type: "PRESENCE"
+        error_message: "{attribute} is required"
+        confidence: 0.95
+
+      - type: "RANGE"
+        condition: "non_negative"
+        error_message: "{attribute} must be greater than or equal to 0"
+        confidence: 0.95
+
+      - type: "STOCK_CONSTRAINT"
+        error_message: "{attribute} quantity cannot exceed available stock"
+        confidence: 0.85
+
+  price:
+    pattern: "(?:price|cost|amount|rate|fee)"
+    description: "Price/monetary field"
+    validations:
+      - type: "PRESENCE"
+        error_message: "{attribute} is required"
+        confidence: 0.95
+
+      - type: "RANGE"
+        condition: "positive"
+        error_message: "{attribute} must be greater than 0"
+        confidence: 0.95
+
+      - type: "FORMAT"
+        condition: "decimal"
+        error_message: "{attribute} must be a valid decimal with 2 decimal places"
+        confidence: 0.90
+
+  id:
+    pattern: "^id$|_id$|Id$|ID$"
+    description: "Identifier field"
+    validations:
+      - type: "UNIQUENESS"
+        error_message: "{attribute} must be unique"
+        confidence: 0.95
+
+      - type: "PRESENCE"
+        error_message: "{attribute} is required"
+        confidence: 0.95
+
+# ==============================================================================
+# ENDPOINT PATTERNS
+# ==============================================================================
+# These patterns apply based on HTTP endpoint characteristics
+
+endpoint_patterns:
+  POST:
+    description: "POST request patterns (create operations)"
+    path_patterns:
+      - "^/api/v[0-9]+/[^/]+$"  # /api/v1/resources
+    validations:
+      - attribute: "body"
+        type: "PRESENCE"
+        error_message: "Request body is required for {method} {path}"
+        confidence: 0.95
+
+      - attribute: "body"
+        type: "FORMAT"
+        condition: "valid_json"
+        error_message: "Request body must be valid JSON"
+        confidence: 0.90
+
+  GET:
+    description: "GET request patterns (read operations)"
+    path_patterns:
+      - "^/api/v[0-9]+/[^/]+/\\{[^}]+\\}$"  # /api/v1/resources/{id}
+    validations:
+      - attribute: "{id_param}"
+        type: "PRESENCE"
+        error_message: "ID parameter is required"
+        confidence: 0.95
+
+      - attribute: "{id_param}"
+        type: "FORMAT"
+        condition: "uuid"
+        error_message: "ID parameter must be a valid UUID"
+        confidence: 0.90
+
+  PUT:
+    description: "PUT request patterns (update operations)"
+    path_patterns:
+      - "^/api/v[0-9]+/[^/]+/\\{[^}]+\\}$"  # /api/v1/resources/{id}
+    validations:
+      - attribute: "{id_param}"
+        type: "PRESENCE"
+        error_message: "ID parameter is required"
+        confidence: 0.95
+
+      - attribute: "body"
+        type: "PRESENCE"
+        error_message: "Request body is required for {method} {path}"
+        confidence: 0.95
+
+  DELETE:
+    description: "DELETE request patterns (delete operations)"
+    path_patterns:
+      - "^/api/v[0-9]+/[^/]+/\\{[^}]+\\}$"  # /api/v1/resources/{id}
+    validations:
+      - attribute: "{id_param}"
+        type: "PRESENCE"
+        error_message: "ID parameter is required"
+        confidence: 0.95
+
+      - attribute: "{id_param}"
+        type: "FORMAT"
+        condition: "uuid"
+        error_message: "ID parameter must be a valid UUID"
+        confidence: 0.90
+
+# ==============================================================================
+# CONSTRAINT PATTERNS
+# ==============================================================================
+# These patterns apply based on field constraints
+
+constraint_patterns:
+  unique:
+    description: "Unique constraint patterns"
+    validates: "UNIQUENESS"
+    applies_to:
+      - "email"
+      - "username"
+      - "*_code"
+      - "handle"
+      - "slug"
+    error_message: "{attribute} must be unique"
+    confidence: 0.95
+
+  not_null:
+    description: "NOT NULL constraint patterns"
+    validates: "PRESENCE"
+    error_message: "{attribute} is required"
+    confidence: 0.95
+
+  foreign_key:
+    description: "Foreign key constraint patterns"
+    validates: "RELATIONSHIP"
+    pattern: "^(.*?)_id$"
+    error_message: "Invalid {related_entity} reference"
+    confidence: 0.90
+
+  check:
+    description: "CHECK constraint patterns"
+    validates: "RANGE"
+    pattern: "CHECK \\("
+    error_message: "{attribute} violates constraint"
+    confidence: 0.85
+
+# ==============================================================================
+# DOMAIN-SPECIFIC PATTERNS
+# ==============================================================================
+# These patterns apply to specific business domains
+
+domain_patterns:
+  e-commerce:
+    entities:
+      - Product
+      - Order
+      - OrderItem
+    patterns:
+      - field: "sku"
+        type: "UNIQUENESS"
+        error_message: "Product SKU must be unique"
+        confidence: 0.95
+
+      - field: "price"
+        type: "RANGE"
+        condition: "positive"
+        error_message: "Price must be greater than 0"
+        confidence: 0.95
+
+      - field: "quantity"
+        type: "STOCK_CONSTRAINT"
+        error_message: "Quantity cannot exceed available stock"
+        confidence: 0.90
+
+      - field: "status"
+        type: "STATUS_TRANSITION"
+        condition: "valid_transitions"
+        error_message: "Invalid status transition"
+        confidence: 0.85
+
+  inventory:
+    entities:
+      - InventoryItem
+      - StockLevel
+      - Movement
+    patterns:
+      - field: "stock_level"
+        type: "STOCK_CONSTRAINT"
+        error_message: "Stock level cannot be negative"
+        confidence: 0.95
+
+      - field: "reorder_point"
+        type: "RANGE"
+        error_message: "Reorder point must be non-negative"
+        confidence: 0.90
+
+      - field: "movement_type"
+        type: "FORMAT"
+        condition: "enum"
+        error_message: "Invalid movement type"
+        confidence: 0.95
+
+  user-management:
+    entities:
+      - User
+      - Role
+      - Permission
+    patterns:
+      - field: "email"
+        type: "UNIQUENESS"
+        error_message: "Email must be unique"
+        confidence: 0.95
+
+      - field: "email"
+        type: "FORMAT"
+        condition: "email"
+        error_message: "Invalid email format"
+        confidence: 0.95
+
+      - field: "password"
+        type: "FORMAT"
+        condition: "strong_password"
+        error_message: "Password must meet complexity requirements"
+        confidence: 0.90
+
+      - field: "status"
+        type: "STATUS_TRANSITION"
+        error_message: "Invalid user status"
+        confidence: 0.85
+
+  workflow:
+    entities:
+      - Task
+      - WorkflowState
+      - Transition
+    patterns:
+      - field: "status"
+        type: "WORKFLOW_CONSTRAINT"
+        condition: "valid_workflow_state"
+        error_message: "Invalid workflow state"
+        confidence: 0.95
+
+      - field: "assignee_id"
+        type: "RELATIONSHIP"
+        error_message: "Invalid user assignment"
+        confidence: 0.90
+
+      - field: "due_date"
+        type: "PRESENCE"
+        error_message: "Due date is required"
+        confidence: 0.85
+
+# ==============================================================================
+# RELATIONSHIP PATTERNS
+# ==============================================================================
+# These patterns apply to entity relationships
+
+relationship_patterns:
+  one_to_many:
+    description: "One-to-many relationship patterns"
+    validates: "RELATIONSHIP"
+    pattern: "^(.*?)_id$"
+    error_message: "Invalid reference to {related_entity}"
+    confidence: 0.90
+
+  many_to_one:
+    description: "Many-to-one relationship patterns"
+    validates: "RELATIONSHIP"
+    pattern: "^(.*?)_ids?$"
+    error_message: "Invalid references to {related_entity}"
+    confidence: 0.85
+
+  many_to_many:
+    description: "Many-to-many relationship patterns"
+    validates: "RELATIONSHIP"
+    pattern: "junction_table"
+    error_message: "Invalid many-to-many relationship"
+    confidence: 0.85
+
+# ==============================================================================
+# WORKFLOW STATE PATTERNS
+# ==============================================================================
+# These patterns apply to state machines and workflow systems
+
+workflow_patterns:
+  common_statuses:
+    - "draft"
+    - "pending"
+    - "active"
+    - "inactive"
+    - "archived"
+    - "deleted"
+
+  order_workflow:
+    states: ["pending", "confirmed", "shipped", "delivered", "cancelled"]
+    validations:
+      - from: "pending"
+        to: ["confirmed", "cancelled"]
+      - from: "confirmed"
+        to: ["shipped", "cancelled"]
+      - from: "shipped"
+        to: ["delivered"]
+
+  user_workflow:
+    states: ["active", "inactive", "suspended", "deleted"]
+    validations:
+      - from: "active"
+        to: ["inactive", "suspended"]
+      - from: "inactive"
+        to: ["active"]
+      - from: "suspended"
+        to: ["active", "deleted"]
+
+  task_workflow:
+    states: ["todo", "in_progress", "review", "done", "blocked"]
+    validations:
+      - from: "todo"
+        to: ["in_progress", "blocked"]
+      - from: "in_progress"
+        to: ["review", "blocked", "todo"]
+      - from: "review"
+        to: ["done", "in_progress"]
+
+# ==============================================================================
+# IMPLICIT PATTERNS
+# ==============================================================================
+# These patterns infer validations from common conventions
+
+implicit_patterns:
+  created_at:
+    type: "FORMAT"
+    condition: "iso8601_datetime"
+    error_message: "created_at must be a valid ISO 8601 datetime"
+    confidence: 0.95
+
+  updated_at:
+    type: "FORMAT"
+    condition: "iso8601_datetime"
+    error_message: "updated_at must be a valid ISO 8601 datetime"
+    confidence: 0.95
+
+  deleted_at:
+    type: "FORMAT"
+    condition: "iso8601_datetime or null"
+    error_message: "deleted_at must be a valid ISO 8601 datetime or null"
+    confidence: 0.90
+
+  version:
+    type: "RANGE"
+    condition: "non_negative_integer"
+    error_message: "version must be a non-negative integer"
+    confidence: 0.85
+
+  is_active:
+    type: "FORMAT"
+    condition: "boolean"
+    error_message: "is_active must be true or false"
+    confidence: 0.95
+
+  is_deleted:
+    type: "FORMAT"
+    condition: "boolean"
+    error_message: "is_deleted must be true or false"
+    confidence: 0.95
