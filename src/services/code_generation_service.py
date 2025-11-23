@@ -2369,6 +2369,37 @@ Generate ONLY the README.md content, no additional explanations."""
                         service_pattern = find_pattern_by_keyword(category_patterns, "service", "business logic")
                         if service_pattern:
                             adapted = adapt_pattern_helper(service_pattern.code, current_entity=entity)
+
+                            # INJECT VALIDATIONS into template-generated service
+                            try:
+                                if hasattr(self, 'app_ir') and self.app_ir and hasattr(self.app_ir, 'validation_model'):
+                                    from src.services.validation_code_generator import ValidationCodeGenerator
+
+                                    # Get rules for this entity
+                                    validation_rules = [
+                                        rule for rule in self.app_ir.validation_model.rules
+                                        if rule.entity == entity.name
+                                    ]
+
+                                    if validation_rules:
+                                        # Create validation model with just this entity's rules
+                                        from src.cognitive.ir.validation_model import ValidationModelIR
+                                        entity_validation_model = ValidationModelIR(rules=validation_rules)
+
+                                        # Generate validation code
+                                        validator_gen = ValidationCodeGenerator()
+                                        validation_code_dict = validator_gen.generate_validation_code(entity_validation_model)
+
+                                        # Inject into service
+                                        if entity.name in validation_code_dict:
+                                            validation_code = validation_code_dict[entity.name]
+                                            adapted = validator_gen.inject_validation_into_service(
+                                                adapted, entity.name, validation_code
+                                            )
+                                            logger.info(f"✅ Injected validations into template-generated service for {entity.name}")
+                            except Exception as e:
+                                logger.warning(f"⚠️  Could not inject validations into template service: {e}")
+
                             files[f"src/services/{get_entity_snake_name(entity)}_service.py"] = adapted
             else:
                 # Fallback to pattern matching if no entities
@@ -2376,6 +2407,37 @@ Generate ONLY the README.md content, no additional explanations."""
                 if service_pattern and entities:
                     for entity in entities:
                         adapted = adapt_pattern_helper(service_pattern.code, current_entity=entity)
+
+                        # INJECT VALIDATIONS into template-generated service
+                        try:
+                            if hasattr(self, 'app_ir') and self.app_ir and hasattr(self.app_ir, 'validation_model'):
+                                from src.services.validation_code_generator import ValidationCodeGenerator
+
+                                # Get rules for this entity
+                                validation_rules = [
+                                    rule for rule in self.app_ir.validation_model.rules
+                                    if rule.entity == entity.name
+                                ]
+
+                                if validation_rules:
+                                    # Create validation model with just this entity's rules
+                                    from src.cognitive.ir.validation_model import ValidationModelIR
+                                    entity_validation_model = ValidationModelIR(rules=validation_rules)
+
+                                    # Generate validation code
+                                    validator_gen = ValidationCodeGenerator()
+                                    validation_code_dict = validator_gen.generate_validation_code(entity_validation_model)
+
+                                    # Inject into service
+                                    if entity.name in validation_code_dict:
+                                        validation_code = validation_code_dict[entity.name]
+                                        adapted = validator_gen.inject_validation_into_service(
+                                            adapted, entity.name, validation_code
+                                        )
+                                        logger.info(f"✅ Injected validations into template-generated service for {entity.name}")
+                        except Exception as e:
+                            logger.warning(f"⚠️  Could not inject validations into template service: {e}")
+
                         files[f"src/services/{get_entity_snake_name(entity)}_service.py"] = adapted
 
         # API Routes - ALWAYS use LLM with pattern as guide (Milestone 5+ improvement)
