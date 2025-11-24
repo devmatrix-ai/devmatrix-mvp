@@ -961,9 +961,24 @@ class ComplianceValidator:
                                     constraints.append("primary_key")
 
                             elif key == "default":
-                                # default=uuid.uuid4 or default=datetime.utcnow → auto-generated
+                                # Normalize default values to constraint names
                                 if isinstance(value, ast.Attribute):
+                                    # default=uuid.uuid4 or default=datetime.utcnow → auto-generated
                                     if value.attr == "uuid4" or value.attr == "utcnow":
+                                        constraints.append("auto-generated")
+                                elif isinstance(value, ast.Constant):
+                                    # default=True → default_true, default=False → default_false, etc.
+                                    const_val = value.value
+                                    if const_val is True:
+                                        constraints.append("default_true")
+                                    elif const_val is False:
+                                        constraints.append("default_false")
+                                    elif isinstance(const_val, str):
+                                        # default="open" → default_open, etc.
+                                        constraints.append(f"default_{const_val.lower()}")
+                                elif isinstance(value, ast.Name):
+                                    # default=uuid.uuid4 (Name not Attribute) - still auto-generated
+                                    if value.id in ["uuid4", "utcnow"]:
                                         constraints.append("auto-generated")
 
                         # Check positional arguments for ForeignKey
