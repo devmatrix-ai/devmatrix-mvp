@@ -1075,6 +1075,24 @@ class ComplianceValidator:
                                         else:
                                             constraints.append(f"default_factory_{func_name}")
 
+                            elif key == "default_factory":
+                                # FIX 4 Extended: default_factory extraction for auto-generated fields
+                                if isinstance(value, ast.Call):
+                                    # default_factory=datetime.utcnow()
+                                    func_name = None
+                                    if isinstance(value.func, ast.Name):
+                                        func_name = value.func.id
+                                    elif isinstance(value.func, ast.Attribute):
+                                        func_name = value.func.attr
+
+                                    if func_name and func_name in ["utcnow", "now", "utc_now", "uuid4"]:
+                                        constraints.append("auto-generated")
+                                elif isinstance(value, ast.Name):
+                                    # default_factory=some_factory_func (without call)
+                                    func_name = value.id
+                                    if "uuid" in func_name.lower() or "time" in func_name.lower():
+                                        constraints.append("auto-generated")
+
                         # Check positional arguments for ForeignKey
                         for arg in call.args:
                             if isinstance(arg, ast.Call):
