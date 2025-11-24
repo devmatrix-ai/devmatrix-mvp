@@ -1273,9 +1273,9 @@ class ComplianceValidator:
             "required": ["required"],
 
             # Auto-generated variants
-            "auto-generated": ["default_factory", "auto_increment", "generated", "auto-generated"],
-            "auto_generated": ["default_factory", "auto_increment", "generated", "auto-generated"],
-            "auto-increment": ["default_factory", "auto_increment"],
+            "auto-generated": ["default_factory*", "auto_increment", "generated", "auto-generated", "default=uuid.uuid4", "default=datetime.utcnow"],
+            "auto_generated": ["default_factory*", "auto_increment", "generated", "auto-generated", "default=uuid.uuid4", "default=datetime.utcnow"],
+            "auto-increment": ["default_factory*", "auto_increment"],
 
             # Read-only variants (output fields, snapshots, immutable)
             "read-only": ["description", "read_only", "exclude", "snapshot_at*"],
@@ -1312,14 +1312,18 @@ class ComplianceValidator:
             "uuid_format": ["uuid_format"],
 
             # Default values (with wildcard support for specific values)
-            "default_true": ["default=True", "default=true", "default_true"],
-            "default_false": ["default=False", "default=false", "default_false"],
-            "default_open": ["default=open", "default_open"],
-            "default_pending_payment": ["default=pending_payment", "default_pending_payment"],
-            "default_pending": ["default=pending", "default_pending"],
+            "default_true": ["default=True", "default=true", "default_true", "default*true"],
+            "default_false": ["default=False", "default=false", "default_false", "default*false"],
+            "default_open": ["default=open", "default_open", "default*open"],
+            "default_pending_payment": ["default=pending_payment", "default_pending_payment", "default*pending*payment"],
+            "default_pending": ["default=pending", "default_pending", "default*pending"],
 
             # Enum/values constraints
             "values": ["enum", "values", "default*"],  # Enum constraints often have default values
+
+            # Read-only/computed fields (should match description or auto-generated patterns)
+            "read-only": ["description", "read_only", "exclude", "snapshot_at*"],
+            "auto-calculated": ["description", "auto*calculated"],
         }
 
         matches = 0
