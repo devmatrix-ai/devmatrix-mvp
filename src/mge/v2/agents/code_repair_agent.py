@@ -896,6 +896,9 @@ JSON OUTPUT:"""
                             if k.arg not in ('default', 'default_factory')
                         ]
 
+                    # Remove existing keyword of same type before adding (prevents duplicates)
+                    field_call.keywords = [k for k in field_call.keywords if k.arg != self.c_type]
+
                     # Add new keyword
                     field_call.keywords.append(ast.keyword(arg=self.c_type, value=value_node))
                     self.modified = True

@@ -1042,6 +1042,39 @@ class ComplianceValidator:
                                             if "immutable" in desc_lower:
                                                 constraints.append("immutable")
 
+                            elif key == "default":
+                                # FIX 4: Extract default values and map to semantic constraint names
+                                if isinstance(value, ast.Constant):
+                                    default_val = value.value
+                                    if isinstance(default_val, bool):
+                                        # default=True → default_true
+                                        constraints.append(f"default_{'true' if default_val else 'false'}")
+                                    elif isinstance(default_val, str):
+                                        # default="open" → default_open, default="pending_payment" → default_pending_payment
+                                        constraints.append(f"default_{default_val}")
+                                    elif isinstance(default_val, (int, float)):
+                                        # default=0 → default_zero, default=1 → default_one, etc.
+                                        if default_val == 0:
+                                            constraints.append("default_zero")
+                                        elif default_val == 1:
+                                            constraints.append("default_one")
+                                        else:
+                                            constraints.append(f"default_{default_val}")
+                                elif isinstance(value, ast.Call):
+                                    # default=func() → extract function name
+                                    func_name = None
+                                    if isinstance(value.func, ast.Name):
+                                        func_name = value.func.id
+                                    elif isinstance(value.func, ast.Attribute):
+                                        func_name = value.func.attr
+
+                                    if func_name:
+                                        # datetime.utcnow → auto_generated
+                                        if func_name in ["utcnow", "now", "utc_now"]:
+                                            constraints.append("auto-generated")
+                                        else:
+                                            constraints.append(f"default_factory_{func_name}")
+
                         # Check positional arguments for ForeignKey
                         for arg in call.args:
                             if isinstance(arg, ast.Call):
