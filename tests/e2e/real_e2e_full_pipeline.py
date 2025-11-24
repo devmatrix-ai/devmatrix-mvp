@@ -2334,6 +2334,17 @@ Once running, visit:
             self.metrics_collector.metrics.regressions_detected = repair_result["regressions_detected"]
             self.metrics_collector.metrics.pattern_reuse_count = repair_result["pattern_reuse_count"]
 
+            # CP-6.5.4B: Check if repair improved compliance enough
+            final_compliance = repair_result.get("final_compliance", compliance_score)
+            REPAIR_IMPROVEMENT_THRESHOLD = float(os.getenv("REPAIR_IMPROVEMENT_THRESHOLD", "0.85"))
+            if final_compliance < REPAIR_IMPROVEMENT_THRESHOLD:
+                print(f"\n  🛑 STOPPING TEST: Final compliance {final_compliance:.1%} below threshold {REPAIR_IMPROVEMENT_THRESHOLD:.1%}")
+                print(f"    Repair loop completed but compliance did not improve enough.")
+                print(f"    Initial: {compliance_score:.1%} → Final: {final_compliance:.1%}")
+                print(f"    Issue: Unmatched validations or semantic equivalence mapping problems.")
+                self.metrics_collector.metrics.compliance_score = final_compliance
+                raise SystemExit(1)
+
             # Update generated code if repair was successful
             if repair_result["final_code"]:
                 self.generated_code["main.py"] = repair_result["final_code"]
