@@ -688,7 +688,8 @@ JSON OUTPUT:"""
                 'min_items', 'max_items',
                 'default', 'default_factory', 'required', 'enum',
                 'unique', 'foreign_key',  # Database constraints
-                'computed_field'  # Special constraint
+                'read_only',  # Output/response-only fields
+                'auto_increment', 'computed_field'  # Special constraints
             }
             if constraint_type not in known_constraints:
                 logger.info(f"Ignoring unrecognized validation '{validation_str}' (constraint_type={constraint_type}) as noise against ground truth.")
@@ -764,12 +765,15 @@ JSON OUTPUT:"""
             
             # Handle special constraints
             if constraint_type == 'read_only':
-                logger.info(f"Skipping read_only constraint for {entity_name}.{field_name} (handled by schema structure)")
-                return True
-            
-                # Convert to default_factory
-                constraint_type = 'default_factory'
-                logger.info(f"Converting auto_generated to default_factory for {entity_name}.{field_name}")
+                logger.info(f"Processing read_only constraint for {entity_name}.{field_name}")
+                # read_only in Pydantic schemas is typically handled via Field(exclude=True) in Response classes
+                # But we'll apply it as a marker for now
+                constraint_type = 'read_only'
+                # Continue to apply it to the schema
+            elif constraint_type == 'auto_increment':
+                # Convert to default_factory or read_only for Response schemas
+                logger.info(f"Converting auto_increment to read_only for {entity_name}.{field_name}")
+                constraint_type = 'read_only'
 
             if constraint_type == 'computed_field':
                 # We can't easily generate the computation logic via AST, but we can document it
@@ -859,8 +863,14 @@ JSON OUTPUT:"""
                         self.modified = True
                         return
 
+                    # Special handling for read_only - just mark it as a note, no special Field parameter
+                    if self.c_type == 'read_only':
+                        # read_only is typically handled by schema structure, not Field parameter
+                        # We'll add it as description note instead
+                        value_node = ast.Constant(value=f"Read-only field (auto-generated)")
+                        self.c_type = 'description'  # Switch to description instead
                     # Special handling for default_factory (ensure callable)
-                    if self.c_type == 'default_factory':
+                    elif self.c_type == 'default_factory':
                         # Parse the string value into an AST node (e.g. "uuid.uuid4" -> Attribute)
                         try:
                             # If it's a known callable string, parse it
