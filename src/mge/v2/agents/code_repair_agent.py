@@ -842,7 +842,7 @@ JSON OUTPUT:"""
                         )
                         # If we converted a default value, make sure it's not None if we are adding 'required'
                         if self.c_type == 'required' and self.c_value is True:
-                             node.value.args = [ast.Constant(value=...)]
+                             node.value.args = [ast.Constant(value=Ellipsis)]
                     
                     # Now we have a Field() call
                     field_call = node.value
@@ -855,7 +855,7 @@ JSON OUTPUT:"""
                         # Remove default=... if present
                         field_call.keywords = [k for k in field_call.keywords if k.arg != 'default']
                         # Ensure first arg is ...
-                        field_call.args = [ast.Constant(value=...)]
+                        field_call.args = [ast.Constant(value=Ellipsis)]
                         self.modified = True
                         return
 
