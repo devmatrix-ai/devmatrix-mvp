@@ -748,10 +748,10 @@ JSON OUTPUT:"""
         """
         try:
             # CRITICAL: Route constraints to the correct file
-            # Database-level constraints (unique, foreign_key) belong in entities.py (SQLAlchemy)
+            # Database-level constraints belong in entities.py (SQLAlchemy)
             # Validation constraints (gt, pattern, etc.) belong in schemas.py (Pydantic)
-            
-            DATABASE_CONSTRAINTS = {'unique', 'foreign_key'}
+
+            DATABASE_CONSTRAINTS = {'unique', 'foreign_key', 'default', 'default_factory', 'description'}
             
             # Route database constraints to entities.py
             if constraint_type in DATABASE_CONSTRAINTS:
@@ -1161,7 +1161,7 @@ JSON OUTPUT:"""
                                 fk_ref = f"{table}.{column}"
                             else:
                                 fk_ref = table_column
-                            
+
                             # Add ForeignKey('table.column')
                             fk_node = ast.Call(
                                 func=ast.Name(id='ForeignKey', ctx=ast.Load()),
@@ -1171,6 +1171,55 @@ JSON OUTPUT:"""
                             column_call.args.append(fk_node)
                             self.modified = True
                             logger.info(f"Added ForeignKey('{fk_ref}') to {entity_name}.{field_name}")
+
+                    elif self.c_type == 'default':
+                        # Handle default=<value>
+                        has_default = any(k.arg == 'default' for k in column_call.keywords)
+                        if has_default:
+                            logger.debug(f"{entity_name}.{field_name} already has default value")
+                        else:
+                            # Create appropriate AST node for the value
+                            if isinstance(self.c_value, bool):
+                                value_node = ast.Constant(value=self.c_value)
+                            elif isinstance(self.c_value, (int, float)):
+                                value_node = ast.Constant(value=self.c_value)
+                            else:
+                                value_node = ast.Constant(value=str(self.c_value))
+
+                            column_call.keywords.append(ast.keyword(arg='default', value=value_node))
+                            self.modified = True
+                            logger.info(f"Added default={self.c_value} to {entity_name}.{field_name}")
+
+                    elif self.c_type == 'default_factory':
+                        # Handle default_factory=<callable>
+                        has_factory = any(k.arg == 'default_factory' for k in column_call.keywords)
+                        if has_factory:
+                            logger.debug(f"{entity_name}.{field_name} already has default_factory")
+                        else:
+                            # Parse function reference like 'datetime.utcnow' or 'uuid.uuid4'
+                            # Create appropriate callable reference
+                            if '.' in str(self.c_value):
+                                parts = str(self.c_value).split('.')
+                                # Create nested attribute like datetime.utcnow
+                                value_node = ast.Name(id=parts[0], ctx=ast.Load())
+                                for part in parts[1:]:
+                                    value_node = ast.Attribute(value=value_node, attr=part, ctx=ast.Load())
+                            else:
+                                value_node = ast.Name(id=str(self.c_value), ctx=ast.Load())
+
+                            column_call.keywords.append(ast.keyword(arg='default_factory', value=value_node))
+                            self.modified = True
+                            logger.info(f"Added default_factory={self.c_value} to {entity_name}.{field_name}")
+
+                    elif self.c_type == 'description':
+                        # Handle description="<text>"
+                        has_desc = any(k.arg == 'description' for k in column_call.keywords)
+                        if has_desc:
+                            logger.debug(f"{entity_name}.{field_name} already has description")
+                        else:
+                            column_call.keywords.append(ast.keyword(arg='description', value=ast.Constant(value=str(self.c_value))))
+                            self.modified = True
+                            logger.info(f"Added description='{self.c_value}' to {entity_name}.{field_name}")
 
             modifier = EntityModifier(entity_name, field_name, constraint_type, constraint_value)
             new_tree = modifier.visit(tree)
