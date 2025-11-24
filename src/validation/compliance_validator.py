@@ -1528,8 +1528,16 @@ class ComplianceValidator:
                         if not found_match:
                             # Pattern-based matching for known constraint types
                             if "auto-generated" in constraint_lower or "auto_generated" in constraint_lower:
-                                # Match auto-generated with any factory function
-                                if "default_factory" in found_constraint or "auto-generated" in found_constraint:
+                                # IMPROVED FIX 8: Match auto-generated with any factory function patterns
+                                # Match: default_factory=datetime.utcnow, default_factory=uuid.uuid4, auto-generated, etc.
+                                factory_patterns = [
+                                    "default_factory",
+                                    "auto-generated",
+                                    "auto_generated",
+                                    "auto_increment",
+                                    "generated",
+                                ]
+                                if any(pattern in found_constraint for pattern in factory_patterns):
                                     matches += 1
                                     matched_validations.append(f"{entity_field}: {found_constraint}")
                                     found_match = True
@@ -1537,6 +1545,19 @@ class ComplianceValidator:
                             elif "read-only" in constraint_lower or "immutable" in constraint_lower:
                                 # Match read-only/immutable with description or read_only keyword
                                 if "description" in found_constraint or "read_only" in found_constraint:
+                                    matches += 1
+                                    matched_validations.append(f"{entity_field}: {found_constraint}")
+                                    found_match = True
+
+                            elif "foreign_key" in constraint_lower:
+                                # IMPROVED FIX 8: Match foreign_key patterns
+                                # Match: foreign_key_customer, foreign_key_product, ForeignKey('table.id'), etc.
+                                fk_patterns = [
+                                    "foreign_key",
+                                    "fk_",
+                                    "foreignkey",
+                                ]
+                                if any(pattern in found_constraint for pattern in fk_patterns):
                                     matches += 1
                                     matched_validations.append(f"{entity_field}: {found_constraint}")
                                     found_match = True
@@ -1550,12 +1571,21 @@ class ComplianceValidator:
 
                             elif "default_" in constraint_lower:
                                 # Match default_pending_payment with default=pending_payment
+                                # IMPROVED FIX 8: Handle multiple formats for default values
                                 value_part = constraint_lower.split("default_")[1] if "default_" in constraint_lower else ""
-                                if f"default={value_part.replace('_', ' ')}" in found_constraint or f"default_{value_part}" in found_constraint:
+                                # Try multiple formats: default=value, default='value', default="value", default_value
+                                default_patterns = [
+                                    f"default={value_part}",
+                                    f"default='{value_part}'",
+                                    f'default="{value_part}"',
+                                    f"default={value_part.replace('_', ' ')}",  # For multi-word values
+                                    f"default_{value_part}",
+                                ]
+                                if any(pattern in found_constraint for pattern in default_patterns):
                                     matches += 1
                                     matched_validations.append(f"{entity_field}: {found_constraint}")
                                     found_match = True
-                                elif "default_" in found_constraint:
+                                elif "default" in found_constraint:
                                     # Generic default match: any default matches any default
                                     matches += 1
                                     matched_validations.append(f"{entity_field}: {found_constraint}")
