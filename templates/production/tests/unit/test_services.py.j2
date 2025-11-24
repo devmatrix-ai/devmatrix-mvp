@@ -1,0 +1,512 @@
+"""
+Unit tests for {{ app_name }} service layer.
+
+Tests business logic with mocked repositories and dependencies.
+"""
+
+import pytest
+from unittest.mock import Mock, MagicMock, patch, call, AsyncMock
+from datetime import datetime, timezone
+from typing import List, Optional, Dict, Any
+import asyncio
+
+from services.{{ app_name|lower }}_service import (
+    {% for entity in entities %}{{ entity.name }}Service,
+    {% endfor %}
+)
+from repositories.repository import (
+    {% for entity in entities %}{{ entity.name }}Repository,
+    {% endfor %}
+)
+from models.schemas import (
+    {% for entity in entities %}{{ entity.name }}Create,
+    {{ entity.name }}Update,
+    {{ entity.name }}Response,
+    {% endfor %}
+)
+from core.exceptions import (
+    NotFoundException,
+    ValidationException,
+    BusinessRuleException,
+    DuplicateException,
+)
+
+{% for entity in entities %}
+class Test{{ entity.name }}Service:
+    """Test suite for {{ entity.name }}Service."""
+
+    @pytest.fixture
+    def mock_repository(self):
+        """Create a mock {{ entity.name }} repository."""
+        return MagicMock(spec={{ entity.name }}Repository)
+
+    @pytest.fixture
+    def mock_cache(self):
+        """Create a mock cache client."""
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_event_bus(self):
+        """Create a mock event bus."""
+        return MagicMock()
+
+    @pytest.fixture
+    def service(self, mock_repository, mock_cache, mock_event_bus):
+        """Create service instance with mocked dependencies."""
+        return {{ entity.name }}Service(
+            repository=mock_repository,
+            cache=mock_cache,
+            event_bus=mock_event_bus
+        )
+
+    @pytest.fixture
+    def sample_entity_dict(self):
+        """Create sample entity data dictionary."""
+        return {
+            "id": 1,
+            {% for field in entity.fields %}
+            {% if field.type == "str" %}
+            "{{ field.name }}": "test_value",
+            {% elif field.type == "int" %}
+            "{{ field.name }}": 42,
+            {% elif field.type == "float" %}
+            "{{ field.name }}": 3.14,
+            {% elif field.type == "bool" %}
+            "{{ field.name }}": True,
+            {% elif field.type == "datetime" %}
+            "{{ field.name }}": datetime.now(timezone.utc),
+            {% elif field.type in ["json", "dict"] %}
+            "{{ field.name }}": {"key": "value"},
+            {% elif field.type == "list" %}
+            "{{ field.name }}": ["item1", "item2"],
+            {% endif %}
+            {% endfor %}
+        }
+
+    # Test CREATE operations
+    async def test_create_success(self, service, mock_repository, mock_event_bus, sample_entity_dict):
+        """Test successful entity creation with business logic."""
+        create_data = {{ entity.name }}Create(
+            {% for field in entity.fields if field.name != "id" %}
+            {% if field.type == "str" %}
+            {{ field.name }}="new_value",
+            {% elif field.type == "int" %}
+            {{ field.name }}=100,
+            {% elif field.type == "float" %}
+            {{ field.name }}=99.99,
+            {% elif field.type == "bool" %}
+            {{ field.name }}=False,
+            {% endif %}
+            {% endfor %}
+        )
+
+        mock_entity = MagicMock()
+        for key, value in sample_entity_dict.items():
+            setattr(mock_entity, key, value)
+
+        mock_repository.create.return_value = mock_entity
+
+        result = await service.create(create_data)
+
+        # Verify repository was called
+        mock_repository.create.assert_called_once()
+
+        # Verify event was published
+        mock_event_bus.publish.assert_called_once()
+        event_call = mock_event_bus.publish.call_args
+        assert event_call[0][0] == "{{ entity.name|lower }}.created"
+
+        # Verify result
+        assert isinstance(result, {{ entity.name }}Response)
+        assert result.id == 1
+
+    async def test_create_with_validation_error(self, service, mock_repository):
+        """Test creation with business validation failure."""
+        create_data = {{ entity.name }}Create(
+            {% for field in entity.fields[:1] if field.name != "id" %}
+            {% if field.type == "str" %}
+            {{ field.name }}="invalid_according_to_business_rules",
+            {% elif field.type == "int" %}
+            {{ field.name }}=-1,  # Invalid negative value
+            {% endif %}
+            {% endfor %}
+        )
+
+        # Mock business validation failure
+        service.validate_business_rules = MagicMock(
+            side_effect=BusinessRuleException("Business rule violated")
+        )
+
+        with pytest.raises(BusinessRuleException):
+            await service.create(create_data)
+
+        mock_repository.create.assert_not_called()
+
+    async def test_create_with_duplicate_check(self, service, mock_repository):
+        """Test creation with duplicate prevention logic."""
+        create_data = {{ entity.name }}Create(
+            {% for field in entity.fields[:1] if field.name != "id" %}
+            {% if field.type == "str" %}
+            {{ field.name }}="duplicate_value",
+            {% elif field.type == "int" %}
+            {{ field.name }}=42,
+            {% endif %}
+            {% endfor %}
+        )
+
+        # Mock duplicate check
+        mock_repository.get_by_unique_fields.return_value = MagicMock()  # Existing entity
+
+        with pytest.raises(DuplicateException):
+            await service.create(create_data)
+
+    # Test READ operations
+    async def test_get_by_id_from_cache(self, service, mock_repository, mock_cache, sample_entity_dict):
+        """Test getting entity from cache."""
+        cached_data = sample_entity_dict
+        mock_cache.get.return_value = cached_data
+
+        result = await service.get(1)
+
+        # Cache was hit, repository not called
+        mock_cache.get.assert_called_once_with("{{ entity.name|lower }}:1")
+        mock_repository.get.assert_not_called()
+
+        assert isinstance(result, {{ entity.name }}Response)
+        assert result.id == 1
+
+    async def test_get_by_id_from_database(self, service, mock_repository, mock_cache, sample_entity_dict):
+        """Test getting entity from database when not in cache."""
+        mock_cache.get.return_value = None  # Cache miss
+
+        mock_entity = MagicMock()
+        for key, value in sample_entity_dict.items():
+            setattr(mock_entity, key, value)
+
+        mock_repository.get.return_value = mock_entity
+
+        result = await service.get(1)
+
+        # Repository was called
+        mock_repository.get.assert_called_once_with(1)
+
+        # Result was cached
+        mock_cache.set.assert_called_once()
+        cache_call = mock_cache.set.call_args
+        assert cache_call[0][0] == "{{ entity.name|lower }}:1"
+
+        assert isinstance(result, {{ entity.name }}Response)
+        assert result.id == 1
+
+    async def test_get_by_id_not_found(self, service, mock_repository, mock_cache):
+        """Test getting non-existent entity."""
+        mock_cache.get.return_value = None
+        mock_repository.get.return_value = None
+
+        with pytest.raises(NotFoundException):
+            await service.get(999)
+
+    async def test_get_all_with_filters(self, service, mock_repository, mock_cache):
+        """Test getting all entities with business filters."""
+        mock_entities = [MagicMock(), MagicMock()]
+        mock_repository.get_all.return_value = mock_entities
+
+        filters = {
+            "status": "active",
+            "category": "premium"
+        }
+
+        result = await service.get_all(skip=0, limit=10, **filters)
+
+        # Verify filters were applied
+        mock_repository.get_all.assert_called_once()
+        call_args = mock_repository.get_all.call_args
+        assert call_args[1]["skip"] == 0
+        assert call_args[1]["limit"] == 10
+
+        assert len(result) == 2
+
+    async def test_get_all_with_pagination(self, service, mock_repository):
+        """Test pagination in service layer."""
+        # Create 15 mock entities
+        mock_entities = [MagicMock() for _ in range(15)]
+        mock_repository.get_all.return_value = mock_entities[:10]  # First page
+
+        result = await service.get_all(skip=0, limit=10)
+
+        assert len(result) == 10
+        mock_repository.get_all.assert_called_with(skip=0, limit=10)
+
+    # Test UPDATE operations
+    async def test_update_success(self, service, mock_repository, mock_cache, mock_event_bus, sample_entity_dict):
+        """Test successful entity update with cache invalidation."""
+        update_data = {{ entity.name }}Update(
+            {% for field in entity.fields[:1] if field.name != "id" %}
+            {% if field.type == "str" %}
+            {{ field.name }}="updated_value",
+            {% elif field.type == "int" %}
+            {{ field.name }}=999,
+            {% endif %}
+            {% endfor %}
+        )
+
+        mock_entity = MagicMock()
+        for key, value in sample_entity_dict.items():
+            setattr(mock_entity, key, value)
+
+        mock_repository.update.return_value = mock_entity
+
+        result = await service.update(1, update_data)
+
+        # Verify update was called
+        mock_repository.update.assert_called_once_with(1, update_data)
+
+        # Verify cache was invalidated
+        mock_cache.delete.assert_called_once_with("{{ entity.name|lower }}:1")
+
+        # Verify event was published
+        mock_event_bus.publish.assert_called_once()
+        event_call = mock_event_bus.publish.call_args
+        assert event_call[0][0] == "{{ entity.name|lower }}.updated"
+
+        assert isinstance(result, {{ entity.name }}Response)
+
+    async def test_update_not_found(self, service, mock_repository):
+        """Test updating non-existent entity."""
+        update_data = {{ entity.name }}Update(
+            {% for field in entity.fields[:1] if field.name != "id" %}
+            {% if field.type == "str" %}
+            {{ field.name }}="updated_value"
+            {% elif field.type == "int" %}
+            {{ field.name }}=999
+            {% endif %}
+            {% endfor %}
+        )
+
+        mock_repository.update.return_value = None
+
+        with pytest.raises(NotFoundException):
+            await service.update(999, update_data)
+
+    async def test_update_with_business_validation(self, service, mock_repository):
+        """Test update with business rule validation."""
+        update_data = {{ entity.name }}Update(
+            {% for field in entity.fields[:1] if field.name != "id" %}
+            {% if field.type == "str" %}
+            {{ field.name }}="invalid_update"
+            {% elif field.type == "int" %}
+            {{ field.name }}=-999  # Invalid
+            {% endif %}
+            {% endfor %}
+        )
+
+        service.validate_update_rules = MagicMock(
+            side_effect=BusinessRuleException("Update violates business rules")
+        )
+
+        with pytest.raises(BusinessRuleException):
+            await service.update(1, update_data)
+
+    # Test DELETE operations
+    async def test_delete_success(self, service, mock_repository, mock_cache, mock_event_bus):
+        """Test successful entity deletion."""
+        mock_repository.delete.return_value = True
+
+        result = await service.delete(1)
+
+        # Verify deletion
+        mock_repository.delete.assert_called_once_with(1)
+
+        # Verify cache invalidation
+        mock_cache.delete.assert_called_once_with("{{ entity.name|lower }}:1")
+
+        # Verify event publication
+        mock_event_bus.publish.assert_called_once()
+        event_call = mock_event_bus.publish.call_args
+        assert event_call[0][0] == "{{ entity.name|lower }}.deleted"
+
+        assert result is True
+
+    async def test_delete_not_found(self, service, mock_repository):
+        """Test deleting non-existent entity."""
+        mock_repository.delete.return_value = False
+
+        with pytest.raises(NotFoundException):
+            await service.delete(999)
+
+    async def test_delete_with_cascade_check(self, service, mock_repository):
+        """Test deletion with cascade prevention."""
+        service.check_delete_cascade = MagicMock(
+            side_effect=BusinessRuleException("Cannot delete: has dependencies")
+        )
+
+        with pytest.raises(BusinessRuleException):
+            await service.delete(1)
+
+        mock_repository.delete.assert_not_called()
+
+    # Test business logic methods
+    async def test_complex_business_operation(self, service, mock_repository):
+        """Test complex business logic operation."""
+        # Example: Calculate something based on multiple entities
+        mock_entities = [MagicMock(), MagicMock()]
+        mock_repository.get_all.return_value = mock_entities
+
+        result = await service.calculate_aggregate_metrics()
+
+        mock_repository.get_all.assert_called()
+        assert result is not None
+
+    async def test_batch_processing(self, service, mock_repository):
+        """Test batch processing operations."""
+        items = [
+            {{ entity.name }}Create(
+                {% for field in entity.fields[:1] if field.name != "id" %}
+                {% if field.type == "str" %}
+                {{ field.name }}=f"batch_{i}"
+                {% elif field.type == "int" %}
+                {{ field.name }}=i
+                {% endif %}
+                {% endfor %}
+            )
+            for i in range(5)
+        ]
+
+        mock_repository.create_batch.return_value = [MagicMock() for _ in range(5)]
+
+        result = await service.create_batch(items)
+
+        mock_repository.create_batch.assert_called_once()
+        assert len(result) == 5
+
+    # Test transaction management
+    async def test_transactional_operation(self, service, mock_repository):
+        """Test transactional operations in service layer."""
+        with patch('services.{{ app_name|lower }}_service.transaction') as mock_transaction:
+            async def operation():
+                await service.complex_transactional_operation()
+
+            await operation()
+
+            mock_transaction.__enter__.assert_called()
+            mock_transaction.__exit__.assert_called()
+
+    # Test error handling
+    async def test_repository_error_handling(self, service, mock_repository):
+        """Test proper handling of repository errors."""
+        mock_repository.get.side_effect = Exception("Database connection failed")
+
+        with pytest.raises(Exception) as exc_info:
+            await service.get(1)
+
+        assert "Database connection failed" in str(exc_info.value)
+
+    async def test_retry_logic(self, service, mock_repository):
+        """Test retry logic for transient failures."""
+        # First two calls fail, third succeeds
+        mock_repository.get.side_effect = [
+            Exception("Temporary failure"),
+            Exception("Temporary failure"),
+            MagicMock()  # Success on third try
+        ]
+
+        with patch('asyncio.sleep', new_callable=AsyncMock):
+            result = await service.get_with_retry(1)
+
+        assert mock_repository.get.call_count == 3
+        assert result is not None
+
+    # Test caching strategies
+    async def test_cache_warming(self, service, mock_repository, mock_cache):
+        """Test cache warming strategy."""
+        mock_entities = [MagicMock() for _ in range(10)]
+        mock_repository.get_all.return_value = mock_entities
+
+        await service.warm_cache()
+
+        # Verify all entities were cached
+        assert mock_cache.set.call_count == 10
+
+    async def test_cache_invalidation_cascade(self, service, mock_cache):
+        """Test cascading cache invalidation."""
+        await service.invalidate_related_caches(1)
+
+        # Verify all related caches were invalidated
+        expected_calls = [
+            call("{{ entity.name|lower }}:1"),
+            call("{{ entity.name|lower }}_list:*"),
+            call("{{ entity.name|lower }}_aggregate:*"),
+        ]
+        mock_cache.delete.assert_has_calls(expected_calls, any_order=True)
+
+{% endfor %}
+
+# Test cross-service interactions
+class TestServiceInteractions:
+    """Test interactions between multiple services."""
+
+    @pytest.fixture
+    def service_container(self):
+        """Create container with all services."""
+        container = MagicMock()
+        {% for entity in entities %}
+        container.{{ entity.name|lower }}_service = MagicMock(spec={{ entity.name }}Service)
+        {% endfor %}
+        return container
+
+    async def test_cross_service_operation(self, service_container):
+        """Test operation involving multiple services."""
+        # Example: Create entity that depends on another
+        {% if entities|length > 1 %}
+        parent_entity = MagicMock()
+        parent_entity.id = 1
+
+        service_container.{{ entities[0].name|lower }}_service.get.return_value = parent_entity
+
+        # Create child entity referencing parent
+        result = await service_container.{{ entities[1].name|lower }}_service.create_with_parent(
+            parent_id=1,
+            data=MagicMock()
+        )
+
+        service_container.{{ entities[0].name|lower }}_service.get.assert_called_once_with(1)
+        {% endif %}
+
+    async def test_service_transaction_coordination(self, service_container):
+        """Test transaction coordination across services."""
+        with patch('services.transaction_manager') as mock_tm:
+            async def coordinated_operation():
+                async with mock_tm.begin():
+                    {% for entity in entities[:2] %}
+                    await service_container.{{ entity.name|lower }}_service.create(MagicMock())
+                    {% endfor %}
+
+            await coordinated_operation()
+
+            mock_tm.begin.assert_called()
+            mock_tm.commit.assert_called()
+
+# Test service configuration
+class TestServiceConfiguration:
+    """Test service configuration and initialization."""
+
+    def test_service_initialization(self):
+        """Test that services are properly initialized."""
+        {% for entity in entities %}
+        service = {{ entity.name }}Service(
+            repository=MagicMock(),
+            cache=MagicMock(),
+            event_bus=MagicMock()
+        )
+        assert service.repository is not None
+        assert service.cache is not None
+        assert service.event_bus is not None
+        {% endfor %}
+
+    def test_service_dependencies(self):
+        """Test service dependency injection."""
+        {% for entity in entities %}
+        mock_repo = MagicMock(spec={{ entity.name }}Repository)
+        service = {{ entity.name }}Service(repository=mock_repo)
+        assert service.repository == mock_repo
+        {% endfor %}

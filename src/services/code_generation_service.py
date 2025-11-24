@@ -2455,19 +2455,29 @@ Generate ONLY the README.md content, no additional explanations."""
                 # Generate route for each entity using LLM with pattern as guide
                 for entity in entities:
                     # Extract endpoints specific to this entity from spec
-                    # Use MORE PRECISE matching: only if path STARTS with entity plural (after first /)
+                    # Use endpoint.entity field (set by LLM parser) for accurate grouping
+                    # Fallback to path-based matching if entity field is missing
                     entity_snake = get_entity_snake_name(entity)
-                    entity_plural = f"{entity_snake}s"  # e.g., "products", "carts"
-                    entity_endpoints = [
-                        e for e in endpoints
-                        if e.path.lstrip('/').startswith(entity_plural + '/')
-                        or e.path.lstrip('/').startswith(entity_plural)
-                        or e.path == f"/{entity_plural}"
-                    ]
+                    entity_plural = f"{entity_snake}s"
+                    
+                    entity_endpoints = []
+                    for e in endpoints:
+                        # Try entity field first (LLM-parsed)
+                        if hasattr(e, 'entity') and e.entity:
+                            if e.entity.lower() == entity.name.lower():
+                                entity_endpoints.append(e)
+                        else:
+                            # Fallback to path-based matching
+                            if (e.path.lstrip('/').startswith(entity_plural + '/') or
+                                e.path.lstrip('/').startswith(entity_plural) or
+                                e.path == f"/{entity_plural}"):
+                                entity_endpoints.append(e)
 
                     # Generate route using LLM with pattern as style guide
                     # For api_routes, pass spec_or_ir based on type
                     spec_arg = spec_or_ir if not is_app_ir else None
+                    
+                    entity_snake = get_entity_snake_name(entity)
                     route_code = await self._generate_route_with_llm(
                         entity=entity,
                         endpoints=entity_endpoints,
@@ -2837,7 +2847,25 @@ Generate ONLY the README.md content, no additional explanations."""
         # Convert CamelCase to snake_case correctly (CartItem → cart_item)
         import re
         entity_snake = re.sub(r'(?<!^)(?=[A-Z])', '_', entity.name).lower()
-        entity_plural = f"{entity_snake}s"
+        entity_plural = f"{entity_snake}s"  # Always define this for use in function bodies
+        
+        # Determine router prefix from actual endpoint paths
+        # Extract common prefix from all endpoints for this entity
+        router_prefix = None
+        if endpoints:
+            # Get first path segment from first endpoint as router prefix
+            first_path = endpoints[0].path
+            # Extract first segment: /cart/... → /cart, /products/... → /products
+            match = re.match(r'^(/[^/]+)', first_path)
+            if match:
+                router_prefix = match.group(1)
+        
+        # Fallback to entity_plural if no endpoints or detection failed
+        if not router_prefix:
+            router_prefix = f"/{entity_plural}"
+        
+        # Determine tag name from router prefix (remove leading slash)
+        tag_name = router_prefix.lstrip('/')
 
         # Start building the route file
         code = f'''"""
@@ -2859,8 +2887,8 @@ from src.models.schemas import {entity.name}Create, {entity.name}Update, {entity
 from src.services.{entity_snake}_service import {entity.name}Service
 
 router = APIRouter(
-    prefix="/{entity_plural}",
-    tags=["{entity_plural}"],
+    prefix="{router_prefix}",
+    tags=["{tag_name}"],
 )
 
 
@@ -2872,7 +2900,8 @@ router = APIRouter(
             extra={
                 "entity": entity.name,
                 "endpoint_count": len(endpoints),
-                "endpoints": [f"{ep.method} {ep.path}" for ep in endpoints]
+                "endpoints": [f"{ep.method} {ep.path}" for ep in endpoints],
+                "router_prefix": router_prefix
             }
         )
 
@@ -2881,9 +2910,8 @@ router = APIRouter(
         for ep in endpoints:
             # Convert absolute path to relative path
             relative_path = ep.path
-            entity_prefix = f"/{entity_plural}"
-            if relative_path.startswith(entity_prefix):
-                relative_path = relative_path[len(entity_prefix):]
+            if relative_path.startswith(router_prefix):
+                relative_path = relative_path[len(router_prefix):]
             if not relative_path:
                 relative_path = "/"
 

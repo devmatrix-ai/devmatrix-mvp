@@ -2459,7 +2459,7 @@ Once running, visit:
 
             # CRITICAL FIX: Use CURRENT compliance report, not initial
             # This ensures repair agent sees the actual current state, not stale data
-            repair_result = self.code_repair_agent.repair(
+            repair_result = await self.code_repair_agent.repair(
                 compliance_report=current_compliance_report,
                 spec_requirements=self.spec_requirements,
                 max_attempts=3
@@ -2540,15 +2540,26 @@ Once running, visit:
                 # Store failed repair pattern
                 if self.error_pattern_store:
                     try:
-                        await self.error_pattern_store.store_error_pattern(
-                            repair={"repairs": str(repair_result.repairs_applied)[:500]},
-                            metadata={
-                                "iteration": iteration,
-                                "compliance_before": current_compliance,
-                                "compliance_after": new_compliance,
-                                "improvement": new_compliance - current_compliance,
-                                "regression": True
-                            }
+                        # Create ErrorPattern object
+                        from src.services.error_pattern_store import ErrorPattern
+                        await self.error_pattern_store.store_error(
+                            ErrorPattern(
+                                error_id=str(uuid4()),
+                                task_id=str(uuid4()),
+                                task_description=f"Phase 6.5 Code Repair - {self.spec_name}",
+                                error_type="regression",
+                                error_message=f"Regression detected: {current_compliance:.1%} -> {new_compliance:.1%}",
+                                failed_code=str(repair_result.repairs_applied)[:500],
+                                attempt=iteration,
+                                timestamp=datetime.now(),
+                                metadata={
+                                    "iteration": iteration,
+                                    "compliance_before": current_compliance,
+                                    "compliance_after": new_compliance,
+                                    "improvement": new_compliance - current_compliance,
+                                    "regression": True
+                                }
+                            )
                         )
                     except Exception as e:
                         if repair_logger:
@@ -3384,7 +3395,18 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
             print(f"  Overall Compliance:  {self.compliance_report.overall_compliance:.1%}")
             print(f"    ├─ Entities:       {self.compliance_report.compliance_details.get('entities', 0):.1%} ({len(self.compliance_report.entities_implemented)}/{len(self.compliance_report.entities_expected)})")
             print(f"    ├─ Endpoints:      {self.compliance_report.compliance_details.get('endpoints', 0):.1%} ({len(self.compliance_report.endpoints_implemented)}/{len(self.compliance_report.endpoints_expected)})")
-            print(f"    └─ Validations:    {self.compliance_report.compliance_details.get('validations', 0):.1%} ({len(self.compliance_report.validations_implemented)}/{len(self.compliance_report.validations_expected)})")
+            # Display validations with dynamic GT (add extras if all required are present)
+            val_compliance = self.compliance_report.compliance_details.get('validations', 0)
+            val_implemented = len(self.compliance_report.validations_implemented)
+            val_expected = len(self.compliance_report.validations_expected)
+            
+            # If compliance is 100%, show found/found (all validations are valid)
+            # Otherwise show matched/expected (some required validations are missing)
+            if val_compliance >= 0.999:  # 100% (accounting for float precision)
+                val_found = len(self.compliance_report.validations_found)
+                print(f"    └─ Validations:    {val_compliance:.1%} ({val_found}/{val_found} all valid)")
+            else:
+                print(f"    └─ Validations:    {val_compliance:.1%} ({val_implemented}/{val_expected} required)")
 
             # Calculate extra validations (found but not explicitly expected)
             extra_validations = len(self.compliance_report.validations_found) - len(self.compliance_report.validations_implemented)

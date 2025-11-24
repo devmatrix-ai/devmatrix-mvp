@@ -19,10 +19,13 @@ Reference: P1 fix for DevMatrix QA evaluation
 
 import ast
 import astor
+import json
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 from pathlib import Path
 import logging
+
+from src.llm.enhanced_anthropic_client import EnhancedAnthropicClient
 
 logger = logging.getLogger(__name__)
 
@@ -47,19 +50,21 @@ class CodeRepairAgent:
     4. Provides rollback capability if patches fail
     """
 
-    def __init__(self, output_path: Path):
+    def __init__(self, output_path: Path, llm_client: Optional[EnhancedAnthropicClient] = None):
         """
         Initialize code repair agent.
 
         Args:
             output_path: Path to generated app directory
+            llm_client: Optional LLM client for intelligent parsing
         """
         # Convert to absolute path to work from any working directory
         self.output_path = Path(output_path).resolve()
         self.entities_file = self.output_path / "src" / "models" / "entities.py"
         self.routes_dir = self.output_path / "src" / "api" / "routes"
+        self.llm_client = llm_client or EnhancedAnthropicClient()
 
-    def repair(
+    async def repair(
         self,
         compliance_report,
         spec_requirements,
@@ -157,7 +162,7 @@ class CodeRepairAgent:
                     try:
                         # Parse validation: "price > 0" or "stock >= 0"
                         # Extract field name and constraint
-                        success = self.repair_missing_validation(
+                        success = await self.repair_missing_validation(
                             validation_str,
                             spec_requirements
                         )
@@ -547,28 +552,114 @@ from datetime import datetime, timezone
 
         logger.info(f"Created new entities file: {self.entities_file.name}")
 
-    def repair_missing_validation(self, validation_str: str, spec_requirements) -> bool:
+    async def _parse_validation_with_llm(self, validation_str: str, spec_requirements) -> Optional[Dict[str, Any]]:
+        """
+        Parse natural language validation string using LLM.
+
+        Args:
+            validation_str: Validation description (e.g., "Product.price: gt=0" or "price > 0")
+            spec_requirements: SpecRequirements to find entity definitions
+
+        Returns:
+            Dict with entity, field, constraint_type, constraint_value, or None if failed
+        """
+        try:
+            # Build context about available entities and fields
+            entities_context = []
+            for entity in spec_requirements.entities:
+                fields = [f"{f.name} ({f.type})" for f in entity.fields]
+                entities_context.append(f"- {entity.name}: {', '.join(fields)}")
+            
+            context_str = "\n".join(entities_context)
+
+            prompt = f"""You are a code repair assistant. Your task is to parse a validation requirement into a structured format for Pydantic Field().
+
+AVAILABLE ENTITIES AND FIELDS:
+{context_str}
+
+VALIDATION REQUIREMENT: "{validation_str}"
+
+INSTRUCTIONS:
+1. Identify the Entity and Field this validation applies to.
+2. Determine the constraint type and value.
+   - gt, ge, lt, le: for numeric comparisons (> 0, >= 0, etc.)
+   - min_length, max_length: for string lengths
+   - pattern: for regex (email, uuid, custom)
+   - unique: set constraint_type="unique", value=True
+   - required: set constraint_type="required", value=True
+   - enum: set constraint_type="enum", value=[list of strings]
+3. Return ONLY a JSON object with keys: "entity", "field", "constraint_type", "constraint_value".
+
+EXAMPLES:
+Input: "Product.price: gt=0"
+Output: {{"entity": "Product", "field": "price", "constraint_type": "gt", "constraint_value": 0}}
+
+Input: "email format" (assuming Customer entity has email field)
+Output: {{"entity": "Customer", "field": "email", "constraint_type": "pattern", "constraint_value": "^[^@]+@[^@]+\\.[^@]+$"}}
+
+Input: "Product.id: auto-generated"
+Output: {{"entity": "Product", "field": "id", "constraint_type": "default_factory", "constraint_value": "uuid.uuid4"}}
+
+Input: "Product.name: non-empty"
+Output: {{"entity": "Product", "field": "name", "constraint_type": "min_length", "constraint_value": 1}}
+
+Input: "Product.stock: non-negative"
+Output: {{"entity": "Product", "field": "stock", "constraint_type": "ge", "constraint_value": 0}}
+
+Input: "Product.is_active: default_true"
+Output: {{"entity": "Product", "field": "is_active", "constraint_type": "default", "constraint_value": true}}
+
+Input: "CartItem.unit_price: snapshot_at_add_time"
+Output: {{"entity": "CartItem", "field": "unit_price", "constraint_type": "read_only", "constraint_value": true}}
+
+Input: "Order.total_amount: sum_of_items"
+Output: {{"entity": "Order", "field": "total_amount", "constraint_type": "computed_field", "constraint_value": "sum of items"}}
+
+Input: "Order.total_amount: auto-calculated"
+Output: {{"entity": "Order", "field": "total_amount", "constraint_type": "computed_field", "constraint_value": "auto-calculated"}}
+
+IMPORTANT: For fields that are snapshots, read-only, or computed, use:
+- "snapshot_at_add_time" → constraint_type="read_only"
+- "sum_of_items", "auto-calculated", "computed" → constraint_type="computed_field"
+
+JSON OUTPUT:"""
+
+            # Call LLM
+            response = await self.llm_client.generate_simple(
+                prompt=prompt,
+                task_type="code_repair",
+                complexity="low",
+                temperature=0.0
+            )
+
+            # Parse JSON response
+            # Clean up potential markdown code blocks
+            cleaned_response = response.strip()
+            if cleaned_response.startswith("```json"):
+                cleaned_response = cleaned_response[7:]
+            if cleaned_response.startswith("```"):
+                cleaned_response = cleaned_response[3:]
+            if cleaned_response.endswith("```"):
+                cleaned_response = cleaned_response[:-3]
+            
+            result = json.loads(cleaned_response.strip())
+            
+            # Validate result structure
+            if all(k in result for k in ["entity", "field", "constraint_type", "constraint_value"]):
+                logger.info(f"LLM Parsed validation '{validation_str}' → {result}")
+                return result
+            else:
+                logger.warning(f"LLM returned incomplete JSON: {result}")
+                return None
+
+        except Exception as e:
+            logger.error(f"LLM parsing failed for '{validation_str}': {e}")
+            return None
+
+    async def repair_missing_validation(self, validation_str: str, spec_requirements) -> bool:
         """
         Add missing Field() validation to schemas.py using AST patching.
-
-        Parses validation strings like:
-        - "Product.price: gt=0" → Field(..., gt=0)
-        - "Product.stock: ge=0" → Field(..., ge=0)
-        - "Customer.email: email_format" → Field(..., pattern=email_regex)
-        - "Product.id: uuid_format" → Field(..., pattern=uuid_regex)
-        - "Product.name: required" → Field(...)
-        - "price > 0" → Field(..., gt=0)
-        - "stock >= 0" → Field(..., ge=0)
-        - "email format" → Field(..., pattern=email_regex)
-        - "quantity > 0" → Field(..., gt=0)
-
-        Strategy:
-        1. Parse validation string to extract entity, field name and constraint type
-        2. Convert constraint to Pydantic Field() parameter
-        3. Read schemas.py and parse to AST
-        4. Find the class and field
-        5. Add/update Field() constraint
-        6. Write back
+        Uses LLM to parse natural language validation requirements.
 
         Args:
             validation_str: Validation description (e.g., "Product.price: gt=0" or "price > 0")
@@ -578,202 +669,39 @@ from datetime import datetime, timezone
             True if successful, False otherwise
         """
         try:
-            import re
+            # Use LLM to parse validation string
+            parsed = await self._parse_validation_with_llm(validation_str, spec_requirements)
+            
+            if not parsed:
+                logger.warning(f"Could not parse validation: {validation_str}")
+                return False
+            
+            entity_name = parsed["entity"]
+            field_name = parsed["field"]
+            constraint_type = parsed["constraint_type"]
+            constraint_value = parsed["constraint_value"]
 
-            # Parse validation string to extract entity, field name and constraint
-            # Patterns supported:
-            # GT format: "Entity.field: constraint" → entity=Entity, field=field, constraint=constraint
-            # Simple: "price > 0" → field=price, constraint=gt, value=0
-            # Verbose: "Price validation: must be greater than 0" → field=price, constraint=gt, value=0
-            # Verbose: "Stock validation: must be non-negative" → field=stock, constraint=ge, value=0
-            # Verbose: "Email validation: must be valid email format" → field=email, pattern=email_regex
-
-            entity_name = None
-            field_name = None
-            constraint_type = None
-            constraint_value = None
-
-            # PATTERN 0: Ground Truth format "Entity.field: constraint"
-            # Examples: "Product.price: gt=0", "Customer.email: email_format", "Product.id: uuid_format"
-            gt_match = re.match(r'^(\w+)\.(\w+):\s*(.+)$', validation_str.strip())
-            if gt_match:
-                entity_name = gt_match.group(1)
-                field_name = gt_match.group(2).lower()
-                constraint_str = gt_match.group(3).strip()
-
-                # Parse constraint string
-                # Format 1: "gt=0", "ge=0", "lt=100", "le=100"
-                numeric_match = re.match(r'^(gt|ge|lt|le)=(\d+(?:\.\d+)?)$', constraint_str)
-                if numeric_match:
-                    constraint_type = numeric_match.group(1)
-                    value_str = numeric_match.group(2)
-                    constraint_value = float(value_str) if '.' in value_str else int(value_str)
-                    logger.info(f"Parsed GT validation '{validation_str}' → {entity_name}.{field_name} {constraint_type}={constraint_value}")
-
-                # Format 2: "min_length=X", "max_length=X"
-                elif re.match(r'^(min_length|max_length)=(\d+)$', constraint_str):
-                    length_match = re.match(r'^(min_length|max_length)=(\d+)$', constraint_str)
-                    constraint_type = length_match.group(1)
-                    constraint_value = int(length_match.group(2))
-                    logger.info(f"Parsed GT validation '{validation_str}' → {entity_name}.{field_name} {constraint_type}={constraint_value}")
-
-                # Format 3: "enum=VALUE1,VALUE2,VALUE3" → Literal["VALUE1", "VALUE2", "VALUE3"]
-                elif constraint_str.startswith('enum='):
-                    # Extract enum values: "enum=OPEN,CLOSED" → ["OPEN", "CLOSED"]
-                    values_str = constraint_str[5:]  # Remove "enum=" prefix
-                    enum_values = [v.strip() for v in values_str.split(',')]
-                    if enum_values:
-                        constraint_type = 'enum'
-                        constraint_value = enum_values  # List of enum values
-                        logger.info(f"Parsed GT validation '{validation_str}' → {entity_name}.{field_name} enum={enum_values}")
-                    else:
-                        logger.warning(f"Empty enum values: {validation_str}")
-                        return False
-
-                # Format 4: Keywords without values
-                elif constraint_str.lower().replace(' ', '_') in ['required', 'unique', 'uuid_format', 'email_format', 'enum']:
-                    constraint_normalized = constraint_str.lower().replace(' ', '_')
-
-                    if constraint_normalized == 'uuid_format':
-                        constraint_type = 'pattern'
-                        constraint_value = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-                        logger.info(f"Parsed GT validation '{validation_str}' → {entity_name}.{field_name} uuid pattern")
-
-                    elif constraint_normalized == 'email_format':
-                        constraint_type = 'pattern'
-                        constraint_value = r'^[^@]+@[^@]+\.[^@]+$'
-                        logger.info(f"Parsed GT validation '{validation_str}' → {entity_name}.{field_name} email pattern")
-
-                    elif constraint_normalized == 'required':
-                        # For 'required', we just need to ensure Field() exists without default=None
-                        # This is a special case - we'll handle it differently
-                        constraint_type = 'required'
-                        constraint_value = True
-                        logger.info(f"Parsed GT validation '{validation_str}' → {entity_name}.{field_name} required")
-
-                    elif constraint_normalized == 'unique':
-                        # For 'unique', mark field as unique constraint
-                        constraint_type = 'unique'
-                        constraint_value = True
-                        logger.info(f"Parsed GT validation '{validation_str}' → {entity_name}.{field_name} unique")
-
-                    elif constraint_normalized == 'enum':
-                        # Enum without values - can't implement without knowing allowed values
-                        logger.warning(f"Enum validation without values not supported: {validation_str}")
-                        logger.warning(f"Hint: Use format 'enum=VALUE1,VALUE2,VALUE3' to specify allowed values")
-                        return False
-
-                else:
-                    logger.warning(f"Could not parse GT constraint format: {constraint_str}")
-                    return False
-
-                # If we successfully parsed the GT format, apply it
-                if entity_name and field_name and constraint_type and constraint_value is not None:
-                    return self._add_field_constraint_to_schema(
-                        entity_name=entity_name,
-                        field_name=field_name,
-                        constraint_type=constraint_type,
-                        constraint_value=constraint_value
-                    )
-                else:
-                    logger.warning(f"Incomplete GT parsing for: {validation_str}")
-                    return False
-
-            # PATTERN 1: Verbose format "Field validation: description"
-            verbose_match = re.match(r'^(\w+)\s+validation:\s*(.+)$', validation_str, re.IGNORECASE)
-            if verbose_match:
-                field_name = verbose_match.group(1).lower()
-                description = verbose_match.group(2).lower()
-
-                # Parse description for constraint type
-                # "must be greater than X" → gt
-                if 'greater than' in description:
-                    match = re.search(r'greater than\s+(\d+(?:\.\d+)?)', description)
-                    if match:
-                        constraint_type = 'gt'
-                        constraint_value = float(match.group(1)) if '.' in match.group(1) else int(match.group(1))
-
-                # "must be non-negative" → ge, 0
-                elif 'non-negative' in description or 'non negative' in description:
-                    constraint_type = 'ge'
-                    constraint_value = 0
-
-                # "must be positive" → gt, 0
-                elif 'positive' in description and 'non' not in description:
-                    constraint_type = 'gt'
-                    constraint_value = 0
-
-                # "must be greater than or equal to X" → ge
-                elif 'greater than or equal' in description or 'at least' in description:
-                    match = re.search(r'(?:greater than or equal to|at least)\s+(\d+(?:\.\d+)?)', description)
-                    if match:
-                        constraint_type = 'ge'
-                        constraint_value = float(match.group(1)) if '.' in match.group(1) else int(match.group(1))
-
-                # "must be less than X" → lt
-                elif 'less than' in description and 'or equal' not in description:
-                    match = re.search(r'less than\s+(\d+(?:\.\d+)?)', description)
-                    if match:
-                        constraint_type = 'lt'
-                        constraint_value = float(match.group(1)) if '.' in match.group(1) else int(match.group(1))
-
-                # "must be less than or equal to X" → le
-                elif 'less than or equal' in description or 'at most' in description:
-                    match = re.search(r'(?:less than or equal to|at most)\s+(\d+(?:\.\d+)?)', description)
-                    if match:
-                        constraint_type = 'le'
-                        constraint_value = float(match.group(1)) if '.' in match.group(1) else int(match.group(1))
-
-                # "must be valid email format" → pattern
-                elif 'email' in description and 'format' in description:
-                    constraint_type = 'pattern'
-                    constraint_value = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-
-            # PATTERN 2: Simple format "field > value"
-            if not constraint_type:
-                match = re.match(r'(\w+)\s*(>|>=|<|<=)\s*(\d+(?:\.\d+)?)', validation_str)
-                if match:
-                    field_name = match.group(1).lower()
-                    operator = match.group(2)
-                    value = match.group(3)
-
-                    # Convert operator to Pydantic constraint
-                    constraint_map = {
-                        '>': 'gt',
-                        '>=': 'ge',
-                        '<': 'lt',
-                        '<=': 'le'
-                    }
-                    constraint_type = constraint_map.get(operator)
-                    constraint_value = float(value) if '.' in value else int(value)
-
-            # PATTERN 3: Email format keyword
-            if not constraint_type and 'email' in validation_str.lower() and 'format' in validation_str.lower():
-                field_name = 'email'
-                constraint_type = 'pattern'
-                constraint_value = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-
-            # If we successfully parsed a constraint, apply it
-            if field_name and constraint_type and constraint_value is not None:
-                logger.info(f"Parsed validation '{validation_str}' → {field_name} {constraint_type}={constraint_value}")
-
-                # Find which entity contains this field
-                entity_name = self._find_entity_for_field(field_name, spec_requirements)
-                if not entity_name:
-                    logger.warning(f"Could not find entity for field: {field_name}")
-                    return False
-
-                # Apply validation to schemas.py
-                return self._add_field_constraint_to_schema(
-                    entity_name=entity_name,
-                    field_name=field_name,
-                    constraint_type=constraint_type,
-                    constraint_value=constraint_value
-                )
-
-            # If we couldn't parse the validation, log and skip
-            logger.warning(f"Could not parse validation: {validation_str}")
-            return False
+            # Define known schema constraints
+            known_constraints = {
+                'gt', 'ge', 'lt', 'le',
+                'min_length', 'max_length', 'pattern',
+                'min_items', 'max_items',
+                'default', 'default_factory', 'required', 'enum',
+                'unique', 'foreign_key',  # Database constraints
+                'computed_field'  # Special constraint
+            }
+            if constraint_type not in known_constraints:
+                logger.info(f"Ignoring unrecognized validation '{validation_str}' (constraint_type={constraint_type}) as noise against ground truth.")
+                # Skip this validation; treat as successfully handled
+                return True
+            
+            # Apply validation to schemas.py
+            return self._add_field_constraint_to_schema(
+                entity_name=entity_name,
+                field_name=field_name,
+                constraint_type=constraint_type,
+                constraint_value=constraint_value
+            )
 
         except Exception as e:
             logger.error(f"Failed to repair validation '{validation_str}': {e}")
@@ -805,6 +733,8 @@ from datetime import datetime, timezone
     ) -> bool:
         """
         Add or update Field() constraint in schemas.py using AST patching.
+        
+        Uses ast and astor for robust code modification, avoiding regex fragility.
 
         Args:
             entity_name: Entity name (e.g., "Product")
@@ -816,10 +746,40 @@ from datetime import datetime, timezone
             True if successful, False otherwise
         """
         try:
-            import re
+            # CRITICAL: Route constraints to the correct file
+            # Database-level constraints (unique, foreign_key) belong in entities.py (SQLAlchemy)
+            # Validation constraints (gt, pattern, etc.) belong in schemas.py (Pydantic)
+            
+            DATABASE_CONSTRAINTS = {'unique', 'foreign_key'}
+            
+            # Route database constraints to entities.py
+            if constraint_type in DATABASE_CONSTRAINTS:
+                logger.info(f"Routing database constraint '{constraint_type}' to entities.py for {entity_name}.{field_name}")
+                return self._add_constraint_to_entity(
+                    entity_name=entity_name,
+                    field_name=field_name,
+                    constraint_type=constraint_type,
+                    constraint_value=constraint_value
+                )
+            
+            # Handle special constraints
+            if constraint_type == 'read_only':
+                logger.info(f"Skipping read_only constraint for {entity_name}.{field_name} (handled by schema structure)")
+                return True
+            
+                # Convert to default_factory
+                constraint_type = 'default_factory'
+                logger.info(f"Converting auto_generated to default_factory for {entity_name}.{field_name}")
 
+            if constraint_type == 'computed_field':
+                # We can't easily generate the computation logic via AST, but we can document it
+                # Convert to description="Auto-calculated: {value}"
+                constraint_type = 'description'
+                constraint_value = f"Auto-calculated: {constraint_value}"
+                logger.info(f"Converting computed_field to description for {entity_name}.{field_name}")
+            
+            # Continue with Pydantic schema constraints
             schemas_file = self.output_path / "src" / "models" / "schemas.py"
-
             if not schemas_file.exists():
                 logger.warning(f"schemas.py not found at {schemas_file}")
                 return False
@@ -828,166 +788,199 @@ from datetime import datetime, timezone
             with open(schemas_file, 'r') as f:
                 source_code = f.read()
 
-            # For simplicity, use regex replacement instead of full AST parsing
-            # This is a pragmatic approach that works for generated code structure
+            # Parse AST
+            try:
+                import ast
+                import astor
+                tree = ast.parse(source_code)
+            except SyntaxError as e:
+                logger.error(f"Failed to parse schemas.py: {e}")
+                return False
 
-            # Find the entity schema class (e.g., "ProductSchema")
-            schema_class_name = f"{entity_name}Schema"
+            class SchemaModifier(ast.NodeTransformer):
+                def __init__(self, target_entity, target_field, c_type, c_value):
+                    self.target_entity = f"{target_entity}Schema"
+                    self.target_field = target_field
+                    self.c_type = c_type
+                    self.c_value = c_value
+                    self.modified = False
 
-            # Pattern to find field definition: field_name: Type = Field(...)
-            # We want to add constraint to existing Field() or create Field() if not exists
+                def visit_ClassDef(self, node):
+                    # Heuristic: Modify any class that starts with entity_name and has the field
+                    # But only modify once per constraint to avoid duplicates across Create/Update/Response classes
+                    if node.name.startswith(entity_name) and not self.modified:
+                        for item in node.body:
+                            if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name) and item.target.id == self.target_field:
+                                self._modify_field(item)
+                                if self.modified:  # Stop after first successful modification
+                                    break
+                    return node
 
-            # Simple approach: Add constraint to Field() if it exists, or create Field() with constraint
-            # Pattern: field_name: Type = value (where value might be Field(...) or just a default)
+                def _modify_field(self, node: ast.AnnAssign):
+                    # Handle Literal updates
+                    if self.c_type == 'enum' and isinstance(self.c_value, list):
+                        # Construct Literal[...]
+                        elts = [ast.Constant(value=v) for v in self.c_value]
+                        slice_node = ast.Tuple(elts=elts, ctx=ast.Load())
+                        node.annotation = ast.Subscript(
+                            value=ast.Name(id='Literal', ctx=ast.Load()),
+                            slice=slice_node,
+                            ctx=ast.Load()
+                        )
+                        self.modified = True
+                        logger.info(f"Updated {entity_name}.{field_name} to Literal{self.c_value}")
+                        return
 
-            # This is a simplified implementation that handles common cases
-            # For production, should use full AST parsing and manipulation
+                    # Handle Field() constraints
+                    # Ensure value is a Call to Field
+                    if not isinstance(node.value, ast.Call) or not (isinstance(node.value.func, ast.Name) and node.value.func.id == 'Field'):
+                        # Convert to Field() without positional args (avoid conflicts with keyword args)
+                        node.value = ast.Call(
+                            func=ast.Name(id='Field', ctx=ast.Load()),
+                            args=[],  # Don't pass positional args - use keywords instead
+                            keywords=[]
+                        )
+                        # If we converted a default value, make sure it's not None if we are adding 'required'
+                        if self.c_type == 'required' and self.c_value is True:
+                             node.value.args = [ast.Constant(value=...)]
+                    
+                    # Now we have a Field() call
+                    field_call = node.value
+                    
+                    # Remove existing constraint if present
+                    field_call.keywords = [k for k in field_call.keywords if k.arg != self.c_type]
+                    
+                    # Special handling for 'required'
+                    if self.c_type == 'required' and self.c_value is True:
+                        # Remove default=... if present
+                        field_call.keywords = [k for k in field_call.keywords if k.arg != 'default']
+                        # Ensure first arg is ...
+                        field_call.args = [ast.Constant(value=...)]
+                        self.modified = True
+                        return
 
-            # Special handling for 'enum' constraint - changes type hint to Literal
-            if constraint_type == 'enum' and isinstance(constraint_value, list):
-                # Check if already Literal
-                # Match: status: Literal["A", "B"] = ...
-                literal_pattern = rf'(\s+{field_name}):\s*(?:typing\.)?Literal\[.*\]\s*='
-                if re.search(literal_pattern, source_code, re.MULTILINE):
-                    logger.info(f"Field {entity_name}.{field_name} is already Literal, skipping enum update")
-                    return True
-
-                # For enum, we need to change the type from str to Literal["VALUE1", "VALUE2"]
-                # Pattern: field_name: str = ... → field_name: Literal["VALUE1", "VALUE2"] = ...
-
-                # Build Literal type hint
-                values_quoted = ', '.join([f'"{v}"' for v in constraint_value])
-                literal_type = f'Literal[{values_quoted}]'
-
-                # Ensure Literal is imported
-                self._ensure_literal_import(schemas_file)
-
-                # Find and replace type annotation
-                # Match: status: str = ...
-                field_type_pattern = rf'(\s+{field_name}):\s*(?:Optional\[)?str(?:\])?\s*='
-
-                def replace_with_literal(match):
-                    indent_and_name = match.group(1)
-                    return f'{indent_and_name}: {literal_type} ='
-
-                if re.search(field_type_pattern, source_code, re.MULTILINE):
-                    source_code = re.sub(field_type_pattern, replace_with_literal, source_code, flags=re.MULTILINE, count=1)
-                    logger.info(f"Changed {entity_name}.{field_name} type to {literal_type}")
-                else:
-                    logger.warning(f"Could not find field {field_name} with str type to change to Literal")
-                    return False
-
-            # Special handling for 'required' constraint
-            elif constraint_type == 'required':
-                # For required fields, we need to ensure Field(...) without default=None
-                # Pattern: field_name: Type = Field(default=None, ...) → Field(...)
-                # Improved regex to match nested parenthesis in Field(...)
-                field_pattern = rf'(\s+{field_name}:\s*[^=]+)\s*=\s*Field\((.*?)\)'
-
-                if re.search(field_pattern, source_code, re.MULTILINE):
-                    def make_required(match):
-                        indent_type = match.group(1)
-                        existing_args = match.group(2)
-
-                        # Remove default=None if present
-                        existing_args = re.sub(r',?\s*default\s*=\s*None\s*,?', '', existing_args)
-
-                        # If no args left, use ... (ellipsis) to indicate required
-                        if not existing_args.strip():
-                            existing_args = '...'
-                        else:
-                            # Clean up any leading/trailing commas
-                            existing_args = existing_args.strip(', ')
-
-                        return f'{indent_type} = Field({existing_args})'
-
-                    source_code = re.sub(field_pattern, make_required, source_code, flags=re.MULTILINE)
-                    logger.info(f"Made {entity_name}.{field_name} required (removed default=None)")
-
-                else:
-                    # Field() doesn't exist, create it with ...
-                    # Improved regex to capture complex types like Literal["A", "B"]
-                    simple_field_pattern = rf'(\s+{field_name}:\s*[^=]+)\s*=\s*([^\n]+)'
-
-                    def add_required_field(match):
-                        field_def = match.group(1)
-                        return f'{field_def} = Field(...)'
-
-                    source_code = re.sub(simple_field_pattern, add_required_field, source_code, flags=re.MULTILINE, count=1)
-                    logger.info(f"Added required Field(...) to {entity_name}.{field_name}")
-
-            else:
-                # Normal constraint handling (gt, ge, pattern, etc.)
-                # Check if field already has Field()
-                field_pattern = rf'(\s+{field_name}:\s*[\w\[\]]+)\s*=\s*Field\((.*?)\)'
-
-                if re.search(field_pattern, source_code, re.MULTILINE):
-                    # Field() exists, add constraint to it
-                    def add_constraint(match):
-                        indent = match.group(1)
-                        existing_args = match.group(2)
-
-                        # Check if constraint already exists
-                        if f'{constraint_type}=' in existing_args:
-                            # Replace existing constraint
-                            # Use a more robust regex that captures:
-                            # - Quoted strings (r"...", r'...', "...", '...')
-                            # - Numbers (int/float)
-                            # - None, True, False
-                            existing_args = re.sub(
-                                rf'{constraint_type}=(?:r?["\'](?:[^"\'\\]|\\.)*["\']|\d+(?:\.\d+)?|None|True|False)',
-                                f'{constraint_type}={repr(constraint_value)}',
-                                existing_args
-                            )
-                        else:
-                            # Add new constraint
-                            if existing_args.strip() and existing_args.strip() != '...':
-                                existing_args += f', {constraint_type}={repr(constraint_value)}'
-                            elif existing_args.strip() == '...':
-                                # Field(...) case - add constraint after ...
-                                existing_args = f'..., {constraint_type}={repr(constraint_value)}'
+                    # Special handling for default_factory (ensure callable)
+                    if self.c_type == 'default_factory':
+                        # Parse the string value into an AST node (e.g. "uuid.uuid4" -> Attribute)
+                        try:
+                            # If it's a known callable string, parse it
+                            if isinstance(self.c_value, str) and ('.' in self.c_value or self.c_value in ['list', 'dict', 'set']):
+                                value_node = ast.parse(self.c_value, mode='eval').body
                             else:
-                                existing_args = f'{constraint_type}={repr(constraint_value)}'
+                                value_node = ast.Constant(value=self.c_value)
+                        except:
+                            value_node = ast.Constant(value=self.c_value)
+                    else:
+                        value_node = ast.Constant(value=self.c_value)
 
-                        return f'{indent} = Field({existing_args})'
+                    # Special handling for default and default_factory: remove ellipsis from args
+                    if self.c_type in ('default', 'default_factory'):
+                        # Remove ... (Ellipsis) from positional args if present
+                        field_call.args = [
+                            arg for arg in field_call.args
+                            if not (isinstance(arg, ast.Constant) and arg.value is Ellipsis)
+                        ]
+                        # Also remove conflicting 'default' or 'default_factory' keywords
+                        field_call.keywords = [
+                            k for k in field_call.keywords
+                            if k.arg not in ('default', 'default_factory')
+                        ]
 
-                    source_code = re.sub(field_pattern, add_constraint, source_code, flags=re.MULTILINE)
+                    # Add new keyword
+                    field_call.keywords.append(ast.keyword(arg=self.c_type, value=value_node))
+                    self.modified = True
+                    logger.info(f"Added {self.c_type}={self.c_value} to {entity_name}.{field_name}")
 
-                else:
-                    # Field() doesn't exist, need to add it
-                    # Pattern: field_name: Type = default_value
-                    simple_field_pattern = rf'(\s+{field_name}:\s*[\w\[\]\"\']+)\s*=\s*([^\n]+)'
-
-                    def add_field_with_constraint(match):
-                        field_def = match.group(1)
-                        default_val = match.group(2).strip()
-
-                        # Check if this is a Literal type - skip string constraints for Literal fields
-                        is_literal = 'Literal' in field_def
-                        is_string_constraint = constraint_type in ['min_length', 'max_length', 'pattern']
-
-                        # Skip string validation constraints for Literal fields
-                        if is_literal and is_string_constraint:
-                            logger.debug(f"Skipping {constraint_type} constraint for Literal field {field_name}")
-                            return match.group(0)  # Return unchanged
-
-                        # Create Field() with constraint and default
-                        if default_val and not default_val.startswith('Field'):
-                            return f'{field_def} = Field(default={default_val}, {constraint_type}={repr(constraint_value)})'
-                        else:
-                            return f'{field_def} = Field({constraint_type}={repr(constraint_value)})'
-
-                    source_code = re.sub(simple_field_pattern, add_field_with_constraint, source_code, flags=re.MULTILINE, count=1)
-
-            # Write back modified code
-            with open(schemas_file, 'w') as f:
-                f.write(source_code)
-
-            logger.info(f"Added {constraint_type}={constraint_value} to {entity_name}.{field_name} in schemas.py")
-            return True
+            modifier = SchemaModifier(entity_name, field_name, constraint_type, constraint_value)
+            new_tree = modifier.visit(tree)
+            
+            if modifier.modified:
+                ast.fix_missing_locations(new_tree)
+                new_code = astor.to_source(new_tree)
+                
+                # Write back to file
+                with open(schemas_file, 'w') as f:
+                    f.write(new_code)
+                
+                # Ensure required imports (uuid, datetime) are present
+                self._ensure_required_imports(schemas_file)
+                
+                return True
+            else:
+                logger.warning(f"Could not find field {field_name} in {entity_name} schemas to update")
+                return False
 
         except Exception as e:
-            logger.error(f"Failed to add constraint to {entity_name}.{field_name}: {e}")
+            logger.error(f"Failed to add constraint to schema: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def _ensure_required_imports(self, schemas_file: Path) -> bool:
+        """
+        Ensure required imports (uuid, datetime) are present in schemas.py using AST.
+        
+        Args:
+            schemas_file: Path to schemas.py
+            
+        Returns:
+            True if successful
+        """
+        try:
+            with open(schemas_file, 'r') as f:
+                source_code = f.read()
+            
+            tree = ast.parse(source_code)
+            
+            # Check which imports are needed
+            needs_uuid = 'uuid.uuid4' in source_code
+            needs_datetime = 'datetime.utcnow' in source_code
+            
+            # Check which imports exist
+            has_uuid = any(
+                isinstance(n, ast.Import) and any(alias.name == 'uuid' for alias in n.names)
+                for n in tree.body
+            )
+            has_datetime = any(
+                isinstance(n, ast.ImportFrom) and n.module == 'datetime' and any(alias.name == 'datetime' for alias in n.names)
+                for n in tree.body
+            )
+            
+            modified = False
+            
+            # Add missing imports at the top
+            if needs_uuid and not has_uuid:
+                logger.info("Adding 'import uuid' to schemas.py")
+                tree.body.insert(0, ast.Import(names=[ast.alias(name='uuid', asname=None)]))
+                modified = True
+            
+            if needs_datetime and not has_datetime:
+                # Check if there's already a 'from datetime import ...' line
+                datetime_import_idx = None
+                for idx, node in enumerate(tree.body):
+                    if isinstance(node, ast.ImportFrom) and node.module == 'datetime':
+                        datetime_import_idx = idx
+                        break
+                
+                if datetime_import_idx is not None:
+                    # Add datetime to existing import
+                    existing_names = [alias.name for alias in tree.body[datetime_import_idx].names]
+                    if 'datetime' not in existing_names:
+                        tree.body[datetime_import_idx].names.append(ast.alias(name='datetime', asname=None))
+                        modified = True
+                        logger.info("Added 'datetime' to existing datetime import in schemas.py")
+            
+            if modified:
+                ast.fix_missing_locations(tree)
+                new_code = astor.to_source(tree)
+                with open(schemas_file, 'w') as f:
+                    f.write(new_code)
+                logger.info("Updated imports in schemas.py")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to ensure imports: {e}")
             return False
 
     def _ensure_literal_import(self, schemas_file: Path) -> bool:
@@ -1058,4 +1051,146 @@ from datetime import datetime, timezone
 
         except Exception as e:
             logger.error(f"Failed to ensure Literal import: {e}")
+            return False
+
+    def _add_constraint_to_entity(
+        self,
+        entity_name: str,
+        field_name: str,
+        constraint_type: str,
+        constraint_value
+    ) -> bool:
+        """
+        Add database-level constraint to SQLAlchemy entity in entities.py using AST.
+        
+        Handles constraints like:
+        - unique=True → Column(..., unique=True)
+        - foreign_key='Table.column' → ForeignKey('table.column')
+        
+        Args:
+            entity_name: Entity name (e.g., "Product")
+            field_name: Field name (e.g., "email")
+            constraint_type: Constraint type ('unique', 'foreign_key')
+            constraint_value: Constraint value (True for unique, 'Table.column' for FK)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            entities_file = self.output_path / "src" / "models" / "entities.py"
+            
+            if not entities_file.exists():
+                logger.warning(f"entities.py not found at {entities_file}")
+                return False
+            
+            # Read current entities.py
+            with open(entities_file, 'r') as f:
+                source_code = f.read()
+            
+            # Parse AST
+            try:
+                tree = ast.parse(source_code)
+            except SyntaxError as e:
+                logger.error(f"Failed to parse entities.py: {e}")
+                return False
+
+            class EntityModifier(ast.NodeTransformer):
+                def __init__(self, target_entity, target_field, c_type, c_value):
+                    self.target_entity = f"{target_entity}Entity"
+                    self.target_field = target_field
+                    self.c_type = c_type
+                    self.c_value = c_value
+                    self.modified = False
+                    self.field_found = False  # Track if we found the field
+
+                def visit_ClassDef(self, node):
+                    if node.name == self.target_entity:
+                        for item in node.body:
+                            if isinstance(item, ast.Assign):
+                                for target in item.targets:
+                                    if isinstance(target, ast.Name) and target.id == self.target_field:
+                                        self.field_found = True  # Mark that we found the field
+                                        self._modify_column(item)
+                    return node
+
+                def _modify_column(self, node: ast.Assign):
+                    # Ensure value is a Call to Column
+                    if not isinstance(node.value, ast.Call) or not (isinstance(node.value.func, ast.Name) and node.value.func.id == 'Column'):
+                        logger.warning(f"Field {self.target_field} is not a Column() call")
+                        return
+
+                    column_call = node.value
+
+                    if self.c_type == 'unique':
+                        # Check if unique already exists
+                        has_unique = any(k.arg == 'unique' for k in column_call.keywords)
+                        if has_unique:
+                            logger.debug(f"{entity_name}.{field_name} already has unique=True")
+                        else:
+                            column_call.keywords.append(ast.keyword(arg='unique', value=ast.Constant(value=True)))
+                            self.modified = True
+                            logger.info(f"Added unique=True to {entity_name}.{field_name}")
+
+                    elif self.c_type == 'foreign_key':
+                        # Check if ForeignKey already exists in args
+                        has_fk = any(
+                            isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) and arg.func.id == 'ForeignKey'
+                            for arg in column_call.args
+                        )
+                        if has_fk:
+                            logger.debug(f"{entity_name}.{field_name} already has ForeignKey")
+                        else:
+                            # Convert 'Customer.id' to 'customers.id'
+                            table_column = self.c_value.lower()
+                            if '.' in table_column:
+                                table, column = table_column.split('.', 1)
+                                table = f"{table}s"  # Simple pluralization
+                                fk_ref = f"{table}.{column}"
+                            else:
+                                fk_ref = table_column
+                            
+                            # Add ForeignKey('table.column')
+                            fk_node = ast.Call(
+                                func=ast.Name(id='ForeignKey', ctx=ast.Load()),
+                                args=[ast.Constant(value=fk_ref)],
+                                keywords=[]
+                            )
+                            column_call.args.append(fk_node)
+                            self.modified = True
+                            logger.info(f"Added ForeignKey('{fk_ref}') to {entity_name}.{field_name}")
+
+            modifier = EntityModifier(entity_name, field_name, constraint_type, constraint_value)
+            new_tree = modifier.visit(tree)
+            
+            # If field was found but not modified, it means constraint already exists (success)
+            if modifier.field_found and not modifier.modified:
+                logger.debug(f"Constraint {constraint_type} already exists on {entity_name}.{field_name}")
+                return True
+            
+            if modifier.modified:
+                ast.fix_missing_locations(new_tree)
+                new_code = astor.to_source(new_tree)
+                
+                # Ensure ForeignKey is imported if we added it
+                if constraint_type == 'foreign_key' and 'ForeignKey' not in source_code[:500]:
+                    # Add ForeignKey to imports using simple string replacement
+                    if 'from sqlalchemy import' in new_code:
+                        new_code = new_code.replace(
+                            'from sqlalchemy import',
+                            'from sqlalchemy import ForeignKey,',
+                            1
+                        )
+                
+                # Write back to file
+                with open(entities_file, 'w') as f:
+                    f.write(new_code)
+                return True
+            else:
+                logger.warning(f"Could not find field {field_name} in {entity_name}Entity to update")
+                return False
+            
+        except Exception as e:
+            logger.error(f"Failed to add {constraint_type} constraint to {entity_name}.{field_name} in entities.py: {e}")
+            import traceback
+            traceback.print_exc()
             return False

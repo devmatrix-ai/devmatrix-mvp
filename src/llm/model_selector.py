@@ -37,6 +37,7 @@ class TaskType(str, Enum):
     MASTERPLAN_GENERATION = "masterplan_generation"
     TASK_EXECUTION = "task_execution"
     CODE_REVIEW = "code_review"
+    CODE_REPAIR = "code_repair"
     TEST_GENERATION = "test_generation"
     DOCUMENTATION = "documentation"
     SUMMARY = "summary"
@@ -197,9 +198,10 @@ class ModelSelector:
         # Rule 5: Low/Medium complexity → Haiku (if cost optimization) or Sonnet
         if complexity in [TaskComplexity.LOW, TaskComplexity.MEDIUM]:
             if self.cost_optimization:
-                # Use Haiku for most task types
+                # Use Haiku for most task types (fast, high-volume, simple tasks)
                 if task_type in [
                     TaskType.TASK_EXECUTION,
+                    TaskType.CODE_REPAIR,  # Code repair is repetitive, use fast Haiku
                     TaskType.TEST_GENERATION,
                     TaskType.DOCUMENTATION,
                     TaskType.SUMMARY,

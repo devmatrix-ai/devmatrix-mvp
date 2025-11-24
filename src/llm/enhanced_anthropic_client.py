@@ -664,14 +664,15 @@ class EnhancedAnthropicClient:
             complexity=complexity
         )
 
-        # Use base client (has retry/circuit breaker)
-        response = self.base_client.generate(
-            messages=[{"role": "user", "content": prompt}],
+        # Use direct Anthropic client (properly formatted)
+        response = self.anthropic.messages.create(
+            model=model,
             max_tokens=max_tokens,
-            temperature=temperature
+            temperature=temperature,
+            messages=[{"role": "user", "content": prompt}]
         )
 
-        return response["content"]
+        return response.content[0].text
 
     async def generate(
         self,

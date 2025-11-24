@@ -1,0 +1,142 @@
+"""
+API Integration Tests
+
+End-to-end tests for API endpoints.
+"""
+import pytest
+from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
+import uuid
+
+{% for entity in entities %}
+
+class TestAPI{{ entity.name }}:
+    """Integration tests for {{ entity.name }} API endpoints."""
+
+    async def test_create_{{ entity.name | lower }}(self, client: AsyncClient, sample_data: dict):
+        """Test creating a new {{ entity.name | lower }}."""
+        response = await client.post("/{{ entity.plural | lower }}/", json=sample_data)
+        assert response.status_code == 201
+        data = response.json()
+        assert "id" in data
+        assert data["name"] == sample_data["name"]
+
+    async def test_get_{{ entity.name | lower }}(self, client: AsyncClient, sample_data: dict):
+        """Test getting a {{ entity.name | lower }} by ID."""
+        # Create {{ entity.name | lower }}
+        create_response = await client.post("/{{ entity.plural | lower }}/", json=sample_data)
+        assert create_response.status_code == 201
+        {{ entity.name | lower }}_id = create_response.json()["id"]
+
+        # Get {{ entity.name | lower }}
+        response = await client.get(f"/{{ entity.plural | lower }}/{{{ entity.name | lower }}_id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == {{ entity.name | lower }}_id
+        assert data["name"] == sample_data["name"]
+
+    async def test_get_{{ entity.name | lower }}_not_found(self, client: AsyncClient):
+        """Test getting a non-existent {{ entity.name | lower }}."""
+        fake_id = str(uuid.uuid4())
+        response = await client.get(f"/{{ entity.plural | lower }}/{fake_id}")
+        assert response.status_code == 404
+
+    async def test_list_{{ entity.plural | lower }}(self, client: AsyncClient, sample_data: dict):
+        """Test listing {{ entity.plural | lower }} with pagination."""
+        # Create multiple {{ entity.plural | lower }}
+        for i in range(3):
+            data = sample_data.copy()
+            data["name"] = f"Test Item {i}"
+            await client.post("/{{ entity.plural | lower }}/", json=data)
+
+        # List {{ entity.plural | lower }}
+        response = await client.get("/{{ entity.plural | lower }}/")
+        assert response.status_code == 200
+        data = response.json()
+        assert "items" in data
+        assert "total" in data
+        assert data["total"] >= 3
+        assert len(data["items"]) >= 3
+
+    async def test_update_{{ entity.name | lower }}(self, client: AsyncClient, sample_data: dict):
+        """Test updating a {{ entity.name | lower }}."""
+        # Create {{ entity.name | lower }}
+        create_response = await client.post("/{{ entity.plural | lower }}/", json=sample_data)
+        {{ entity.name | lower }}_id = create_response.json()["id"]
+
+        # Update {{ entity.name | lower }}
+        update_data = {"name": "Updated Name"}
+        response = await client.put(f"/{{ entity.plural | lower }}/{{{ entity.name | lower }}_id}", json=update_data)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["name"] == "Updated Name"
+
+    async def test_delete_{{ entity.name | lower }}(self, client: AsyncClient, sample_data: dict):
+        """Test deleting a {{ entity.name | lower }}."""
+        # Create {{ entity.name | lower }}
+        create_response = await client.post("/{{ entity.plural | lower }}/", json=sample_data)
+        {{ entity.name | lower }}_id = create_response.json()["id"]
+
+        # Delete {{ entity.name | lower }}
+        response = await client.delete(f"/{{ entity.plural | lower }}/{{{ entity.name | lower }}_id}")
+        assert response.status_code == 204
+
+        # Verify deletion
+        get_response = await client.get(f"/{{ entity.plural | lower }}/{{{ entity.name | lower }}_id}")
+        assert get_response.status_code == 404
+
+    {% if 'name' in entity.fields | map(attribute='name') %}
+    async def test_search_{{ entity.plural | lower }}(self, client: AsyncClient, sample_data: dict):
+        """Test searching {{ entity.plural | lower }} by name."""
+        # Create {{ entity.name | lower }} with specific name
+        sample_data["name"] = "Searchable Item"
+        await client.post("/{{ entity.plural | lower }}/", json=sample_data)
+
+        # Search
+        response = await client.get("/{{ entity.plural | lower }}/search/?query=Searchable")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) > 0
+        assert "Searchable" in data[0]["name"]
+    {% endif %}
+{% endfor %}
+
+
+class TestHealthEndpoints:
+    """Tests for health check endpoints."""
+
+    async def test_health_check(self, client: AsyncClient):
+        """Test basic health check endpoint."""
+        response = await client.get("/health/health")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+
+    async def test_readiness_check(self, client: AsyncClient):
+        """Test readiness check endpoint."""
+        response = await client.get("/health/ready")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ready"
+        assert "database" in data["checks"]
+
+    async def test_metrics_endpoint(self, client: AsyncClient):
+        """Test Prometheus metrics endpoint."""
+        response = await client.get("/metrics/metrics")
+        assert response.status_code == 200
+        # Metrics are in Prometheus text format
+        assert "http_requests_total" in response.text
+
+
+class TestRootEndpoint:
+    """Test root API endpoint."""
+
+    async def test_root(self, client: AsyncClient):
+        """Test root endpoint returns API info."""
+        response = await client.get("/")
+        assert response.status_code == 200
+        data = response.json()
+        assert "name" in data
+        assert "version" in data
+        assert "status" in data
+        assert data["status"] == "running"

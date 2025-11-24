@@ -1,0 +1,52 @@
+"""
+SQLAlchemy ORM Models
+
+Database entity definitions.
+"""
+from sqlalchemy import Column, String, Boolean, DateTime, Text, Integer, Numeric
+from sqlalchemy.dialects.postgresql import UUID
+from datetime import datetime, timezone
+import uuid
+from src.core.database import Base
+
+{% for entity in entities %}
+
+class {{ entity.name }}Entity(Base):
+    """SQLAlchemy model for {{ entity.table_name }} table."""
+
+    __tablename__ = "{{ entity.table_name }}"
+
+    {% for field in entity.fields %}
+    {% if field.primary_key %}
+    {{ field.name }} = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    {% elif field.type == "str" %}
+    {% if field.constraints and field.constraints.get('max_length') and field.constraints.get('max_length') > 255 %}
+    {{ field.name }} = Column(Text, nullable={{ 'False' if field.required else 'True' }}{% if field.unique %}, unique=True{% endif %}{% if field.name in ['title', 'name', 'email'] %}, index=True{% endif %})
+    {% else %}
+    {{ field.name }} = Column(String({{ field.constraints.get('max_length', 200) if field.constraints else 200 }}), nullable={{ 'False' if field.required else 'True' }}{% if field.unique %}, unique=True{% endif %}{% if field.name in ['title', 'name', 'email'] %}, index=True{% endif %})
+    {% endif %}
+    {% elif field.type == "bool" %}
+    {{ field.name }} = Column(Boolean, nullable={{ 'False' if field.required else 'True' }}, default={{ field.default if field.default else 'False' }}{% if field.name in ['completed', 'is_active', 'published'] %}, index=True{% endif %})
+    {% elif field.type == "int" %}
+    {{ field.name }} = Column(Integer, nullable={{ 'False' if field.required else 'True' }}{% if field.default %}, default={{ field.default }}{% endif %})
+    {% elif field.type == "Decimal" %}
+    {{ field.name }} = Column(Numeric(precision=10, scale=2), nullable={{ 'False' if field.required else 'True' }}{% if field.default %}, default={{ field.default }}{% endif %})
+    {% elif field.type == "datetime" %}
+    {% if field.name in ['created_at', 'updated_at'] %}
+    {{ field.name }} = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc){% if field.name == 'updated_at' %},
+        onupdate=lambda: datetime.now(timezone.utc){% endif %}
+    )
+    {% else %}
+    {{ field.name }} = Column(DateTime(timezone=True), nullable={{ 'False' if field.required else 'True' }})
+    {% endif %}
+    {% else %}
+    {{ field.name }} = Column(String(200), nullable={{ 'False' if field.required else 'True' }})
+    {% endif %}
+    {% endfor %}
+
+    def __repr__(self):
+        return f"<{{ entity.name }} {self.id}: {getattr(self, '{{ entity.fields[1].name if entity.fields|length > 1 else 'id' }}', 'N/A')}>"
+{% endfor %}

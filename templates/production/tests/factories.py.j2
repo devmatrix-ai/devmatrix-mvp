@@ -1,0 +1,135 @@
+"""
+Test data factories for {{ app_name }} entities.
+
+This module provides factory_boy factories for generating test data
+for all entities in the application.
+"""
+
+import factory
+from factory.alchemy import SQLAlchemyModelFactory
+from datetime import datetime, timezone
+from typing import Optional, Any
+from sqlalchemy.orm import Session
+
+from models.entities import {% for entity in entities %}{{ entity.name }}{% if not loop.last %}, {% endif %}{% endfor %}
+from core.database import SessionLocal
+
+# Base factory configuration
+class BaseFactory(SQLAlchemyModelFactory):
+    """Base factory for all model factories."""
+
+    class Meta:
+        abstract = True
+        sqlalchemy_session_persistence = "commit"
+        sqlalchemy_session = SessionLocal()
+
+    @classmethod
+    def _create(cls, model_class, *args, **kwargs):
+        """Override _create to handle our database session properly."""
+        session = cls._meta.sqlalchemy_session
+        obj = super()._create(model_class, *args, **kwargs)
+        session.add(obj)
+        session.commit()
+        return obj
+
+{% for entity in entities %}
+class {{ entity.name }}Factory(BaseFactory):
+    """Factory for generating {{ entity.name }} test data."""
+
+    class Meta:
+        model = {{ entity.name }}
+
+    {% for field in entity.fields %}
+    {% if field.type == "str" %}
+    {{ field.name }} = factory.Faker("{% if 'email' in field.name %}email{% elif 'name' in field.name %}name{% elif 'title' in field.name %}sentence{% elif 'description' in field.name %}text{% elif 'url' in field.name %}url{% else %}word{% endif %}")
+    {% elif field.type == "int" %}
+    {{ field.name }} = factory.Faker("random_int", min=1, max=1000)
+    {% elif field.type == "float" %}
+    {{ field.name }} = factory.Faker("pyfloat", positive=True, min_value=0.1, max_value=1000.0)
+    {% elif field.type == "bool" %}
+    {{ field.name }} = factory.Faker("boolean")
+    {% elif field.type == "datetime" %}
+    {{ field.name }} = factory.LazyFunction(lambda: datetime.now(timezone.utc))
+    {% elif field.type == "date" %}
+    {{ field.name }} = factory.Faker("date_object")
+    {% elif field.type == "uuid" %}
+    {{ field.name }} = factory.Faker("uuid4")
+    {% elif field.type == "json" or field.type == "dict" %}
+    {{ field.name }} = factory.LazyFunction(lambda: {"key": "value"})
+    {% elif field.type == "list" %}
+    {{ field.name }} = factory.LazyFunction(lambda: [])
+    {% else %}
+    {{ field.name }} = None  # TODO: Handle {{ field.type }} type
+    {% endif %}
+    {% endfor %}
+
+    @factory.post_generation
+    def relationships(obj, create, extracted, **kwargs):
+        """Handle any relationship fields after creation."""
+        # Add relationship handling if needed
+        pass
+
+    @classmethod
+    def create_batch_with_variations(cls, size: int, **kwargs) -> list:
+        """Create a batch with slight variations for each instance."""
+        return [cls.create(**kwargs) for _ in range(size)]
+
+{% endfor %}
+
+# Utility functions for test data generation
+def reset_factory_sessions():
+    """Reset all factory sessions."""
+    for factory_class in [{% for entity in entities %}{{ entity.name }}Factory{% if not loop.last %}, {% endif %}{% endfor %}]:
+        factory_class._meta.sqlalchemy_session.rollback()
+        factory_class._meta.sqlalchemy_session.close()
+        factory_class._meta.sqlalchemy_session = SessionLocal()
+
+def create_test_dataset():
+    """Create a complete test dataset with related entities."""
+    dataset = {}
+    {% for entity in entities %}
+    dataset["{{ entity.name|lower }}s"] = {{ entity.name }}Factory.create_batch(5)
+    {% endfor %}
+    return dataset
+
+# Test data patterns for specific scenarios
+class ScenarioFactories:
+    """Factories for specific test scenarios."""
+
+    @staticmethod
+    def create_minimal_data():
+        """Create minimal valid data for quick tests."""
+        data = {}
+        {% for entity in entities %}
+        data["{{ entity.name|lower }}"] = {{ entity.name }}Factory.create()
+        {% endfor %}
+        return data
+
+    @staticmethod
+    def create_edge_cases():
+        """Create edge case data for boundary testing."""
+        edge_cases = {}
+        {% for entity in entities %}
+        # Create edge cases for {{ entity.name }}
+        edge_cases["{{ entity.name|lower }}_empty"] = {{ entity.name }}Factory.create(
+            {% for field in entity.fields %}
+            {% if field.type == "str" and not field.required %}
+            {{ field.name }}="",
+            {% elif field.type in ["int", "float"] and not field.required %}
+            {{ field.name }}=0,
+            {% elif field.type == "list" and not field.required %}
+            {{ field.name }}=[],
+            {% endif %}
+            {% endfor %}
+        )
+        edge_cases["{{ entity.name|lower }}_max"] = {{ entity.name }}Factory.create(
+            {% for field in entity.fields %}
+            {% if field.type == "str" %}
+            {{ field.name }}="x" * 255,  # Adjust max length as needed
+            {% elif field.type in ["int", "float"] %}
+            {{ field.name }}=999999,
+            {% endif %}
+            {% endfor %}
+        )
+        {% endfor %}
+        return edge_cases

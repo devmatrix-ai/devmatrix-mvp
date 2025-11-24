@@ -1,0 +1,347 @@
+"""
+Unit tests for {{ app_name }} Pydantic models/schemas.
+
+Tests validation, strict mode, type coercion, and serialization.
+"""
+
+import pytest
+from datetime import datetime, date, timezone
+from decimal import Decimal
+from typing import Optional, Dict, Any, List
+from uuid import UUID, uuid4
+import json
+
+from pydantic import ValidationError
+
+from models.schemas import (
+    {% for entity in entities %}{{ entity.name }}Base,
+    {{ entity.name }}Create,
+    {{ entity.name }}Update,
+    {{ entity.name }}Response,
+    {{ entity.name }}InDB,
+    {% endfor %}
+)
+
+{% for entity in entities %}
+class Test{{ entity.name }}Schemas:
+    """Test suite for {{ entity.name }} Pydantic schemas."""
+
+    # Test {{ entity.name }}Base
+    def test_{{ entity.name|lower }}_base_valid(self):
+        """Test {{ entity.name }}Base with valid data."""
+        data = {
+            {% for field in entity.fields %}
+            {% if field.type == "str" %}
+            "{{ field.name }}": "test_value",
+            {% elif field.type == "int" %}
+            "{{ field.name }}": 42,
+            {% elif field.type == "float" %}
+            "{{ field.name }}": 3.14,
+            {% elif field.type == "bool" %}
+            "{{ field.name }}": True,
+            {% elif field.type == "datetime" %}
+            "{{ field.name }}": datetime.now(timezone.utc),
+            {% elif field.type == "date" %}
+            "{{ field.name }}": date.today(),
+            {% elif field.type == "uuid" %}
+            "{{ field.name }}": uuid4(),
+            {% elif field.type in ["json", "dict"] %}
+            "{{ field.name }}": {"key": "value"},
+            {% elif field.type == "list" %}
+            "{{ field.name }}": ["item1", "item2"],
+            {% endif %}
+            {% endfor %}
+        }
+        schema = {{ entity.name }}Base(**data)
+        assert schema.model_dump() is not None
+        {% for field in entity.fields %}
+        assert schema.{{ field.name }} == data["{{ field.name }}"]
+        {% endfor %}
+
+    def test_{{ entity.name|lower }}_base_validation_error(self):
+        """Test {{ entity.name }}Base with invalid data."""
+        invalid_data = {
+            {% for field in entity.fields %}
+            {% if field.type == "str" %}
+            "{{ field.name }}": 123,  # Should be string
+            {% elif field.type == "int" %}
+            "{{ field.name }}": "not_an_int",
+            {% elif field.type == "float" %}
+            "{{ field.name }}": "not_a_float",
+            {% elif field.type == "bool" %}
+            "{{ field.name }}": "not_a_bool",
+            {% elif field.type == "datetime" %}
+            "{{ field.name }}": "not_a_datetime",
+            {% elif field.type == "date" %}
+            "{{ field.name }}": "not_a_date",
+            {% elif field.type == "uuid" %}
+            "{{ field.name }}": "not_a_uuid",
+            {% endif %}
+            {% endfor %}
+        }
+        with pytest.raises(ValidationError):
+            {{ entity.name }}Base(**invalid_data)
+
+    def test_{{ entity.name|lower }}_base_optional_fields(self):
+        """Test {{ entity.name }}Base with optional fields."""
+        minimal_data = {
+            {% for field in entity.fields if field.required %}
+            {% if field.type == "str" %}
+            "{{ field.name }}": "required_value",
+            {% elif field.type == "int" %}
+            "{{ field.name }}": 1,
+            {% elif field.type == "float" %}
+            "{{ field.name }}": 1.0,
+            {% elif field.type == "bool" %}
+            "{{ field.name }}": False,
+            {% endif %}
+            {% endfor %}
+        }
+        schema = {{ entity.name }}Base(**minimal_data)
+        assert schema.model_dump() is not None
+
+    # Test {{ entity.name }}Create
+    def test_{{ entity.name|lower }}_create_valid(self):
+        """Test {{ entity.name }}Create with valid data."""
+        data = {
+            {% for field in entity.fields if field.name != "id" %}
+            {% if field.type == "str" %}
+            "{{ field.name }}": "create_value",
+            {% elif field.type == "int" %}
+            "{{ field.name }}": 100,
+            {% elif field.type == "float" %}
+            "{{ field.name }}": 99.99,
+            {% elif field.type == "bool" %}
+            "{{ field.name }}": True,
+            {% elif field.type == "datetime" %}
+            "{{ field.name }}": datetime.now(timezone.utc),
+            {% elif field.type == "date" %}
+            "{{ field.name }}": date.today(),
+            {% elif field.type == "uuid" %}
+            "{{ field.name }}": uuid4(),
+            {% elif field.type in ["json", "dict"] %}
+            "{{ field.name }}": {"create": "data"},
+            {% elif field.type == "list" %}
+            "{{ field.name }}": ["new", "items"],
+            {% endif %}
+            {% endfor %}
+        }
+        schema = {{ entity.name }}Create(**data)
+        assert schema.model_dump() is not None
+
+    def test_{{ entity.name|lower }}_create_extra_fields_forbidden(self):
+        """Test {{ entity.name }}Create rejects extra fields."""
+        data = {
+            {% for field in entity.fields if field.name != "id" %}
+            {% if field.type == "str" %}
+            "{{ field.name }}": "value",
+            {% elif field.type == "int" %}
+            "{{ field.name }}": 1,
+            {% endif %}
+            {% endfor %}
+            "extra_field": "should_not_be_allowed"
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            {{ entity.name }}Create(**data)
+        assert "extra_field" in str(exc_info.value)
+
+    # Test {{ entity.name }}Update
+    def test_{{ entity.name|lower }}_update_partial(self):
+        """Test {{ entity.name }}Update with partial data."""
+        data = {
+            {% for field in entity.fields[:2] if field.name != "id" %}
+            {% if field.type == "str" %}
+            "{{ field.name }}": "updated_value",
+            {% elif field.type == "int" %}
+            "{{ field.name }}": 999,
+            {% endif %}
+            {% endfor %}
+        }
+        schema = {{ entity.name }}Update(**data)
+        assert schema.model_dump(exclude_unset=True) == data
+
+    def test_{{ entity.name|lower }}_update_all_fields(self):
+        """Test {{ entity.name }}Update with all fields."""
+        data = {
+            {% for field in entity.fields if field.name != "id" %}
+            {% if field.type == "str" %}
+            "{{ field.name }}": "fully_updated",
+            {% elif field.type == "int" %}
+            "{{ field.name }}": 777,
+            {% elif field.type == "float" %}
+            "{{ field.name }}": 77.77,
+            {% elif field.type == "bool" %}
+            "{{ field.name }}": False,
+            {% endif %}
+            {% endfor %}
+        }
+        schema = {{ entity.name }}Update(**data)
+        assert len(schema.model_dump(exclude_unset=True)) == len(data)
+
+    # Test {{ entity.name }}Response
+    def test_{{ entity.name|lower }}_response_serialization(self):
+        """Test {{ entity.name }}Response JSON serialization."""
+        data = {
+            "id": 1,
+            {% for field in entity.fields %}
+            {% if field.type == "str" %}
+            "{{ field.name }}": "response_value",
+            {% elif field.type == "int" %}
+            "{{ field.name }}": 42,
+            {% elif field.type == "float" %}
+            "{{ field.name }}": 3.14,
+            {% elif field.type == "bool" %}
+            "{{ field.name }}": True,
+            {% elif field.type == "datetime" %}
+            "{{ field.name }}": datetime.now(timezone.utc),
+            {% elif field.type == "date" %}
+            "{{ field.name }}": date.today(),
+            {% elif field.type == "uuid" %}
+            "{{ field.name }}": uuid4(),
+            {% elif field.type in ["json", "dict"] %}
+            "{{ field.name }}": {"response": "data"},
+            {% elif field.type == "list" %}
+            "{{ field.name }}": ["item1", "item2"],
+            {% endif %}
+            {% endfor %}
+        }
+        schema = {{ entity.name }}Response(**data)
+        json_data = schema.model_dump_json()
+        assert isinstance(json_data, str)
+
+        # Verify deserialization works
+        parsed = json.loads(json_data)
+        assert parsed["id"] == data["id"]
+
+    def test_{{ entity.name|lower }}_response_from_orm(self):
+        """Test {{ entity.name }}Response ORM mode compatibility."""
+        # This would typically use a real ORM object
+        # For unit test, we simulate with a mock object
+        class Mock{{ entity.name }}:
+            id = 1
+            {% for field in entity.fields %}
+            {% if field.type == "str" %}
+            {{ field.name }} = "orm_value"
+            {% elif field.type == "int" %}
+            {{ field.name }} = 100
+            {% elif field.type == "float" %}
+            {{ field.name }} = 10.5
+            {% elif field.type == "bool" %}
+            {{ field.name }} = True
+            {% elif field.type == "datetime" %}
+            {{ field.name }} = datetime.now(timezone.utc)
+            {% elif field.type == "date" %}
+            {{ field.name }} = date.today()
+            {% elif field.type == "uuid" %}
+            {{ field.name }} = uuid4()
+            {% elif field.type in ["json", "dict"] %}
+            {{ field.name }} = {"orm": "data"}
+            {% elif field.type == "list" %}
+            {{ field.name }} = ["orm_item"]
+            {% endif %}
+            {% endfor %}
+
+        orm_object = Mock{{ entity.name }}()
+        schema = {{ entity.name }}Response.model_validate(orm_object)
+        assert schema.id == 1
+
+    # Test type coercion
+    def test_{{ entity.name|lower }}_type_coercion(self):
+        """Test type coercion in {{ entity.name }} schemas."""
+        data = {
+            {% for field in entity.fields %}
+            {% if field.type == "str" %}
+            "{{ field.name }}": 123,  # Will be coerced to "123"
+            {% elif field.type == "int" %}
+            "{{ field.name }}": "42",  # Will be coerced to 42
+            {% elif field.type == "float" %}
+            "{{ field.name }}": "3.14",  # Will be coerced to 3.14
+            {% elif field.type == "bool" %}
+            "{{ field.name }}": 1,  # Will be coerced to True
+            {% endif %}
+            {% endfor %}
+        }
+        schema = {{ entity.name }}Base(**data)
+        {% for field in entity.fields %}
+        {% if field.type == "str" %}
+        assert schema.{{ field.name }} == "123"
+        {% elif field.type == "int" %}
+        assert schema.{{ field.name }} == 42
+        {% elif field.type == "float" %}
+        assert schema.{{ field.name }} == 3.14
+        {% elif field.type == "bool" %}
+        assert schema.{{ field.name }} is True
+        {% endif %}
+        {% endfor %}
+
+    # Test field constraints
+    def test_{{ entity.name|lower }}_field_constraints(self):
+        """Test field constraints in {{ entity.name }} schemas."""
+        # Test max length for strings
+        {% for field in entity.fields if field.type == "str" %}
+        {% if field.max_length %}
+        with pytest.raises(ValidationError):
+            {{ entity.name }}Base(**{"{{ field.name }}": "x" * ({{ field.max_length }} + 1)})
+        {% endif %}
+        {% endfor %}
+
+        # Test min/max values for numbers
+        {% for field in entity.fields if field.type in ["int", "float"] %}
+        {% if field.min_value %}
+        with pytest.raises(ValidationError):
+            {{ entity.name }}Base(**{"{{ field.name }}": {{ field.min_value }} - 1})
+        {% endif %}
+        {% if field.max_value %}
+        with pytest.raises(ValidationError):
+            {{ entity.name }}Base(**{"{{ field.name }}": {{ field.max_value }} + 1})
+        {% endif %}
+        {% endfor %}
+
+    def test_{{ entity.name|lower }}_schema_json_schema(self):
+        """Test JSON schema generation for {{ entity.name }} schemas."""
+        json_schema = {{ entity.name }}Base.model_json_schema()
+        assert "properties" in json_schema
+        assert "type" in json_schema
+        {% for field in entity.fields %}
+        assert "{{ field.name }}" in json_schema["properties"]
+        {% endfor %}
+
+{% endfor %}
+
+# Test cross-entity relationships and validations
+class TestCrossEntityValidation:
+    """Test validations that span multiple entities."""
+
+    def test_entity_relationships(self):
+        """Test relationships between entities are properly validated."""
+        # Add tests for foreign key relationships, unique constraints, etc.
+        pass
+
+    def test_business_rule_validations(self):
+        """Test business rules that involve multiple entities."""
+        # Add tests for complex business validations
+        pass
+
+# Test schema configuration
+class TestSchemaConfiguration:
+    """Test Pydantic configuration for all schemas."""
+
+    def test_strict_mode_enabled(self):
+        """Test that strict mode is properly configured."""
+        {% for entity in entities %}
+        assert {{ entity.name }}Base.model_config.get("strict", False) == True
+        {% endfor %}
+
+    def test_orm_mode_enabled(self):
+        """Test that ORM mode is enabled for response schemas."""
+        {% for entity in entities %}
+        assert {{ entity.name }}Response.model_config.get("from_attributes", False) == True
+        {% endfor %}
+
+    def test_json_encoders_configured(self):
+        """Test that custom JSON encoders are properly configured."""
+        {% for entity in entities %}
+        config = {{ entity.name }}Response.model_config
+        if "json_encoders" in config:
+            assert datetime in config["json_encoders"]
+        {% endfor %}

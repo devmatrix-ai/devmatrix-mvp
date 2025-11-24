@@ -1,0 +1,129 @@
+{
+  "entities": [
+    {
+      "name": "Product",
+      "fields": [
+        {"name": "id", "type": "UUID", "is_primary_key": true},
+        {"name": "name", "type": "string", "required": true, "min_length": 1},
+        {"name": "description", "type": "string", "required": false},
+        {"name": "price", "type": "decimal", "required": true, "minimum": 0.01},
+        {"name": "stock", "type": "integer", "required": true, "minimum": 0},
+        {"name": "is_active", "type": "boolean", "required": true}
+      ]
+    },
+    {
+      "name": "Customer",
+      "fields": [
+        {"name": "id", "type": "UUID", "is_primary_key": true},
+        {"name": "email", "type": "string", "required": true, "unique": true},
+        {"name": "full_name", "type": "string", "required": true},
+        {"name": "created_at", "type": "datetime", "required": true}
+      ]
+    },
+    {
+      "name": "Cart",
+      "fields": [
+        {"name": "id", "type": "UUID", "is_primary_key": true},
+        {"name": "customer_id", "type": "UUID", "required": true},
+        {"name": "status", "type": "string", "required": true, "allowed_values": ["OPEN", "CHECKED_OUT"]},
+        {"name": "created_at", "type": "datetime", "required": true}
+      ]
+    },
+    {
+      "name": "CartItem",
+      "fields": [
+        {"name": "id", "type": "UUID", "is_primary_key": true},
+        {"name": "cart_id", "type": "UUID", "required": true},
+        {"name": "product_id", "type": "UUID", "required": true},
+        {"name": "quantity", "type": "integer", "required": true, "minimum": 1},
+        {"name": "unit_price", "type": "decimal", "required": true, "minimum": 0}
+      ]
+    },
+    {
+      "name": "Order",
+      "fields": [
+        {"name": "id", "type": "UUID", "is_primary_key": true},
+        {"name": "customer_id", "type": "UUID", "required": true},
+        {"name": "total_amount", "type": "decimal", "required": true, "minimum": 0},
+        {"name": "status", "type": "string", "required": true, "allowed_values": ["PENDING_PAYMENT", "PAID", "CANCELLED"]},
+        {"name": "payment_status", "type": "string", "required": true, "allowed_values": ["PENDING", "SIMULATED_OK", "FAILED"]},
+        {"name": "created_at", "type": "datetime", "required": true}
+      ]
+    },
+    {
+      "name": "OrderItem",
+      "fields": [
+        {"name": "id", "type": "UUID", "is_primary_key": true},
+        {"name": "order_id", "type": "UUID", "required": true},
+        {"name": "product_id", "type": "UUID", "required": true},
+        {"name": "quantity", "type": "integer", "required": true, "minimum": 1},
+        {"name": "unit_price", "type": "decimal", "required": true, "minimum": 0}
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "from": "Customer",
+      "to": "Cart",
+      "type": "one-to-many",
+      "foreign_key": "customer_id",
+      "required": true,
+      "cascade_delete": true
+    },
+    {
+      "from": "Cart",
+      "to": "CartItem",
+      "type": "one-to-many",
+      "foreign_key": "cart_id",
+      "required": true,
+      "cascade_delete": true
+    },
+    {
+      "from": "Product",
+      "to": "CartItem",
+      "type": "one-to-many",
+      "foreign_key": "product_id",
+      "required": true
+    },
+    {
+      "from": "Customer",
+      "to": "Order",
+      "type": "one-to-many",
+      "foreign_key": "customer_id",
+      "required": true,
+      "cascade_delete": true
+    },
+    {
+      "from": "Order",
+      "to": "OrderItem",
+      "type": "one-to-many",
+      "foreign_key": "order_id",
+      "required": true,
+      "cascade_delete": true
+    },
+    {
+      "from": "Product",
+      "to": "OrderItem",
+      "type": "one-to-many",
+      "foreign_key": "product_id",
+      "required": true
+    }
+  ],
+  "endpoints": [
+    {"method": "POST", "path": "/api/products", "name": "Create Product", "parameters": ["name", "price", "stock"]},
+    {"method": "GET", "path": "/api/products", "name": "List Products"},
+    {"method": "GET", "path": "/api/products/{id}", "name": "Get Product"},
+    {"method": "PUT", "path": "/api/products/{id}", "name": "Update Product"},
+    {"method": "POST", "path": "/api/customers", "name": "Register Customer", "parameters": ["email", "full_name"]},
+    {"method": "GET", "path": "/api/customers/{id}", "name": "Get Customer"},
+    {"method": "POST", "path": "/api/carts", "name": "Create Cart", "parameters": ["customer_id"]},
+    {"method": "GET", "path": "/api/carts/{id}", "name": "Get Cart"},
+    {"method": "POST", "path": "/api/carts/{id}/items", "name": "Add Item to Cart", "parameters": ["product_id", "quantity"]},
+    {"method": "PUT", "path": "/api/carts/{id}/items/{item_id}", "name": "Update Item Quantity", "parameters": ["quantity"]},
+    {"method": "DELETE", "path": "/api/carts/{id}/items/{item_id}", "name": "Remove Item from Cart"},
+    {"method": "POST", "path": "/api/orders", "name": "Create Order", "parameters": ["cart_id"]},
+    {"method": "GET", "path": "/api/orders/{id}", "name": "Get Order"},
+    {"method": "GET", "path": "/api/customers/{id}/orders", "name": "List Customer Orders"},
+    {"method": "POST", "path": "/api/orders/{id}/payment", "name": "Simulate Payment"}
+  ]
+}

@@ -59,9 +59,8 @@ class RepairResults:
 
 ### Optional
 - **CodeRepairAgent** (`src/mge/v2/agents/code_repair_agent.py`)
-  - Repair broken code
-  - Fix syntax errors
-  - Resolve test failures
+  - Repair broken code using **AST patching** (robust against syntax errors)
+  - Fix syntax errors and resolve test failures
   - Learn from failures
 
 ## Repair Strategy
