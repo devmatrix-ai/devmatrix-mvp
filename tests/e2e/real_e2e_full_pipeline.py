@@ -2240,6 +2240,15 @@ Once running, visit:
                 "endpoints_expected": endpoints_expected
             })
 
+            # Early exit if compliance is not acceptable (< 65%)
+            MIN_ACCEPTABLE_COMPLIANCE = float(os.getenv("MIN_ACCEPTABLE_COMPLIANCE", "0.65"))
+            if compliance_score < MIN_ACCEPTABLE_COMPLIANCE:
+                print(f"\n  🛑 STOPPING TEST: Compliance {compliance_score:.1%} below minimum acceptable {MIN_ACCEPTABLE_COMPLIANCE:.1%}")
+                print(f"    This indicates a fundamental issue with the implementation.")
+                print(f"    Fix the issue and re-run the test.")
+                self.metrics_collector.metrics.compliance_score = compliance_score
+                raise SystemExit(1)
+
             # CP-6.5.4: Skip logic (only if 100% perfect)
             COMPLIANCE_THRESHOLD = 1.00  # Must be perfect to skip repair
             if compliance_score >= COMPLIANCE_THRESHOLD:

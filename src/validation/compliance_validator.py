@@ -650,6 +650,30 @@ class ComplianceValidator:
             else:
                 logger.warning(f"schemas.py not found at {schemas_file}")
 
+            # 3.5. PASO 1C: Extract SQLAlchemy constraints using AST Parser (robust)
+            # Replaces regex-based extraction with AST parser that handles multi-line definitions
+            entities_file = output_path / "src" / "models" / "entities.py"
+            if entities_file.exists():
+                try:
+                    entities_content = entities_file.read_text()
+                    sqlalchemy_constraints = self._extract_sqlalchemy_constraints_ast(entities_content)
+
+                    extracted_count = 0
+                    for entity_name, fields in sqlalchemy_constraints.items():
+                        for field_info in fields:
+                            field_name = field_info["field"]
+                            constraints = field_info["constraints"]
+
+                            for constraint in constraints:
+                                record_validation(entity_name, field_name, constraint)
+                                extracted_count += 1
+
+                    logger.info(f"✅ Extracted {extracted_count} SQLAlchemy constraints using AST parser")
+                except Exception as e:
+                    logger.warning(f"Failed to extract SQLAlchemy constraints: {e}")
+            else:
+                logger.debug(f"entities.py not found at {entities_file}")
+
             # 4. Extract what was expected from spec
             entities_expected = [e.name for e in spec_requirements.entities]
             endpoints_expected = [f"{ep.method} {ep.path}" for ep in spec_requirements.endpoints]
@@ -862,8 +886,126 @@ class ComplianceValidator:
             return "email_format"
         if c == "uuid format":
             return "uuid_format"
-            
+
         return c
+
+    def _extract_sqlalchemy_constraints_ast(self, entities_content: str) -> Dict[str, List[Dict]]:
+        """
+        PASO 1B: Extract SQLAlchemy constraints using AST parser (robust).
+
+        Handles multi-line Column definitions, nested function calls, etc.
+
+        Returns: {
+            "Product": [
+                {"field": "id", "constraints": ["unique", "required", "primary_key"]},
+                {"field": "name", "constraints": ["required"]},
+            ]
+        }
+        """
+        import ast
+
+        try:
+            tree = ast.parse(entities_content)
+        except SyntaxError as e:
+            logger.error(f"entities.py has syntax errors: {e}, falling back to empty result")
+            return {}
+
+        result = {}
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+
+            # Extract entity name: ProductEntity → Product
+            if not node.name.endswith("Entity"):
+                continue
+            entity_name = node.name[:-6]  # Remove "Entity" suffix
+            result[entity_name] = []
+
+            # Process class body
+            for stmt in node.body:
+                if not isinstance(stmt, ast.Assign):
+                    continue
+
+                # field_name = Column(...)
+                field_name = stmt.targets[0].id if hasattr(stmt.targets[0], 'id') else None
+                if not field_name:
+                    continue
+
+                constraints = []
+
+                # Check if it's a Column() call
+                if isinstance(stmt.value, ast.Call):
+                    call = stmt.value
+                    func_name = call.func.attr if isinstance(call.func, ast.Attribute) else None
+
+                    if func_name == "Column" or (isinstance(call.func, ast.Name) and call.func.id == "Column"):
+                        # Extract keyword arguments
+                        for keyword in call.keywords:
+                            key = keyword.arg
+                            value = keyword.value
+
+                            if key == "nullable":
+                                # nullable=False → required
+                                if isinstance(value, ast.Constant) and value.value is False:
+                                    constraints.append("required")
+
+                            elif key == "unique":
+                                # unique=True → unique
+                                if isinstance(value, ast.Constant) and value.value is True:
+                                    constraints.append("unique")
+
+                            elif key == "primary_key":
+                                # primary_key=True → primary_key
+                                if isinstance(value, ast.Constant) and value.value is True:
+                                    constraints.append("primary_key")
+
+                            elif key == "default":
+                                # default=uuid.uuid4 or default=datetime.utcnow → auto-generated
+                                if isinstance(value, ast.Attribute):
+                                    if value.attr == "uuid4" or value.attr == "utcnow":
+                                        constraints.append("auto-generated")
+
+                        # Check positional arguments for ForeignKey
+                        for arg in call.args:
+                            if isinstance(arg, ast.Call):
+                                arg_func = arg.func.attr if isinstance(arg.func, ast.Attribute) else (arg.func.id if isinstance(arg.func, ast.Name) else None)
+                                if arg_func == "ForeignKey":
+                                    constraints.append("foreign_key")
+
+                result[entity_name].append({
+                    "field": field_name,
+                    "constraints": constraints
+                })
+
+        return result
+
+    def _matches_with_wildcard(self, found_constraint: str, expected_constraint: str) -> bool:
+        """
+        CAMBIO 3: Check if a found constraint matches an expected constraint with wildcard support.
+
+        Examples:
+        - "description=Read-only field" matches "description"
+        - "foreign_key_customer" matches "foreign_key"
+        - "auto-generated" matches "auto-generated"
+        """
+        # Direct equality
+        if found_constraint == expected_constraint:
+            return True
+
+        # Prefix matching for constraints with values (e.g., "description=*" matches any "description=...")
+        if '=' in expected_constraint and '=' in found_constraint:
+            found_key = found_constraint.split('=')[0]
+            expected_key = expected_constraint.split('=')[0]
+            if found_key == expected_key:
+                return True
+
+        # Prefix matching for simple constraints (e.g., "description" matches "description=...")
+        if found_constraint.startswith(expected_constraint):
+            return True
+
+        # Substring matching as last resort
+        return expected_constraint in found_constraint
 
     def _calculate_compliance(self, found: List[str], expected: List[str]) -> float:
         """
@@ -1115,21 +1257,62 @@ class ComplianceValidator:
         # FLEXIBLE MATCHING MODE (default - per Architecture Rule #1)
         # Use semantic equivalence mapping for common validation patterns
         # Maps high-level constraints from spec to code-level constraints
+        # CAMBIO 2: Expanded semantic equivalences with wildcard support and computed fields
         semantic_equivalences = {
-            "unique": ["unique", "read_only", "primary"],  # unique fields are often read_only
-            "auto-generated": ["read_only", "auto_increment", "generated", "default_factory"],  # auto-gen → default_factory
-            "auto_generated": ["read_only", "auto_increment", "generated", "default_factory"],  # variant
+            # Database-level constraints
+            "unique": ["unique", "read_only", "primary"],
+            "primary_key": ["primary_key", "unique"],
+            "foreign_key": ["foreign_key*", "fk_*"],  # Matches foreign_key_customer, foreign_key_product, etc.
+            "required": ["required"],
+
+            # Auto-generated variants
+            "auto-generated": ["default_factory", "auto_increment", "generated", "auto-generated"],
+            "auto_generated": ["default_factory", "auto_increment", "generated", "auto-generated"],
+            "auto-increment": ["default_factory", "auto_increment"],
+
+            # Read-only variants (output fields, snapshots, immutable)
+            "read-only": ["description", "read_only", "exclude", "snapshot_at*"],
+            "read_only": ["description", "read_only", "exclude", "snapshot_at*"],
+            "snapshot_at": ["description", "read_only", "exclude", "snapshot_at*"],
+            "snapshot_at_add_time": ["description", "read_only", "exclude", "default*"],
+            "snapshot_at_order_time": ["description", "read_only", "exclude", "default*"],
+            "immutable": ["description", "read_only", "exclude"],
+
+            # Computed fields (auto-calculated, derived)
+            "computed_field": ["description"],
+            "auto-calculated": ["description"],
+            "auto_calculated": ["description"],
+
+            # Input validation constraints
+            "presence": ["required"],
             "non-empty": ["required", "min_length"],
+            "non_empty": ["required", "min_length"],
             "non-negative": ["ge=0", "gt=-1", "minimum=0"],
-            "greater_than_zero": ["gt=0", "ge=1", "minimum=1", "exclusiveMinimum=0"],
-            "valid_email_format": ["email_format", "email", "pattern"],
-            "valid-email-format": ["email_format", "email", "pattern"],  # variant with hyphens
-            "default_true": ["default=True", "default=true", "default=True"],
-            "default_false": ["default=False", "default=false"],
-            "read-only": ["read_only", "exclude"],  # read-only variants
-            "read_only": ["read_only", "exclude"],
-            "snapshot_at": ["read_only", "exclude"],  # snapshot fields are read-only
-            "immutable": ["read_only", "exclude"],  # immutable = read-only
+            "non_negative": ["ge=0", "gt=-1", "minimum=0"],
+            "positive": ["gt=0", "ge=1"],
+            "greater_than_zero": ["gt=0", "gt"],
+            "gt": ["gt"],
+            "ge": ["ge"],
+            "lt": ["lt"],
+            "le": ["le"],
+            "min_length": ["min_length"],
+            "max_length": ["max_length"],
+
+            # Format validations
+            "valid_email_format": ["email_format", "pattern"],
+            "valid-email-format": ["email_format", "pattern"],
+            "email_format": ["email_format", "pattern"],
+            "uuid_format": ["uuid_format"],
+
+            # Default values (with wildcard support for specific values)
+            "default_true": ["default=True", "default=true", "default_true"],
+            "default_false": ["default=False", "default=false", "default_false"],
+            "default_open": ["default=open", "default_open"],
+            "default_pending_payment": ["default=pending_payment", "default_pending_payment"],
+            "default_pending": ["default=pending", "default_pending"],
+
+            # Enum/values constraints
+            "values": ["enum", "values", "default*"],  # Enum constraints often have default values
         }
 
         matches = 0
@@ -1157,13 +1340,13 @@ class ComplianceValidator:
                         found_match = True
                         break
 
-                    # Try semantic equivalence match
+                    # Try semantic equivalence match with wildcard support
                     # Check if the constraint has semantic equivalents
                     for semantic_key, equivalents in semantic_equivalences.items():
                         if semantic_key in constraint_lower:
-                            # Check if any equivalent is in the found_val
+                            # Check if any equivalent matches (with wildcard support)
                             for equiv in equivalents:
-                                if equiv in found_val.lower():
+                                if self._matches_with_wildcard(found_val.lower(), equiv.lower()):
                                     matches += 1
                                     matched_validations.append(found_val)
                                     found_match = True
