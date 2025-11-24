@@ -1,0 +1,161 @@
+
+======================================================================
+🚀 REAL E2E TEST: Full Pipeline Execution
+======================================================================
+📄 Spec: tests/e2e/test_specs/ecommerce-api-spec-human.md
+📁 Output: tests/e2e/generated_apps/ecommerce-api-spec-human_1764006197
+======================================================================
+
+
+📊 Progress tracking enabled
+
+
+  🔄 Loading PatternBank... ✓
+  🔄 Loading PatternClassifier... ✓
+  🔄 Loading MultiPassPlanner... ✓
+  🔄 Loading RequirementsClassifier... ✓
+  🔄 Loading ComplianceValidator... ✓
+  🔄 Loading TestResultAdapter... ✓
+  🔄 Loading ErrorPatternStore... ✓
+  🔄 Loading CodeGenerationService...
+📊 Metrics saved to: tests/e2e/metrics/real_e2e_ecommerce-api-spec-human_1764006197.json
+
+
+================================================================================
+                    📊 E2E PIPELINE PROGRESS                    
+================================================================================
+
+  ⏳ Spec Ingestion            [░░░░░░░░░░░░░░░░░░]   0%
+  ⏳ Requirements Analysis     [░░░░░░░░░░░░░░░░░░]   0%
+  ⏳ Multi-Pass Planning       [░░░░░░░░░░░░░░░░░░]   0%
+  ⏳ Atomization               [░░░░░░░░░░░░░░░░░░]   0%
+  ⏳ DAG Construction          [░░░░░░░░░░░░░░░░░░]   0%
+  ⏳ Code Generation           [░░░░░░░░░░░░░░░░░░]   0%
+  ⏳ Deployment                [░░░░░░░░░░░░░░░░░░]   0%
+  ⏳ Code Repair               [░░░░░░░░░░░░░░░░░░]   0%
+  ⏳ Validation                [░░░░░░░░░░░░░░░░░░]   0%
+  ⏳ Health Verification       [░░░░░░░░░░░░░░░░░░]   0%
+  ⏳ Learning                  [░░░░░░░░░░░░░░░░░░]   0%
+
+================================================================================
+📈 LIVE STATISTICS
+--------------------------------------------------------------------------------
+
+  📊 Overall Progress: [░░░░░░░░░░░░░░░░░░░░░░░░░]   0%
+     0/11 phases completed
+
+================================================================================
+
+
+==========================================================================================
+                              📊 REPORTE COMPLETO E2E                              
+==========================================================================================
+
+🎯 EXECUTION SUMMARY
+------------------------------------------------------------------------------------------
+  Spec:                tests/e2e/test_specs/ecommerce-api-spec-human.md
+  Output:              tests/e2e/generated_apps/ecommerce-api-spec-human_1764006197
+  Status:              failed
+  Duration:            0.1 minutes (5640ms)
+  Overall Progress:    0.0%
+  Execution Success:   0.0%
+  Overall Accuracy:    0.0%
+
+🧪 TESTING & QUALITY
+------------------------------------------------------------------------------------------
+  Test Pass Rate:      0.0%
+  Test Coverage:       0.0%
+  Code Quality:        0.0%
+  Contract Violations: 0
+  Acceptance Criteria: 0/0
+
+📚 PATTERN LEARNING & REUSE
+------------------------------------------------------------------------------------------
+  Pattern Reuse Rate:  0.0%
+  Patterns Matched:    0
+  Patterns Stored:     0
+  Patterns Promoted:   0
+  Patterns Reused:     0
+  New Patterns:        0
+  Candidates Created:  0
+  Learning Time:       0.0ms
+
+🔧 CODE REPAIR & RECOVERY
+------------------------------------------------------------------------------------------
+  Repair Applied:      False
+  Repair Iterations:   0
+  Repair Improvement:  0.0%
+  Tests Fixed:         0
+  Regressions:         0
+  Repair Time:         0.0ms
+
+⚠️  ERROR TRACKING & RECOVERY
+------------------------------------------------------------------------------------------
+  Total Errors:        0
+  Recovered Errors:    0
+  Critical Errors:     0
+  Recovery Rate:       0.0%
+
+💾 RESOURCE USAGE
+------------------------------------------------------------------------------------------
+  Peak Memory:         0.0 MB
+  Avg Memory:          0.0 MB
+  Peak CPU:            0.0%
+  Avg CPU:             0.0%
+
+🗄️  DATABASE PERFORMANCE
+------------------------------------------------------------------------------------------
+  Neo4j Queries:       0
+  Neo4j Avg Time:      0.0ms
+  Qdrant Queries:      0
+  Qdrant Avg Time:     0.0ms
+
+⏱️  PHASE EXECUTION TIMES
+------------------------------------------------------------------------------------------
+  ⚠️ spec_ingestion                 0ms  (0/4 checkpoints)
+  ⚠️ requirements_analysis          0ms  (0/5 checkpoints)
+  ⚠️ multi_pass_planning            0ms  (0/5 checkpoints)
+  ⚠️ atomization                    0ms  (0/5 checkpoints)
+  ⚠️ dag_construction               0ms  (0/5 checkpoints)
+  ⚠️ wave_execution                 0ms  (0/5 checkpoints)
+  ⚠️ validation                     0ms  (0/5 checkpoints)
+  ⚠️ deployment                     0ms  (0/5 checkpoints)
+  ⚠️ health_verification            0ms  (0/5 checkpoints)
+  ⚠️ learning                       0ms  (0/5 checkpoints)
+
+📊 PRECISION & ACCURACY METRICS
+------------------------------------------------------------------------------------------
+  🎯 Overall Pipeline Performance:
+     Accuracy:         0.0%
+     Precision:        0.0%
+
+  📊 Pattern Matching Performance:
+     Precision:        0.0%
+     Recall:           0.0%
+     F1-Score:         0.0%
+
+  🏷️  Classification Accuracy:
+     Overall:          0.0%
+
+🚀 HOW TO RUN THE GENERATED APP
+------------------------------------------------------------------------------------------
+
+  1. Navigate: cd tests/e2e/generated_apps/ecommerce-api-spec-human_1764006197
+  2. Start:    docker-compose -f docker/docker-compose.yml up -d --build
+  3. Health:   docker-compose -f docker/docker-compose.yml ps
+
+  📍 Endpoints:
+     - API:        http://localhost:8002
+     - Docs:       http://localhost:8002/docs
+     - Health:     http://localhost:8002/health/health
+     - Metrics:    http://localhost:8002/metrics/metrics
+     - Grafana:    http://localhost:3002 (devmatrix/admin)
+     - Prometheus: http://localhost:9091
+     - PostgreSQL: localhost:5433 (devmatrix/admin)
+
+✅ CONTRACT VALIDATION
+------------------------------------------------------------------------------------------
+  ✅ All contracts validated successfully!
+
+==========================================================================================
+

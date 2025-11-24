@@ -549,6 +549,7 @@ class ComplianceValidator:
                         elif pattern:
                             record_validation(entity_name, field_name, f"pattern={pattern}")
 
+
                         # Extract default values - indicates auto-generation
                         if "default" in schema_obj:
                             default_val = schema_obj["default"]
@@ -560,6 +561,57 @@ class ComplianceValidator:
                             elif isinstance(default_val, str):
                                 # String defaults like "open", "pending", etc
                                 record_validation(entity_name, field_name, f"default={default_val}")
+
+                        # FIX 11: Extract readOnly and description patterns from OpenAPI schema
+                        if schema_obj.get("readOnly") is True:
+                            record_validation(entity_name, field_name, "read-only")
+
+                        desc = schema_obj.get("description")
+                        if desc:
+                            if desc is True or str(desc).lower() == "true":
+                                record_validation(entity_name, field_name, "read-only")
+                            
+                            if isinstance(desc, str):
+                                desc_lower = desc.lower()
+                                
+                                if "read-only" in desc_lower or "read only" in desc_lower:
+                                    record_validation(entity_name, field_name, "read-only")
+                                
+                                # Handle "Auto-calculated: <pattern>" format
+                                if "auto-calculated:" in desc_lower:
+                                    parts = desc_lower.split("auto-calculated:")
+                                    if len(parts) > 1:
+                                        pattern = parts[1].strip()
+                                        if pattern:
+                                            normalized = pattern.replace(" ", "_").replace("-", "_")
+                                            if normalized == "auto_calculated":
+                                                record_validation(entity_name, field_name, "auto-calculated")
+                                            elif normalized == "sum_of_items":
+                                                record_validation(entity_name, field_name, "sum_of_items")
+                                            elif normalized == "sum_of_amounts":
+                                                record_validation(entity_name, field_name, "sum_of_amounts")
+                                            elif "at_add_time" in normalized or "at_time_of" in normalized:
+                                                record_validation(entity_name, field_name, "snapshot_at_add_time")
+                                            elif "at_order_time" in normalized:
+                                                record_validation(entity_name, field_name, "snapshot_at_order_time")
+                                            elif normalized == "immutable":
+                                                record_validation(entity_name, field_name, "immutable")
+                                            else:
+                                                record_validation(entity_name, field_name, normalized)
+                                else:
+                                    # Pattern matching for computed/auto-calculated fields (fallback)
+                                    if "auto-calculated" in desc_lower or "auto_calculated" in desc_lower:
+                                        record_validation(entity_name, field_name, "auto-calculated")
+                                    if "sum of items" in desc_lower or "sum_of_items" in desc_lower:
+                                        record_validation(entity_name, field_name, "sum_of_items")
+                                    if "sum of amounts" in desc_lower or "sum_of_amounts" in desc_lower:
+                                        record_validation(entity_name, field_name, "sum_of_amounts")
+                                    if "at time of" in desc_lower or "at_add_time" in desc_lower:
+                                        record_validation(entity_name, field_name, "snapshot_at_add_time")
+                                    if "at order time" in desc_lower or "at_order_time" in desc_lower:
+                                        record_validation(entity_name, field_name, "snapshot_at_order_time")
+                                    if "immutable" in desc_lower:
+                                        record_validation(entity_name, field_name, "immutable")
 
                     # Extract validations from prop_def directly
                     extract_validations(prop_def, base_entity_name, prop_name)
@@ -579,7 +631,8 @@ class ComplianceValidator:
                 schemas_content = schemas_file.read_text()
 
                 # Track current class to know which entity
-                class_pattern = r'class\s+(\w+)(?:Base|Create|Update|Response)\((?:BaseModel|BaseSchema)\):'
+                # Match any class inheriting from BaseModel or BaseSchema
+                class_pattern = r'class\s+(\w+)\((?:BaseModel|BaseSchema)\):'
                 
                 # Regex to match field definitions:
                 # 1. With Field(): name: type = Field(...)
@@ -645,6 +698,58 @@ class ComplianceValidator:
                                 record_validation(current_entity, field_name, "email_format")
                             else:
                                 record_validation(current_entity, field_name, f"pattern={pat_val}")
+
+                        # FIX 12: Extract description from Field(...) in schemas.py
+                        # Handle quoted strings with spaces (group 1) or simple values (group 2)
+                        desc_match = re.search(r'description\s*=\s*(?:["\']([^"\']*)["\']|([^,\s)]+))', field_value)
+                        if desc_match:
+                            # Get value from either group
+                            desc_val = desc_match.group(1) or desc_match.group(2)
+                            desc_val = desc_val.strip()
+                            
+                            if desc_val == "True" or desc_val == "true":
+                                record_validation(current_entity, field_name, "read-only")
+                            
+                            desc_lower = desc_val.lower()
+                            
+                            if "read-only" in desc_lower or "read only" in desc_lower:
+                                record_validation(current_entity, field_name, "read-only")
+
+                            # Handle "Auto-calculated: <pattern>" format
+                            if "auto-calculated:" in desc_lower:
+                                parts = desc_lower.split("auto-calculated:")
+                                if len(parts) > 1:
+                                    pattern = parts[1].strip()
+                                    if pattern:
+                                        normalized = pattern.replace(" ", "_").replace("-", "_")
+                                        if normalized == "auto_calculated":
+                                            record_validation(current_entity, field_name, "auto-calculated")
+                                        elif normalized == "sum_of_items":
+                                            record_validation(current_entity, field_name, "sum_of_items")
+                                        elif normalized == "sum_of_amounts":
+                                            record_validation(current_entity, field_name, "sum_of_amounts")
+                                        elif "at_add_time" in normalized or "at_time_of" in normalized:
+                                            record_validation(current_entity, field_name, "snapshot_at_add_time")
+                                        elif "at_order_time" in normalized:
+                                            record_validation(current_entity, field_name, "snapshot_at_order_time")
+                                        elif normalized == "immutable":
+                                            record_validation(current_entity, field_name, "immutable")
+                                        else:
+                                            record_validation(current_entity, field_name, normalized)
+                            else:
+                                # Pattern matching for computed/auto-calculated fields (fallback)
+                                if "auto-calculated" in desc_lower or "auto_calculated" in desc_lower:
+                                    record_validation(current_entity, field_name, "auto-calculated")
+                                if "sum of items" in desc_lower or "sum_of_items" in desc_lower:
+                                    record_validation(current_entity, field_name, "sum_of_items")
+                                if "sum of amounts" in desc_lower or "sum_of_amounts" in desc_lower:
+                                    record_validation(current_entity, field_name, "sum_of_amounts")
+                                if "at time of" in desc_lower or "at_add_time" in desc_lower:
+                                    record_validation(current_entity, field_name, "snapshot_at_add_time")
+                                if "at order time" in desc_lower or "at_order_time" in desc_lower:
+                                    record_validation(current_entity, field_name, "snapshot_at_order_time")
+                                if "immutable" in desc_lower:
+                                    record_validation(current_entity, field_name, "immutable")
 
                 logger.info(f"After checking schemas.py: {len(validations_found)} validations found")
             else:
@@ -998,6 +1103,10 @@ class ComplianceValidator:
                                         # description=True → read-only field
                                         constraints.append("read-only")
                                     elif isinstance(desc_val, str):
+                                        # FIX 9: Handle string "True" (common from CodeRepairAgent)
+                                        if desc_val.lower() == "true":
+                                            constraints.append("read-only")
+                                            
                                         # FIX 3: Map description patterns to computed field constraints
                                         desc_lower = desc_val.lower()
 
@@ -1042,7 +1151,57 @@ class ComplianceValidator:
                                             if "immutable" in desc_lower:
                                                 constraints.append("immutable")
 
-                            elif key == "default":
+                            elif key == "info":
+                                # FIX 10: Extract description from info={'description': ...}
+                                if isinstance(value, ast.Dict):
+                                    for k, v in zip(value.keys, value.values):
+                                        if isinstance(k, ast.Constant) and k.value == 'description':
+                                            if isinstance(v, ast.Constant):
+                                                desc_val = v.value
+                                                
+                                                if desc_val is True:
+                                                    constraints.append("read-only")
+                                                elif isinstance(desc_val, str):
+                                                    if desc_val.lower() == "true":
+                                                        constraints.append("read-only")
+                                                    
+                                                    desc_lower = desc_val.lower()
+                                                    
+                                                    # Handle "Auto-calculated: <pattern>" format
+                                                    if "auto-calculated:" in desc_lower:
+                                                        parts = desc_lower.split("auto-calculated:")
+                                                        if len(parts) > 1:
+                                                            pattern = parts[1].strip()
+                                                            if pattern:
+                                                                normalized = pattern.replace(" ", "_").replace("-", "_")
+                                                                if normalized == "auto_calculated":
+                                                                    constraints.append("auto-calculated")
+                                                                elif normalized == "sum_of_items":
+                                                                    constraints.append("sum_of_items")
+                                                                elif normalized == "sum_of_amounts":
+                                                                    constraints.append("sum_of_amounts")
+                                                                elif "at_add_time" in normalized or "at_time_of" in normalized:
+                                                                    constraints.append("snapshot_at_add_time")
+                                                                elif "at_order_time" in normalized:
+                                                                    constraints.append("snapshot_at_order_time")
+                                                                elif normalized == "immutable":
+                                                                    constraints.append("immutable")
+                                                                else:
+                                                                    constraints.append(normalized)
+                                                    else:
+                                                        # Pattern matching for computed/auto-calculated fields (fallback)
+                                                        if "auto-calculated" in desc_lower or "auto_calculated" in desc_lower:
+                                                            constraints.append("auto-calculated")
+                                                        if "sum of items" in desc_lower or "sum_of_items" in desc_lower:
+                                                            constraints.append("sum_of_items")
+                                                        if "sum of amounts" in desc_lower or "sum_of_amounts" in desc_lower:
+                                                            constraints.append("sum_of_amounts")
+                                                        if "at time of" in desc_lower or "at_add_time" in desc_lower:
+                                                            constraints.append("snapshot_at_add_time")
+                                                        if "at order time" in desc_lower or "at_order_time" in desc_lower:
+                                                            constraints.append("snapshot_at_order_time")
+                                                        if "immutable" in desc_lower:
+                                                            constraints.append("immutable")
                                 # FIX 4: Extract default values and map to semantic constraint names
                                 if isinstance(value, ast.Constant):
                                     default_val = value.value

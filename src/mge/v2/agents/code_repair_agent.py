@@ -1212,14 +1212,23 @@ JSON OUTPUT:"""
                             logger.info(f"Added default_factory={self.c_value} to {entity_name}.{field_name}")
 
                     elif self.c_type == 'description':
-                        # Handle description="<text>"
-                        has_desc = any(k.arg == 'description' for k in column_call.keywords)
-                        if has_desc:
-                            logger.debug(f"{entity_name}.{field_name} already has description")
+                        # Handle description="<text>" via info={'description': "<text>"}
+                        # SQLAlchemy Column doesn't accept 'description', use 'info' dict instead
+                        has_info = any(k.arg == 'info' for k in column_call.keywords)
+                        
+                        if has_info:
+                            # If info exists, we'd need to update the dict - too complex for now
+                            # Just log and skip to avoid breaking existing info
+                            logger.debug(f"{entity_name}.{field_name} already has info dict")
                         else:
-                            column_call.keywords.append(ast.keyword(arg='description', value=ast.Constant(value=str(self.c_value))))
+                            # Create info={'description': 'value'}
+                            dict_keys = [ast.Constant(value='description')]
+                            dict_values = [ast.Constant(value=str(self.c_value))]
+                            info_dict = ast.Dict(keys=dict_keys, values=dict_values)
+                            
+                            column_call.keywords.append(ast.keyword(arg='info', value=info_dict))
                             self.modified = True
-                            logger.info(f"Added description='{self.c_value}' to {entity_name}.{field_name}")
+                            logger.info(f"Added info={{'description': '{self.c_value}'}} to {entity_name}.{field_name}")
 
             modifier = EntityModifier(entity_name, field_name, constraint_type, constraint_value)
             new_tree = modifier.visit(tree)

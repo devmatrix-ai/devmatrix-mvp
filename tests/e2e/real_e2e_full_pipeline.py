@@ -2536,13 +2536,26 @@ Once running, visit:
                 new_compliance = 0.0
 
             compliance_indicator = "✅" if new_compliance > current_compliance else ("⚠️" if new_compliance == current_compliance else "❌")
+
+            # Extract validation counts for detailed logging
+            pre_repair_validations_matched = len(getattr(current_compliance_report, 'validations_implemented', []))
+            pre_repair_validations_expected = len(getattr(current_compliance_report, 'validations_expected', []))
+            post_repair_validations_matched = len(getattr(new_compliance_report, 'validations_implemented', []))
+            post_repair_validations_expected = len(getattr(new_compliance_report, 'validations_expected', []))
+
             if repair_logger:
-                repair_logger.info(f"Compliance: {current_compliance:.1%} → {new_compliance:.1%}", {
+                repair_logger.info(f"Post-repair compliance: {current_compliance:.1%} → {new_compliance:.1%}", {
                     "Status": compliance_indicator,
-                    "Delta": f"{(new_compliance - current_compliance)*100:+.1f}%"
+                    "Delta": f"{(new_compliance - current_compliance)*100:+.1f}%",
+                    "Validations": f"{pre_repair_validations_matched}/{pre_repair_validations_expected} → {post_repair_validations_matched}/{post_repair_validations_expected}",
+                    "Tests fixed": len(repair_result.repairs_applied)
                 })
             else:
-                print(f"        Compliance: {current_compliance:.1%} → {new_compliance:.1%} {compliance_indicator}")
+                print(f"      📊 POST-REPAIR COMPLIANCE CHECK")
+                print(f"        Pre-repair:  {current_compliance:.1%} ({pre_repair_validations_matched}/{pre_repair_validations_expected} validations)")
+                print(f"        Post-repair: {new_compliance:.1%} ({post_repair_validations_matched}/{post_repair_validations_expected} validations)")
+                print(f"        Improvement: {(new_compliance - current_compliance)*100:+.1f}% {compliance_indicator}")
+                print(f"        Repairs applied: {len(repair_result.repairs_applied)}")
 
             # Step 7: Check for regression (P1: no rollback yet, files already modified)
             if new_compliance < current_compliance:
