@@ -1378,6 +1378,11 @@ class ComplianceValidator:
 
         ARCHITECTURE RULE #1 COMPLIANT: All found validations are counted (no filtering of read_only or other unrecognized types).
 
+        FIX 6: Semantic Equivalence Matching for complex patterns:
+        - Compound constraints: Fields with multiple constraints (auto-generated + read-only)
+        - Snapshot patterns: snapshot_at_add_time, snapshot_at_order_time
+        - Enum-default patterns: default_pending_payment, default_checked_out
+
         FLEXIBLE MATCHING (use_exact_matching=False):
         - For each expected validation, check if any found validation contains the constraint substring
         - Example: Expected "Product.price: gt=0" matches Found "Product.price: gt=0" (substring match)
@@ -1404,7 +1409,7 @@ class ComplianceValidator:
         # FLEXIBLE MATCHING MODE (default - per Architecture Rule #1)
         # Use semantic equivalence mapping for common validation patterns
         # Maps high-level constraints from spec to code-level constraints
-        # CAMBIO 2: Expanded semantic equivalences with wildcard support and computed fields
+        # FIX 6: Enhanced with compound constraint detection and snapshot pattern support
         semantic_equivalences = {
             # Database-level constraints
             "unique": ["unique", "read_only", "primary"],
@@ -1412,23 +1417,24 @@ class ComplianceValidator:
             "foreign_key": ["foreign_key*", "fk_*"],  # Matches foreign_key_customer, foreign_key_product, etc.
             "required": ["required"],
 
-            # Auto-generated variants
+            # Auto-generated variants (FIX 6: improved compound detection)
             "auto-generated": ["default_factory*", "auto_increment", "generated", "auto-generated", "default=uuid.uuid4", "default=datetime.utcnow"],
             "auto_generated": ["default_factory*", "auto_increment", "generated", "auto-generated", "default=uuid.uuid4", "default=datetime.utcnow"],
             "auto-increment": ["default_factory*", "auto_increment"],
 
             # Read-only variants (output fields, snapshots, immutable)
+            # FIX 6: Improved snapshot pattern matching
             "read-only": ["description", "read_only", "exclude", "snapshot_at*"],
             "read_only": ["description", "read_only", "exclude", "snapshot_at*"],
             "snapshot_at": ["description", "read_only", "exclude", "snapshot_at*"],
-            "snapshot_at_add_time": ["description", "read_only", "exclude", "default*"],
-            "snapshot_at_order_time": ["description", "read_only", "exclude", "default*"],
+            "snapshot_at_add_time": ["snapshot_at_add_time", "description", "read_only", "exclude"],
+            "snapshot_at_order_time": ["snapshot_at_order_time", "description", "read_only", "exclude"],
             "immutable": ["description", "read_only", "exclude"],
 
             # Computed fields (auto-calculated, derived)
             "computed_field": ["description"],
-            "auto-calculated": ["description"],
-            "auto_calculated": ["description"],
+            "auto-calculated": ["description", "auto-calculated", "auto_calculated"],
+            "auto_calculated": ["description", "auto-calculated", "auto_calculated"],
 
             # Input validation constraints
             "presence": ["required"],
@@ -1451,24 +1457,35 @@ class ComplianceValidator:
             "email_format": ["email_format", "pattern"],
             "uuid_format": ["uuid_format"],
 
-            # Default values (with wildcard support for specific values)
+            # Default values (FIX 6: improved enum-default pattern matching)
             "default_true": ["default=True", "default=true", "default_true", "default*true"],
             "default_false": ["default=False", "default=false", "default_false", "default*false"],
             "default_open": ["default=open", "default_open", "default*open"],
             "default_pending_payment": ["default=pending_payment", "default_pending_payment", "default*pending*payment"],
             "default_pending": ["default=pending", "default_pending", "default*pending"],
+            "default_checked_out": ["default=checked_out", "default_checked_out", "default*checked*out"],
 
             # Enum/values constraints
             "values": ["enum", "values", "default*"],  # Enum constraints often have default values
 
             # Read-only/computed fields (should match description or auto-generated patterns)
             "read-only": ["description", "read_only", "exclude", "snapshot_at*"],
-            "auto-calculated": ["description", "auto*calculated"],
+            "auto-calculated": ["description", "auto*calculated", "sum_of*"],
         }
 
         matches = 0
         matched_validations = []
         unmatched_validations = []
+
+        # FIX 6: Build entity.field -> [constraints] map from found validations
+        # This enables compound constraint detection
+        found_constraints_map = {}
+        for found_val in found:
+            if ": " in found_val:
+                entity_field, constraint = found_val.split(": ", 1)
+                if entity_field not in found_constraints_map:
+                    found_constraints_map[entity_field] = []
+                found_constraints_map[entity_field].append(constraint.lower())
 
         for exp_val in expected:
             # Extract entity.field and constraint from expected
@@ -1479,41 +1496,73 @@ class ComplianceValidator:
                 entity_field, constraint = exp_val.split(": ", 1)
                 constraint_lower = constraint.lower()
 
-                for found_val in found:
-                    # Check if this is the same entity.field
-                    if entity_field not in found_val:
-                        continue
+                # FIX 6: Check if entity.field has multiple constraints (compound constraint)
+                if entity_field in found_constraints_map:
+                    found_field_constraints = found_constraints_map[entity_field]
 
-                    # Try exact match first (strict)
-                    if constraint in found_val:
-                        matches += 1
-                        matched_validations.append(found_val)
-                        found_match = True
-                        break
+                    # Try to match the expected constraint against all found constraints for this field
+                    for found_constraint in found_field_constraints:
+                        # Try exact match first (strict)
+                        if constraint_lower == found_constraint:
+                            matches += 1
+                            matched_validations.append(f"{entity_field}: {found_constraint}")
+                            found_match = True
+                            break
 
-                    # Extract the constraint part from found_val for matching
-                    # Found format: "Entity.field: constraint_value"
-                    if ": " in found_val:
-                        found_constraint = found_val.split(": ", 1)[1].lower()
-                    else:
-                        found_constraint = found_val.lower()
-
-                    # Try semantic equivalence match with wildcard support
-                    # Check if the constraint has semantic equivalents
-                    for semantic_key, equivalents in semantic_equivalences.items():
-                        if semantic_key in constraint_lower:
-                            # Check if any equivalent matches (with wildcard support)
-                            for equiv in equivalents:
-                                if self._matches_with_wildcard(found_constraint, equiv.lower()):
-                                    matches += 1
-                                    matched_validations.append(found_val)
-                                    found_match = True
+                        # Try semantic equivalence match with wildcard support
+                        # Check if the constraint has semantic equivalents
+                        for semantic_key, equivalents in semantic_equivalences.items():
+                            if semantic_key in constraint_lower:
+                                # Check if any equivalent matches (with wildcard support)
+                                for equiv in equivalents:
+                                    if self._matches_with_wildcard(found_constraint, equiv.lower()):
+                                        matches += 1
+                                        matched_validations.append(f"{entity_field}: {found_constraint}")
+                                        found_match = True
+                                        break
+                                if found_match:
                                     break
-                            if found_match:
-                                break
 
-                    if found_match:
-                        break
+                        if found_match:
+                            break
+
+                if not found_match:
+                    # Fallback: check found validations as before
+                    for found_val in found:
+                        # Check if this is the same entity.field
+                        if entity_field not in found_val:
+                            continue
+
+                        # Try exact match first (strict)
+                        if constraint in found_val:
+                            matches += 1
+                            matched_validations.append(found_val)
+                            found_match = True
+                            break
+
+                        # Extract the constraint part from found_val for matching
+                        # Found format: "Entity.field: constraint_value"
+                        if ": " in found_val:
+                            found_constraint = found_val.split(": ", 1)[1].lower()
+                        else:
+                            found_constraint = found_val.lower()
+
+                        # Try semantic equivalence match with wildcard support
+                        # Check if the constraint has semantic equivalents
+                        for semantic_key, equivalents in semantic_equivalences.items():
+                            if semantic_key in constraint_lower:
+                                # Check if any equivalent matches (with wildcard support)
+                                for equiv in equivalents:
+                                    if self._matches_with_wildcard(found_constraint, equiv.lower()):
+                                        matches += 1
+                                        matched_validations.append(found_val)
+                                        found_match = True
+                                        break
+                                if found_match:
+                                    break
+
+                        if found_match:
+                            break
             else:
                 # Fallback: simple substring match for edge cases
                 for found_val in found:
