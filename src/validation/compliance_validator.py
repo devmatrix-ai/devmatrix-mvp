@@ -960,10 +960,11 @@ class ComplianceValidator:
                                 if isinstance(value, ast.Constant) and value.value is True:
                                     constraints.append("primary_key")
 
-                            elif key == "default":
-                                # Normalize default values to constraint names
+                            elif key == "default" or key == "default_factory":
+                                # Normalize default/default_factory values to constraint names
                                 if isinstance(value, ast.Attribute):
                                     # default=uuid.uuid4 or default=datetime.utcnow → auto-generated
+                                    # Also: default_factory=datetime.utcnow → auto-generated
                                     if value.attr == "uuid4" or value.attr == "utcnow":
                                         constraints.append("auto-generated")
                                 elif isinstance(value, ast.Constant):
@@ -974,19 +975,92 @@ class ComplianceValidator:
                                     elif const_val is False:
                                         constraints.append("default_false")
                                     elif isinstance(const_val, str):
-                                        # default="open" → default_open, etc.
-                                        constraints.append(f"default_{const_val.lower()}")
+                                        # default="open" → default_open
+                                        # default="pending_payment" → default_pending_payment
+                                        # Normalize: replace spaces and underscores, lowercase
+                                        normalized_default = const_val.lower().replace(" ", "_").replace("-", "_")
+                                        constraints.append(f"default_{normalized_default}")
                                 elif isinstance(value, ast.Name):
-                                    # default=uuid.uuid4 (Name not Attribute) - still auto-generated
-                                    if value.id in ["uuid4", "utcnow"]:
+                                    # default=open (Name without quotes) → default_open
+                                    # or default_factory=datetime.utcnow → auto-generated
+                                    if key == "default_factory":
                                         constraints.append("auto-generated")
+                                    else:
+                                        # default=open → default_open
+                                        constraints.append(f"default_{value.id.lower()}")
+
+                            elif key == "description":
+                                # FIX 2: Extract read-only constraint from description=True
+                                # Also extract computed field semantics from description patterns
+                                if isinstance(value, ast.Constant):
+                                    desc_val = value.value
+                                    if desc_val is True:
+                                        # description=True → read-only field
+                                        constraints.append("read-only")
+                                    elif isinstance(desc_val, str):
+                                        # FIX 3: Map description patterns to computed field constraints
+                                        desc_lower = desc_val.lower()
+
+                                        # Handle "Auto-calculated: <pattern>" format
+                                        if "auto-calculated:" in desc_lower:
+                                            # Extract pattern after "Auto-calculated:"
+                                            parts = desc_lower.split("auto-calculated:")
+                                            if len(parts) > 1:
+                                                pattern = parts[1].strip()
+                                                # Normalize extracted pattern
+                                                if pattern:
+                                                    # Replace spaces and hyphens with underscores
+                                                    normalized = pattern.replace(" ", "_").replace("-", "_")
+                                                    # Map specific patterns
+                                                    if normalized == "auto_calculated":
+                                                        constraints.append("auto-calculated")
+                                                    elif normalized == "sum_of_items":
+                                                        constraints.append("sum_of_items")
+                                                    elif normalized == "sum_of_amounts":
+                                                        constraints.append("sum_of_amounts")
+                                                    elif "at_add_time" in normalized or "at_time_of" in normalized:
+                                                        constraints.append("snapshot_at_add_time")
+                                                    elif "at_order_time" in normalized:
+                                                        constraints.append("snapshot_at_order_time")
+                                                    elif normalized == "immutable":
+                                                        constraints.append("immutable")
+                                                    else:
+                                                        # Fallback: add the normalized pattern as-is
+                                                        constraints.append(normalized)
+                                        else:
+                                            # Pattern matching for computed/auto-calculated fields (fallback)
+                                            if "auto-calculated" in desc_lower or "auto_calculated" in desc_lower:
+                                                constraints.append("auto-calculated")
+                                            if "sum of items" in desc_lower or "sum_of_items" in desc_lower:
+                                                constraints.append("sum_of_items")
+                                            if "sum of amounts" in desc_lower or "sum_of_amounts" in desc_lower:
+                                                constraints.append("sum_of_amounts")
+                                            if "at time of" in desc_lower or "at_add_time" in desc_lower:
+                                                constraints.append("snapshot_at_add_time")
+                                            if "at order time" in desc_lower or "at_order_time" in desc_lower:
+                                                constraints.append("snapshot_at_order_time")
+                                            if "immutable" in desc_lower:
+                                                constraints.append("immutable")
 
                         # Check positional arguments for ForeignKey
                         for arg in call.args:
                             if isinstance(arg, ast.Call):
                                 arg_func = arg.func.attr if isinstance(arg.func, ast.Attribute) else (arg.func.id if isinstance(arg.func, ast.Name) else None)
                                 if arg_func == "ForeignKey":
-                                    constraints.append("foreign_key")
+                                    # Extract the table name from ForeignKey("table_name.column_name")
+                                    if arg.args and isinstance(arg.args[0], ast.Constant):
+                                        fk_ref = arg.args[0].value
+                                        # Extract entity name from table reference (e.g., "customers.id" -> "customers" -> "customer")
+                                        if isinstance(fk_ref, str):
+                                            # Split on dot to get just the table name
+                                            fk_table = fk_ref.split('.')[0] if '.' in fk_ref else fk_ref
+                                            # Try to singularize: customers → customer, products → product
+                                            entity_name_fk = fk_table.rstrip('s') if fk_table.endswith('s') else fk_table
+                                            constraints.append(f"foreign_key_{entity_name_fk}")
+                                        else:
+                                            constraints.append("foreign_key")
+                                    else:
+                                        constraints.append("foreign_key")
 
                 result[entity_name].append({
                     "field": field_name,
