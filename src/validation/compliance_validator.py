@@ -986,12 +986,19 @@ class ComplianceValidator:
 
         Examples:
         - "description=Read-only field" matches "description"
-        - "foreign_key_customer" matches "foreign_key"
+        - "foreign_key_customer" matches "foreign_key*"
         - "auto-generated" matches "auto-generated"
         """
+        import fnmatch
+
         # Direct equality
         if found_constraint == expected_constraint:
             return True
+
+        # Wildcard pattern matching (e.g., "foreign_key_customer" matches "foreign_key*")
+        if '*' in expected_constraint:
+            if fnmatch.fnmatch(found_constraint, expected_constraint):
+                return True
 
         # Prefix matching for constraints with values (e.g., "description=*" matches any "description=...")
         if '=' in expected_constraint and '=' in found_constraint:
@@ -1340,13 +1347,20 @@ class ComplianceValidator:
                         found_match = True
                         break
 
+                    # Extract the constraint part from found_val for matching
+                    # Found format: "Entity.field: constraint_value"
+                    if ": " in found_val:
+                        found_constraint = found_val.split(": ", 1)[1].lower()
+                    else:
+                        found_constraint = found_val.lower()
+
                     # Try semantic equivalence match with wildcard support
                     # Check if the constraint has semantic equivalents
                     for semantic_key, equivalents in semantic_equivalences.items():
                         if semantic_key in constraint_lower:
                             # Check if any equivalent matches (with wildcard support)
                             for equiv in equivalents:
-                                if self._matches_with_wildcard(found_val.lower(), equiv.lower()):
+                                if self._matches_with_wildcard(found_constraint, equiv.lower()):
                                     matches += 1
                                     matched_validations.append(found_val)
                                     found_match = True
