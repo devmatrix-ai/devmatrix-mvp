@@ -549,6 +549,18 @@ class ComplianceValidator:
                         elif pattern:
                             record_validation(entity_name, field_name, f"pattern={pattern}")
 
+                        # Extract default values - indicates auto-generation
+                        if "default" in schema_obj:
+                            default_val = schema_obj["default"]
+                            # Common patterns for auto-generated fields
+                            if isinstance(default_val, bool):
+                                record_validation(entity_name, field_name, f"default={str(default_val).lower()}")
+                            elif isinstance(default_val, (int, float)):
+                                record_validation(entity_name, field_name, f"default={default_val}")
+                            elif isinstance(default_val, str):
+                                # String defaults like "open", "pending", etc
+                                record_validation(entity_name, field_name, f"default={default_val}")
+
                     # Extract validations from prop_def directly
                     extract_validations(prop_def, base_entity_name, prop_name)
 
@@ -1105,13 +1117,19 @@ class ComplianceValidator:
         # Maps high-level constraints from spec to code-level constraints
         semantic_equivalences = {
             "unique": ["unique", "read_only", "primary"],  # unique fields are often read_only
-            "auto-generated": ["read_only", "auto_increment", "generated"],
+            "auto-generated": ["read_only", "auto_increment", "generated", "default_factory"],  # auto-gen → default_factory
+            "auto_generated": ["read_only", "auto_increment", "generated", "default_factory"],  # variant
             "non-empty": ["required", "min_length"],
             "non-negative": ["ge=0", "gt=-1", "minimum=0"],
             "greater_than_zero": ["gt=0", "ge=1", "minimum=1", "exclusiveMinimum=0"],
             "valid_email_format": ["email_format", "email", "pattern"],
-            "default_true": ["default=True", "default=true"],
+            "valid-email-format": ["email_format", "email", "pattern"],  # variant with hyphens
+            "default_true": ["default=True", "default=true", "default=True"],
             "default_false": ["default=False", "default=false"],
+            "read-only": ["read_only", "exclude"],  # read-only variants
+            "read_only": ["read_only", "exclude"],
+            "snapshot_at": ["read_only", "exclude"],  # snapshot fields are read-only
+            "immutable": ["read_only", "exclude"],  # immutable = read-only
         }
 
         matches = 0
