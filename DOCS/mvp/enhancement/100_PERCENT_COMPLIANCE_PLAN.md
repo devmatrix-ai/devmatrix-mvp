@@ -1157,14 +1157,17 @@ def test_customization_with_reproducibility():
 
 ## 📈 Métricas de Éxito
 
-| Métrica | Actual | Target | Fase |
-|---------|--------|--------|------|
-| Entities Compliance | 100% | 100% | ✅ Achieved |
-| Endpoints Compliance | 100% | 100% | ✅ Achieved |
-| Validations Compliance | 90.5% | 100% | Fase 3 |
-| Syntax Errors | 2 | 0 | Fase 1 |
-| Real Enforcement vs Description | 0/6 | 6/6 | Fase 2 |
-| Reproducibility Test | N/A | Pass | Fase 4 |
+| Métrica | Actual | Target | Fase | Status |
+|---------|--------|--------|------|--------|
+| Entities Compliance | 100% | 100% | ✅ Phase 4.0 | ✅ Achieved |
+| Endpoints Compliance | 100% | 100% | ✅ Phase 4.0 | ✅ Achieved |
+| Validations Compliance | 90.5% | 100% | Fase 3 (Pending) | ⏳ Pending |
+| Syntax Errors | 2 | 0 | Fase 1 (Pending) | ⏳ Pending |
+| Real Enforcement vs Description | 0/6 | 6/6 | Fase 2 (Pending) | ⏳ Pending |
+| Reproducibility Test | **PASS** ✅ | Pass | ✅ Phase 4.4 | ✅ **9/9 Tests PASSED** |
+| IR Round-trip Fidelity | **100%** ✅ | 100% | ✅ Phase 4.3 | ✅ **Complete** |
+| Enforcement Persistence | **100%** ✅ | 100% | ✅ Phase 4.3 | ✅ **Complete** |
+| Pipeline Determinism | **100%** ✅ | 100% | ✅ Phase 4.4 | ✅ **Validated** |
 
 ---
 
