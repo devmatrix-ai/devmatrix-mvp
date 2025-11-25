@@ -231,7 +231,7 @@ class BusinessLogicExtractor:
 
 
     def _extract_from_field_descriptions(self, entities: List[Dict[str, Any]]) -> List[ValidationRule]:
-        """Extract validation rules from field descriptions and names."""
+        """Extract validation rules from field descriptions and names with REAL enforcement (Phase 2)."""
         rules = []
 
         for entity in entities:
@@ -240,6 +240,50 @@ class BusinessLogicExtractor:
                 field_name = field.get("name")
                 field_desc = field.get("description", "").lower()
                 field_type = field.get("type", "").lower()
+
+                # PHASE 2: Read-only fields → immutable enforcement
+                if "read-only" in field_desc or "solo lectura" in field_desc or "read only" in field_desc:
+                    from src.cognitive.ir.validation_model import EnforcementType
+                    rules.append(ValidationRule(
+                        entity=entity_name,
+                        attribute=field_name,
+                        type=ValidationType.CUSTOM,
+                        condition="read_only",
+                        enforcement_type=EnforcementType.IMMUTABLE,
+                        enforcement_code="exclude=True",
+                        applied_at=["schema", "entity"],
+                        error_message=f"{field_name} is read-only and cannot be modified"
+                    ))
+
+                # PHASE 2: Auto-calculated fields → computed field enforcement
+                if "auto-calculated" in field_desc or "automática" in field_desc or "calculated" in field_desc:
+                    from src.cognitive.ir.validation_model import EnforcementType
+                    # Extract calculation logic from description if possible
+                    calc_code = self._extract_calculation_logic(field_desc, field_name)
+                    rules.append(ValidationRule(
+                        entity=entity_name,
+                        attribute=field_name,
+                        type=ValidationType.CUSTOM,
+                        condition="auto_calculated",
+                        enforcement_type=EnforcementType.COMPUTED_FIELD,
+                        enforcement_code=calc_code,
+                        applied_at=["schema"],
+                        error_message=f"{field_name} is auto-calculated and cannot be set manually"
+                    ))
+
+                # PHASE 2: Snapshot fields → immutable + business logic enforcement
+                if "snapshot" in field_desc or "EN ESE MOMENTO" in field_desc.upper() or "at that time" in field_desc:
+                    from src.cognitive.ir.validation_model import EnforcementType
+                    rules.append(ValidationRule(
+                        entity=entity_name,
+                        attribute=field_name,
+                        type=ValidationType.CUSTOM,
+                        condition="snapshot_at_add_time",
+                        enforcement_type=EnforcementType.BUSINESS_LOGIC,
+                        enforcement_code=f"Capture {field_name} value when item is added",
+                        applied_at=["service", "entity"],
+                        error_message=f"{field_name} is a snapshot value captured at creation time"
+                    ))
 
                 # Email validation (from name or description)
                 if "email" in field_name.lower() or "email" in field_desc:
@@ -338,14 +382,140 @@ class BusinessLogicExtractor:
 
         return rules
 
+    def _extract_calculation_logic(self, description: str, field_name: str) -> str:
+        """Extract calculation logic from natural language description (Phase 2)."""
+        # Sum/Total patterns
+        if ("suma" in description or "sum" in description or "total" in description) and "total" in field_name.lower():
+            return "return sum(item.unit_price * item.quantity for item in self.items)"
+
+        # Count patterns
+        if "count" in description or "cantidad" in description:
+            return "return len(self.items)"
+
+        # Average patterns
+        if "average" in description or "promedio" in description:
+            return "return sum(self.values) / len(self.values) if self.values else 0"
+
+        # Default fallback
+        return "pass  # TODO: Implement calculation logic"
+
+    def _determine_enforcement_strategy(self, rule: ValidationRule, field: Dict[str, Any] = None) -> Optional['EnforcementStrategy']:
+        """
+        Determine the enforcement strategy for a validation rule.
+
+        Returns an EnforcementStrategy with type, implementation, and metadata.
+        """
+        from src.cognitive.ir.validation_model import EnforcementStrategy, EnforcementType
+
+        field_desc = (field.get("description", "") if field else "").lower()
+        field_name = rule.attribute.lower()
+        rule_type = rule.type.value.lower()
+
+        # 1. Immutable fields (read-only, created_at, updated_at if created only)
+        if ("read-only" in field_desc or "read only" in field_desc or "solo lectura" in field_desc or
+            field_name in ["created_at", "created", "id"] and "created" in field_name):
+            return EnforcementStrategy(
+                type=EnforcementType.IMMUTABLE,
+                implementation="Field(exclude=True)",
+                applied_at=["schema", "entity"],
+                template_name="immutable_field",
+                parameters={"field_name": rule.attribute},
+                description="Field is immutable after creation"
+            )
+
+        # 2. Computed fields (calculated, sum of, derived, aggregated, total)
+        computed_keywords = ["calculated", "computed", "sum of", "derived", "aggregated", "total", "subtotal"]
+        if any(kw in field_desc for kw in computed_keywords):
+            return EnforcementStrategy(
+                type=EnforcementType.COMPUTED_FIELD,
+                implementation="@computed_field",
+                applied_at=["entity"],
+                template_name="pydantic_computed_field",
+                parameters={"field_name": rule.attribute},
+                description="Field is computed from other fields"
+            )
+
+        # 3. Validator fields (unique, required format, pattern validation)
+        if rule_type == "uniqueness":
+            return EnforcementStrategy(
+                type=EnforcementType.VALIDATOR,
+                implementation="@field_validator",
+                applied_at=["entity", "service"],
+                template_name="unique_validator",
+                parameters={"field_name": rule.attribute, "constraint": "unique"},
+                description="Field must be unique"
+            )
+
+        if rule_type == "format" or "email" in field_desc or "pattern" in field_desc:
+            return EnforcementStrategy(
+                type=EnforcementType.VALIDATOR,
+                implementation="@field_validator",
+                applied_at=["entity"],
+                template_name="format_validator",
+                parameters={"field_name": rule.attribute, "pattern": "email" if "email" in field_desc else "custom"},
+                description="Field must match required format"
+            )
+
+        if rule_type == "range":
+            return EnforcementStrategy(
+                type=EnforcementType.VALIDATOR,
+                implementation="@field_validator",
+                applied_at=["entity"],
+                template_name="range_validator",
+                parameters={"field_name": rule.attribute, "condition": rule.condition or ""},
+                description="Field value must be within range"
+            )
+
+        # 4. State machine / status transitions
+        if rule_type == "status_transition" or "status" in field_name:
+            return EnforcementStrategy(
+                type=EnforcementType.STATE_MACHINE,
+                implementation="StateTransitionValidator",
+                applied_at=["service", "endpoint"],
+                template_name="state_machine_validator",
+                parameters={"field_name": rule.attribute, "states": rule.condition or ""},
+                description="Field follows state machine transitions"
+            )
+
+        # 5. Business logic (workflow, stock, inventory)
+        if rule_type == "workflow_constraint" or rule_type == "stock_constraint":
+            return EnforcementStrategy(
+                type=EnforcementType.BUSINESS_LOGIC,
+                implementation="BusinessLogicValidator",
+                applied_at=["service"],
+                template_name="business_logic_validator",
+                parameters={"field_name": rule.attribute, "rule": rule.condition or ""},
+                description="Field enforced by business logic in service layer"
+            )
+
+        # 6. Required fields (presence validation)
+        if rule_type == "presence":
+            return EnforcementStrategy(
+                type=EnforcementType.VALIDATOR,
+                implementation="@field_validator",
+                applied_at=["entity"],
+                template_name="presence_validator",
+                parameters={"field_name": rule.attribute},
+                description="Field is required"
+            )
+
+        # Default: no specific enforcement (description only)
+        return None
+
     def _deduplicate_rules(self, rules: List[ValidationRule]) -> List[ValidationRule]:
-        """Remove duplicate rules (same entity+attribute+type)."""
+        """Remove duplicate rules and assign enforcement strategies."""
         seen = {}
         deduplicated = []
 
         for rule in rules:
             key = (rule.entity, rule.attribute, rule.type)
             if key not in seen:
+                # Assign enforcement strategy if not already set
+                if rule.enforcement is None:
+                    rule.enforcement = self._determine_enforcement_strategy(rule)
+                    if rule.enforcement:
+                        rule.enforcement_type = rule.enforcement.type
+
                 seen[key] = rule
                 deduplicated.append(rule)
 

@@ -188,7 +188,8 @@ async def get_db() -> AsyncSession:
             'from pydantic import BaseModel, Field, ConfigDict',
             'from uuid import UUID',
             'from datetime import datetime',
-            'from typing import Optional',
+            'from typing import Optional, Literal',
+            'from decimal import Decimal',
             '',
         ]
 
@@ -198,11 +199,8 @@ async def get_db() -> AsyncSession:
             code_parts.append('    """Base schema with common fields"""')
             for field in entity.fields:
                 if field.name not in ['id', 'created_at', 'updated_at']:
-                    field_type = self._map_field_type(field.type)
-                    optional = "Optional[" if not field.required else ""
-                    optional_close = "]" if not field.required else ""
-                    default = f" = {field.default}" if field.default else ""
-                    code_parts.append(f'    {field.name}: {optional}{field_type}{optional_close}{default}')
+                    field_def = self._generate_pydantic_field(field)
+                    code_parts.append(f'    {field_def}')
             code_parts.append('')
 
             # Create schema
@@ -218,6 +216,10 @@ async def get_db() -> AsyncSession:
             for field in entity.fields:
                 if field.name not in ['id', 'created_at', 'updated_at']:
                     field_type = self._map_field_type(field.type)
+                    # For enums in update schema
+                    if hasattr(field, 'enum_values') and field.enum_values:
+                        enum_str = ', '.join(f"'{v}'" for v in field.enum_values)
+                        field_type = f"Literal[{enum_str}]"
                     code_parts.append(f'    {field.name}: Optional[{field_type}] = None')
             code_parts.append('')
 
@@ -231,6 +233,87 @@ async def get_db() -> AsyncSession:
             code_parts.append('')
 
         return '\n'.join(code_parts)
+    
+    def _generate_pydantic_field(self, field) -> str:
+        """Generate Pydantic field with Field() and all validations"""
+        field_type = self._map_field_type(field.type)
+        
+        # Handle enums
+        if hasattr(field, 'enum_values') and field.enum_values:
+            enum_str = ', '.join(f"'{v}'" for v in field.enum_values)
+            field_type = f"Literal[{enum_str}]"
+        
+        # Handle Optional
+        if not field.required:
+            field_type = f"Optional[{field_type}]"
+        
+        # Build Field() arguments
+        field_args = []
+        
+        # Required or default
+        if field.required:
+            field_args.append("...")
+        elif field.default:
+            # For enums and booleans, use the value directly
+            if hasattr(field, 'enum_values') and field.enum_values:
+                field_args.append(f"'{field.default}'")
+            elif field.type.lower() == 'boolean':
+                field_args.append(str(field.default))
+            else:
+                field_args.append(f"'{field.default}'")
+        
+        # Add constraints from field.constraints list
+        for constraint in field.constraints:
+            # constraint format: "gt=0", "min_length=1", "email_format"
+            if '=' in constraint:
+                field_args.append(constraint)
+            elif constraint == 'email_format':
+                # Add email pattern
+                field_args.append("pattern=r'^[^@]+@[^@]+\\.[^@]+$'")
+            elif constraint == 'uuid_format':
+                # UUID pattern
+                field_args.append("pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'")
+        
+        # Add length constraints if present
+        if hasattr(field, 'min_length') and field.min_length is not None:
+            field_args.append(f"min_length={field.min_length}")
+        if hasattr(field, 'max_length') and field.max_length is not None:
+            field_args.append(f"max_length={field.max_length}")
+        
+        # Add pattern if present
+        if hasattr(field, 'pattern') and field.pattern:
+            field_args.append(f"pattern=r'{field.pattern}'")
+        
+        # Add description for metadata
+        if field.description:
+            # Escape quotes in description
+            desc = field.description.replace("'", "\\'")
+            field_args.append(f"description='{desc}'")
+        elif hasattr(field, 'metadata') and field.metadata:
+            # Generate description from metadata
+            if 'read-only' in field.metadata or field.metadata.get('read-only'):
+                field_args.append("description='Read-only field (auto-generated)'")
+            elif 'auto-calculated' in field.metadata:
+                pattern = field.metadata.get('auto-calculated', 'auto-calculated')
+                field_args.append(f"description='Auto-calculated: {pattern}'")
+            elif 'snapshot_at_add_time' in field.metadata:
+                field_args.append("description='Snapshot at add time'")
+            elif 'snapshot_at_order_time' in field.metadata:
+                field_args.append("description='Snapshot at order time'")
+            elif 'immutable' in field.metadata:
+                field_args.append("description='Immutable after creation'")
+        
+        # Build final field definition
+        if field_args:
+            field_call = f"Field({', '.join(field_args)})"
+            return f"{field.name}: {field_type} = {field_call}"
+        else:
+            # No Field() needed if no constraints
+            if field.default:
+                return f"{field.name}: {field_type} = {field.default}"
+            else:
+                return f"{field.name}: {field_type}"
+
 
     def _generate_entities(self, spec_requirements) -> str:
         """Generate src/models/entities.py (Task 2.3)"""
@@ -240,9 +323,11 @@ async def get_db() -> AsyncSession:
             'Database models with relationships',
             '"""',
             '',
-            'from sqlalchemy import Column, String, Boolean, DateTime, Text',
+            'from sqlalchemy import Column, String, Boolean, DateTime, Text, Integer, Float, ForeignKey, Enum',
             'from sqlalchemy.dialects.postgresql import UUID',
+            'from sqlalchemy.orm import relationship',
             'from datetime import datetime, timezone',
+            'from decimal import Decimal',
             'import uuid',
             'from src.core.database import Base',
             '',
@@ -257,12 +342,8 @@ async def get_db() -> AsyncSession:
 
             for field in entity.fields:
                 if field.name not in ['id', 'created_at', 'updated_at']:
-                    col_type = self._map_sqlalchemy_type(field.type)
-                    nullable = not field.required
-                    index = field.unique or field.name in ['title', 'name', 'email']
-                    code_parts.append(
-                        f'    {field.name} = Column({col_type}, nullable={nullable}, index={index})'
-                    )
+                    col_def = self._generate_sqlalchemy_column(field, entity.name)
+                    code_parts.append(f'    {col_def}')
 
             code_parts.append('    created_at = Column(')
             code_parts.append('        DateTime(timezone=True),')
@@ -281,6 +362,122 @@ async def get_db() -> AsyncSession:
             code_parts.append('')
 
         return '\n'.join(code_parts)
+    
+    def _generate_sqlalchemy_column(self, field, entity_name: str) -> str:
+        """Generate SQLAlchemy Column with all constraints and metadata"""
+        col_type = self._map_sqlalchemy_type(field.type)
+        col_parts = []
+        
+        # Handle foreign keys
+        if hasattr(field, 'foreign_key') and field.foreign_key:
+            # Extract table name from foreign_key (e.g., "Customer.id" -> "customers")
+            target_entity = field.foreign_key.split('.')[0]
+            table_name = self._entity_to_table_name(target_entity)
+            col_parts.append(f"ForeignKey('{table_name}.id')")
+        
+        # Column type
+        col_parts.append(col_type)
+        
+        # Nullable
+        nullable = not field.required
+        col_parts.append(f"nullable={nullable}")
+        
+        # Unique
+        if field.unique:
+            col_parts.append("unique=True")
+        
+        # Index
+        if field.unique or field.name in ['title', 'name', 'email']:
+            col_parts.append("index=True")
+        
+        # Default value from field.default
+        if field.default is not None and not hasattr(field, 'metadata'):
+            # Simple defaults handling
+            if field.type.lower() == 'boolean':
+                col_parts.append(f"default={field.default}")
+            elif hasattr(field, 'enum_values') and field.enum_values:
+                col_parts.append(f"default='{field.default}'")
+            else:
+                col_parts.append(f"default='{field.default}'")
+        
+        # Process constraints and metadata for validation flags
+        info_dict = {}
+        # Constraints list
+        for constraint in getattr(field, 'constraints', []):
+            if constraint in {'read-only', 'read_only'}:
+                info_dict['read_only'] = True
+            elif constraint in {'auto-calculated', 'auto_calculated'}:
+                info_dict['auto_calculated'] = True
+            elif constraint == 'snapshot_at_add_time':
+                info_dict['snapshot_at_add_time'] = True
+            elif constraint == 'snapshot_at_order_time':
+                info_dict['snapshot_at_order_time'] = True
+            elif constraint == 'immutable':
+                info_dict['immutable'] = True
+            # Default handling
+            elif constraint == 'default_true':
+                col_parts.append('default=True')
+            elif constraint == 'default_false':
+                col_parts.append('default=False')
+            elif constraint.startswith('default_'):
+                val = constraint.split('default_', 1)[1]
+                col_parts.append(f"default='{val}'")
+        # Description / metadata fields
+        if field.description:
+            desc = field.description.lower()
+            if 'read-only' in desc:
+                info_dict['read_only'] = True
+            if 'auto-calculated' in desc:
+                info_dict['auto_calculated'] = True
+            if 'snapshot' in desc:
+                if 'add time' in desc:
+                    info_dict['snapshot_at_add_time'] = True
+                elif 'order time' in desc:
+                    info_dict['snapshot_at_order_time'] = True
+            if 'immutable' in desc:
+                info_dict['immutable'] = True
+        elif hasattr(field, 'metadata') and field.metadata:
+            for key, value in field.metadata.items():
+                if key == 'read-only':
+                    info_dict['read_only'] = True
+                elif key == 'auto-calculated':
+                    info_dict['auto_calculated'] = True
+                elif key == 'snapshot_at_add_time':
+                    info_dict['snapshot_at_add_time'] = True
+                elif key == 'snapshot_at_order_time':
+                    info_dict['snapshot_at_order_time'] = True
+                elif key == 'immutable':
+                    info_dict['immutable'] = True
+                elif key == 'default' and field.default is None:
+                    if field.type.lower() == 'boolean':
+                        col_parts.append(f"default={value}")
+                    else:
+                        col_parts.append(f"default='{value}'")
+                elif key == 'description':
+                    info_dict['description'] = value
+        # Append info dict if any flags set
+        if info_dict:
+            col_parts.append(f"info={info_dict}")
+        # Build column definition
+        column_call = f"Column({', '.join(col_parts)})"
+        return f"{field.name} = {column_call}"
+    
+    def _entity_to_table_name(self, entity_name: str) -> str:
+        """Convert entity name to table name (snake_case plural)"""
+        # Simple conversion: CamelCase -> snake_case
+        import re
+        snake = re.sub('([A-Z]+)([A-Z][a-z])', r'\1_\2', entity_name)
+        snake = re.sub('([a-z\d])([A-Z])', r'\1_\2', snake)
+        snake = snake.lower()
+        
+        # Simple pluralization
+        if snake.endswith('y'):
+            return snake[:-1] + 'ies'
+        elif snake.endswith('s'):
+            return snake + 'es'
+        else:
+            return snake + 's'
+
 
     def _generate_repository(self, entity) -> str:
         """Generate repository for entity (Task 2.4)"""

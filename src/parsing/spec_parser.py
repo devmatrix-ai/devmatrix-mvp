@@ -10,12 +10,23 @@ Parses functional requirements from markdown specs including:
 Target: Extract functional requirements from any natural language spec
 """
 
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Union
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
 import logging
 import yaml
+
+from src.parsing.hierarchical_models import (
+    GlobalContext,
+    EntitySummary,
+    Relationship as EntityRelationship,  # Alias to avoid conflict with spec_parser.Relationship
+    EndpointSummary,
+    EntityDetail
+)
+from src.parsing.entity_locator import find_entity_locations, extract_context_window
+from src.parsing.prompts import get_global_context_prompt
+from src.parsing.field_extractor import extract_entity_fields
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +60,14 @@ class Field:
     constraints: List[str] = field(default_factory=list)  # ["gt=0", "email_format"]
     default: Optional[str] = None
     description: str = ""
+    
+    # Phase 2.2: Enhanced validation metadata
+    foreign_key: Optional[str] = None  # "Customer.id" for relationships
+    enum_values: Optional[List[str]] = None  # ["open", "checked_out"] for enums
+    metadata: Dict[str, Any] = field(default_factory=dict)  # {"read-only": True, "auto-calculated": "sum"}
+    min_length: Optional[int] = None  # For string validation
+    max_length: Optional[int] = None  # For string validation
+    pattern: Optional[str] = None  # Regex pattern for validation
 
 
 @dataclass
@@ -216,23 +235,30 @@ class SpecParser:
         self.field_human_pattern = re.compile(r"^\s*-\s+\*\*(?P<name>[^*]+)\*\*\s*(?P<info>.*)$", re.MULTILINE)
 
 
-    def parse(self, spec_path: Path) -> SpecRequirements:
+    def parse(self, spec_input: Union[Path, str]) -> SpecRequirements:
         """
-        Parse specification markdown file
-        
+        Parse specification markdown file or string content
+
         Args:
-            spec_path: Path to markdown specification file
-            
+            spec_input: Path to markdown specification file OR string content
+
         Returns:
             SpecRequirements with all extracted components
         """
         try:
-            content = spec_path.read_text(encoding="utf-8")
+            # Handle both Path objects and string content
+            if isinstance(spec_input, Path):
+                content = spec_input.read_text(encoding="utf-8")
+                spec_name = spec_input.name
+            else:
+                # spec_input is already the content string
+                content = spec_input
+                spec_name = "inline_spec"
         except Exception as e:
-            logger.error(f"Failed to read spec file {spec_path}: {e}")
+            logger.error(f"Failed to read spec file {spec_input}: {e}")
             return SpecRequirements()
 
-        logger.info(f"Parsing specification: {spec_path.name}")
+        logger.info(f"Parsing specification: {spec_name}")
 
         # Try LLM-based extraction (Exclusive method)
         try:
@@ -242,7 +268,7 @@ class SpecParser:
                 logger.info("LLM extraction successful")
                 # Add metadata
                 result.metadata = {
-                    "source_file": str(spec_path),
+                    "source_file": str(spec_input) if isinstance(spec_input, Path) else "inline_content",
                     "total_requirements": len(result.requirements),
                     "functional_count": sum(1 for r in result.requirements if r.type == "functional"),
                     "non_functional_count": sum(1 for r in result.requirements if r.type == "non_functional"),
@@ -287,8 +313,189 @@ class SpecParser:
                 
         except Exception as e:
             logger.error(f"LLM extraction failed: {e}")
-            # No fallback as requested
-            raise e
+            logger.warning("Falling back to regex-based extraction with LLM enrichment")
+            return self._extract_hybrid(content, spec_input)
+
+    def _extract_hybrid(self, content: str, spec_input) -> SpecRequirements:
+        """Hybrid extraction: regex for structure + LLM for descriptions"""
+        import re
+
+        logger.info("Using hybrid extraction (regex structure + LLM descriptions)")
+        reqs = SpecRequirements()
+
+        # 1. Extract entities with regex - support multiple formats
+        # Format 1: ### 1. Producto (Product)
+        entity_pattern1 = r'###\s+\d+\.\s+([^(]+)\s*\(([^)]+)\)(.*?)(?=###\s+\d+\.|\Z)'
+        # Format 2: **Entity: Product**
+        entity_pattern2 = r'\*\*(?:Entidad|Entity):\s*(\w+)\*\*\s*\n(.*?)(?=\n\*\*(?:Entidad|Entity):|$)'
+
+        entities_found1 = re.findall(entity_pattern1, content, re.DOTALL | re.IGNORECASE)
+        entities_found2 = re.findall(entity_pattern2, content, re.DOTALL | re.IGNORECASE)
+
+        # Process format 1 entities (### 1. Producto (Product))
+        for spanish_name, english_name, entity_content in entities_found1:
+            entity_name = english_name.strip()  # Use English name
+
+            # Extract fields - format: - **ID único** (código UUID...)
+            field_pattern = r'-\s+\*\*([^*]+)\*\*\s*\(([^)]+)\)(?:[^-\n]*?)(?:-\s*(.+?))?(?=\n-|\n\n|###|\Z)'
+            fields_found = re.findall(field_pattern, entity_content, re.DOTALL)
+
+            fields = []
+            for field_name_raw, field_type_raw, field_desc in fields_found:
+                field_name = field_name_raw.strip()
+
+                # Simple field name mapping from Spanish to English
+                field_name_map = {
+                    "ID único": "id",
+                    "Nombre": "name",
+                    "Descripción": "description",
+                    "Precio": "price",
+                    "Stock": "stock",
+                    "Email": "email",
+                    "Fecha de creación": "creation_date",
+                    "Total": "total_amount",
+                    "Estado": "status"
+                }
+                field_name = field_name_map.get(field_name, field_name.lower().replace(" ", "_"))
+
+                # Type mapping
+                type_map = {
+                    "código UUID": "UUID",
+                    "UUID": "UUID",
+                    "texto": "String",
+                    "número decimal": "Float",
+                    "entero": "Integer",
+                    "fecha": "DateTime",
+                    "enum": "String"
+                }
+                field_type = type_map.get(field_type_raw.strip(), "String")
+
+                # Extract description with LLM for enforcement keywords
+                description = self._extract_field_description(entity_name, field_name, content)
+
+                fields.append(Field(
+                    name=field_name,
+                    type=field_type,
+                    required=True,  # Default, could be refined
+                    description=description or field_desc.strip() if field_desc else ""
+                ))
+
+            if fields:
+                reqs.entities.append(Entity(name=entity_name, fields=fields))
+
+        # Process format 2 entities (**Entity: Product**)
+        for entity_name, entity_content in entities_found2:
+            field_pattern = r'-\s+`?(\w+)`?\s*\(([^)]+)\)(?::\s*(.+?))?(?=\n-|\n\n|\Z)'
+            fields_found = re.findall(field_pattern, entity_content, re.DOTALL)
+
+            fields = []
+            for field_name, field_type, field_desc in fields_found:
+                description = self._extract_field_description(entity_name, field_name, content)
+
+                fields.append(Field(
+                    name=field_name.strip(),
+                    type=field_type.strip(),
+                    required=True,
+                    description=description or field_desc.strip() if field_desc else ""
+                ))
+
+            if fields:
+                reqs.entities.append(Entity(name=entity_name.strip(), fields=fields))
+
+        # 2. Extract endpoints with regex
+        endpoint_pattern = r'\*\*(?:POST|GET|PUT|DELETE|PATCH)\s+([^\*]+)\*\*'
+        endpoints_found = re.findall(endpoint_pattern, content, re.IGNORECASE)
+
+        for endpoint_path in endpoints_found:
+            # Find method from context
+            method_match = re.search(r'\*\*(POST|GET|PUT|DELETE|PATCH)\s+' + re.escape(endpoint_path), content, re.IGNORECASE)
+            method = method_match.group(1).upper() if method_match else "GET"
+
+            reqs.endpoints.append(Endpoint(
+                method=method,
+                path=endpoint_path.strip(),
+                entity="Unknown",
+                operation="custom",
+                description=f"{method} {endpoint_path}"
+            ))
+
+        # 3. Add metadata
+        reqs.metadata = {
+            "source_file": str(spec_input) if isinstance(spec_input, Path) else "inline_content",
+            "entity_count": len(reqs.entities),
+            "endpoint_count": len(reqs.endpoints),
+            "extraction_method": "hybrid"
+        }
+
+        logger.info(f"Hybrid extraction: {len(reqs.entities)} entities, {len(reqs.endpoints)} endpoints")
+        return reqs
+
+    def _extract_field_description(self, entity_name: str, field_name: str, content: str) -> Optional[str]:
+        """Extract field description using focused LLM query"""
+        try:
+            from src.llm.enhanced_anthropic_client import EnhancedAnthropicClient
+            from src.config.constants import DEFAULT_MODEL
+            import asyncio
+
+            # Find context around the field
+            field_context_pattern = rf'(?:{entity_name}.*?{field_name}.*?)(.{{0,500}})'
+            match = re.search(field_context_pattern, content, re.DOTALL | re.IGNORECASE)
+            context = match.group(1) if match else ""
+
+            if not context:
+                return None
+
+            prompt = f"""Extract the description for field "{field_name}" in entity "{entity_name}".
+
+Context:
+{context[:500]}
+
+Look for keywords indicating enforcement type:
+- "auto-calculated", "automática", "se calcula automáticamente" - indicates computed field
+- "read-only", "solo lectura", "automática", "inmutable" - indicates immutable field
+- "snapshot", "captures", "captura el precio EN ESE MOMENTO" - indicates snapshot behavior
+
+Return ONLY the description text (1-2 sentences maximum), or "NONE" if no description found.
+DO NOT return JSON, just the plain text description."""
+
+            client = EnhancedAnthropicClient()
+
+            try:
+                loop = asyncio.get_running_loop()
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(
+                        asyncio.run,
+                        client.generate(prompt=prompt, model=DEFAULT_MODEL, max_tokens=200, temperature=0.0)
+                    )
+                    response = future.result(timeout=10)
+            except RuntimeError:
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                response = loop.run_until_complete(
+                    client.generate(prompt=prompt, model=DEFAULT_MODEL, max_tokens=200, temperature=0.0)
+                )
+
+            # Parse response
+            if hasattr(response, 'text'):
+                desc = response.text.strip()
+            elif hasattr(response, 'content'):
+                desc = response.content.strip()
+            elif isinstance(response, dict):
+                desc = response.get('content', '').strip()
+            else:
+                desc = str(response).strip()
+
+            if desc and desc != "NONE":
+                return desc
+            return None
+
+        except Exception as e:
+            logger.debug(f"Could not extract description for {entity_name}.{field_name}: {e}")
+            return None
 
     def _extract_with_llm(self, content: str) -> Optional[SpecRequirements]:
         """Extract spec requirements using LLM"""
@@ -299,24 +506,30 @@ class SpecParser:
             import asyncio
 
             prompt = f"""You are an expert API architect. Analyze this specification and extract structured requirements.
-            
+
             # Specification
-            {content[:8000]}
-            
+            {content[:12000]}
+
             # Task
             Extract the following components into a JSON structure:
-            1. entities: List of data models with fields (name, type, required, constraints)
+            1. entities: List of data models with fields (name, type, required, constraints, description)
             2. endpoints: List of API endpoints (method, path, description, params)
             3. validations: List of business validations (entity, field, rule)
             4. requirements: List of functional requirements (id, description)
-            
+
             # JSON Format
             {{
                 "entities": [
                     {{
                         "name": "EntityName",
                         "fields": [
-                            {{"name": "fieldName", "type": "DataType", "required": true, "constraints": ["constraint1"]}}
+                            {{
+                                "name": "fieldName",
+                                "type": "DataType",
+                                "required": true,
+                                "constraints": ["constraint1"],
+                                "description": "Field description (CRITICAL: include keywords like 'auto-calculated', 'read-only', 'snapshot', 'automática', 'solo lectura')"
+                            }}
                         ]
                     }}
                 ],
@@ -336,22 +549,37 @@ class SpecParser:
                     {{"id": "F1", "description": "Requirement description"}}
                 ]
             }}
-            
-            Return ONLY valid JSON. No markdown formatting.
+
+            CRITICAL INSTRUCTIONS:
+            1. For each field, extract its description from the spec. Look for:
+               - "auto-calculated", "automática", "se calcula automáticamente" → Include in description
+               - "read-only", "solo lectura", "automática" → Include in description
+               - "snapshot", "captures", "captura el precio EN ESE MOMENTO" → Include in description
+               - Any text explaining the field behavior → Include in description
+
+            2. JSON VALIDITY REQUIREMENTS:
+               - ALWAYS close all strings with matching quotes
+               - Escape special characters in strings (quotes, newlines, backslashes)
+               - If approaching token limit, STOP at a complete JSON object
+               - Better to return fewer complete objects than incomplete JSON
+               - All opened brackets {{ [ must be closed }} ]
+               - Test your JSON is valid before returning
+
+            3. Return ONLY valid JSON. No markdown formatting, no explanations.
             """
 
             client = EnhancedAnthropicClient()
-            
-            # Run sync
+
+            # Run sync with increased token limit
             try:
                 loop = asyncio.get_running_loop()
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     future = executor.submit(
                         asyncio.run,
-                        client.generate(prompt=prompt, model=DEFAULT_MODEL, max_tokens=4000, temperature=0.0)
+                        client.generate(prompt=prompt, model=DEFAULT_MODEL, max_tokens=8000, temperature=0.0)
                     )
-                    response = future.result(timeout=60)
+                    response = future.result(timeout=90)
             except RuntimeError:
                 try:
                     loop = asyncio.get_event_loop()
@@ -378,8 +606,55 @@ class SpecParser:
                 response_text = response_text[7:]
             if response_text.endswith("```"):
                 response_text = response_text[:-3]
-            
-            data = json.loads(response_text)
+
+            # Try to parse JSON with robust error handling and multiple repair strategies
+            data = None
+            try:
+                data = json.loads(response_text)
+            except json.JSONDecodeError as json_err:
+                logger.warning(f"JSON parse error at char {json_err.pos}: {json_err.msg}")
+
+                # Strategy 1: Find last complete JSON object by searching for last valid '}'
+                try:
+                    # Find all positions of '}' and try parsing up to each one
+                    closing_brace_positions = [i for i, char in enumerate(response_text) if char == '}']
+                    for pos in reversed(closing_brace_positions):
+                        try:
+                            truncated = response_text[:pos+1]
+                            data = json.loads(truncated)
+                            logger.info(f"✅ JSON repaired by truncating to last complete object at position {pos}")
+                            break
+                        except:
+                            continue
+                except:
+                    pass
+
+                # Strategy 2: Line-by-line truncation with closing brackets
+                if data is None:
+                    lines = response_text.split('\n')
+                    for i in range(len(lines) - 1, max(len(lines) - 50, 0), -1):  # Only try last 50 lines
+                        try:
+                            truncated = '\n'.join(lines[:i])
+                            # Balance brackets
+                            open_braces = truncated.count('{') - truncated.count('}')
+                            open_brackets = truncated.count('[') - truncated.count(']')
+                            if open_braces > 0:
+                                truncated += '\n' + '}' * open_braces
+                            if open_brackets > 0:
+                                truncated += '\n' + ']' * open_brackets
+                            data = json.loads(truncated)
+                            logger.info(f"✅ JSON repaired by line truncation at line {i}")
+                            break
+                        except:
+                            continue
+
+                # Strategy 3: Return minimal valid structure if all else fails
+                if data is None:
+                    logger.error(f"Could not repair JSON after multiple strategies. Error was at position {json_err.pos}")
+                    logger.error(f"Context around error: ...{response_text[max(0, json_err.pos-100):json_err.pos+100]}...")
+                    # Return empty but valid structure
+                    logger.warning("Returning empty SpecRequirements due to unparseable JSON")
+                    return SpecRequirements()
             
             # Map to objects
             reqs = SpecRequirements()
@@ -388,10 +663,11 @@ class SpecParser:
             for e_data in data.get("entities", []):
                 fields = [
                     Field(
-                        name=f["name"], 
-                        type=f["type"], 
+                        name=f["name"],
+                        type=f["type"],
                         required=f.get("required", True),
-                        constraints=f.get("constraints", [])
+                        constraints=f.get("constraints", []),
+                        description=f.get("description", "")  # ✅ CRITICAL for enforcement detection
                     ) for f in e_data.get("fields", [])
                 ]
                 reqs.entities.append(Entity(name=e_data["name"], fields=fields))
@@ -433,6 +709,226 @@ class SpecParser:
             logger.error(f"Error in _extract_with_llm: {e}")
             raise e
 
+    def _extract_global_context(self, content: str) -> Optional[GlobalContext]:
+        """
+        Pass 1: Extract global context from full spec (no truncation).
+
+        This method processes the FULL specification content without truncation
+        to extract high-level information:
+        - Domain description
+        - Entity summaries (names, descriptions, relationships)
+        - Entity relationships
+        - Business logic rules
+        - Endpoint summaries
+
+        Returns small output (~2-3K tokens) despite large input to avoid truncation.
+
+        Args:
+            content: Full specification text (NO truncation applied)
+
+        Returns:
+            GlobalContext object with domain, entity summaries, relationships, business logic, and endpoints.
+            None if extraction fails.
+        """
+        try:
+            from src.llm.enhanced_anthropic_client import EnhancedAnthropicClient
+            from src.config.constants import DEFAULT_MODEL
+            import json
+            import asyncio
+
+            # CRITICAL: Pass FULL content (no truncation)
+            # Output is small (entity summaries only), so no truncation risk
+            prompt = get_global_context_prompt(content)
+
+            client = EnhancedAnthropicClient()
+
+            # Run LLM call
+            try:
+                loop = asyncio.get_running_loop()
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(
+                        asyncio.run,
+                        client.generate(prompt=prompt, model=DEFAULT_MODEL, max_tokens=4000, temperature=0.0)
+                    )
+                    response = future.result(timeout=90)
+            except RuntimeError:
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                response = loop.run_until_complete(
+                    client.generate(prompt=prompt, model=DEFAULT_MODEL, max_tokens=4000, temperature=0.0)
+                )
+
+            # Parse response
+            if hasattr(response, 'text'):
+                response_text = response.text
+            elif hasattr(response, 'content'):
+                response_text = response.content
+            elif isinstance(response, dict):
+                response_text = response.get('content', '')
+            else:
+                response_text = str(response)
+
+            # Clean up JSON
+            response_text = response_text.strip()
+            if response_text.startswith("```json"):
+                response_text = response_text[7:]
+            if response_text.endswith("```"):
+                response_text = response_text[:-3]
+            response_text = response_text.strip()
+
+            # Parse JSON
+            data = json.loads(response_text)
+
+            # Extract entity names for location finding
+            entity_names = [e["name"] for e in data.get("entities", [])]
+
+            # Find entity locations in spec
+            entity_locations = find_entity_locations(content, entity_names)
+            logger.info(f"Found locations for {len(entity_locations)}/{len(entity_names)} entities")
+
+            # Map to GlobalContext object
+            entity_summaries = []
+            for e_data in data.get("entities", []):
+                entity_summaries.append(EntitySummary(
+                    name=e_data["name"],
+                    location=entity_locations.get(e_data["name"], 0),  # Default to 0 if not found
+                    description=e_data.get("description", ""),
+                    relationships=e_data.get("relationships", [])
+                ))
+
+            relationships = []
+            for r_data in data.get("relationships", []):
+                relationships.append(EntityRelationship(
+                    source=r_data["source"],
+                    target=r_data["target"],
+                    type=r_data.get("type", "one_to_many"),
+                    description=r_data.get("description", "")
+                ))
+
+            endpoints = []
+            for ep_data in data.get("endpoints", []):
+                endpoints.append(EndpointSummary(
+                    method=ep_data["method"],
+                    path=ep_data["path"],
+                    entity=ep_data.get("entity")
+                ))
+
+            global_context = GlobalContext(
+                domain=data.get("domain", ""),
+                entities=entity_summaries,
+                relationships=relationships,
+                business_logic=data.get("business_logic", []),
+                endpoints=endpoints
+            )
+
+            logger.info(
+                f"✅ Pass 1 complete: Extracted {len(entity_summaries)} entities, "
+                f"{len(relationships)} relationships, {len(endpoints)} endpoints"
+            )
+
+            return global_context
+
+        except Exception as e:
+            logger.error(f"Error in _extract_global_context: {e}", exc_info=True)
+            return None
+
+    def _extract_entity_fields_with_regex(
+        self,
+        entity_name: str,
+        context_window: str
+    ) -> EntityDetail:
+        """
+        Extract entity fields using regex patterns (Pass 2).
+
+        Args:
+            entity_name: Name of the entity
+            context_window: Text window around entity definition
+
+        Returns:
+            EntityDetail with extracted fields and enforcement types
+        """
+        try:
+            # Use regex-based field extraction
+            fields = extract_entity_fields(entity_name, context_window)
+
+            logger.info(
+                f"Extracted {len(fields)} fields for {entity_name} using regex"
+            )
+
+            return EntityDetail(entity=entity_name, fields=fields)
+
+        except Exception as e:
+            logger.error(f"Error extracting fields for {entity_name}: {e}", exc_info=True)
+            return EntityDetail(entity=entity_name, fields=[])
+
+    def _extract_with_hierarchical_llm(
+        self,
+        spec_content: str
+    ) -> Dict[str, EntityDetail]:
+        """
+        Complete hierarchical extraction: Pass 1 (global) + Pass 2 (detailed).
+
+        Orchestrates:
+        - Pass 1: Extract global context from full spec
+        - Pass 2: Extract entity fields with context windows
+
+        Args:
+            spec_content: Full specification text
+
+        Returns:
+            Dictionary mapping entity name -> EntityDetail
+        """
+        try:
+            # PASS 1: Extract global context from full spec
+            logger.info("PASS 1: Extracting global context...")
+            global_context = self._extract_global_context(spec_content)
+
+            if global_context is None:
+                logger.error("Pass 1 extraction failed")
+                return {}
+
+            logger.info(
+                f"Pass 1 extracted {len(global_context.entities)} entities, "
+                f"{len(global_context.relationships)} relationships"
+            )
+
+            # PASS 2: Extract detailed fields for each entity
+            logger.info("PASS 2: Extracting entity fields with context windows...")
+            entity_details = {}
+
+            for entity_summary in global_context.entities:
+                entity_name = entity_summary.name
+                location = entity_summary.location
+
+                # Extract context window around entity definition
+                context_window = extract_context_window(spec_content, location, window=2000)
+
+                # Extract fields using regex patterns
+                entity_detail = self._extract_entity_fields_with_regex(
+                    entity_name,
+                    context_window
+                )
+
+                entity_details[entity_name] = entity_detail
+
+                logger.info(
+                    f"Entity {entity_name}: {len(entity_detail.fields)} fields extracted"
+                )
+
+            logger.info(
+                f"Hierarchical extraction complete: "
+                f"{len(entity_details)} entities with detailed fields"
+            )
+
+            return entity_details
+
+        except Exception as e:
+            logger.error(f"Error in hierarchical extraction: {e}", exc_info=True)
+            return {}
 
 
     def _parse_classification_ground_truth(self, content: str) -> Dict[str, Dict[str, Any]]:

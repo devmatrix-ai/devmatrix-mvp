@@ -327,23 +327,52 @@ class MultiLanguageParser:
     def _extract_python_functions(self, root: tree_sitter.Node, code: str) -> List[Dict]:
         """Extract function definitions from Python AST"""
         functions = []
+        code_bytes = code.encode('utf8')
 
         def find_functions(node: tree_sitter.Node) -> None:
             if node.type == "function_definition":
-                # Get function name
+                # Get function name (use bytes for correct extraction)
                 name_node = node.child_by_field_name("name")
-                name = code[name_node.start_byte:name_node.end_byte] if name_node else "unknown"
+                if name_node:
+                    name = code_bytes[name_node.start_byte:name_node.end_byte].decode('utf8')
+                else:
+                    name = "unknown"
 
                 # Get parameters
                 params_node = node.child_by_field_name("parameters")
-                params = code[params_node.start_byte:params_node.end_byte] if params_node else "()"
+                if params_node:
+                    params_str = code_bytes[params_node.start_byte:params_node.end_byte].decode('utf8')
+                else:
+                    params_str = "()"
+
+                # Extract parameter names (strip type hints and defaults)
+                params_list = []
+                if params_node:
+                    for child in params_node.children:
+                        if child.type in ["identifier", "typed_parameter"]:
+                            param_name = code_bytes[child.start_byte:child.end_byte].decode('utf8')
+                            # Extract just the parameter name (before : or =)
+                            if ':' in param_name:
+                                param_name = param_name.split(':')[0].strip()
+                            if '=' in param_name:
+                                param_name = param_name.split('=')[0].strip()
+                            if param_name and param_name not in ['(', ')', ',', 'self', 'cls']:
+                                params_list.append(param_name)
+
+                # Build signature
+                signature = f"{name}{params_str}"
+
+                # Calculate basic complexity (count decision points)
+                complexity = self._calculate_node_complexity(node)
 
                 functions.append({
                     "name": name,
-                    "params": params,
+                    "params": params_list,
+                    "signature": signature,
                     "start_line": node.start_point[0] + 1,
                     "end_line": node.end_point[0] + 1,
-                    "loc": node.end_point[0] - node.start_point[0] + 1
+                    "loc": node.end_point[0] - node.start_point[0] + 1,
+                    "complexity": complexity
                 })
 
             for child in node.children:
@@ -355,17 +384,44 @@ class MultiLanguageParser:
     def _extract_python_classes(self, root: tree_sitter.Node, code: str) -> List[Dict]:
         """Extract class definitions from Python AST"""
         classes = []
+        code_bytes = code.encode('utf8')
 
         def find_classes(node: tree_sitter.Node) -> None:
             if node.type == "class_definition":
                 name_node = node.child_by_field_name("name")
-                name = code[name_node.start_byte:name_node.end_byte] if name_node else "unknown"
+                if name_node:
+                    name = code_bytes[name_node.start_byte:name_node.end_byte].decode('utf8')
+                else:
+                    name = "unknown"
+
+                # Extract base classes (superclasses)
+                bases = []
+                superclasses_node = node.child_by_field_name("superclasses")
+                if superclasses_node:
+                    # superclasses is an argument_list with arguments
+                    for child in superclasses_node.children:
+                        if child.type in ["identifier", "attribute"]:
+                            base_name = code_bytes[child.start_byte:child.end_byte].decode('utf8')
+                            bases.append(base_name)
+
+                # Extract methods
+                methods = []
+                body_node = node.child_by_field_name("body")
+                if body_node:
+                    for child in body_node.children:
+                        if child.type == "function_definition":
+                            method_name_node = child.child_by_field_name("name")
+                            if method_name_node:
+                                method_name = code_bytes[method_name_node.start_byte:method_name_node.end_byte].decode('utf8')
+                                methods.append(method_name)
 
                 classes.append({
                     "name": name,
                     "start_line": node.start_point[0] + 1,
                     "end_line": node.end_point[0] + 1,
-                    "loc": node.end_point[0] - node.start_point[0] + 1
+                    "loc": node.end_point[0] - node.start_point[0] + 1,
+                    "bases": bases,
+                    "methods": methods
                 })
 
             for child in node.children:
@@ -462,6 +518,38 @@ class MultiLanguageParser:
     def _extract_js_imports(self, root: tree_sitter.Node, code: str) -> List[str]:
         """Extract import statements from JavaScript AST"""
         return self._extract_ts_imports(root, code)  # Same structure
+
+    def _calculate_node_complexity(self, node: tree_sitter.Node) -> float:
+        """
+        Calculate cyclomatic complexity for a specific node
+
+        Complexity = 1 + number of decision points
+        Decision points: if, elif, else, while, for, try, except, and, or
+        """
+        decision_nodes = [
+            "if_statement",
+            "elif_clause",
+            "else_clause",
+            "while_statement",
+            "for_statement",
+            "try_statement",
+            "except_clause",
+            "boolean_operator",  # and, or
+            "conditional_expression",  # ternary
+        ]
+
+        count = 1  # Base complexity
+
+        def count_decisions(n: tree_sitter.Node) -> None:
+            nonlocal count
+            if n.type in decision_nodes:
+                count += 1
+
+            for child in n.children:
+                count_decisions(child)
+
+        count_decisions(node)
+        return float(count)
 
     def _calculate_complexity(self, root: tree_sitter.Node) -> float:
         """

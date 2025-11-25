@@ -5,15 +5,18 @@ Responsible for constructing the initial ApplicationIR from SpecRequirements.
 This acts as the bridge between the "Analysis Phase" (SpecRequirements) and the "Generation Phase" (ApplicationIR).
 """
 import uuid
+import logging
 from datetime import datetime
 from typing import Any, Dict, List
+
+logger = logging.getLogger(__name__)
 
 from src.cognitive.ir.application_ir import ApplicationIR
 from src.cognitive.ir.domain_model import DomainModelIR, Entity, Attribute, Relationship, DataType, RelationshipType
 from src.cognitive.ir.api_model import APIModelIR, Endpoint, HttpMethod, ParameterLocation, APIParameter
 from src.cognitive.ir.infrastructure_model import InfrastructureModelIR, DatabaseConfig, DatabaseType, ObservabilityConfig
 from src.cognitive.ir.behavior_model import BehaviorModelIR, Invariant, Flow, FlowType
-from src.cognitive.ir.validation_model import ValidationModelIR, ValidationRule, ValidationType
+from src.cognitive.ir.validation_model import ValidationModelIR, ValidationRule, ValidationType, EnforcementType
 
 # Import actual SpecRequirements from parser
 from src.parsing.spec_parser import SpecRequirements
@@ -171,6 +174,7 @@ class IRBuilder:
         # Use BusinessLogicExtractor for complex business logic rules
         try:
             # Convert spec to dict format that BusinessLogicExtractor expects
+            # CRITICAL: Include description for enforcement type detection!
             spec_dict = {
                 "name": spec.metadata.get("spec_name", ""),
                 "entities": [
@@ -180,6 +184,7 @@ class IRBuilder:
                             {
                                 "name": field.name,
                                 "type": field.type,
+                                "description": field.description or "",  # ✅ CRITICAL for enforcement detection
                                 "constraints": field.constraints or {},
                                 "unique": field.unique
                             }
@@ -193,11 +198,90 @@ class IRBuilder:
             extractor = BusinessLogicExtractor()
             business_logic_model = extractor.extract_validation_rules(spec_dict)
             rules.extend(business_logic_model.rules)
+            logger.info(f"BusinessLogicExtractor added {len(business_logic_model.rules)} rules")
         except Exception as e:
-            # If extraction fails, continue with basic rules
+            # If extraction fails, log error and continue with basic rules
+            logger.error(f"BusinessLogicExtractor failed: {e}", exc_info=True)
             pass
 
-        return ValidationModelIR(rules=rules)
+        # Optimize enforcement placement for each rule
+        optimized_rules = [IRBuilder._optimize_enforcement_placement(rule) for rule in rules]
+
+        return ValidationModelIR(rules=optimized_rules)
+
+    @staticmethod
+    def _optimize_enforcement_placement(rule: ValidationRule) -> ValidationRule:
+        """
+        Optimize where enforcement rules are applied based on their type.
+
+        Routing logic:
+        - VALIDATOR: schema + entity (unique → also service for uniqueness check)
+        - IMMUTABLE: schema + entity
+        - COMPUTED_FIELD: entity only
+        - STATE_MACHINE: service + endpoint
+        - BUSINESS_LOGIC: service only
+        - DESCRIPTION: no enforcement
+        """
+        if rule.enforcement is None or rule.enforcement_type == EnforcementType.DESCRIPTION:
+            # No enforcement placement needed
+            return rule
+
+        enforcement_type = rule.enforcement_type
+
+        # Determine optimal applied_at locations
+        if enforcement_type == EnforcementType.VALIDATOR:
+            # Validators always go in schema + entity
+            if rule.enforcement.applied_at is None:
+                rule.enforcement.applied_at = []
+
+            # Ensure schema and entity are included
+            if "schema" not in rule.enforcement.applied_at:
+                rule.enforcement.applied_at.append("schema")
+            if "entity" not in rule.enforcement.applied_at:
+                rule.enforcement.applied_at.append("entity")
+
+            # For uniqueness constraints, also apply at service level
+            if rule.type == ValidationType.UNIQUENESS:
+                if "service" not in rule.enforcement.applied_at:
+                    rule.enforcement.applied_at.append("service")
+
+        elif enforcement_type == EnforcementType.IMMUTABLE:
+            # Immutable fields: schema + entity (read-only, no updates)
+            if rule.enforcement.applied_at is None:
+                rule.enforcement.applied_at = []
+
+            if "schema" not in rule.enforcement.applied_at:
+                rule.enforcement.applied_at.append("schema")
+            if "entity" not in rule.enforcement.applied_at:
+                rule.enforcement.applied_at.append("entity")
+
+        elif enforcement_type == EnforcementType.COMPUTED_FIELD:
+            # Computed fields: entity only (calculated at model level)
+            if rule.enforcement.applied_at is None:
+                rule.enforcement.applied_at = []
+
+            if "entity" not in rule.enforcement.applied_at:
+                rule.enforcement.applied_at.append("entity")
+
+        elif enforcement_type == EnforcementType.STATE_MACHINE:
+            # State machines: service + endpoint (workflow enforcement)
+            if rule.enforcement.applied_at is None:
+                rule.enforcement.applied_at = []
+
+            if "service" not in rule.enforcement.applied_at:
+                rule.enforcement.applied_at.append("service")
+            if "endpoint" not in rule.enforcement.applied_at:
+                rule.enforcement.applied_at.append("endpoint")
+
+        elif enforcement_type == EnforcementType.BUSINESS_LOGIC:
+            # Business logic: service only (orchestration, complex rules)
+            if rule.enforcement.applied_at is None:
+                rule.enforcement.applied_at = []
+
+            if "service" not in rule.enforcement.applied_at:
+                rule.enforcement.applied_at.append("service")
+
+        return rule
 
     @staticmethod
     def _map_data_type(type_str: str) -> DataType:

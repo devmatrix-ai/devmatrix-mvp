@@ -19,6 +19,28 @@ class ValidationType(str, Enum):
     WORKFLOW_CONSTRAINT = "workflow_constraint"  # workflow sequence validation
     CUSTOM = "custom"
 
+
+class EnforcementType(str, Enum):
+    """How validation is enforced in generated code."""
+    DESCRIPTION = "description"      # Only description string (NOT real enforcement)
+    VALIDATOR = "validator"          # Pydantic @field_validator
+    COMPUTED_FIELD = "computed_field"  # Pydantic @computed_field
+    IMMUTABLE = "immutable"          # Field(exclude=True) + onupdate=None
+    STATE_MACHINE = "state_machine"  # Workflow state transitions
+    BUSINESS_LOGIC = "business_logic"  # Service-layer enforcement
+
+
+class EnforcementStrategy(BaseModel):
+    """How to enforce a validation rule in generated code."""
+    type: EnforcementType
+    implementation: str  # Code pattern or template name
+    applied_at: List[str] = Field(default_factory=list)  # ["schema", "entity", "service", "endpoint"]
+    template_name: Optional[str] = None  # e.g., "pydantic_validator", "immutable_field"
+    parameters: Dict[str, Any] = Field(default_factory=dict)  # Configuration for template
+    code_snippet: Optional[str] = None  # Raw code if not using template
+    description: Optional[str] = None  # Human-readable explanation
+
+
 class ValidationRule(BaseModel):
     entity: str
     attribute: str
@@ -26,6 +48,12 @@ class ValidationRule(BaseModel):
     condition: Optional[str] = None
     error_message: Optional[str] = None
     severity: str = "error" # error, warning
+
+    # Enforcement strategy (CRITICAL for 100% compliance)
+    enforcement_type: EnforcementType = EnforcementType.DESCRIPTION  # Default: no real enforcement
+    enforcement: Optional[EnforcementStrategy] = None  # Detailed enforcement strategy
+    enforcement_code: Optional[str] = None  # Legacy: Actual enforcement code or template
+    applied_at: List[str] = Field(default_factory=list)  # ["schema", "entity", "service"]
 
 class TestCase(BaseModel):
     """Abstract representation of a test case."""

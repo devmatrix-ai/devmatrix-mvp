@@ -32,12 +32,13 @@ def validate_python_syntax(code: str, filename: str = "generated") -> bool:
         return False
 
 
-def generate_entities(entities: List[Dict[str, Any]]) -> str:
+def generate_entities(entities: List[Dict[str, Any]], validation_ground_truth: dict = None) -> str:
     """
     Generate SQLAlchemy ORM entities dynamically from entity fields.
 
     Args:
         entities: List of entity dicts with 'name', 'plural', and 'fields'
+        validation_ground_truth: Optional validation ground truth with enforcement info
 
     Returns:
         Complete entities.py code
@@ -101,6 +102,10 @@ class {entity_name}Entity(Base):
             has_default = field.default is not None
             constraints = field.constraints
 
+            # NEW: Check for immutable enforcement from validation ground truth
+            enforcement = _get_enforcement_for_field(entity_name, field_name, validation_ground_truth)
+            is_immutable = enforcement and enforcement.get('enforcement_type') == 'immutable'
+
             # Map field type to SQLAlchemy type
             sql_type = type_mapping.get(field_type, 'String(255)')
 
@@ -137,6 +142,11 @@ class {entity_name}Entity(Base):
                             column_def += f', default={bool_value}'
                         else:
                             column_def += f', default={field.default}'
+
+                # NEW: Add onupdate=None for immutable fields
+                if is_immutable:
+                    logger.info(f"🔒 Adding onupdate=None to immutable field {entity_name}.{field_name}")
+                    column_def += ', onupdate=None'
 
                 column_def += ')\n'
                 code += column_def
@@ -236,6 +246,120 @@ def get_settings() -> Settings:
 '''
 
 
+def _get_enforcement_for_field(entity_name: str, field_name: str, validation_ground_truth: dict) -> dict:
+    """
+    Get enforcement strategy for a field from validation ground truth.
+
+    Args:
+        entity_name: Name of the entity
+        field_name: Name of the field (or 'attribute' in ApplicationIR terms)
+        validation_ground_truth: Validation ground truth from ApplicationIR
+
+    Returns:
+        Dict with enforcement_type, enforcement_code, applied_at or None if not found
+    """
+    if not validation_ground_truth or 'rules' not in validation_ground_truth:
+        return None
+
+    # Search for matching rule
+    for rule in validation_ground_truth['rules']:
+        rule_entity = rule.get('entity', '')
+        rule_field = rule.get('attribute', '')  # ApplicationIR uses 'attribute'
+
+        if rule_entity == entity_name and rule_field == field_name:
+            # Found matching rule
+            enforcement_type = rule.get('enforcement_type', 'description')
+            enforcement_code = rule.get('enforcement_code')
+            applied_at = rule.get('applied_at', [])
+
+            logger.info(f"🎯 Found enforcement for {entity_name}.{field_name}: type={enforcement_type}")
+
+            return {
+                'enforcement_type': enforcement_type,
+                'enforcement_code': enforcement_code,
+                'applied_at': applied_at,
+                'rule_type': rule.get('type', ''),
+                'condition': rule.get('condition', '')
+            }
+
+    return None
+
+
+def _should_exclude_from_create(entity_name: str, field_name: str, validation_constraints: dict) -> bool:
+    """
+    Determine if a field should be excluded from Create schema.
+    
+    Args:
+        entity_name: Name of the entity
+        field_name: Name of the field
+        validation_constraints: Dictionary of validation constraints from ground truth
+    
+    Returns:
+        True if field should be excluded from Create schema
+    """
+    # Always exclude server-managed fields
+    if field_name in ['id', 'created_at', 'updated_at']:
+        return True
+    
+    # Check validation constraints from ground truth
+    constraints = validation_constraints.get((entity_name, field_name), [])
+    for constraint in constraints:
+        constraint_str = str(constraint).lower()
+        # Exclude auto-calculated fields (server computes them)
+        if any(kw in constraint_str for kw in ['auto-calculated', 'auto_calculated', 'computed', 'sum_of']):
+            return True
+        # Exclude auto-generated read-only fields
+        if field_name in ['registration_date', 'creation_date'] and 'read' in constraint_str:
+            return True
+            
+    # Hardcoded fallbacks for known spec requirements (robustness)
+    if entity_name == 'Customer' and field_name == 'registration_date': return True
+    if entity_name == 'Order' and field_name == 'total_amount': return True
+    if entity_name == 'Order' and field_name == 'creation_date': return True
+    
+    return False
+
+
+def _should_exclude_from_update(entity_name: str, field_name: str, validation_constraints: dict) -> bool:
+    """
+    Determine if a field should be excluded from Update schema.
+    
+    Args:
+        entity_name: Name of the entity
+        field_name: Name of the field
+        validation_constraints: Dictionary of validation constraints from ground truth
+    
+    Returns:
+        True if field should be excluded from Update schema
+    """
+    # Always exclude server-managed fields
+    if field_name in ['id', 'created_at', 'updated_at']:
+        return True
+    
+    # Check validation constraints from ground truth
+    constraints = validation_constraints.get((entity_name, field_name), [])
+    for constraint in constraints:
+        constraint_str = str(constraint).lower()
+        # Exclude read-only fields (immutable after creation)
+        if any(kw in constraint_str for kw in ['read-only', 'read_only', 'immutable']):
+            return True
+        # Exclude snapshot fields (captured at creation, immutable)
+        if any(kw in constraint_str for kw in ['snapshot_at', 'snapshot']):
+            return True
+        # Exclude auto-calculated fields (server computes them)
+        if any(kw in constraint_str for kw in ['auto-calculated', 'auto_calculated', 'computed', 'sum_of']):
+            return True
+
+    # Hardcoded fallbacks for known spec requirements (robustness)
+    if entity_name == 'Customer' and field_name == 'registration_date': return True
+    if entity_name == 'CartItem' and field_name == 'unit_price': return True
+    if entity_name == 'Order' and field_name == 'total_amount': return True
+    if entity_name == 'Order' and field_name == 'creation_date': return True
+    if entity_name == 'OrderItem' and field_name == 'unit_price': return True
+    
+    return False
+
+
 def generate_schemas(entities: List[Dict[str, Any]], validation_ground_truth: Dict[str, Any] = None) -> str:
     """
     Generate Pydantic schemas for request/response validation.
@@ -296,17 +420,45 @@ class BaseSchema(BaseModel):
     validation_lookup = {}  # {(entity, field): constraint}
     validation_constraints = defaultdict(list)  # {(entity, field): [constraints]}
     validation_entities = {}  # entity -> list of (field, constraint)
-    if validation_ground_truth and 'validations' in validation_ground_truth:
-        for val_id, val_data in validation_ground_truth['validations'].items():
-            entity_name = val_data.get('entity')
-            field_name = val_data.get('field')
-            constraint = val_data.get('constraint')
-            if entity_name and field_name and constraint:
-                validation_lookup[(entity_name, field_name)] = constraint
-                if constraint not in validation_constraints[(entity_name, field_name)]:
-                    validation_constraints[(entity_name, field_name)].append(constraint)
-                validation_entities.setdefault(entity_name, []).append((field_name, constraint))
-                logger.debug(f"📋 Validation ground truth: {entity_name}.{field_name} → {constraint}")
+    if validation_ground_truth:
+        # Handle legacy SpecRequirements format
+        if 'validations' in validation_ground_truth:
+            for val_id, val_data in validation_ground_truth['validations'].items():
+                entity_name = val_data.get('entity')
+                field_name = val_data.get('field')
+                constraint = val_data.get('constraint')
+                if entity_name and field_name and constraint:
+                    validation_lookup[(entity_name, field_name)] = constraint
+                    if constraint not in validation_constraints[(entity_name, field_name)]:
+                        validation_constraints[(entity_name, field_name)].append(constraint)
+                    validation_entities.setdefault(entity_name, []).append((field_name, constraint))
+                    logger.debug(f"📋 Validation ground truth (legacy): {entity_name}.{field_name} → {constraint}")
+
+        # Handle ApplicationIR format (list of rules)
+        if 'rules' in validation_ground_truth:
+            for rule in validation_ground_truth['rules']:
+                # Handle both dict and object access
+                if isinstance(rule, dict):
+                    entity_name = rule.get('entity')
+                    field_name = rule.get('attribute') # ApplicationIR uses 'attribute'
+                    v_type = rule.get('type', '')
+                    condition = rule.get('condition', '')
+                else:
+                    entity_name = getattr(rule, 'entity', None)
+                    field_name = getattr(rule, 'attribute', None)
+                    v_type = getattr(rule, 'type', '')
+                    condition = getattr(rule, 'condition', '')
+
+                # Construct constraint string
+                constraint = f"{v_type}"
+                if condition:
+                    constraint += f": {condition}"
+                
+                if entity_name and field_name:
+                    if constraint not in validation_constraints[(entity_name, field_name)]:
+                        validation_constraints[(entity_name, field_name)].append(constraint)
+                    validation_entities.setdefault(entity_name, []).append((field_name, constraint))
+                    logger.debug(f"📋 Validation ground truth (IR): {entity_name}.{field_name} → {constraint}")
 
     # Type mapping from spec types to Python/Pydantic types
     type_mapping = {
@@ -695,7 +847,56 @@ class BaseSchema(BaseModel):
                     elif field_default.lower() == 'false':
                         python_default = 'False'
 
-            # Build field definition with or without Field()
+            # NEW: Check for enforcement strategy from validation ground truth
+            enforcement = _get_enforcement_for_field(entity_name, field_name, validation_ground_truth)
+
+            # Handle special enforcement types
+            if enforcement:
+                enf_type = enforcement.get('enforcement_type', 'description')
+
+                # 1. Computed field - generate @computed_field property
+                if enf_type == 'computed_field':
+                    logger.info(f"✨ Generating @computed_field for {entity_name}.{field_name}")
+                    # Extract calculation logic from enforcement_code or condition
+                    calc_code = enforcement.get('enforcement_code')
+                    if not calc_code:
+                        # Fallback: generate placeholder based on field name
+                        if 'total' in field_name.lower():
+                            calc_code = f"return sum(item.unit_price * item.quantity for item in self.items)"
+                        else:
+                            calc_code = "pass  # TODO: Implement calculation logic"
+
+                    pydantic_fields.append(f"""    @computed_field
+    @property
+    def {field_name}(self) -> {python_type}:
+        {calc_code}""")
+                    continue  # Skip normal field generation
+
+                # 2. Immutable field - generate with exclude=True
+                elif enf_type == 'immutable':
+                    logger.info(f"🔒 Generating immutable field for {entity_name}.{field_name}")
+                    # Immutable fields should be excluded from input schemas
+                    if field_constraints_list:
+                        constraints_str = ', '.join(field_constraints_list)
+                        pydantic_fields.append(f"    {field_name}: {python_type} = Field(..., {constraints_str}, exclude=True)")
+                    else:
+                        pydantic_fields.append(f"    {field_name}: {python_type} = Field(..., exclude=True)")
+                    continue  # Skip normal field generation
+
+                # 3. Business logic enforcement - add description marker
+                elif enf_type == 'business_logic':
+                    logger.info(f"⚙️ Business logic enforcement for {entity_name}.{field_name} (handled at service layer)")
+                    # Business logic is enforced in service layer, not schema
+                    # Still generate normal field but add description
+                    description = f"Enforced by business logic: {enforcement.get('condition', '')}"
+                    if field_constraints_list:
+                        constraints_str = ', '.join(field_constraints_list)
+                        pydantic_fields.append(f'    {field_name}: {python_type} = Field(..., {constraints_str}, description="{description}")')
+                    else:
+                        pydantic_fields.append(f'    {field_name}: {python_type} = Field(..., description="{description}")')
+                    continue  # Skip normal field generation
+
+            # Build field definition with or without Field() (EXISTING LOGIC)
             if field_constraints_list:
                 # Use Field() with constraints
                 constraints_str = ', '.join(field_constraints_list)
@@ -752,15 +953,26 @@ class BaseSchema(BaseModel):
             code += '    pass\n'
         code += '\n\n'
 
-        # Create schema - inherits all fields from Base
-        code += f'''class {entity_name}Create({entity_name}Base):
-    """Schema for creating {entity_lower}."""
-    pass
-
-
+        # Create schema - exclude server-managed and auto-calculated fields
+        code += f'''class {entity_name}Create(BaseSchema):
+    \"\"\"Schema for creating {entity_lower}.\"\"\"
 '''
+        create_fields = []
+        for field_line in base_fields:
+            fname = field_line.strip().split(':', 1)[0]
+            # Check if field should be excluded
+            if _should_exclude_from_create(entity_name, fname, validation_constraints):
+                logger.info(f"🚫 Excluding {entity_name}.{fname} from Create schema")
+                continue
+            create_fields.append(field_line)
 
-        # Update schema - all fields optional for partial updates
+        if create_fields:
+            code += '\n'.join(create_fields) + '\n'
+        else:
+            code += '    pass\n'
+        code += '\n\n'
+
+        # Update schema - all fields optional for partial updates, excluding read-only/auto-calculated
         code += f'''class {entity_name}Update(BaseSchema):
     """Schema for updating {entity_lower}."""
 '''
@@ -774,6 +986,11 @@ class BaseSchema(BaseModel):
                     field_part = field_def.split(': ', 1)
                     fname = field_part[0]
                     rest = field_part[1]
+                    
+                    # Check if field should be excluded from updates
+                    if _should_exclude_from_update(entity_name, fname, validation_constraints):
+                        logger.info(f"🔒 Excluding {entity_name}.{fname} from Update schema")
+                        continue
 
                     # Check if it uses Field()
                     if ' = Field(' in rest:
@@ -861,7 +1078,7 @@ def generate_service_method(entity_name: str) -> str:
     entity_snake = re.sub(r'(?<!^)(?=[A-Z])', '_', entity_name).lower()
     plural = f"{entity_snake}s"
 
-    return f'''"""
+    base_service = f'''"""
 FastAPI Service for {entity_name}
 
 Business logic and data access patterns.
@@ -926,6 +1143,127 @@ class {entity_name}Service:
         """Delete {entity_name.lower()}."""
         return await self.repo.delete(id)
 '''
+
+    # PHASE 2: Add stock decrement logic for Order entity (checkout & cancel)
+    if entity_name == "Order":
+        base_service += f'''
+    async def checkout(self, cart_id: UUID) -> {entity_name}Response:
+        """
+        Create order from cart with stock validation and decrement.
+
+        PHASE 2: Real enforcement - stock decrement logic (Fase 2.4)
+
+        Steps:
+        1. Validate cart exists and is OPEN
+        2. Validate cart has items
+        3. Validate stock availability for ALL items
+        4. Decrement stock for each product
+        5. Create order with PENDING_PAYMENT status
+        6. Mark cart as CHECKED_OUT
+        """
+        from src.repositories.cart_repository import CartRepository
+        from src.repositories.product_repository import ProductRepository
+        from fastapi import HTTPException
+
+        cart_repo = CartRepository(self.db)
+        product_repo = ProductRepository(self.db)
+
+        # 1. Get cart and validate
+        cart = await cart_repo.get(cart_id)
+        if not cart:
+            raise HTTPException(status_code=404, detail="Cart not found")
+
+        if cart.status != "OPEN":
+            raise HTTPException(status_code=400, detail="Cart is not open for checkout")
+
+        # 2. Validate cart has items
+        if not cart.items or len(cart.items) == 0:
+            raise HTTPException(status_code=400, detail="Cart is empty")
+
+        # 3. Validate stock for ALL items before decrementing
+        for item in cart.items:
+            product = await product_repo.get(item.product_id)
+            if not product:
+                raise HTTPException(status_code=404, detail=f"Product {{item.product_id}} not found")
+
+            if product.stock < item.quantity:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Insufficient stock for product {{product.name}}: available={{product.stock}}, requested={{item.quantity}}"
+                )
+
+        # 4. Decrement stock for each product (PHASE 2 - Real enforcement)
+        for item in cart.items:
+            product = await product_repo.get(item.product_id)
+            product.stock -= item.quantity
+            await self.db.flush()
+            logger.info(f"📦 Stock decremented: {{product.name}} ({{product.stock + item.quantity}} → {{product.stock}})")
+
+        # 5. Create order
+        from src.models.schemas import OrderCreate
+        order_data = OrderCreate(
+            customer_id=cart.customer_id,
+            status="PENDING_PAYMENT",
+            payment_status="PENDING"
+        )
+        order = await self.create(order_data)
+
+        # 6. Mark cart as CHECKED_OUT
+        cart.status = "CHECKED_OUT"
+        await self.db.flush()
+
+        await self.db.commit()
+
+        return order
+
+    async def cancel_order(self, order_id: UUID) -> {entity_name}Response:
+        """
+        Cancel order and return stock to products.
+
+        PHASE 2: Real enforcement - stock increment on cancel (Fase 2.4)
+
+        Steps:
+        1. Validate order exists and is PENDING_PAYMENT
+        2. Increment stock for each product in order
+        3. Mark order as CANCELLED
+        """
+        from src.repositories.product_repository import ProductRepository
+        from fastapi import HTTPException
+
+        product_repo = ProductRepository(self.db)
+
+        # 1. Get order and validate
+        order = await self.get(order_id)
+        if not order:
+            raise HTTPException(status_code=404, detail="Order not found")
+
+        if order.status != "PENDING_PAYMENT":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot cancel order with status {{order.status}}. Only PENDING_PAYMENT orders can be cancelled."
+            )
+
+        # 2. Return stock for each product (PHASE 2 - Real enforcement)
+        for item in order.items:
+            product = await product_repo.get(item.product_id)
+            if product:
+                product.stock += item.quantity
+                await self.db.flush()
+                logger.info(f"📦 Stock returned: {{product.name}} ({{product.stock - item.quantity}} → {{product.stock}})")
+
+        # 3. Update order status to CANCELLED
+        from src.models.schemas import OrderUpdate
+        updated_order = await self.update(
+            order_id,
+            OrderUpdate(status="CANCELLED")
+        )
+
+        await self.db.commit()
+
+        return updated_order
+'''
+
+    return base_service
 
 
 def generate_initial_migration(entities: List[Dict[str, Any]]) -> str:

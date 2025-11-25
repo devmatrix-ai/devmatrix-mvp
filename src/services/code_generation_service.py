@@ -2167,16 +2167,25 @@ Generate ONLY the README.md content, no additional explanations."""
 
         def get_validation_ground_truth():
             """Get validation ground truth from either ApplicationIR or SpecRequirements."""
-            if is_app_ir:
-                # For ApplicationIR, extract from validation model
-                if spec_or_ir.validation_model:
-                    return {
-                        "rules": [r.dict() for r in spec_or_ir.validation_model.rules],
-                        "test_cases": [tc.dict() for tc in spec_or_ir.validation_model.test_cases]
-                    }
-                return {}
-            else:
+            # 1. Try to use local spec_or_ir if it's ApplicationIR
+            if is_app_ir and spec_or_ir.validation_model:
+                return {
+                    "rules": [r.dict() for r in spec_or_ir.validation_model.rules],
+                    "test_cases": [tc.dict() for tc in spec_or_ir.validation_model.test_cases]
+                }
+            
+            # 2. Fallback to self.app_ir if available (even if spec_or_ir is SpecRequirements)
+            if hasattr(self, 'app_ir') and self.app_ir and hasattr(self.app_ir, 'validation_model') and self.app_ir.validation_model:
+                return {
+                    "rules": [r.dict() for r in self.app_ir.validation_model.rules],
+                    "test_cases": [tc.dict() for tc in self.app_ir.validation_model.test_cases]
+                }
+
+            # 3. Fallback to legacy validation_ground_truth on SpecRequirements
+            if not is_app_ir:
                 return getattr(spec_or_ir, 'validation_ground_truth', {})
+            
+            return {}
 
         # Helper to adapt pattern with correct parameters
         def adapt_pattern_helper(code, current_entity=None, skip_jinja=False):
@@ -2296,7 +2305,8 @@ Generate ONLY the README.md content, no additional explanations."""
             entities = get_entities()
             if entities:
                 entities_code = generate_entities(
-                    [{"name": e.name, "plural": e.name.lower() + "s", "fields": get_entity_fields(e)} for e in entities]
+                    [{"name": e.name, "plural": e.name.lower() + "s", "fields": get_entity_fields(e)} for e in entities],
+                    validation_ground_truth=get_validation_ground_truth()  # NEW: Pass validation ground truth
                 )
                 if entities_code:
                     files["src/models/entities.py"] = entities_code
