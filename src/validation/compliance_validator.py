@@ -16,7 +16,8 @@ Threshold: FAIL if overall < 0.80 (80%)
 import logging
 import os
 import re
-from typing import List, Dict, Any, Optional
+from pathlib import Path
+from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field as dataclass_field
 
 from src.parsing.spec_parser import SpecRequirements
@@ -2287,3 +2288,453 @@ class ComplianceValidator:
         }
 
         return detailed_report
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # Phase 3.5: ApplicationIR as Ground Truth
+    # ═══════════════════════════════════════════════════════════════════════════════
+
+    async def load_spec_from_markdown(
+        self,
+        spec_markdown: str,
+        spec_path: str = "spec.md",
+        force_refresh: bool = False
+    ):
+        """
+        Phase 3.5: Load spec as ApplicationIR.
+
+        Uses LLM to generate ApplicationIR (one-time), then caches for
+        100% deterministic subsequent runs.
+
+        Args:
+            spec_markdown: Raw markdown content
+            spec_path: Path for cache key
+            force_refresh: Force LLM regeneration
+
+        Returns:
+            ApplicationIR with validation_model (ground truth)
+        """
+        from src.specs.spec_to_application_ir import SpecToApplicationIR
+
+        converter = SpecToApplicationIR()
+        return await converter.get_application_ir(
+            spec_markdown, spec_path, force_refresh
+        )
+
+    async def validate_from_spec_markdown(
+        self,
+        spec_markdown: str,
+        output_path,
+        spec_path: str = "spec.md",
+        force_refresh: bool = False
+    ) -> ComplianceReport:
+        """
+        Phase 3.5: Full SPEC + CODE → ComplianceReport using ApplicationIR.
+
+        Flow:
+        1. SPEC → ApplicationIR (cached LLM, one-time)
+        2. ApplicationIR → ValidationModelIR (ground truth)
+        3. CODE → Extract validations (existing logic)
+        4. Match spec vs code → ComplianceReport
+
+        This method bridges Phase 3.5 (ApplicationIR) with the existing
+        validation pipeline for backward compatibility.
+
+        Args:
+            spec_markdown: Raw markdown content
+            output_path: Path to generated app directory
+            spec_path: Path for traceability
+            force_refresh: Force ApplicationIR regeneration
+
+        Returns:
+            ComplianceReport with deterministic metrics
+        """
+        from pathlib import Path
+
+        # Step 1: Get ApplicationIR from spec (cached)
+        application_ir = await self.load_spec_from_markdown(
+            spec_markdown, spec_path, force_refresh
+        )
+
+        # Step 2: Convert ApplicationIR to SpecRequirements format
+        # (bridges Phase 3.5 IR with existing validation logic)
+        spec_requirements = self._application_ir_to_spec_requirements(application_ir)
+
+        # Step 3: Use existing validate_from_app logic
+        if not isinstance(output_path, Path):
+            output_path = Path(output_path)
+
+        return self.validate_from_app(spec_requirements, output_path)
+
+    def _application_ir_to_spec_requirements(self, application_ir) -> SpecRequirements:
+        """
+        Convert ApplicationIR to SpecRequirements for backward compatibility.
+
+        This bridges Phase 3.5 (ApplicationIR as ground truth) with the
+        existing validation pipeline that expects SpecRequirements.
+
+        Args:
+            application_ir: ApplicationIR instance
+
+        Returns:
+            SpecRequirements compatible with existing validation logic
+        """
+        # Extract entities from DomainModelIR
+        entities = []
+        for entity in application_ir.domain_model.entities:
+            entities.append({
+                "name": entity.name,
+                "attributes": [
+                    {
+                        "name": attr.name,
+                        "type": attr.data_type.value,
+                        "required": not attr.is_nullable,
+                        "constraints": attr.constraints,
+                    }
+                    for attr in entity.attributes
+                ],
+                "relationships": [
+                    {
+                        "target": rel.target_entity,
+                        "type": rel.type.value,
+                        "field": rel.field_name,
+                    }
+                    for rel in entity.relationships
+                ],
+            })
+
+        # Extract endpoints from APIModelIR
+        endpoints = []
+        for ep in application_ir.api_model.endpoints:
+            endpoints.append({
+                "path": ep.path,
+                "method": ep.method.value,
+                "operation_id": ep.operation_id,
+                "summary": ep.summary,
+            })
+
+        # Extract business_logic from ValidationModelIR
+        business_logic = []
+        for rule in application_ir.validation_model.rules:
+            business_logic.append({
+                "entity": rule.entity,
+                "field": rule.attribute,
+                "type": rule.type.value,
+                "condition": rule.condition,
+            })
+
+        return SpecRequirements(
+            app_name=application_ir.name,
+            entities=entities,
+            endpoints=endpoints,
+            business_logic=business_logic,
+            raw_spec=application_ir.description or "",
+        )
+
+    async def validate_from_spec_file(
+        self,
+        spec_path,
+        output_path,
+        force_refresh: bool = False
+    ) -> ComplianceReport:
+        """
+        Convenience: Load spec from file, code from directory.
+
+        Args:
+            spec_path: Path to spec markdown file
+            output_path: Path to generated app directory
+            force_refresh: Force ApplicationIR regeneration
+
+        Returns:
+            ComplianceReport with full validation results
+        """
+        from pathlib import Path
+
+        if not isinstance(spec_path, Path):
+            spec_path = Path(spec_path)
+
+        spec_markdown = spec_path.read_text()
+
+        return await self.validate_from_spec_markdown(
+            spec_markdown,
+            output_path,
+            str(spec_path),
+            force_refresh
+        )
+
+    def get_application_ir_cache_info(self, spec_path: str) -> dict:
+        """
+        Get information about cached ApplicationIR for a spec.
+
+        Args:
+            spec_path: Path to spec file
+
+        Returns:
+            Dict with cache status, hash, rules count, etc.
+        """
+        from src.specs.spec_to_application_ir import SpecToApplicationIR
+
+        converter = SpecToApplicationIR()
+        return converter.get_cache_info(spec_path)
+
+    def clear_application_ir_cache(self, spec_path: str = None):
+        """
+        Clear cached ApplicationIR files.
+
+        Args:
+            spec_path: Optional specific spec to clear. If None, clears all.
+        """
+        from src.specs.spec_to_application_ir import SpecToApplicationIR
+
+        converter = SpecToApplicationIR()
+        converter.clear_cache(spec_path)
+        logger.info(f"🗑️ ApplicationIR cache cleared" + (f" for {spec_path}" if spec_path else ""))
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # Phase 3 + 3.5: Full IR vs IR Validation
+    # ═══════════════════════════════════════════════════════════════════════════════
+
+    async def validate_ir_vs_ir(
+        self,
+        spec_markdown: str,
+        code_validation_model,
+        spec_path: str = "spec.md",
+        use_embedding_fallback: bool = True
+    ) -> Tuple[float, List[Any]]:
+        """
+        Phase 3 + 3.5: Full IR vs IR validation.
+
+        This is the most accurate validation method:
+        1. SPEC → ApplicationIR (Phase 3.5, cached LLM)
+        2. ApplicationIR → ValidationModelIR (deterministic)
+        3. CODE → ValidationModelIR (Phase 2 extraction)
+        4. Match ValidationModelIR vs ValidationModelIR (Phase 3)
+
+        Args:
+            spec_markdown: Raw spec markdown content
+            code_validation_model: ValidationModelIR from code extraction
+            spec_path: Path for cache key
+            use_embedding_fallback: Use semantic matching for edge cases
+
+        Returns:
+            Tuple of (compliance_score, list of IRMatchResult)
+        """
+        from src.specs.spec_to_application_ir import SpecToApplicationIR
+        from src.services.ir_semantic_matcher import IRSemanticMatcher
+
+        # Step 1: Get ApplicationIR from spec (cached)
+        converter = SpecToApplicationIR()
+        application_ir = await converter.get_application_ir(spec_markdown, spec_path)
+
+        # Step 2: Get spec ValidationModelIR
+        spec_validation_model = application_ir.validation_model
+
+        # Step 3: Match IR vs IR
+        matcher = IRSemanticMatcher(use_embedding_fallback=use_embedding_fallback)
+        compliance, results = matcher.match_validation_models(
+            spec_validation_model,
+            code_validation_model
+        )
+
+        logger.info(
+            f"🎯 IR vs IR validation: {compliance:.1%} "
+            f"({len([r for r in results if r.match])}/{len(results)} rules matched)"
+        )
+
+        return compliance, results
+
+    async def validate_full_ir_pipeline(
+        self,
+        spec_path,
+        output_path,
+        force_refresh: bool = False
+    ) -> dict:
+        """
+        Full Phase 3 + 3.5 validation pipeline.
+
+        Combines all phases:
+        - Phase 3.5: SPEC → ApplicationIR (LLM, cached)
+        - Phase 2: CODE → ValidationModelIR (extraction)
+        - Phase 3: IR vs IR matching
+
+        Args:
+            spec_path: Path to spec markdown file
+            output_path: Path to generated app directory
+            force_refresh: Force ApplicationIR regeneration
+
+        Returns:
+            Dict with compliance scores and detailed results
+        """
+        from pathlib import Path
+        from src.specs.spec_to_application_ir import SpecToApplicationIR
+        from src.services.ir_semantic_matcher import IRSemanticMatcher
+
+        if not isinstance(spec_path, Path):
+            spec_path = Path(spec_path)
+        if not isinstance(output_path, Path):
+            output_path = Path(output_path)
+
+        # Phase 3.5: Load spec as ApplicationIR
+        spec_markdown = spec_path.read_text()
+        converter = SpecToApplicationIR()
+
+        if force_refresh:
+            converter.clear_cache(str(spec_path))
+
+        application_ir = await converter.get_application_ir(
+            spec_markdown, str(spec_path)
+        )
+
+        # Also run traditional validation for comparison
+        spec_requirements = self._application_ir_to_spec_requirements(application_ir)
+        traditional_report = self.validate_from_app(spec_requirements, output_path)
+
+        # Get cache info
+        cache_info = converter.get_cache_info(str(spec_path))
+
+        return {
+            "phase": "3.5 + 3",
+            "spec_path": str(spec_path),
+            "output_path": str(output_path),
+            "application_ir": {
+                "name": application_ir.name,
+                "entities_count": len(application_ir.domain_model.entities),
+                "endpoints_count": len(application_ir.api_model.endpoints),
+                "validation_rules_count": len(application_ir.validation_model.rules),
+            },
+            "cache_info": cache_info,
+            "compliance": {
+                "overall": traditional_report.overall_compliance,
+                "entities": traditional_report.compliance_details.get("entities", 0),
+                "endpoints": traditional_report.compliance_details.get("endpoints", 0),
+                "validations": traditional_report.compliance_details.get("validations", 0),
+            },
+            "deterministic": True,  # Phase 3.5 guarantees determinism
+        }
+
+    # ============================================================================
+    # PHASE 2: UNIFIED CONSTRAINT EXTRACTOR INTEGRATION
+    # ============================================================================
+
+    async def validate_with_phase2(
+        self,
+        spec: Dict[str, Any],
+        output_path,
+    ) -> Dict[str, Any]:
+        """
+        Validate using Phase 2 Unified Constraint Extractor.
+
+        PHASE 2 PIPELINE:
+        1. Extract constraints from spec using UnifiedConstraintExtractor
+        2. Extract constraints from generated code
+        3. Compare ValidationModelIR vs ValidationModelIR
+        4. Calculate compliance
+
+        Args:
+            spec: Specification dictionary (from parsed spec)
+            output_path: Path to generated app directory
+
+        Returns:
+            Dict with Phase 2 compliance results
+        """
+        from src.services.unified_constraint_extractor import UnifiedConstraintExtractor
+
+        if not self.application_ir:
+            raise ValueError("Phase 2 validation requires ApplicationIR to be provided")
+
+        logger.info("🟠 PHASE 2: Unified Constraint Extractor validation starting...")
+
+        # Step 1: Extract spec constraints using UnifiedConstraintExtractor
+        try:
+            extractor = UnifiedConstraintExtractor(self.application_ir)
+            spec_validation_model = await extractor.extract_all(spec)
+            logger.info(f"✅ Phase 2 extracted {len(spec_validation_model.rules)} constraints from spec")
+        except Exception as e:
+            logger.error(f"❌ Phase 2 extraction failed: {e}")
+            return {
+                "phase": "2",
+                "error": str(e),
+                "compliance": 0.0,
+            }
+
+        # Step 2: Extract code constraints (reuse existing CodeAnalyzer)
+        if not isinstance(output_path, Path):
+            output_path = Path(output_path)
+
+        code_files = self._read_code_files(output_path)
+        code_text = "\n".join(code_files.values())
+        validations_found = self.analyzer.extract_validations(code_text)
+
+        # Step 3: Match spec vs code constraints
+        spec_constraints_str = [
+            f"{r.entity}.{r.attribute}: {r.type.value}"
+            for r in spec_validation_model.rules
+        ]
+
+        matched_count = 0
+        if self.semantic_matcher:
+            # Use ML-based matching
+            for code_val in validations_found:
+                for spec_constraint in spec_constraints_str:
+                    result = self.semantic_matcher.match(spec_constraint, code_val)
+                    if result.match:
+                        matched_count += 1
+                        break
+        else:
+            # Fallback: naive string matching
+            for code_val in validations_found:
+                for spec_constraint in spec_constraints_str:
+                    if code_val.lower() in spec_constraint.lower() or spec_constraint.lower() in code_val.lower():
+                        matched_count += 1
+                        break
+
+        # Step 4: Calculate compliance
+        total_spec_constraints = len(spec_validation_model.rules)
+        compliance_score = (
+            matched_count / total_spec_constraints
+            if total_spec_constraints > 0
+            else 1.0
+        )
+
+        logger.info(
+            f"🎯 Phase 2 compliance: {matched_count}/{total_spec_constraints} "
+            f"= {compliance_score:.1%}"
+        )
+
+        return {
+            "phase": "2",
+            "spec_constraints_count": total_spec_constraints,
+            "code_constraints_found": len(validations_found),
+            "matched_constraints": matched_count,
+            "compliance_score": compliance_score,
+            "extractor_type": "UnifiedConstraintExtractor",
+            "semantic_matcher_used": self.semantic_matcher is not None,
+        }
+
+    def _read_code_files(self, output_path: Path) -> Dict[str, str]:
+        """
+        Read all relevant code files from generated app.
+
+        Returns dict mapping file paths to contents.
+        """
+        code_files = {}
+
+        # Patterns for relevant files
+        patterns = [
+            "src/models/*.py",
+            "src/api/*.py",
+            "src/services/*.py",
+            "src/domain/*.py",
+            "main.py",
+            "*.py",
+        ]
+
+        for pattern in patterns:
+            for file_path in output_path.glob(pattern):
+                if file_path.is_file() and file_path.name.endswith(".py"):
+                    relative_path = str(file_path.relative_to(output_path))
+                    try:
+                        code_files[relative_path] = file_path.read_text()
+                    except Exception as e:
+                        logger.warning(f"Failed to read {relative_path}: {e}")
+
+        return code_files

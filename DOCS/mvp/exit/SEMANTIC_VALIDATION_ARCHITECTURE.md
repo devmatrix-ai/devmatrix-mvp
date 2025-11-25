@@ -1,8 +1,8 @@
 # Semantic Validation Architecture: ApplicationIR as Single Source of Truth
 
-**Document Version**: 1.0
+**Document Version**: 2.0
 **Date**: November 25, 2025
-**Status**: 🟡 Phase 1 Complete, Phases 2-4 Pending
+**Status**: ✅ Phase 1 Complete | 🟡 Phase 2 Design Complete | 🟡 Phase 3 Design Complete | 🟢 Phase 4 Pending
 **Priority**: 🔴 CRITICAL - Determinism of DevMatrix Engine
 
 ---
@@ -86,9 +86,12 @@ But **never normalizes to a canonical semantic representation** (ApplicationIR).
 
 ---
 
-### Phase 2: Unified Constraint Extractor → IR Loader 🟡 PENDING
+### Phase 2: Unified Constraint Extractor → IR Loader 🟡 DESIGN COMPLETE
 
 **Impact**: +15-20% compliance recovery
+
+**Status**: Design phase complete, implementation ready
+**Documentation**: See [PHASE_2_UNIFIED_CONSTRAINT_EXTRACTOR.md](PHASE_2_UNIFIED_CONSTRAINT_EXTRACTOR.md)
 
 **Architecture**:
 ```python
@@ -272,18 +275,34 @@ tests/unit/
 
 ## 🎯 Next Steps
 
-**Phase 2** (High priority):
-1. Create SemanticNormalizer that canonicalizes all extracted rules
-2. Update extractors to output normalized constraints
-3. Build UnifiedConstraintExtractor that merges all sources
-4. Update ValidationModelIR builder
+**Phase 2** (High priority - DESIGN COMPLETE):
 
-**Phase 3** (Medium priority):
-1. Enhance SemanticMatcher to be fully IR-aware
-2. Remove string-based matching entirely
-3. Test with real ecommerce spec
+✅ Design complete, ready for implementation
+
+- [ ] Create SemanticNormalizer that canonicalizes all extracted rules
+- [ ] Build UnifiedConstraintExtractor that merges all sources
+- [ ] Update extractors to output normalized constraints
+- [ ] Update ValidationModelIR builder
+- [ ] Write unit tests (coverage required)
+- [ ] Integrate with Phase 1 ComplianceValidator
+
+📖 See: [PHASE_2_UNIFIED_CONSTRAINT_EXTRACTOR.md](PHASE_2_UNIFIED_CONSTRAINT_EXTRACTOR.md)
+📖 Reference: [CONSTRAINT_EQUIVALENCE_MAPPING_REFERENCE.md](CONSTRAINT_EQUIVALENCE_MAPPING_REFERENCE.md)
+
+**Phase 3** (Medium priority - DESIGN COMPLETE):
+
+✅ Design complete, ready for implementation after Phase 2
+
+- [ ] Create ConstraintIR typed data structure
+- [ ] Build IRSemanticMatcher with match hierarchy (exact → category → field → fallback)
+- [ ] Enhance ValidationModelIR with IR conversion methods
+- [ ] Update ComplianceValidator with IR-native priority
+- [ ] Write unit tests (coverage required)
+
+📖 See: [PHASE_3_IR_AWARE_SEMANTIC_MATCHING.md](PHASE_3_IR_AWARE_SEMANTIC_MATCHING.md)
 
 **Phase 4** (Low priority):
+
 1. Normalize ground truth specs to IR format
 2. Update evaluation to use IR comparison
 
