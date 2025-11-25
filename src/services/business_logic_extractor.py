@@ -403,6 +403,7 @@ class BusinessLogicExtractor:
         """
         Determine the enforcement strategy for a validation rule.
 
+        Phase 2: More comprehensive detection of enforcement patterns.
         Returns an EnforcementStrategy with type, implementation, and metadata.
         """
         from src.cognitive.ir.validation_model import EnforcementStrategy, EnforcementType
@@ -410,32 +411,78 @@ class BusinessLogicExtractor:
         field_desc = (field.get("description", "") if field else "").lower()
         field_name = rule.attribute.lower()
         rule_type = rule.type.value.lower()
+        rule_condition = (rule.condition or "").lower()
 
-        # 1. Immutable fields (read-only, created_at, updated_at if created only)
-        if ("read-only" in field_desc or "read only" in field_desc or "solo lectura" in field_desc or
-            field_name in ["created_at", "created", "id"] and "created" in field_name):
+        # PHASE 2: Detect specific field names that need enforcement
+        # ============================================================
+
+        # 1. IMMUTABLE: registration_date, creation_date, created_at, updated_at (read-only)
+        immutable_patterns = ["registration_date", "creation_date", "created_at", "created", "id"]
+        if any(pattern in field_name for pattern in immutable_patterns) or \
+           "read-only" in field_desc or "read only" in field_desc or "solo lectura" in field_desc:
             return EnforcementStrategy(
                 type=EnforcementType.IMMUTABLE,
                 implementation="Field(exclude=True)",
                 applied_at=["schema", "entity"],
                 template_name="immutable_field",
-                parameters={"field_name": rule.attribute},
+                parameters={"field_name": rule.attribute, "allow_mutation": False},
+                code_snippet=f"{rule.attribute}: datetime = Field(..., exclude=True, frozen=True)",
                 description="Field is immutable after creation"
             )
 
-        # 2. Computed fields (calculated, sum of, derived, aggregated, total)
-        computed_keywords = ["calculated", "computed", "sum of", "derived", "aggregated", "total", "subtotal"]
-        if any(kw in field_desc for kw in computed_keywords):
+        # 2. COMPUTED_FIELD: unit_price (snapshot), total_amount (calculated), totals, sums
+        computed_patterns = ["unit_price", "total_amount", "total", "subtotal", "sum", "calculated", "computed", "derived", "aggregated"]
+        if any(pattern in field_name for pattern in computed_patterns) or \
+           any(kw in field_desc for kw in computed_patterns):
+
+            # Determine calculation logic
+            calc_logic = self._extract_calculation_logic(field_desc, field_name)
+
             return EnforcementStrategy(
                 type=EnforcementType.COMPUTED_FIELD,
                 implementation="@computed_field",
                 applied_at=["entity"],
                 template_name="pydantic_computed_field",
-                parameters={"field_name": rule.attribute},
+                parameters={"field_name": rule.attribute, "calculation": calc_logic},
+                code_snippet=f"@computed_field\n@property\ndef {rule.attribute}(self) -> Decimal:\n    {calc_logic}",
                 description="Field is computed from other fields"
             )
 
-        # 3. Validator fields (unique, required format, pattern validation)
+        # 3. BUSINESS_LOGIC: stock (decrementar), inventory, checkout operations
+        business_logic_patterns = ["stock", "inventory", "quantity", "available", "checkout", "decrement"]
+        if any(pattern in field_name for pattern in business_logic_patterns) or \
+           "decrementar" in field_desc or "decrement" in field_desc or rule_type == "stock_constraint":
+            return EnforcementStrategy(
+                type=EnforcementType.BUSINESS_LOGIC,
+                implementation="ServiceLayerLogic",
+                applied_at=["service"],
+                template_name="stock_decrement_logic",
+                parameters={"field_name": rule.attribute, "operation": "decrement"},
+                code_snippet=f"await product_repo.decrement_stock({rule.attribute}, quantity)",
+                description="Stock/inventory decremented during checkout or item removal"
+            )
+
+        # 4. STATE_MACHINE: status, state (with transitions)
+        if "status" in field_name or "state" in field_name or rule_type == "status_transition":
+            return EnforcementStrategy(
+                type=EnforcementType.STATE_MACHINE,
+                implementation="StateTransitionValidator",
+                applied_at=["service", "endpoint"],
+                template_name="state_machine_fsm",
+                parameters={"field_name": rule.attribute, "states": rule.condition or ""},
+                code_snippet="""def validate_transition(current: str, next_status: str) -> bool:
+    valid_transitions = {
+        'pending': ['confirmed', 'cancelled'],
+        'confirmed': ['shipped', 'cancelled'],
+        'shipped': ['delivered'],
+        'delivered': [],
+        'cancelled': []
+    }
+    return next_status in valid_transitions.get(current, [])""",
+                description="Field follows state machine transitions"
+            )
+
+        # 5. VALIDATOR: uniqueness, format, range, presence
         if rule_type == "uniqueness":
             return EnforcementStrategy(
                 type=EnforcementType.VALIDATOR,
@@ -443,6 +490,7 @@ class BusinessLogicExtractor:
                 applied_at=["entity", "service"],
                 template_name="unique_validator",
                 parameters={"field_name": rule.attribute, "constraint": "unique"},
+                code_snippet=f"@field_validator('{rule.attribute}')\ndef validate_{rule.attribute}(cls, v):\n    # Check uniqueness\n    return v",
                 description="Field must be unique"
             )
 
@@ -453,6 +501,7 @@ class BusinessLogicExtractor:
                 applied_at=["entity"],
                 template_name="format_validator",
                 parameters={"field_name": rule.attribute, "pattern": "email" if "email" in field_desc else "custom"},
+                code_snippet=f"@field_validator('{rule.attribute}')\ndef validate_{rule.attribute}(cls, v):\n    # Validate format\n    return v",
                 description="Field must match required format"
             )
 
@@ -463,32 +512,11 @@ class BusinessLogicExtractor:
                 applied_at=["entity"],
                 template_name="range_validator",
                 parameters={"field_name": rule.attribute, "condition": rule.condition or ""},
+                code_snippet=f"@field_validator('{rule.attribute}')\ndef validate_{rule.attribute}(cls, v):\n    # Validate range\n    return v",
                 description="Field value must be within range"
             )
 
-        # 4. State machine / status transitions
-        if rule_type == "status_transition" or "status" in field_name:
-            return EnforcementStrategy(
-                type=EnforcementType.STATE_MACHINE,
-                implementation="StateTransitionValidator",
-                applied_at=["service", "endpoint"],
-                template_name="state_machine_validator",
-                parameters={"field_name": rule.attribute, "states": rule.condition or ""},
-                description="Field follows state machine transitions"
-            )
-
-        # 5. Business logic (workflow, stock, inventory)
-        if rule_type == "workflow_constraint" or rule_type == "stock_constraint":
-            return EnforcementStrategy(
-                type=EnforcementType.BUSINESS_LOGIC,
-                implementation="BusinessLogicValidator",
-                applied_at=["service"],
-                template_name="business_logic_validator",
-                parameters={"field_name": rule.attribute, "rule": rule.condition or ""},
-                description="Field enforced by business logic in service layer"
-            )
-
-        # 6. Required fields (presence validation)
+        # 6. PRESENCE: required fields
         if rule_type == "presence":
             return EnforcementStrategy(
                 type=EnforcementType.VALIDATOR,
@@ -496,7 +524,19 @@ class BusinessLogicExtractor:
                 applied_at=["entity"],
                 template_name="presence_validator",
                 parameters={"field_name": rule.attribute},
+                code_snippet=f"@field_validator('{rule.attribute}')\ndef validate_{rule.attribute}(cls, v):\n    assert v is not None\n    return v",
                 description="Field is required"
+            )
+
+        # 7. WORKFLOW_CONSTRAINT → BUSINESS_LOGIC
+        if rule_type == "workflow_constraint":
+            return EnforcementStrategy(
+                type=EnforcementType.BUSINESS_LOGIC,
+                implementation="WorkflowValidator",
+                applied_at=["service"],
+                template_name="workflow_validator",
+                parameters={"field_name": rule.attribute, "rule": rule.condition or ""},
+                description="Field enforced by workflow business logic"
             )
 
         # Default: no specific enforcement (description only)

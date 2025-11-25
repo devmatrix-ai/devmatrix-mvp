@@ -14,12 +14,20 @@ Threshold: FAIL if overall < 0.80 (80%)
 """
 
 import logging
+import os
 import re
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field as dataclass_field
 
 from src.parsing.spec_parser import SpecRequirements
 from src.analysis.code_analyzer import CodeAnalyzer
+
+# Optional: SemanticMatcher for ML-based matching (replaces manual equivalences)
+try:
+    from src.services.semantic_matcher import SemanticMatcher
+    SEMANTIC_MATCHER_AVAILABLE = True
+except ImportError:
+    SEMANTIC_MATCHER_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -106,9 +114,42 @@ class ComplianceValidator:
     Overall compliance = average of all category scores
     """
 
-    def __init__(self):
-        """Initialize compliance validator"""
+    def __init__(self, use_semantic_matching: bool = None, application_ir=None):
+        """
+        Initialize compliance validator.
+
+        Args:
+            use_semantic_matching: If True, use ML-based SemanticMatcher for validation matching.
+                                   If None (default), auto-detect from USE_SEMANTIC_MATCHING env var.
+                                   Falls back to manual equivalences if SemanticMatcher unavailable.
+            application_ir: Optional ApplicationIR instance for structured validation matching.
+                           When provided, uses ValidationModelIR for more precise constraint matching.
+        """
         self.analyzer = CodeAnalyzer()
+
+        # Store ApplicationIR for IR-based matching (optional)
+        self.application_ir = application_ir
+        self.validation_model = None
+        if application_ir and hasattr(application_ir, 'validation_model'):
+            self.validation_model = application_ir.validation_model
+            logger.info(f"ComplianceValidator: ApplicationIR provided with {len(self.validation_model.rules)} validation rules")
+
+        # Auto-detect semantic matching from environment
+        if use_semantic_matching is None:
+            use_semantic_matching = os.getenv("USE_SEMANTIC_MATCHING", "true").lower() == "true"
+
+        # Initialize SemanticMatcher if available and enabled
+        self.semantic_matcher: Optional[SemanticMatcher] = None
+        if use_semantic_matching and SEMANTIC_MATCHER_AVAILABLE:
+            try:
+                self.semantic_matcher = SemanticMatcher()
+                logger.info("ComplianceValidator initialized with SemanticMatcher (ML-based matching)")
+            except Exception as e:
+                logger.warning(f"Failed to initialize SemanticMatcher: {e}, using manual equivalences")
+                self.semantic_matcher = None
+        else:
+            logger.info("ComplianceValidator initialized with manual equivalences")
+
         logger.info("ComplianceValidator initialized")
 
     def validate(
@@ -972,6 +1013,94 @@ class ComplianceValidator:
 
         return c
 
+    def _semantic_match_validations(
+        self,
+        found: List[str],
+        expected: List[str]
+    ) -> tuple[float, List[str]]:
+        """
+        Use SemanticMatcher for ML-based validation matching.
+
+        This replaces the manual `semantic_equivalences` dictionary with embeddings + LLM.
+
+        Priority order:
+        1. ValidationModelIR (if available from ApplicationIR) - most precise
+        2. Standard SemanticMatcher batch matching - general purpose
+
+        Args:
+            found: Validation signatures found in code
+            expected: Validation requirements from spec
+
+        Returns:
+            Tuple of (compliance_score 0.0-1.0, list of matched validation strings)
+        """
+        if not self.semantic_matcher:
+            raise RuntimeError("SemanticMatcher not initialized")
+
+        if not expected:
+            return 1.0, found
+
+        if not found:
+            return 0.0, []
+
+        # ═══════════════════════════════════════════════════════════════════════════════
+        # IR-BASED MATCHING: Use ValidationModelIR if available (more precise)
+        # ═══════════════════════════════════════════════════════════════════════════════
+        if self.validation_model and hasattr(self.validation_model, 'rules') and len(self.validation_model.rules) > 0:
+            logger.info(f"🧠 Using IR-based matching with {len(self.validation_model.rules)} rules from ValidationModelIR")
+            compliance, results = self.semantic_matcher.match_from_validation_model(
+                self.validation_model, found
+            )
+
+            # Convert MatchResult list to matched validation strings
+            matched_validations = [r.code_constraint for r in results if r.match]
+
+            if compliance >= 1.0:
+                return 1.0, found  # All matched, return all found
+            return compliance, matched_validations
+
+        # ═══════════════════════════════════════════════════════════════════════════════
+        # STANDARD MATCHING: Use SemanticMatcher batch matching
+        # ═══════════════════════════════════════════════════════════════════════════════
+        logger.info("📋 Using standard SemanticMatcher batch matching")
+
+        matches = 0
+        matched_validations = []
+        unmatched = []
+
+        # For each expected validation, find best match in found
+        for exp_val in expected:
+            best_match = None
+            best_score = 0.0
+
+            for found_val in found:
+                # Use SemanticMatcher to compare
+                result = self.semantic_matcher.match(exp_val, found_val)
+
+                if result.match and result.confidence > best_score:
+                    best_match = found_val
+                    best_score = result.confidence
+
+            if best_match:
+                matches += 1
+                matched_validations.append(best_match)
+                logger.debug(f"✅ Semantic match: '{exp_val}' → '{best_match}' ({best_score:.2f})")
+            else:
+                unmatched.append(exp_val)
+                logger.debug(f"❌ No semantic match for: '{exp_val}'")
+
+        # Calculate compliance
+        compliance = matches / len(expected) if expected else 1.0
+
+        if compliance >= 1.0:
+            logger.info(f"✅ Semantic matching: {matches}/{len(expected)} = 100% (+ {len(found) - matches} extras)")
+            return 1.0, found  # Return all found (includes extras)
+        else:
+            logger.warning(f"⚠️ Semantic matching: {matches}/{len(expected)} = {compliance:.1%}")
+            if unmatched:
+                logger.warning(f"   Unmatched: {unmatched[:5]}{'...' if len(unmatched) > 5 else ''}")
+            return compliance, matched_validations
+
     def _extract_sqlalchemy_constraints_ast(self, entities_content: str) -> Dict[str, List[Dict]]:
         """
         PASO 1B: Extract SQLAlchemy constraints using AST parser (robust).
@@ -1631,6 +1760,28 @@ class ComplianceValidator:
 
         if not found:
             return 0.0, []  # Nothing found, no matches
+
+        # ═══════════════════════════════════════════════════════════════════════════════
+        # SEMANTIC MATCHER: ML-based matching (if available)
+        # Replaces ~300 lines of manual semantic_equivalences with embeddings + LLM
+        # ═══════════════════════════════════════════════════════════════════════════════
+        if self.semantic_matcher is not None:
+            logger.info("🧠 Using SemanticMatcher for ML-based constraint matching")
+            compliance, matched = self._semantic_match_validations(found, expected)
+
+            # If perfect compliance, return all found validations (includes extras)
+            if compliance >= 1.0:
+                logger.info(f"✅ SemanticMatcher: All {len(expected)} expected validations matched")
+                return 1.0, found
+            else:
+                logger.info(f"📊 SemanticMatcher: {len(matched)}/{len(expected)} validations matched = {compliance:.1%}")
+                return compliance, matched
+
+        # ═══════════════════════════════════════════════════════════════════════════════
+        # FALLBACK: Manual semantic equivalences (legacy, ~300 lines)
+        # Used when SemanticMatcher is not available
+        # ═══════════════════════════════════════════════════════════════════════════════
+        logger.info("📋 Using manual semantic_equivalences (fallback mode)")
 
         # FLEXIBLE MATCHING MODE (default - per Architecture Rule #1)
         # Use semantic equivalence mapping for common validation patterns

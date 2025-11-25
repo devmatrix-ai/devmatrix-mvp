@@ -38,6 +38,7 @@ from tests.e2e.precision_metrics import (
     PrecisionMetrics,
     ContractValidator
 )
+from tests.e2e.llm_usage_tracker import LLMUsageTracker
 
 # Progress tracking for live pipeline visualization
 try:
@@ -343,6 +344,9 @@ class RealE2ETest:
         self.precision = PrecisionMetrics()
         self.contract_validator = ContractValidator()
 
+        # LLM Usage Tracking (Fase 2)
+        self.llm_tracker = LLMUsageTracker(model="claude-3-5-sonnet")
+
         # Real services
         self.pattern_bank = None
         self.pattern_classifier = None
@@ -534,32 +538,32 @@ class RealE2ETest:
             # Phase 7: Deployment (Save Generated Files)
             # CRITICAL: Must write files to disk BEFORE Code Repair tries to read them
             start_phase("Deployment", substeps=2) if PROGRESS_TRACKING_AVAILABLE else None
-            await self._phase_8_deployment()
+            await self._phase_7_deployment()
             complete_phase("Deployment", success=True) if PROGRESS_TRACKING_AVAILABLE else None
             display_progress() if PROGRESS_TRACKING_AVAILABLE else None
 
             # Phase 8: Code Repair
             # Runs AFTER deployment, so it can read/modify files on disk
             start_phase("Code Repair", substeps=2) if PROGRESS_TRACKING_AVAILABLE else None
-            await self._phase_6_5_code_repair()
+            await self._phase_8_code_repair()
             complete_phase("Code Repair", success=True) if PROGRESS_TRACKING_AVAILABLE else None
             display_progress() if PROGRESS_TRACKING_AVAILABLE else None
 
             # Phase 9: Validation (ENHANCED with semantic validation)
             start_phase("Validation", substeps=3) if PROGRESS_TRACKING_AVAILABLE else None
-            await self._phase_7_validation()
+            await self._phase_9_validation()
             complete_phase("Validation", success=True) if PROGRESS_TRACKING_AVAILABLE else None
             display_progress() if PROGRESS_TRACKING_AVAILABLE else None
 
             # Phase 10: Health Verification
             start_phase("Health Verification", substeps=2) if PROGRESS_TRACKING_AVAILABLE else None
-            await self._phase_9_health_verification()
+            await self._phase_10_health_verification()
             complete_phase("Health Verification", success=True) if PROGRESS_TRACKING_AVAILABLE else None
             display_progress() if PROGRESS_TRACKING_AVAILABLE else None
 
             # Phase 11: Learning
             start_phase("Learning", substeps=2) if PROGRESS_TRACKING_AVAILABLE else None
-            await self._phase_10_learning()
+            await self._phase_11_learning()
             complete_phase("Learning", success=True) if PROGRESS_TRACKING_AVAILABLE else None
             display_progress() if PROGRESS_TRACKING_AVAILABLE else None
 
@@ -932,12 +936,19 @@ class RealE2ETest:
                 # Extract with timeout protection
                 import signal
 
-                def timeout_handler(signum, frame):
-                    raise TimeoutError("Validation extraction timed out after 30 seconds")
+                # FASE 5: Timeout configurable via env var
+                VALIDATION_EXTRACTION_TIMEOUT = int(
+                    os.getenv("VALIDATION_EXTRACTION_TIMEOUT", "60")
+                )
 
-                # Set timeout of 30 seconds
+                def timeout_handler(signum, frame):
+                    raise TimeoutError(
+                        f"Validation extraction timed out after {VALIDATION_EXTRACTION_TIMEOUT} seconds"
+                    )
+
+                # Set configurable timeout
                 signal.signal(signal.SIGALRM, timeout_handler)
-                signal.alarm(30)
+                signal.alarm(VALIDATION_EXTRACTION_TIMEOUT)
 
                 with silent_logs():
                     validations = extractor.extract_validations(spec_dict)
@@ -1591,10 +1602,11 @@ class RealE2ETest:
             self.metrics_collector.add_checkpoint("atomization", f"CP-4.{i+1}: Step {i+1}", {})
             await asyncio.sleep(0.3)
 
-        # Calculate precision metrics BEFORE final checkpoint
+        # VALIDATE ATOMIC UNITS REAL (Fase 3: Validación real de atomization)
         self.precision.atoms_generated = len(self.atomic_units)
-        self.precision.atoms_valid = int(len(self.atomic_units) * 0.9)
-        self.precision.atoms_invalid = self.precision.atoms_generated - self.precision.atoms_valid
+        valid_count, invalid_count = await self._validate_atomic_units()
+        self.precision.atoms_valid = valid_count
+        self.precision.atoms_invalid = invalid_count
 
         # Final checkpoint WITH atomization metrics
         self.metrics_collector.add_checkpoint("atomization", "CP-4.5: Atomization complete", {
@@ -2162,7 +2174,7 @@ Once running, visit:
         print(f"    ✅ All {files_saved} files successfully deployed to disk" + " " * (50 - len(str(files_saved))))
         print("  " + "─" * 110 + "\n")
 
-    async def _phase_6_5_code_repair(self):
+    async def _phase_8_code_repair(self):
         """
         Phase 6.5: Code Repair (Task Group 3 & 4)
 
@@ -2849,7 +2861,7 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         # Just return it as-is
         return repair_proposal
 
-    async def _phase_7_validation(self):
+    async def _phase_9_validation(self):
         """
         Phase 7: Validation (ENHANCED with semantic validation)
 
@@ -3016,19 +3028,33 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
 
         self.metrics_collector.add_checkpoint("validation", "CP-7.5: Test generation check", {})
 
-        self.metrics_collector.add_checkpoint("validation", "CP-7.6: Quality metrics", {})
+        # RUN REAL TESTS (Fase 1: Eliminar hardcoding)
+        tests_executed, tests_passed, tests_failed = await self._run_generated_tests()
+        self.precision.tests_executed = tests_executed
+        self.precision.tests_passed = tests_passed
+        self.precision.tests_failed = tests_failed
 
-        # Precision metrics (updated with semantic validation)
-        self.precision.tests_executed = 50
-        self.precision.tests_passed = 47
-        self.precision.tests_failed = 3
+        # CALCULATE REAL COVERAGE (Fase 1)
+        coverage_result = await self._calculate_test_coverage()
+        coverage = coverage_result.get("coverage", 0.0)
+
+        # CALCULATE REAL QUALITY SCORE (Fase 1)
+        quality_score = self._calculate_quality_score()
+
+        self.metrics_collector.add_checkpoint("validation", "CP-7.6: Quality metrics", {
+            "tests_executed": tests_executed,
+            "tests_passed": tests_passed,
+            "tests_failed": tests_failed,
+            "coverage": coverage,
+            "quality_score": quality_score
+        })
 
         # Contract validation (Task Group 4.2.4: Add compliance to phase output)
         phase_output = {
             "tests_run": self.precision.tests_executed,
             "tests_passed": self.precision.tests_passed,
-            "coverage": 0.85,
-            "quality_score": 0.92,
+            "coverage": coverage,
+            "quality_score": quality_score,
             # NEW: Semantic validation metadata
             "compliance_score": compliance_score,
             "entities_implemented": len(entities_implemented),
@@ -3060,7 +3086,7 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         self.precision.total_operations += 1
         self.precision.successful_operations += 1
 
-    async def _phase_8_deployment(self) -> None:
+    async def _phase_7_deployment(self) -> None:
         """Phase 8: Deployment - Save generated files"""
         self.metrics_collector.start_phase("deployment")
         self._sample_performance()  # Sample memory/CPU at phase start
@@ -3108,7 +3134,7 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         self.precision.total_operations += 1
         self.precision.successful_operations += 1
 
-    async def _phase_9_health_verification(self):
+    async def _phase_10_health_verification(self):
         """Phase 9: Health Verification"""
         self.metrics_collector.start_phase("health_verification")
         self._sample_performance()  # Sample memory/CPU at phase start
@@ -3138,7 +3164,7 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         self.precision.total_operations += 1
         self.precision.successful_operations += 1
 
-    async def _phase_10_learning(self):
+    async def _phase_11_learning(self):
         """Phase 10: Learning - Store successful patterns for future reuse"""
         self.metrics_collector.start_phase("learning")
         self._sample_performance()  # Sample memory/CPU at phase start
@@ -3245,8 +3271,186 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
             print(f"  ⚠️ Could not create ExecutionResult: {e}")
             return None
 
+    async def _run_generated_tests(self) -> tuple[int, int, int]:
+        """
+        Ejecutar tests generados y retornar resultados REALES.
+
+        Returns:
+            Tuple[tests_executed, tests_passed, tests_failed]
+        """
+        import subprocess
+        import json
+
+        test_dir = self.output_path / "tests"
+        if not test_dir.exists():
+            print("  ⚠️  No tests directory found in generated app")
+            return 0, 0, 0
+
+        try:
+            # Run pytest with JSON report
+            result = subprocess.run(
+                [
+                    "python", "-m", "pytest",
+                    str(test_dir),
+                    "-v",
+                    "--tb=short",
+                    "--json-report",
+                    "--json-report-file=/tmp/pytest_report.json",
+                    "-q"
+                ],
+                capture_output=True,
+                text=True,
+                cwd=str(self.output_path),
+                timeout=120
+            )
+
+            # Parse pytest JSON report if available
+            try:
+                with open("/tmp/pytest_report.json", "r") as f:
+                    report = json.load(f)
+                    tests_executed = report.get("summary", {}).get("total", 0)
+                    tests_passed = report.get("summary", {}).get("passed", 0)
+                    tests_failed = report.get("summary", {}).get("failed", 0)
+
+                    if tests_executed > 0:
+                        print(f"  ✅ Tests executed: {tests_executed} total")
+                        print(f"     - Passed: {tests_passed}")
+                        print(f"     - Failed: {tests_failed}")
+                        return tests_executed, tests_passed, tests_failed
+            except (FileNotFoundError, json.JSONDecodeError):
+                pass
+
+            # Fallback: parse from stdout if JSON not available
+            if "passed" in result.stdout or "failed" in result.stdout:
+                # Try to extract from pytest output
+                import re
+                match = re.search(r"(\d+) passed", result.stdout)
+                passed = int(match.group(1)) if match else 0
+                match = re.search(r"(\d+) failed", result.stdout)
+                failed = int(match.group(1)) if match else 0
+                total = passed + failed
+
+                if total > 0:
+                    print(f"  ✅ Tests executed: {total} total")
+                    print(f"     - Passed: {passed}")
+                    print(f"     - Failed: {failed}")
+                    return total, passed, failed
+
+            # No tests found
+            print("  ⚠️  No tests found in generated app")
+            return 0, 0, 0
+
+        except subprocess.TimeoutExpired:
+            print("  ⚠️  Test execution timeout (120s)")
+            return 0, 0, 0
+        except Exception as e:
+            print(f"  ⚠️  Error running tests: {e}")
+            return 0, 0, 0
+
+    async def _calculate_test_coverage(self) -> dict:
+        """
+        Calcular coverage real usando pytest-cov.
+
+        Returns:
+            Dict con coverage metrics
+        """
+        import subprocess
+        import re
+
+        try:
+            result = subprocess.run(
+                [
+                    "python", "-m", "pytest",
+                    str(self.output_path / "tests"),
+                    "--cov=" + str(self.output_path / "src"),
+                    "--cov-report=term-missing",
+                    "-q"
+                ],
+                capture_output=True,
+                text=True,
+                cwd=str(self.output_path),
+                timeout=120
+            )
+
+            # Parse coverage from output (e.g., "TOTAL ... 85%")
+            match = re.search(r"TOTAL\s+.*\s+(\d+)%", result.stdout)
+            if match:
+                coverage = float(match.group(1)) / 100.0
+                print(f"  📊 Test Coverage: {coverage:.1%}")
+                return {"coverage": coverage}
+
+            # Default if parsing fails
+            return {"coverage": 0.0}
+
+        except subprocess.TimeoutExpired:
+            print("  ⚠️  Coverage calculation timeout")
+            return {"coverage": 0.0}
+        except Exception as e:
+            print(f"  ⚠️  Error calculating coverage: {e}")
+            return {"coverage": 0.0}
+
+    def _calculate_quality_score(self) -> float:
+        """
+        Calcular quality score basado en compliance metrics.
+
+        Returns:
+            Float between 0.0 and 1.0
+        """
+        if not hasattr(self, 'compliance_report') or not self.compliance_report:
+            return 0.5
+
+        # Quality = weighted average of compliance components
+        entities_compliance = self.compliance_report.compliance_details.get('entities', 0)
+        endpoints_compliance = self.compliance_report.compliance_details.get('endpoints', 0)
+        validations_compliance = self.compliance_report.compliance_details.get('validations', 0)
+
+        quality = (
+            entities_compliance * 0.35 +
+            endpoints_compliance * 0.35 +
+            validations_compliance * 0.30
+        )
+
+        return quality
+
+    async def _validate_atomic_units(self) -> tuple[int, int]:
+        """
+        Validar quality de atomic units generados.
+
+        Returns:
+            Tuple[valid_count, invalid_count]
+        """
+        valid = 0
+        invalid = 0
+
+        for atom in self.atomic_units:
+            # Criterios de validez:
+            # 1. LOC entre 5-50
+            # 2. Complejidad < 0.8
+            loc = atom.get("loc_estimate", 30)
+            complexity = atom.get("complexity", 0.5)
+
+            if 5 <= loc <= 50 and complexity < 0.8:
+                valid += 1
+            else:
+                invalid += 1
+
+        return valid, invalid
+
     async def _finalize_and_report(self):
         """Finalize metrics and generate report"""
+
+        # INTEGRATE LLM USAGE METRICS (Fase 2)
+        llm_summary = self.llm_tracker.get_summary()
+        self.metrics_collector.metrics.llm_total_tokens = llm_summary["total_tokens"]
+        self.metrics_collector.metrics.llm_prompt_tokens = llm_summary["prompt_tokens"]
+        self.metrics_collector.metrics.llm_completion_tokens = llm_summary[
+            "completion_tokens"
+        ]
+        self.metrics_collector.metrics.llm_cost_usd = llm_summary["total_cost_usd"]
+        self.metrics_collector.metrics.llm_calls_count = llm_summary["total_calls"]
+        self.metrics_collector.metrics.llm_avg_latency_ms = llm_summary[
+            "avg_latency_ms"
+        ]
 
         # Calculate precision
         overall_precision = self.precision.calculate_overall_precision()
@@ -3404,6 +3608,16 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         print(f"  Avg Memory:          {metrics.avg_memory_mb:.1f} MB")
         print(f"  Peak CPU:            {metrics.peak_cpu_percent:.1f}%")
         print(f"  Avg CPU:             {metrics.avg_cpu_percent:.1f}%")
+
+        # 🤖 LLM USAGE & COST (Fase 2 - NUEVO)
+        print(f"\n🤖 LLM USAGE & COST")
+        print("-" * 90)
+        print(f"  Total API Calls:     {metrics.llm_calls_count}")
+        print(f"  Total Tokens:        {metrics.llm_total_tokens:,}")
+        print(f"    ├─ Prompt Tokens:  {metrics.llm_prompt_tokens:,}")
+        print(f"    └─ Completion:     {metrics.llm_completion_tokens:,}")
+        print(f"  Avg Latency:         {metrics.llm_avg_latency_ms:.1f}ms")
+        print(f"  Estimated Cost:      ${metrics.llm_cost_usd:.2f} USD")
 
         # 🗄️  DATABASE PERFORMANCE
         print(f"\n🗄️  DATABASE PERFORMANCE")

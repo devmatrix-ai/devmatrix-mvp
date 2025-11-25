@@ -153,6 +153,14 @@ class PipelineMetrics:
     repair_skipped: bool = False
     repair_skip_reason: str = ""
 
+    # Fase 2: LLM Usage Metrics (NEW)
+    llm_total_tokens: int = 0
+    llm_prompt_tokens: int = 0
+    llm_completion_tokens: int = 0
+    llm_cost_usd: float = 0.0
+    llm_calls_count: int = 0
+    llm_avg_latency_ms: float = 0.0
+
     def initialize_phases(self):
         """Initialize all pipeline phases with checkpoints"""
         phase_configs = {
