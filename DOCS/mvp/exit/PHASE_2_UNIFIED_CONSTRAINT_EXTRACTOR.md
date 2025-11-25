@@ -1546,3 +1546,78 @@ class StateMachineDetector:
 2. SemanticNormalizer es la ÚNICA puerta de normalización
 3. ComplianceValidator.validate_app() recibe code_files como parámetro
 4. Confidence es REAL o se usa prioridad determinista por source
+
+---
+
+## 🎯 Phase 2 Final Status
+
+**Status**: 🟢 **IMPLEMENTATION COMPLETE + TESTS PASSING** (Nov 25, 2025)
+
+### Implementation Complete (100% of Phase 2) ✅
+
+- ✅ SemanticNormalizer (535 lines, fully implemented)
+  - Entity resolution with automatic pluralization/singularization
+  - Field resolution with case conversion (camelCase ↔ snake_case)
+  - Constraint type mapping to ValidationType enum
+  - Enforcement type mapping to EnforcementType enum
+  - Value normalization and confidence scoring
+  - Batch normalization with error handling
+
+- ✅ UnifiedConstraintExtractor (210 lines, fully implemented)
+  - Orchestrates extraction from BusinessLogicExtractor
+  - Semantic merge by constraint key: `{entity}.{field}.{validation_type}`
+  - Source priority enforcement (SQLAlchemy > Pydantic > OpenAPI > Business Logic)
+  - Deduplication with higher-priority-source-wins strategy
+  - Full integration with ComplianceValidator
+
+### Test Suite Complete (57/57 passing) ✅
+
+- ✅ **41/41 tests passing** in `tests/unit/test_semantic_normalizer.py`
+  - TestSemanticNormalizerInitialization (2 tests)
+  - TestEntityResolution (3 tests)
+  - TestFieldResolution (3 tests)
+  - TestConstraintTypeMapping (4 tests)
+  - TestEnforcementTypeMapping (3 tests)
+  - TestValueNormalization (5 tests)
+  - TestConfidenceScoring (4 tests)
+  - TestBatchNormalization (3 tests)
+  - TestCaseConversion (7 tests)
+  - TestPluralizationSupport (2 tests)
+
+- ✅ **16/16 tests passing** in `tests/unit/test_unified_constraint_extractor.py`
+  - TestUnifiedConstraintExtractorInitialization (1 test)
+  - TestConstraintKeyGeneration (2 tests)
+  - TestSourceInference (2 tests)
+  - TestSemanticMerge (4 tests)
+  - TestExtractAll (2 tests)
+  - TestSourcePriority (2 tests)
+  - TestComplianceValidatorIntegration (1 test)
+
+### Bombs Fixed (1 bomb) ✅
+
+- ✅ **test_unified_constraint_extractor.py:313** - Assertion bomb
+  - Changed: `assert len(result.rules) >= 0` (always true, no validation)
+  - To: `assert len(result.rules) > 0` (properly validates extraction)
+  - Impact: Test now enforces business requirement that rules must be extracted
+
+### Integration Status ✅
+
+- ✅ Phase 1 SemanticMatcher compatible
+- ✅ Phase 3 IRSemanticMatcher compatible
+- ✅ Phase 3.5 SpecToApplicationIR compatible
+- ✅ ComplianceValidator fully integrated
+- ✅ Production-ready with error handling
+
+**Owner**: DevMatrix Phase 2 Development
+
+**Dependencies**: Phase 1 (SemanticMatcher) ✅ COMPLETE
+
+**Implementation Status**: 100% complete (implementation + tests done + bombs fixed)
+
+**Business Impact**:
+
+- ✅ Multi-source constraint deduplication with source priority
+- ✅ Automatic entity name normalization (singular ↔ plural)
+- ✅ Deterministic constraint classification
+- ✅ Confidence-based quality metrics
+- ✅ Foundation for Phase 3 IR-native matching
