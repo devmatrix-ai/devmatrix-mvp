@@ -20,7 +20,7 @@ from datetime import datetime
 import uuid
 
 try:
-    from anthropic import Anthropic
+    from anthropic import AsyncAnthropic
     ANTHROPIC_AVAILABLE = True
 except ImportError:
     ANTHROPIC_AVAILABLE = False
@@ -49,7 +49,7 @@ from src.cognitive.ir.infrastructure_model import (
     DatabaseType,
     ObservabilityConfig,
 )
-from src.cognitive.ir.behavior_model import BehaviorModelIR
+from src.cognitive.ir.behavior_model import BehaviorModelIR, Flow, FlowType, Step, Invariant
 from src.cognitive.ir.validation_model import (
     ValidationType,
     EnforcementType,
@@ -80,12 +80,12 @@ class SpecToApplicationIR:
     """
 
     CACHE_DIR = Path(".devmatrix/ir_cache")
-    LLM_MODEL = "claude-3-5-sonnet-20241022"  # Best for structured extraction
+    LLM_MODEL = "claude-sonnet-4-5-20250929"  # Sonnet 4.5 - balanced speed/quality for spec extraction
 
     def __init__(self, cache_dir: Optional[Path] = None):
         """Initialize the converter."""
         if ANTHROPIC_AVAILABLE:
-            self.client = Anthropic()
+            self.client = AsyncAnthropic()
         else:
             self.client = None
             logger.warning("Anthropic not available - LLM extraction disabled")
@@ -140,20 +140,14 @@ class SpecToApplicationIR:
         prompt = self._build_extraction_prompt(spec_markdown)
 
         try:
-            response = await self.client.messages.create(
-                model=self.LLM_MODEL,
-                max_tokens=16000,
-                messages=[{
-                    "role": "user",
-                    "content": prompt
-                }]
-            )
+            # Always use streaming (SDK enforces it for potentially long operations)
+            logger.info(f"📡 Streaming IR extraction from {spec_path}")
+            response_text = await self._generate_with_streaming(prompt)
         except Exception as e:
             logger.error(f"❌ LLM extraction failed: {e}")
             raise RuntimeError(f"Failed to generate ApplicationIR from spec: {e}")
 
         try:
-            response_text = response.content[0].text
             json_str = self._extract_json(response_text)
             ir_data = json.loads(json_str)
         except json.JSONDecodeError as e:
@@ -206,8 +200,8 @@ Output ONLY valid JSON in this EXACT format:
         {{
           "target_entity": "OtherEntity",
           "type": "one_to_many|many_to_one|one_to_one|many_to_many",
-          "field_name": "items",
-          "back_populates": "order"
+          "field_name": "related_field_name",
+          "back_populates": "parent_field_name"
         }}
       ]
     }}
@@ -256,6 +250,35 @@ Output ONLY valid JSON in this EXACT format:
     }}
   ],
 
+  "flows": [
+    {{
+      "name": "Flow Name from spec",
+      "type": "workflow|state_transition|policy|event_handler",
+      "trigger": "What triggers this flow",
+      "description": "Description of the flow from spec",
+      "target_entities": ["Entity1", "Entity2"],
+      "steps": [
+        {{
+          "order": 1,
+          "description": "Step description",
+          "action": "validate|create|update|delete|calculate",
+          "target_entity": "EntityName",
+          "condition": "Optional condition for this step"
+        }}
+      ],
+      "preconditions": ["Flow that must happen before this one"],
+      "postconditions": ["State after flow completes"]
+    }}
+  ],
+
+  "entity_dependencies": [
+    {{
+      "from_entity": "SourceEntity",
+      "to_entity": "TargetEntity",
+      "dependency_type": "requires|uses|creates"
+    }}
+  ],
+
   "database": {{
     "type": "postgresql",
     "name": "app_db"
@@ -270,32 +293,96 @@ VALIDATION TYPE MAPPING:
 - Unique → UNIQUENESS
 - Foreign key → RELATIONSHIP
 - Status/state enums → STATUS_TRANSITION
-- Stock/inventory → STOCK_CONSTRAINT
+- Resource availability constraints → STOCK_CONSTRAINT
 - Workflow sequences → WORKFLOW_CONSTRAINT
 - Other business rules → CUSTOM
 
+FLOW TYPE MAPPING:
+- Multi-step processes (any sequential operations) → workflow
+- State changes (status field transitions) → state_transition
+- Business rules that must always hold → policy
+- Triggered by external events → event_handler
+
+FLOW EXTRACTION INSTRUCTIONS:
+- Look for "Flujos Principales", "Use Cases", "Flows", "Casos de Uso", "Workflows" sections
+- Each numbered flow (F1, F2, etc.) or use case should become a flow entry
+- target_entities: ALL entities this flow reads or modifies
+- steps: Break down the flow into atomic actions
+- preconditions: Flows that must happen before this one (based on spec dependencies)
+
+ENTITY DEPENDENCY EXTRACTION:
+- "EntityA requires EntityB" → from_entity: EntityA, to_entity: EntityB, dependency_type: requires
+- "FlowX uses EntityC" → from_entity: FlowX, to_entity: EntityC, dependency_type: uses
+- "FlowY creates EntityD" → from_entity: FlowY, to_entity: EntityD, dependency_type: creates
+
 IMPORTANT:
-1. Extract ALL constraints, even implicit ones (e.g., "price" implies ≥ 0)
+1. Extract ALL constraints, even implicit ones (e.g., numeric fields often imply ≥ 0)
 2. Include CRUD endpoints for each entity
-3. Include relationship endpoints (e.g., /orders/{{id}}/items)
+3. Include relationship endpoints (e.g., /parent/{{id}}/children)
 4. Be thorough with validation rules
+5. Extract ALL flows from the spec, including CRUD operations as simple flows
+6. Extract entity dependencies from relationships and flow descriptions
 
 SPECIFICATION:
 {spec_markdown}
 
 Output JSON only, no explanation:"""
 
+    async def _generate_with_streaming(self, prompt: str) -> str:
+        """Stream LLM response for large specs to avoid 10-min timeout."""
+        response_text = ""
+
+        try:
+            async with self.client.messages.stream(
+                model=self.LLM_MODEL,
+                max_tokens=32000,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0
+            ) as stream:
+                async for text in stream.text_stream:
+                    response_text += text
+                    if len(response_text) % 10000 == 0:
+                        logger.debug(f"  📊 Streamed {len(response_text)} chars...")
+        except Exception as e:
+            logger.error(f"❌ Streaming failed: {e}")
+            raise
+
+        logger.info(f"✅ Streaming complete: {len(response_text)} chars")
+        return response_text
+
     def _extract_json(self, response: str) -> str:
         """Extract JSON from LLM response, handling markdown code blocks."""
+        # Try ```json block
         if "```json" in response:
             start = response.index("```json") + 7
-            end = response.index("```", start)
-            return response[start:end].strip()
+            try:
+                end = response.index("```", start)
+                return response[start:end].strip()
+            except ValueError:
+                # No closing ```, take rest of response
+                return response[start:].strip()
 
+        # Try plain ``` block
         if "```" in response:
             start = response.index("```") + 3
-            end = response.index("```", start)
-            return response[start:end].strip()
+            try:
+                end = response.index("```", start)
+                return response[start:end].strip()
+            except ValueError:
+                return response[start:].strip()
+
+        # Try to find JSON object directly
+        if "{" in response:
+            start = response.index("{")
+            # Find matching closing brace
+            depth = 0
+            for i, char in enumerate(response[start:], start):
+                if char == "{":
+                    depth += 1
+                elif char == "}":
+                    depth -= 1
+                    if depth == 0:
+                        return response[start:i+1].strip()
 
         return response.strip()
 
@@ -415,7 +502,7 @@ Output JSON only, no explanation:"""
         infrastructure_model = InfrastructureModelIR(
             database=DatabaseConfig(
                 type=db_type,
-                host=db_data.get("host"),  # Can be None for local dev
+                host=db_data.get("host", "localhost"),
                 port=db_port,
                 name=db_name,
                 user=db_user,
@@ -444,6 +531,9 @@ Output JSON only, no explanation:"""
 
         validation_model = ValidationModelIR(rules=validation_rules)
 
+        # Build BehaviorModelIR from extracted flows
+        behavior_model = self._build_behavior_model(ir_data)
+
         # Build ApplicationIR
         app_name = ir_data.get("app_name", Path(spec_path).stem)
 
@@ -453,10 +543,58 @@ Output JSON only, no explanation:"""
             domain_model=domain_model,
             api_model=api_model,
             infrastructure_model=infrastructure_model,
-            behavior_model=BehaviorModelIR(),
+            behavior_model=behavior_model,
             validation_model=validation_model,
             phase_status={"spec_extraction": "complete"},
         )
+
+    def _build_behavior_model(self, ir_data: dict) -> BehaviorModelIR:
+        """Build BehaviorModelIR from extracted flows and entity dependencies."""
+        flows = []
+        invariants = []
+
+        # Process flows from LLM extraction
+        for flow_data in ir_data.get("flows", []):
+            steps = []
+            for step_data in flow_data.get("steps", []):
+                step = Step(
+                    order=step_data.get("order", 0),
+                    description=step_data.get("description", ""),
+                    action=step_data.get("action", ""),
+                    target_entity=step_data.get("target_entity"),
+                    condition=step_data.get("condition"),
+                )
+                steps.append(step)
+
+            flow = Flow(
+                name=flow_data.get("name", "Unknown"),
+                type=self._parse_flow_type(flow_data.get("type", "workflow")),
+                trigger=flow_data.get("trigger", ""),
+                steps=steps,
+                description=flow_data.get("description"),
+            )
+            flows.append(flow)
+
+        # Process entity dependencies as invariants
+        for dep_data in ir_data.get("entity_dependencies", []):
+            invariant = Invariant(
+                entity=dep_data.get("from_entity", ""),
+                description=f"{dep_data.get('from_entity')} {dep_data.get('dependency_type', 'requires')} {dep_data.get('to_entity')}",
+                enforcement_level="strict",
+            )
+            invariants.append(invariant)
+
+        return BehaviorModelIR(flows=flows, invariants=invariants)
+
+    def _parse_flow_type(self, type_str: str) -> FlowType:
+        """Parse flow type string to enum."""
+        type_map = {
+            "workflow": FlowType.WORKFLOW,
+            "state_transition": FlowType.STATE_TRANSITION,
+            "policy": FlowType.POLICY,
+            "event_handler": FlowType.EVENT_HANDLER,
+        }
+        return type_map.get(type_str.lower(), FlowType.WORKFLOW)
 
     def _extract_implicit_rules(self, entity_name: str, attr: Attribute) -> list[ValidationRule]:
         """Extract implicit validation rules from attribute constraints."""

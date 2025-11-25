@@ -2640,18 +2640,34 @@ Generate ONLY the README.md content, no additional explanations."""
                     logger.info("✅ Generating initial migration (hardcoded production generator)")
 
                     def _entity_to_dict(entity) -> dict:
-                        """Convert parsed entity to a plain dict for the migration generator."""
+                        """Convert parsed entity to a plain dict for the migration generator.
+
+                        Handles both ApplicationIR (uses 'attributes') and SpecRequirements (uses 'fields').
+                        This ensures migrations are synchronized with entities.py.
+                        """
                         fields = []
-                        for f in getattr(entity, "fields", []) or []:
-                            fields.append(
-                                {
+                        # ApplicationIR uses 'attributes', SpecRequirements uses 'fields'
+                        raw_fields = getattr(entity, "attributes", None) or getattr(entity, "fields", []) or []
+                        for f in raw_fields:
+                            # Handle ApplicationIR Attribute objects
+                            if hasattr(f, "data_type"):
+                                field_type = f.data_type.value if hasattr(f.data_type, 'value') else str(f.data_type)
+                                fields.append({
+                                    "name": f.name,
+                                    "type": field_type,
+                                    "required": not getattr(f, "is_nullable", False),
+                                    "default": getattr(f, "default_value", None),
+                                    "constraints": getattr(f, "constraints", {}),
+                                })
+                            else:
+                                # Handle SpecRequirements field objects/dicts
+                                fields.append({
                                     "name": getattr(f, "name", None),
                                     "type": getattr(f, "type", None),
                                     "required": getattr(f, "required", None),
                                     "default": getattr(f, "default", None),
                                     "constraints": getattr(f, "constraints", None),
-                                }
-                            )
+                                })
                         return {
                             "name": getattr(entity, "name", "Unknown"),
                             "plural": (getattr(entity, "name", "Unknown") + "s").lower(),

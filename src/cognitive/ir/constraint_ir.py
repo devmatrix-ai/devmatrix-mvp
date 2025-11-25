@@ -117,6 +117,125 @@ class ConstraintIR:
         )
 
     @classmethod
+    def from_validation_string(cls, s: str) -> 'ConstraintIR':
+        """
+        Parse validation string to ConstraintIR.
+
+        Formats supported:
+        - "Entity.field: constraint_type"
+        - "Entity.field: constraint_type=value"
+        - "Entity.field: constraint_type: value1, value2"
+
+        Examples:
+        - "Product.id: unique" -> ConstraintIR(entity="Product", field="id", constraint_type="unique")
+        - "Customer.email: pattern=^[^@]+@..." -> ConstraintIR(entity="Customer", field="email", ...)
+        """
+        # Mapping from constraint strings to ValidationType
+        # ValidationType values: FORMAT, RANGE, PRESENCE, UNIQUENESS, RELATIONSHIP,
+        # STOCK_CONSTRAINT, STATUS_TRANSITION, WORKFLOW_CONSTRAINT, CUSTOM
+        CONSTRAINT_TO_VALIDATION_TYPE = {
+            # Uniqueness constraints
+            "unique": ValidationType.UNIQUENESS,
+            "primary_key": ValidationType.UNIQUENESS,
+            # Presence constraints
+            "required": ValidationType.PRESENCE,
+            "non-empty": ValidationType.PRESENCE,
+            "min_length": ValidationType.PRESENCE,
+            "max_length": ValidationType.RANGE,
+            # Range constraints
+            "gt": ValidationType.RANGE,
+            "ge": ValidationType.RANGE,
+            "lt": ValidationType.RANGE,
+            "le": ValidationType.RANGE,
+            "greater_than_zero": ValidationType.RANGE,
+            "positive": ValidationType.RANGE,
+            "non_negative": ValidationType.RANGE,
+            # Format constraints
+            "pattern": ValidationType.FORMAT,
+            "valid_email_format": ValidationType.FORMAT,
+            "email": ValidationType.FORMAT,
+            # Status/enum constraints
+            "enum_values": ValidationType.STATUS_TRANSITION,
+            "enum": ValidationType.STATUS_TRANSITION,
+            # Relationship constraints
+            "foreign_key": ValidationType.RELATIONSHIP,
+            "foreign_key_customer": ValidationType.RELATIONSHIP,
+            "foreign_key_product": ValidationType.RELATIONSHIP,
+            # Workflow constraints (auto-generated, read-only)
+            # Keys use underscores because lookup does .replace("-", "_")
+            "auto_generated": ValidationType.WORKFLOW_CONSTRAINT,
+            "auto_calculated": ValidationType.WORKFLOW_CONSTRAINT,
+            "default": ValidationType.WORKFLOW_CONSTRAINT,
+            "default_true": ValidationType.WORKFLOW_CONSTRAINT,
+            "default_factory": ValidationType.WORKFLOW_CONSTRAINT,
+            "read_only": ValidationType.WORKFLOW_CONSTRAINT,
+            "snapshot": ValidationType.WORKFLOW_CONSTRAINT,
+        }
+
+        # Parse: "Entity.field: constraint_type" or "Entity.field: constraint_type=value"
+        try:
+            # Split on first ": "
+            if ": " not in s:
+                # Fallback: treat whole thing as constraint
+                return cls(
+                    entity="Unknown",
+                    field="unknown",
+                    validation_type=ValidationType.CUSTOM,
+                    constraint_type=s,
+                    value=None,
+                    source="string_parse"
+                )
+
+            entity_field, rest = s.split(": ", 1)
+
+            # Parse entity.field
+            if "." in entity_field:
+                entity, field = entity_field.rsplit(".", 1)
+            else:
+                entity = entity_field
+                field = "unknown"
+
+            # Parse constraint_type and value
+            value = None
+            constraint_type = rest
+
+            # Check for "=" value format
+            if "=" in rest and not rest.startswith("enum"):
+                constraint_type, value = rest.split("=", 1)
+
+            # Check for ": value1, value2" format (enums)
+            elif rest.count(": ") >= 1:
+                parts = rest.split(": ", 1)
+                constraint_type = parts[0]
+                if len(parts) > 1:
+                    value = [v.strip() for v in parts[1].split(",")]
+
+            # Map to ValidationType
+            validation_type = CONSTRAINT_TO_VALIDATION_TYPE.get(
+                constraint_type.lower().replace("-", "_"),
+                ValidationType.CUSTOM
+            )
+
+            return cls(
+                entity=entity,
+                field=field,
+                validation_type=validation_type,
+                constraint_type=constraint_type,
+                value=value,
+                source="string_parse"
+            )
+        except Exception:
+            # Fallback for unparseable strings
+            return cls(
+                entity="Unknown",
+                field="unknown",
+                validation_type=ValidationType.CUSTOM,
+                constraint_type=s,
+                value=None,
+                source="string_parse_fallback"
+            )
+
+    @classmethod
     def from_dict(cls, data: dict) -> 'ConstraintIR':
         """Create ConstraintIR from dictionary."""
         return cls(

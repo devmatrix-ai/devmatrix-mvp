@@ -1192,9 +1192,14 @@ JSON OUTPUT:"""
 
                     elif self.c_type == 'default_factory':
                         # Handle default_factory=<callable>
-                        has_factory = any(k.arg == 'default_factory' for k in column_call.keywords)
-                        if has_factory:
-                            logger.debug(f"{entity_name}.{field_name} already has default_factory")
+                        # FIX: Check BOTH 'default' and 'default_factory' to avoid duplicates
+                        # SQLAlchemy uses 'default=', Pydantic uses 'default_factory='
+                        has_default_or_factory = any(
+                            k.arg in ('default', 'default_factory')
+                            for k in column_call.keywords
+                        )
+                        if has_default_or_factory:
+                            logger.debug(f"{entity_name}.{field_name} already has default or default_factory - skipping")
                         else:
                             # Parse function reference like 'datetime.utcnow' or 'uuid.uuid4'
                             # Create appropriate callable reference
@@ -1207,9 +1212,11 @@ JSON OUTPUT:"""
                             else:
                                 value_node = ast.Name(id=str(self.c_value), ctx=ast.Load())
 
-                            column_call.keywords.append(ast.keyword(arg='default_factory', value=value_node))
+                            # FIX: SQLAlchemy Column() uses 'default=', not 'default_factory='
+                            # 'default_factory' is only valid for Pydantic Field()
+                            column_call.keywords.append(ast.keyword(arg='default', value=value_node))
                             self.modified = True
-                            logger.info(f"Added default_factory={self.c_value} to {entity_name}.{field_name}")
+                            logger.info(f"Added default={self.c_value} to {entity_name}.{field_name}")
 
                     elif self.c_type == 'description':
                         # Handle description="<text>" via info={'description': "<text>"}

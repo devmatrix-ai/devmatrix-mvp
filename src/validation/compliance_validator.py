@@ -1061,34 +1061,55 @@ class ComplianceValidator:
             return compliance, matched_validations
 
         # ═══════════════════════════════════════════════════════════════════════════════
-        # STANDARD MATCHING: Use SemanticMatcher batch matching
+        # FAST IR MATCHING: Use IRSemanticMatcher with index-based lookup (Phase 3)
         # ═══════════════════════════════════════════════════════════════════════════════
-        logger.info("📋 Using standard SemanticMatcher batch matching")
+        logger.info("🚀 Using IRSemanticMatcher for fast batch matching")
 
-        matches = 0
-        matched_validations = []
-        unmatched = []
+        try:
+            from src.services.ir_semantic_matcher import IRSemanticMatcher
+            from src.cognitive.ir.constraint_ir import ConstraintIR
 
-        # For each expected validation, find best match in found
-        for exp_val in expected:
-            best_match = None
-            best_score = 0.0
+            # Initialize IR matcher (no embedding fallback for maximum speed)
+            ir_matcher = IRSemanticMatcher(use_embedding_fallback=False)
 
-            for found_val in found:
-                # Use SemanticMatcher to compare
-                result = self.semantic_matcher.match(exp_val, found_val)
+            # Parse strings to ConstraintIR
+            spec_constraints = [ConstraintIR.from_validation_string(s) for s in expected]
+            code_constraints = [ConstraintIR.from_validation_string(s) for s in found]
 
-                if result.match and result.confidence > best_score:
-                    best_match = found_val
-                    best_score = result.confidence
+            # Use fast IR matching with index (O(n) instead of O(n×m))
+            compliance, ir_results = ir_matcher.match_constraint_lists(spec_constraints, code_constraints)
 
-            if best_match:
-                matches += 1
-                matched_validations.append(best_match)
-                logger.debug(f"✅ Semantic match: '{exp_val}' → '{best_match}' ({best_score:.2f})")
-            else:
-                unmatched.append(exp_val)
-                logger.debug(f"❌ No semantic match for: '{exp_val}'")
+            # Convert results back to matched validation strings
+            matches = sum(1 for r in ir_results if r.match)
+            matched_validations = [r.code_constraint.to_string() for r in ir_results if r.match and r.code_constraint]
+            unmatched = [r.spec_constraint.to_string() for r in ir_results if not r.match]
+
+            logger.info(f"📊 IRSemanticMatcher: {matches}/{len(expected)} = {compliance:.1%}")
+
+        except Exception as e:
+            # Fallback to slow SemanticMatcher if IRSemanticMatcher fails
+            logger.warning(f"⚠️ IRSemanticMatcher failed ({e}), using slow SemanticMatcher")
+            logger.info("📋 Using standard SemanticMatcher batch matching")
+
+            matches = 0
+            matched_validations = []
+            unmatched = []
+
+            for exp_val in expected:
+                best_match = None
+                best_score = 0.0
+
+                for found_val in found:
+                    result = self.semantic_matcher.match(exp_val, found_val)
+                    if result.match and result.confidence > best_score:
+                        best_match = found_val
+                        best_score = result.confidence
+
+                if best_match:
+                    matches += 1
+                    matched_validations.append(best_match)
+                else:
+                    unmatched.append(exp_val)
 
         # Calculate compliance
         compliance = matches / len(expected) if expected else 1.0

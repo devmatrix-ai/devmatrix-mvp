@@ -123,8 +123,11 @@ class {entity_name}Entity(Base):
                 # Add nullable
                 column_def += f', nullable={nullable}'
 
-                # Add unique for email fields
-                if field_name == 'email':
+                # Add unique if constraint specifies it (NOT based on field name)
+                # NOTE: Hardcoded field_name == 'email' REMOVED - Phase: Hardcoding Elimination
+                # Unique constraint should come from IR/spec constraints
+                constraint_strs = [str(c).lower() for c in constraints] if constraints else []
+                if any('unique' in c for c in constraint_strs):
                     column_def += ', unique=True'
 
                 # Add default if exists
@@ -155,19 +158,14 @@ class {entity_name}Entity(Base):
         code += '    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))\n'
 
         # Generate __repr__ method
-        # Try to find a good display field (name, email, status, or first non-id field)
+        # NOTE: Hardcoded field names REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
+        # Use first non-system field as display field (no preference for specific names)
         display_field = None
         for field in fields:
-            if field.name in ['name', 'email', 'status']:
+            # Skip system fields
+            if field.name not in ['id', 'created_at', 'updated_at']:
                 display_field = field.name
                 break
-
-        if not display_field and fields:
-            # Use first non-id field
-            for field in fields:
-                if field.name not in ['id', 'created_at', 'updated_at']:
-                    display_field = field.name
-                    break
 
         if display_field:
             code += f'''
@@ -312,11 +310,9 @@ def _should_exclude_from_create(entity_name: str, field_name: str, validation_co
         if field_name in ['registration_date', 'creation_date'] and 'read' in constraint_str:
             return True
             
-    # Hardcoded fallbacks for known spec requirements (robustness)
-    if entity_name == 'Customer' and field_name == 'registration_date': return True
-    if entity_name == 'Order' and field_name == 'total_amount': return True
-    if entity_name == 'Order' and field_name == 'creation_date': return True
-    
+    # NOTE: Hardcoded fallbacks REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
+    # Exclusions now come exclusively from validation_constraints (ApplicationIR or GT)
+
     return False
 
 
@@ -350,13 +346,9 @@ def _should_exclude_from_update(entity_name: str, field_name: str, validation_co
         if any(kw in constraint_str for kw in ['auto-calculated', 'auto_calculated', 'computed', 'sum_of']):
             return True
 
-    # Hardcoded fallbacks for known spec requirements (robustness)
-    if entity_name == 'Customer' and field_name == 'registration_date': return True
-    if entity_name == 'CartItem' and field_name == 'unit_price': return True
-    if entity_name == 'Order' and field_name == 'total_amount': return True
-    if entity_name == 'Order' and field_name == 'creation_date': return True
-    if entity_name == 'OrderItem' and field_name == 'unit_price': return True
-    
+    # NOTE: Hardcoded fallbacks REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
+    # Exclusions now come exclusively from validation_constraints (ApplicationIR or GT)
+
     return False
 
 
@@ -394,25 +386,15 @@ class BaseSchema(BaseModel):
 
 '''
     uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-    # Always declare item models when Cart/Order present to avoid NameError
-    has_cart = any(e.get('name', '').lower() == 'cart' for e in entities)
-    has_order = any(e.get('name', '').lower() == 'order' for e in entities)
-    code += f'''class CartItem(BaseModel):
-    """Item within a cart."""
-    product_id: UUID = Field(..., pattern=r"{uuid_pattern}")
-    quantity: int = Field(..., gt=0)
-    unit_price: Decimal = Field(..., gt=0)
 
+    # NOTE: Hardcoded CartItem/OrderItem classes REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
+    # Item schemas are now generated dynamically:
+    # 1. From ApplicationIR.domain_model.entities (if CartItem/OrderItem exist as entities)
+    # 2. From validation_ground_truth synthetic_entities (if validation rules reference them)
+    # 3. Generic ItemSchema fallback is added below if needed
 
-'''
-    code += f'''class OrderItem(BaseModel):
-    """Item within an order."""
-    product_id: UUID = Field(..., pattern=r"{uuid_pattern}")
-    quantity: int = Field(..., gt=0)
-    unit_price: Decimal = Field(..., gt=0)
-
-
-'''
+    # Track whether we need generic item fallback (will be set after synthetic_entities processing)
+    _needs_item_fallback = False
 
     literal_used = False
 
@@ -485,14 +467,33 @@ class BaseSchema(BaseModel):
     synthetic_entities = []
 
     def _infer_type(field_name: str, constraint: str) -> str:
-        name_lower = field_name.lower()
+        """
+        Infer field type from constraint text or field name pattern.
+
+        NOTE: Phase: Hardcoding Elimination (Nov 25, 2025)
+        - FIRST: Try to extract type from constraint text (IR source)
+        - SECOND: Use generic patterns (not domain-specific names)
+        """
         constraint_lower = (constraint or "").lower()
-        if 'uuid' in name_lower or 'uuid' in constraint_lower or 'id' == name_lower or name_lower.endswith('_id'):
+        name_lower = field_name.lower()
+
+        # PRIORITY 1: Extract type from constraint text (from IR)
+        if 'uuid' in constraint_lower:
             return 'UUID'
-        if any(tok in name_lower for tok in ['quantity', 'count']):
+        if 'integer' in constraint_lower or 'int' in constraint_lower:
             return 'int'
-        if any(tok in name_lower for tok in ['price', 'amount', 'total']):
+        if 'decimal' in constraint_lower or 'numeric' in constraint_lower or 'float' in constraint_lower:
             return 'Decimal'
+        if 'boolean' in constraint_lower or 'bool' in constraint_lower:
+            return 'bool'
+        if 'datetime' in constraint_lower or 'timestamp' in constraint_lower:
+            return 'datetime'
+
+        # PRIORITY 2: Generic patterns from field name (not domain-specific)
+        if name_lower == 'id' or name_lower.endswith('_id'):
+            return 'UUID'
+
+        # Default to string (safest)
         return 'str'
 
     for ent_name, fields_list in validation_entities.items():
@@ -529,49 +530,59 @@ class BaseSchema(BaseModel):
 
     entities = sorted(entities, key=_entity_priority)
 
-    # Hardening map for common app domains to inject missing constraints
-    gt_defaults = {
-        'product': {
-            'id': ['uuid_format'],
-            'name': ['required', 'min_length=1', 'max_length=255'],
-            'price': ['required', 'gt=0'],
-            'stock': ['required', 'ge=0'],
-            'is_active': ['required'],
-            'description': ['max_length=1000'],
-        },
-        'customer': {
-            'id': ['uuid_format'],
-            'email': ['required', 'email_format', 'max_length=255'],
-            'full_name': ['required', 'min_length=1', 'max_length=255'],
-            'created_at': ['required'],
-        },
-        'cart': {
-            'id': ['uuid_format'],
-            'customer_id': ['uuid_format', 'required'],
-            'status': ['required', 'enum=OPEN,CHECKED_OUT'],
-            'items': ['required'],
-            'created_at': ['required'],
-        },
-        'order': {
-            'id': ['uuid_format'],
-            'customer_id': ['uuid_format', 'required'],
-            'total_amount': ['required', 'ge=0'],
-            'status': ['required', 'enum=PENDING_PAYMENT,PAID,CANCELLED'],
-            'payment_status': ['required', 'enum=PENDING,SIMULATED_OK,FAILED'],
-            'items': ['required'],
-            'created_at': ['required'],
-        },
-        'cartitem': {
-            'product_id': ['uuid_format', 'required'],
-            'quantity': ['required', 'gt=0'],
-            'unit_price': ['required', 'gt=0'],
-        },
-        'orderitem': {
-            'product_id': ['uuid_format', 'required'],
-            'quantity': ['required', 'gt=0'],
-            'unit_price': ['required', 'gt=0'],
-        },
-    }
+    # NOTE: Hardcoded 'cart'/'order' names REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
+    # Generic item schema detection: entities that need item schemas are detected by:
+    # 1. Having a field of type List[*] (e.g., items: List[CartItem])
+    # 2. Their corresponding *Item entity not being in the entity list
+    entity_names_lower = {str(e.get('name', '')).lower() for e in entities}
+
+    # Detect entities that have List fields (potential parent entities needing item schemas)
+    entities_with_list_fields = set()
+    for entity in entities:
+        fields = entity.get('fields', []) or []
+        for field in fields:
+            if hasattr(field, 'type'):
+                ft = str(getattr(field, 'type', '')).lower()
+            elif isinstance(field, dict):
+                ft = str(field.get('type', '')).lower()
+            else:
+                ft = ''
+            if 'list' in ft or 'array' in ft:
+                entities_with_list_fields.add(str(entity.get('name', '')).lower())
+                break
+
+    # Check if corresponding *Item entities exist for parent entities
+    missing_item_schemas = []
+    for parent_name in entities_with_list_fields:
+        item_name = f"{parent_name}item"
+        if item_name not in entity_names_lower:
+            missing_item_schemas.append(parent_name)
+
+    # Add generic ItemSchema fallback if any parent entity needs item schemas
+    if missing_item_schemas:
+        logger.info(f"📦 Adding generic ItemSchema fallback for: {missing_item_schemas}")
+        code += '''from typing import Dict, Any
+
+# Generic item schema - specific item entities should come from ApplicationIR
+ItemSchema = Dict[str, Any]
+
+
+'''
+        # Generate generic item classes for each missing item entity
+        for parent_name in missing_item_schemas:
+            item_class_name = f"{parent_name.title()}Item"
+            code += f'''class {item_class_name}(BaseModel):
+    """Generic item for {parent_name} - fields should come from ApplicationIR."""
+    model_config = ConfigDict(extra="allow")
+
+
+'''
+
+    # NOTE: gt_defaults for constraint hardening REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
+    # Constraints now come exclusively from:
+    # 1. ApplicationIR.validation_model.rules (from spec parsing)
+    # 2. validation_constraints parameter (from ground truth)
+    # If constraints are missing, they should be added to the spec, not hardcoded here.
 
     for entity in entities:
         entity_name = entity.get('name', 'Unknown')
@@ -622,10 +633,8 @@ class BaseSchema(BaseModel):
             elif not isinstance(constraints, list):
                 constraints = list(constraints)
 
-            # Inject hardening constraints for common entities/fields
-            for extra_c in gt_defaults.get(entity_lower, {}).get(field_name, []):
-                if extra_c not in constraints:
-                    constraints.append(extra_c)
+            # NOTE: Hardening constraint injection REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
+            # Constraints now come from validation_constraints parameter only
 
             # Map type to Python type
             python_type = type_mapping.get(field_type, field_type)
@@ -656,13 +665,8 @@ class BaseSchema(BaseModel):
             # Detect enum constraints (format: enum=VAL1,VAL2) or enum type
             enum_values = None
             enum_from_constraint = False
-            # Hardcode enums when absent but known
-            if entity_lower == 'cart' and field_name == 'status':
-                enum_values = ["OPEN", "CHECKED_OUT"]
-            if entity_lower == 'order' and field_name == 'status':
-                enum_values = ["PENDING_PAYMENT", "PAID", "CANCELLED"]
-            if entity_lower == 'order' and field_name == 'payment_status':
-                enum_values = ["PENDING", "SIMULATED_OK", "FAILED"]
+            # NOTE: Hardcoded enums for cart/order REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
+            # Enums now come exclusively from constraints or field type definition
             if ft_lower.startswith('enum'):
                 # Try to parse inline enum values: enum["OPEN","CLOSED"] or enum OPEN,CLOSED
                 import re
@@ -698,28 +702,22 @@ class BaseSchema(BaseModel):
                 if gt_constraint not in constraints:
                     constraints.append(gt_constraint)
 
-            # If this is an items field for Cart/Order, use concrete item models
-            if field_name == 'items':
-                if entity_name.lower() == 'cart':
-                    python_type = 'List[CartItem]'
-                elif entity_name.lower() == 'order':
-                    python_type = 'List[OrderItem]'
-                # Allow empty list on create; don't force min_items here
+            # NOTE: Hardcoded field_name == 'items' REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
+            # List detection now based ONLY on type, not field name
+            # If this is a list type field, use generic type. Relationships should come from IR.
+            if ft_lower.startswith('list') or ft_lower.startswith('array'):
+                # Use generic list type - specific item types should be defined via IR relationships
+                if python_type not in ('List[Dict[str, Any]]',) and not python_type.startswith('List['):
+                    python_type = 'List[Dict[str, Any]]'
+                # Allow empty list on create
                 required = required_from_gt
                 field_default = None if required_from_gt else (field_default or [])
-                # Remove any injected min_items to avoid 422 on empty carts
+                # Remove any injected min_items to avoid 422 on empty lists
                 constraints = [c for c in constraints if not str(c).startswith('min_items')]
 
-            # Defaults for status fields to avoid required errors on creates
-            if entity_lower == 'cart' and field_name == 'status':
-                field_default = field_default or 'OPEN'
-                required = False
-            if entity_lower == 'order' and field_name == 'status':
-                field_default = field_default or 'PENDING_PAYMENT'
-                required = False
-            if entity_lower == 'order' and field_name == 'payment_status':
-                field_default = field_default or 'PENDING'
-                required = False
+            # NOTE: Hardcoded status defaults for cart/order REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
+            # Status field defaults should come from spec/IR field_default, not hardcoded here
+            # If a status field needs a default, define it in the spec
 
             # If ground truth requires the field, drop defaults to force Field(...)
             if required_from_gt:
@@ -806,8 +804,17 @@ class BaseSchema(BaseModel):
             is_literal = isinstance(python_type, str) and python_type.startswith('Literal[')
             is_str_like = python_type == 'str'  # ← FIXED: Literal types are NOT string-like
 
-            if is_str_like and field_name == 'email':
-                # Email validation with pattern
+            # NOTE: Hardcoded field_name checks REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
+            # Email pattern now detected by constraint, not field name
+            # Check if field has email validation constraint from IR/spec
+            constraint_strs_lower = [str(c).lower() for c in constraints] if constraints else []
+            has_email_constraint = any(
+                kw in c for c in constraint_strs_lower
+                for kw in ['email', 'valid_email', 'format:email', 'email_format']
+            )
+
+            if is_str_like and has_email_constraint:
+                # Email validation with pattern - detected from constraint, not field name
                 if 'pattern' not in field_constraints:
                     field_constraints['pattern'] = 'pattern=r"^[^@]+@[^@]+\\.[^@]+$"'
             elif is_str_like:
@@ -819,14 +826,20 @@ class BaseSchema(BaseModel):
                 if 'max_length' not in field_constraints:
                     field_constraints['max_length'] = 'max_length=255'
             elif python_type in ['Decimal', 'int', 'float']:
-                # Numeric constraints - only add defaults if no constraint already exists
-                # gt (greater than) is more restrictive than ge (greater or equal)
+                # NOTE: Hardcoded field names for gt/ge REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
+                # Numeric constraints should come from IR/spec, not inferred from field names
+                # If spec says field > 0, the constraint should be in validation_constraints
+                # Only add ge=0 as safe default for ALL numerics (non-negative is common)
+                # Specific gt=0 (positive) should come from spec constraints
                 if 'gt' not in field_constraints and 'ge' not in field_constraints:
-                    if field_name in ['price', 'total_amount', 'amount', 'cost', 'quantity']:
+                    # Check if spec already defines positivity constraint
+                    has_positive_constraint = any(
+                        kw in c for c in constraint_strs_lower
+                        for kw in ['positive', 'gt=0', 'gt:0', '>0', 'greater_than_zero']
+                    )
+                    if has_positive_constraint:
                         field_constraints['gt'] = 'gt=0'
-                    elif field_name in ['id', 'count', 'total']:
-                        field_constraints['ge'] = 'ge=0'
-                    # For 'stock' - spec says >= 0, so don't override with gt=0
+                    # Don't add default ge=0 - let spec define constraints explicitly
 
             # Handle enum fields - remove marker and note for future enhancement
             is_enum_field = field_constraints.pop('_is_enum', False)
@@ -913,15 +926,11 @@ class BaseSchema(BaseModel):
                     pydantic_fields.append(f"    {field_name}: Optional[{python_type}] = Field(None, {constraints_str})")
             else:
                 # No constraints, use simple type annotation
+                # NOTE: Hardcoded field_name == 'items' checks REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
+                # List types are now handled generically by type, not field name
                 if required and not python_default:
                     # Required field without default
-                    if field_name == 'items':
-                        # Allow items lists without forcing min_items
-                        pydantic_fields.append(f"    {field_name}: {python_type}")
-                    elif python_type.startswith("List[") and 'min_items' not in field_constraints:
-                        pydantic_fields.append(f"    {field_name}: {python_type}")
-                    else:
-                        pydantic_fields.append(f"    {field_name}: {python_type}")
+                    pydantic_fields.append(f"    {field_name}: {python_type}")
                 elif python_default is not None:
                     # Field with default value
                     needs_quotes = python_type == 'str' or (isinstance(python_type, str) and python_type.startswith('Literal['))
@@ -929,10 +938,7 @@ class BaseSchema(BaseModel):
                     pydantic_fields.append(f'    {field_name}: {python_type} = {default_val}')
                 else:
                     # Optional field (not required, no default)
-                    if field_name == 'items':
-                        pydantic_fields.append(f"    {field_name}: Optional[{python_type}] = None")
-                    else:
-                        pydantic_fields.append(f"    {field_name}: Optional[{python_type}] = None")
+                    pydantic_fields.append(f"    {field_name}: Optional[{python_type}] = None")
 
         # Base schema - includes core fields (server-managed made optional above)
         base_fields = []
@@ -1144,8 +1150,15 @@ class {entity_name}Service:
         return await self.repo.delete(id)
 '''
 
-    # PHASE 2: Add stock decrement logic for Order entity (checkout & cancel)
-    if entity_name == "Order":
+    # PHASE 2: Add checkout/cancel logic for orderable entities
+    # NOTE: Hardcoded entity_name == "Order" REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
+    # Now uses field-based detection: entities with both 'status' and 'payment_status' fields
+    # are considered "orderable" and get checkout/cancel methods.
+    # TODO: This should ultimately come from BehaviorModelIR.flows/operations
+    field_names = {f.name if hasattr(f, 'name') else f.get('name', '') for f in fields}
+    is_orderable_entity = 'status' in field_names and 'payment_status' in field_names
+
+    if is_orderable_entity:
         base_service += f'''
     async def checkout(self, cart_id: UUID) -> {entity_name}Response:
         """
@@ -1318,25 +1331,45 @@ def upgrade() -> None:
         'boolean': 'sa.Boolean',
     }
 
-    gt_defaults = {
-        'product': ['name', 'description', 'price', 'stock', 'is_active'],
-        'customer': ['email', 'full_name', 'created_at'],
-        'cart': ['customer_id', 'items', 'status', 'created_at'],
-        'order': ['customer_id', 'items', 'total_amount', 'status', 'payment_status', 'created_at'],
-    }
+    # NOTE: gt_defaults REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
+    # Fields now come from ApplicationIR.domain_model.entities.attributes
+    # via _entity_to_dict in code_generation_service.py
+    # If fields are empty, it's a bug in the upstream pipeline, not something to patch here.
 
-    def _infer_sql_type(fname: str) -> str:
+    def _infer_sql_type(fname: str, field_type: str = None) -> str:
+        """
+        Infer SQL type from field name or explicit type.
+
+        NOTE: Phase: Hardcoding Elimination (Nov 25, 2025)
+        This function now PREFERS explicit field_type from IR over name inference.
+        Name-based inference is ONLY used as fallback when type is missing.
+        """
+        # FIRST: Use explicit type if provided (from IR)
+        if field_type:
+            ft_lower = field_type.lower()
+            if ft_lower in sql_type_map:
+                return sql_type_map[ft_lower]
+            if 'uuid' in ft_lower:
+                return 'postgresql.UUID(as_uuid=True)'
+            if 'decimal' in ft_lower or 'numeric' in ft_lower:
+                return 'sa.Numeric(10, 2)'
+            if 'int' in ft_lower:
+                return 'sa.Integer'
+            if 'bool' in ft_lower:
+                return 'sa.Boolean'
+            if 'datetime' in ft_lower or 'timestamp' in ft_lower:
+                return 'sa.DateTime(timezone=True)'
+            if 'list' in ft_lower or 'array' in ft_lower:
+                return 'sa.String(255)'  # Store as JSON string
+
+        # FALLBACK: Name-based inference (when type not provided)
+        # NOTE: This is a fallback - types should come from ApplicationIR
         fl = fname.lower()
         if fl.endswith('_id') or fl == 'id':
             return 'postgresql.UUID(as_uuid=True)'
-        if any(tok in fl for tok in ['amount', 'price', 'total']):
-            return 'sa.Numeric(10, 2)'
-        if any(tok in fl for tok in ['stock', 'quantity', 'count']):
-            return 'sa.Integer'
-        if fl in ['is_active', 'active']:
-            return 'sa.Boolean'
         if fl in ['created_at', 'updated_at']:
             return 'sa.DateTime(timezone=True)'
+        # Default to String for unknown fields
         return 'sa.String(255)'
 
     for entity in entities:
@@ -1348,9 +1381,10 @@ def upgrade() -> None:
         else:
             fields = entity.get('fields', []) or []
         if not fields:
-            # synthesize from gt_defaults for common domains
-            for fname in gt_defaults.get(entity_name.lower(), []):
-                fields.append({'name': fname, 'type': _infer_sql_type(fname), 'required': True, 'default': None})
+            # NOTE: No longer using gt_defaults fallback - Phase: Hardcoding Elimination (Nov 25, 2025)
+            # If fields are empty, it indicates a bug in ApplicationIR population
+            # Log warning but don't synthesize fake fields
+            logger.warning(f"⚠️ Entity '{entity_name}' has no fields - check ApplicationIR.domain_model.entities.attributes")
 
         code += f'''
     op.create_table(
@@ -1379,14 +1413,18 @@ def upgrade() -> None:
             if required is None:
                 required = True
 
-            # Infer a type if missing or unknown
-            col_type = type_mapping.get(ftype, _infer_sql_type(fname))
+            # Infer a type if missing or unknown - now passes ftype to prefer IR type over name inference
+            col_type = type_mapping.get(ftype, _infer_sql_type(fname, ftype))
             nullable = not bool(required)
 
             column_def = f"        sa.Column('{fname}', {col_type}, nullable={str(nullable)})"
 
-            # Unique email
-            if fname == 'email':
+            # NOTE: Hardcoded fname == 'email' REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
+            # Unique constraint should come from field constraints, not field name
+            # Check if field has unique constraint from IR/spec
+            field_constraints = f.get('constraints', {}) if isinstance(f, dict) else getattr(f, 'constraints', {})
+            constraint_strs = [str(c).lower() for c in (field_constraints if isinstance(field_constraints, list) else [field_constraints])]
+            if any('unique' in c for c in constraint_strs):
                 column_def = column_def.rstrip(')') + ', unique=True)'
 
             # Simple defaults
