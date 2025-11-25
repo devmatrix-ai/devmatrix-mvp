@@ -90,8 +90,17 @@ python /tmp/test_flow_large.py   # E-commerce spec (~50KB)
 - No additional error handling needed (stream errors bubble up)
 - Backward compatible (fallback to non-streaming for small specs)
 
-## Timeline
-- Phase 1: Implement `_generate_with_streaming()` (30 min)
-- Phase 2: Modify `_generate_with_llm()` trigger logic (10 min)
-- Phase 3: Test both paths (30 min)
-- Phase 4: Validate BehaviorModelIR extraction (20 min)
+## Timeline & Status
+- Phase 1: ✅ Implement `_generate_with_streaming()` - DONE
+- Phase 2: ✅ Modify `_generate_with_llm()` trigger logic - DONE (always stream)
+- Phase 3: ✅ Test streaming - DONE (3 flows extracted, no timeout)
+- Phase 4: ✅ Validate BehaviorModelIR extraction - DONE (5 invariants, 3 flows)
+
+## Validation Results
+```
+✅ Task Management API (non-e-commerce spec)
+   Flows: 3 (Crear Tarea, Completar Tarea, Asignar Tarea)
+   Invariants: 5 (entity dependencies)
+   Entities: 2, Endpoints: 13, Validation Rules: 29
+   Status: BehaviorModelIR fully populated
+```
