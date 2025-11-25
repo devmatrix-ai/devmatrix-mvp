@@ -79,6 +79,9 @@ from src.classification.requirements_classifier import RequirementsClassifier
 # ComplianceValidator for Phase 7 integration (Task Group 4.2)
 from src.validation.compliance_validator import ComplianceValidator, ComplianceValidationError
 
+# ApplicationIR Extraction (IR-centric architecture)
+from src.specs.spec_to_application_ir import SpecToApplicationIR
+
 # Validation Scaling Integration (Phase 1, 2, 3)
 try:
     from src.services.business_logic_extractor import BusinessLogicExtractor
@@ -731,6 +734,24 @@ class RealE2ETest:
         with silent_logs():
             parser = SpecParser()
             self.spec_requirements = parser.parse(spec_path)
+
+        # NEW: Extract ApplicationIR (IR-centric architecture)
+        print("    - Extracting ApplicationIR (domain, API, behavior models)...")
+        try:
+            ir_converter = SpecToApplicationIR()
+            self.application_ir = await ir_converter.get_application_ir(
+                self.spec_content,
+                spec_path.name,
+                force_refresh=False
+            )
+            ir_entities = len(self.application_ir.domain_model.entities)
+            ir_endpoints = len(self.application_ir.api_model.endpoints)
+            ir_flows = len(self.application_ir.behavior_model.flows)
+            ir_validations = len(self.application_ir.validation_model.rules)
+            print(f"    - ApplicationIR: {ir_entities} entities, {ir_endpoints} endpoints, {ir_flows} flows, {ir_validations} validations")
+        except Exception as e:
+            print(f"    ⚠️  ApplicationIR extraction failed (non-blocking): {e}")
+            self.application_ir = None
 
         # Backward compatibility: populate self.requirements for Phase 2
         self.requirements = [r.description for r in self.spec_requirements.requirements]
