@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import logging
 import yaml
+import warnings
 
 from src.parsing.hierarchical_models import (
     GlobalContext,
@@ -174,7 +175,12 @@ class SpecRequirements:
 
 class SpecParser:
     """
-    Enhanced markdown parser for functional requirements
+    Enhanced markdown parser for functional requirements.
+
+    .. deprecated::
+        SpecParser is deprecated. Use SpecToApplicationIR instead for IR-centric
+        architecture. ApplicationIR is the single source of truth for code generation.
+        See: src/specs/spec_to_application_ir.py
 
     Extracts:
     - Functional requirements (F1-F99) from bold headers **F1. Description**
@@ -185,6 +191,12 @@ class SpecParser:
     """
 
     def __init__(self) -> None:
+        warnings.warn(
+            "SpecParser is deprecated. Use SpecToApplicationIR instead for IR-centric "
+            "architecture. See: src/specs/spec_to_application_ir.py",
+            DeprecationWarning,
+            stacklevel=2
+        )
         # Regex patterns for requirement extraction
         # Pattern for **F1. Description** format
         self.functional_req_pattern = re.compile(r"\*\*F(\d+)\.\s+(.+?)\*\*", re.MULTILINE)

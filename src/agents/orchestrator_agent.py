@@ -172,8 +172,8 @@ Important:
             progress_callback: Optional callback function for progress updates
             enable_rag: Enable RAG for task decomposition enhancement (default: True)
         """
-        # Use Claude Opus 4.1 for complex orchestration reasoning
-        self.llm = AnthropicClient(api_key=api_key, model="claude-haiku-4-5-20251001")
+        # Use Claude Sonnet 4.5 for complex orchestration reasoning
+        self.llm = AnthropicClient(api_key=api_key, model="claude-sonnet-4-5-20250929")
         self.console = Console()
         self.logger = get_logger("orchestrator")
         self.registry = agent_registry or AgentRegistry()

@@ -27,6 +27,18 @@ import logging
 
 from src.llm.enhanced_anthropic_client import EnhancedAnthropicClient
 
+# IR-centric imports (optional - for migration)
+try:
+    from src.cognitive.ir.application_ir import ApplicationIR
+    from src.cognitive.ir.domain_model import Entity
+    from src.cognitive.ir.api_model import Endpoint
+    IR_AVAILABLE = True
+except ImportError:
+    ApplicationIR = None
+    Entity = None
+    Endpoint = None
+    IR_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -50,12 +62,18 @@ class CodeRepairAgent:
     4. Provides rollback capability if patches fail
     """
 
-    def __init__(self, output_path: Path, llm_client: Optional[EnhancedAnthropicClient] = None):
+    def __init__(
+        self,
+        output_path: Path,
+        application_ir: Optional["ApplicationIR"] = None,
+        llm_client: Optional[EnhancedAnthropicClient] = None
+    ):
         """
         Initialize code repair agent.
 
         Args:
             output_path: Path to generated app directory
+            application_ir: Optional ApplicationIR for IR-centric repairs (preferred)
             llm_client: Optional LLM client for intelligent parsing
         """
         # Convert to absolute path to work from any working directory
@@ -64,10 +82,14 @@ class CodeRepairAgent:
         self.routes_dir = self.output_path / "src" / "api" / "routes"
         self.llm_client = llm_client or EnhancedAnthropicClient()
 
+        # IR-centric mode (Phase 7 migration)
+        self.application_ir = application_ir
+        self._use_ir = application_ir is not None and IR_AVAILABLE
+
     async def repair(
         self,
         compliance_report,
-        spec_requirements,
+        spec_requirements=None,
         max_attempts: int = 3
     ) -> RepairResult:
         """
@@ -79,12 +101,30 @@ class CodeRepairAgent:
 
         Args:
             compliance_report: ComplianceReport with failures
-            spec_requirements: SpecRequirements with expected entities/endpoints
+            spec_requirements: SpecRequirements with expected entities/endpoints (legacy, optional if IR available)
             max_attempts: Maximum repair attempts (not used for AST, kept for API compatibility)
 
         Returns:
             RepairResult with outcome
         """
+        # === IR vs Legacy Routing (Phase 7 migration) ===
+        if self._use_ir:
+            logger.info("CodeRepair: Using IR-centric mode (ApplicationIR)")
+            return await self._repair_from_ir(compliance_report)
+
+        # Legacy mode: requires spec_requirements
+        if spec_requirements is None:
+            logger.warning("CodeRepair: Neither ApplicationIR nor spec_requirements available")
+            return RepairResult(
+                success=False,
+                repaired_files=[],
+                repairs_applied=[],
+                error_message="spec_requirements required when ApplicationIR not available"
+            )
+
+        logger.info("CodeRepair: Using legacy mode (spec_requirements)")
+
+        # === Legacy repair logic below ===
         repairs_applied = []
         repaired_files = []
 
@@ -198,6 +238,201 @@ class CodeRepairAgent:
                 repairs_applied=[],
                 error_message=str(e)
             )
+
+    # =========================================================================
+    # IR-CENTRIC REPAIR METHODS (Phase 7 Migration)
+    # =========================================================================
+
+    async def _repair_from_ir(self, compliance_report) -> RepairResult:
+        """
+        Repair code using ApplicationIR as source of truth.
+
+        Uses DomainModelIR for entity definitions and APIModelIR for endpoints,
+        instead of legacy spec_requirements.
+
+        Args:
+            compliance_report: ComplianceReport with failures
+
+        Returns:
+            RepairResult with outcome
+        """
+        repairs_applied = []
+        repaired_files = []
+
+        try:
+            # Get IR models
+            domain_model = self.application_ir.domain_model
+            api_model = self.application_ir.api_model
+
+            # Identify what's missing
+            missing_entities = [
+                e for e in compliance_report.entities_expected
+                if e.lower() not in [i.lower() for i in compliance_report.entities_implemented]
+            ]
+
+            missing_endpoints = [
+                e for e in compliance_report.endpoints_expected
+                if e.lower() not in [i.lower() for i in compliance_report.endpoints_implemented]
+            ]
+
+            logger.info(f"CodeRepair (IR): {len(missing_entities)} missing entities, {len(missing_endpoints)} missing endpoints")
+
+            # Repair missing entities from DomainModelIR
+            if missing_entities and domain_model and domain_model.entities:
+                for entity_name in missing_entities:
+                    try:
+                        # Find entity in DomainModelIR
+                        entity_ir = next(
+                            (e for e in domain_model.entities if e.name.lower() == entity_name.lower()),
+                            None
+                        )
+
+                        if entity_ir:
+                            success = self._repair_entity_from_ir(entity_ir)
+                            if success:
+                                repairs_applied.append(f"Added entity (IR): {entity_name}")
+                                if str(self.entities_file) not in repaired_files:
+                                    repaired_files.append(str(self.entities_file))
+                            else:
+                                logger.warning(f"Failed to add entity from IR: {entity_name}")
+                        else:
+                            logger.warning(f"Entity {entity_name} not found in DomainModelIR")
+                    except Exception as e:
+                        logger.error(f"Error adding entity {entity_name} from IR: {e}")
+
+            # Repair missing endpoints from APIModelIR
+            if missing_endpoints and api_model and api_model.endpoints:
+                for endpoint_str in missing_endpoints:
+                    try:
+                        # Parse endpoint: "POST /products"
+                        parts = endpoint_str.split()
+                        if len(parts) >= 2:
+                            method = parts[0].upper()
+                            path = parts[1]
+
+                            # Find endpoint in APIModelIR
+                            endpoint_ir = next(
+                                (e for e in api_model.endpoints
+                                 if e.method.upper() == method and e.path == path),
+                                None
+                            )
+
+                            if endpoint_ir:
+                                route_file = self._repair_endpoint_from_ir(endpoint_ir)
+                                if route_file:
+                                    repairs_applied.append(f"Added endpoint (IR): {method} {path}")
+                                    if route_file not in repaired_files:
+                                        repaired_files.append(route_file)
+                                else:
+                                    logger.warning(f"Failed to add endpoint from IR: {endpoint_str}")
+                            else:
+                                logger.warning(f"Endpoint {endpoint_str} not found in APIModelIR")
+                    except Exception as e:
+                        logger.error(f"Error adding endpoint {endpoint_str} from IR: {e}")
+
+            if repairs_applied:
+                return RepairResult(
+                    success=True,
+                    repaired_files=repaired_files,
+                    repairs_applied=repairs_applied
+                )
+            else:
+                return RepairResult(
+                    success=False,
+                    repaired_files=[],
+                    repairs_applied=[],
+                    error_message="No repairs could be applied from IR"
+                )
+
+        except Exception as e:
+            logger.error(f"CodeRepair (IR) failed: {e}")
+            return RepairResult(
+                success=False,
+                repaired_files=[],
+                repairs_applied=[],
+                error_message=str(e)
+            )
+
+    def _repair_entity_from_ir(self, entity_ir: "Entity") -> bool:
+        """
+        Add missing entity using DomainModelIR Entity definition.
+
+        Uses the same AST patching as legacy, but extracts attributes
+        from the IR Entity structure.
+
+        Args:
+            entity_ir: Entity from DomainModelIR
+
+        Returns:
+            True if successful
+        """
+        try:
+            # Create a pseudo entity_req compatible with repair_missing_entity
+            # This allows reusing the existing AST patching logic
+            class EntityReq:
+                def __init__(self, name, attributes):
+                    self.name = name
+                    self.attributes = attributes
+
+            # Convert IR attributes to format expected by repair_missing_entity
+            attributes = []
+            if entity_ir.attributes:
+                for attr in entity_ir.attributes:
+                    attr_dict = {
+                        'name': attr.name,
+                        'type': attr.type,
+                        'required': not attr.is_nullable if hasattr(attr, 'is_nullable') else True
+                    }
+                    if hasattr(attr, 'constraints') and attr.constraints:
+                        attr_dict['constraints'] = attr.constraints
+                    attributes.append(type('Attr', (), attr_dict)())
+
+            entity_req = EntityReq(entity_ir.name, attributes)
+            return self.repair_missing_entity(entity_req)
+
+        except Exception as e:
+            logger.error(f"_repair_entity_from_ir failed: {e}")
+            return False
+
+    def _repair_endpoint_from_ir(self, endpoint_ir: "Endpoint") -> Optional[str]:
+        """
+        Add missing endpoint using APIModelIR Endpoint definition.
+
+        Uses the same AST patching as legacy, but extracts details
+        from the IR Endpoint structure.
+
+        Args:
+            endpoint_ir: Endpoint from APIModelIR
+
+        Returns:
+            Path to modified route file, or None if failed
+        """
+        try:
+            # Create a pseudo endpoint_req compatible with repair_missing_endpoint
+            class EndpointReq:
+                def __init__(self, method, path, request_body=None, response=None, description=""):
+                    self.method = method
+                    self.path = path
+                    self.request_body = request_body
+                    self.response = response
+                    self.description = description
+
+            endpoint_req = EndpointReq(
+                method=endpoint_ir.method,
+                path=endpoint_ir.path,
+                request_body=endpoint_ir.request_body if hasattr(endpoint_ir, 'request_body') else None,
+                response=endpoint_ir.response if hasattr(endpoint_ir, 'response') else None,
+                description=endpoint_ir.description if hasattr(endpoint_ir, 'description') else ""
+            )
+            return self.repair_missing_endpoint(endpoint_req)
+
+        except Exception as e:
+            logger.error(f"_repair_endpoint_from_ir failed: {e}")
+            return None
+
+    # =========================================================================
+    # LEGACY REPAIR METHODS (preserved for backward compatibility)
+    # =========================================================================
 
     def repair_missing_entity(self, entity_req) -> bool:
         """
@@ -393,15 +628,15 @@ class CodeRepairAgent:
 
     def _generate_endpoint_function_ast(self, endpoint_req, entity_name: str) -> ast.AsyncFunctionDef:
         """
-        Generate AST node for FastAPI endpoint function.
+        Generate AST node for FastAPI endpoint function with real implementation.
 
         Creates function like:
         ```
         @router.get("/")
-        async def get_all_products(db: AsyncSession = Depends(get_db)):
+        async def list_products(db: AsyncSession = Depends(get_db)):
             service = ProductService(db)
-            products = await service.get_all()
-            return products
+            result = await service.list(page=1, size=100)
+            return result.items
         ```
 
         Args:
@@ -411,15 +646,13 @@ class CodeRepairAgent:
         Returns:
             ast.AsyncFunctionDef node
         """
-        # Simplified implementation - creates basic CRUD endpoint
-        # In production would parse endpoint_req details
-
         method = endpoint_req.method.lower()
         entity_capitalized = entity_name.capitalize()
+        service_class = f"{entity_capitalized}Service"
 
         # Determine function name from method
         if method == 'get':
-            func_name = f"get_all_{entity_name}s"
+            func_name = f"list_{entity_name}s"
         elif method == 'post':
             func_name = f"create_{entity_name}"
         elif method == 'put':
@@ -428,6 +661,77 @@ class CodeRepairAgent:
             func_name = f"delete_{entity_name}"
         else:
             func_name = f"{method}_{entity_name}"
+
+        # Generate real function body based on HTTP method
+        # Body: service = {Entity}Service(db)
+        service_assign = ast.Assign(
+            targets=[ast.Name(id='service', ctx=ast.Store())],
+            value=ast.Call(
+                func=ast.Name(id=service_class, ctx=ast.Load()),
+                args=[ast.Name(id='db', ctx=ast.Load())],
+                keywords=[]
+            )
+        )
+
+        if method == 'get':
+            # result = await service.list(page=1, size=100)
+            # return result.items
+            body = [
+                service_assign,
+                ast.Assign(
+                    targets=[ast.Name(id='result', ctx=ast.Store())],
+                    value=ast.Await(
+                        value=ast.Call(
+                            func=ast.Attribute(
+                                value=ast.Name(id='service', ctx=ast.Load()),
+                                attr='list',
+                                ctx=ast.Load()
+                            ),
+                            args=[],
+                            keywords=[
+                                ast.keyword(arg='page', value=ast.Constant(value=1)),
+                                ast.keyword(arg='size', value=ast.Constant(value=100))
+                            ]
+                        )
+                    )
+                ),
+                ast.Return(
+                    value=ast.Attribute(
+                        value=ast.Name(id='result', ctx=ast.Load()),
+                        attr='items',
+                        ctx=ast.Load()
+                    )
+                )
+            ]
+        elif method == 'post':
+            # return await service.create(data)
+            body = [
+                service_assign,
+                ast.Return(
+                    value=ast.Await(
+                        value=ast.Call(
+                            func=ast.Attribute(
+                                value=ast.Name(id='service', ctx=ast.Load()),
+                                attr='create',
+                                ctx=ast.Load()
+                            ),
+                            args=[ast.Name(id='data', ctx=ast.Load())],
+                            keywords=[]
+                        )
+                    )
+                )
+            ]
+        else:
+            # For PUT/DELETE and others, use NotImplementedError with clear message
+            body = [
+                ast.Raise(
+                    exc=ast.Call(
+                        func=ast.Name(id='NotImplementedError', ctx=ast.Load()),
+                        args=[ast.Constant(value=f"Endpoint {func_name} needs implementation")],
+                        keywords=[]
+                    )
+                )
+            ]
 
         # Create async function with decorator
         func_def = ast.AsyncFunctionDef(
@@ -447,10 +751,7 @@ class CodeRepairAgent:
                     )
                 ]
             ),
-            body=[
-                # Simple pass placeholder - in production would generate full logic
-                ast.Pass()
-            ],
+            body=body,
             decorator_list=[
                 ast.Call(
                     func=ast.Attribute(

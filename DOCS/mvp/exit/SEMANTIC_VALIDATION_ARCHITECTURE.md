@@ -2,7 +2,7 @@
 
 **Document Version**: 3.0
 **Date**: November 25, 2025
-**Status**: ✅ Phase 1 Complete | ✅ Phase 2 Complete | ✅ Phase 3 Complete | 🟢 Phase 4 Pending
+**Status**: ✅ Phase 1 Complete | ✅ Phase 2 Complete | ✅ Phase 3 Complete | ✅ Phase 4 Complete
 **Priority**: 🔴 CRITICAL - Determinism of DevMatrix Engine
 
 ---
@@ -179,21 +179,23 @@ SemanticMatcher now says:
 
 ---
 
-### Phase 4: Ground Truth Normalization 🟡 PENDING
+### Phase 4: Ground Truth Normalization ✅ COMPLETE
 
 **Impact**: +5-10% compliance recovery
 
 **New Flow**:
-1. Parse spec
-2. Transform to ApplicationIR (canonical)
-3. Evaluate ground truth against IR (not raw text)
+1. Parse spec (lenguaje natural)
+2. Transform to ApplicationIR (canonical) via `SpecToApplicationIR`
+3. Evaluate ground truth against IR via `ir_compliance_checker`
 
 This eliminates 90% of format inconsistencies.
 
 **Deliverables**:
-- [ ] Spec → ApplicationIR transformer
-- [ ] Ground truth validator using IR comparison
-- [ ] Update test specs to use IR format
+- [x] Spec → ApplicationIR transformer → `SpecToApplicationIR`
+- [x] Ground truth validator using IR comparison → `check_full_ir_compliance()`
+- [x] IR generated dynamically from natural language specs (NO precargado)
+
+**Key Insight**: Las specs son lenguaje natural. El IR se genera determinísticamente, no se precarga.
 
 ---
 
@@ -248,7 +250,10 @@ src/
 │   ├── semantic_matcher.py              [✅ Done Phase 1]
 │   ├── semantic_normalizer.py           [✅ Done Phase 2 - Nov 25, 2025]
 │   ├── unified_constraint_extractor.py  [✅ Done Phase 2 - Nov 25, 2025]
-│   └── ir_semantic_matcher.py           [✅ Done Phase 3 - Nov 25, 2025]
+│   ├── ir_semantic_matcher.py           [✅ Done Phase 3 - Nov 25, 2025]
+│   ├── ir_test_generator.py             [✅ Done - Nov 26, 2025] E2E integrated
+│   ├── ir_compliance_checker.py         [✅ Done - Nov 26, 2025] E2E integrated
+│   └── ir_service_generator.py          [✅ Done - Nov 26, 2025] E2E integrated
 ├── cognitive/ir/
 │   ├── constraint_ir.py                 [✅ Done Phase 3 - Nov 25, 2025]
 │   ├── validation_model.py              [✅ Existing, enhanced]
@@ -261,6 +266,9 @@ tests/unit/
 ├── test_semantic_normalizer.py          [✅ Done Phase 2 - Nov 25, 2025]
 ├── test_unified_constraint_extractor.py [✅ Done Phase 2 - Nov 25, 2025]
 └── test_ir_semantic_matcher.py          [✅ Done Phase 3 - 19/19 passing]
+
+tests/e2e/
+└── real_e2e_full_pipeline.py            [✅ Modified - Phase 6.5, 6.6 + Phase 9 IR]
 ```
 
 ---

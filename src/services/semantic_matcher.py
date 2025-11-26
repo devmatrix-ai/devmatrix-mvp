@@ -60,7 +60,7 @@ class SemanticMatcher:
         self,
         model_name: str = "all-MiniLM-L6-v2",
         use_llm_fallback: bool = True,
-        llm_model: str = "claude-3-haiku-20240307"
+        llm_model: str = "claude-haiku-4-5-20251001"
     ):
         """
         Initialize the semantic matcher.

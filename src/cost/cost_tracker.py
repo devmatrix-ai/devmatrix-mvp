@@ -53,7 +53,7 @@ class CostTracker:
             'input': 3.00,   # $3 per 1M input tokens
             'output': 15.00  # $15 per 1M output tokens
         },
-        'claude-3-5-haiku-20241022': {
+        'claude-haiku-4-5-20251001': {
             'input': 0.80,   # $0.80 per 1M input tokens
             'output': 4.00   # $4 per 1M output tokens
         },

@@ -69,8 +69,11 @@ class ApplicationIRNormalizer:
         entities = []
 
         for entity in self.app_ir.domain_model.entities:
+            # Generate snake_case name for imports and file names
+            snake_name = re.sub(r'(?<!^)(?=[A-Z])', '_', entity.name).lower()
             normalized_entity = {
                 'name': entity.name,
+                'snake_name': snake_name,  # For {{ entity.snake_name }} in templates
                 'plural': self.pluralize(entity.name),
                 'fields': self._normalize_attributes(entity.attributes),
                 'description': entity.description or f"{entity.name} entity",

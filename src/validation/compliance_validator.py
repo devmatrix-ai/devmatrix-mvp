@@ -23,6 +23,13 @@ from dataclasses import dataclass, field as dataclass_field
 from src.parsing.spec_parser import SpecRequirements
 from src.analysis.code_analyzer import CodeAnalyzer
 
+# Support for IR-centric architecture
+try:
+    from src.cognitive.ir.application_ir import ApplicationIR
+    APPLICATION_IR_AVAILABLE = True
+except ImportError:
+    APPLICATION_IR_AVAILABLE = False
+
 # Optional: SemanticMatcher for ML-based matching (replaces manual equivalences)
 try:
     from src.services.semantic_matcher import SemanticMatcher
@@ -153,6 +160,213 @@ class ComplianceValidator:
 
         logger.info("ComplianceValidator initialized")
 
+    def _get_entities_from_spec(self, spec) -> list:
+        """
+        Extract entities from spec, handling both ApplicationIR and SpecRequirements.
+
+        Args:
+            spec: Either ApplicationIR or SpecRequirements object
+
+        Returns:
+            List of entity objects with .name and .attributes
+        """
+        # 1) ApplicationIR: domain_model.entities
+        if hasattr(spec, "domain_model") and spec.domain_model is not None:
+            if hasattr(spec.domain_model, "entities"):
+                return list(spec.domain_model.entities)
+            if hasattr(spec.domain_model, "get_entities"):
+                return spec.domain_model.get_entities()
+
+        # 2) Object has modern get_entities() method
+        if hasattr(spec, "get_entities") and callable(getattr(spec, "get_entities")):
+            try:
+                return spec.get_entities()
+            except Exception as e:
+                logger.warning(f"get_entities() failed: {e}")
+
+        # 3) Legacy SpecRequirements.entities attribute
+        if hasattr(spec, "entities"):
+            return spec.entities if spec.entities else []
+
+        logger.warning(f"Could not extract entities from spec type: {type(spec).__name__}")
+        return []
+
+    def _get_endpoints_from_spec(self, spec) -> list:
+        """
+        Extract endpoints from spec, handling both ApplicationIR and SpecRequirements.
+
+        Args:
+            spec: Either ApplicationIR or SpecRequirements object
+
+        Returns:
+            List of endpoint objects with .method and .path
+        """
+        # 1) ApplicationIR: api_model.endpoints
+        if hasattr(spec, "api_model") and spec.api_model is not None:
+            if hasattr(spec.api_model, "endpoints"):
+                return list(spec.api_model.endpoints)
+            if hasattr(spec.api_model, "get_endpoints"):
+                return spec.api_model.get_endpoints()
+
+        # 2) Object has modern get_endpoints() method
+        if hasattr(spec, "get_endpoints") and callable(getattr(spec, "get_endpoints")):
+            try:
+                return spec.get_endpoints()
+            except Exception as e:
+                logger.warning(f"get_endpoints() failed: {e}")
+
+        # 3) Legacy SpecRequirements.endpoints attribute
+        if hasattr(spec, "endpoints"):
+            return spec.endpoints if spec.endpoints else []
+
+        logger.warning(f"Could not extract endpoints from spec type: {type(spec).__name__}")
+        return []
+
+    def _get_validation_rules_from_spec(self, spec) -> list:
+        """
+        Extract validation rules from spec, handling both ApplicationIR and SpecRequirements.
+
+        Args:
+            spec: Either ApplicationIR or SpecRequirements object
+
+        Returns:
+            List of validation rule objects
+        """
+        # 1) ApplicationIR: validation_model.rules
+        if hasattr(spec, "validation_model") and spec.validation_model is not None:
+            if hasattr(spec.validation_model, "rules"):
+                return list(spec.validation_model.rules)
+
+        # 2) Object has modern get_validation_rules() method
+        if hasattr(spec, "get_validation_rules") and callable(getattr(spec, "get_validation_rules")):
+            try:
+                return spec.get_validation_rules()
+            except Exception as e:
+                logger.warning(f"get_validation_rules() failed: {e}")
+
+        # 3) Legacy SpecRequirements.validation_rules attribute
+        if hasattr(spec, "validation_rules"):
+            return spec.validation_rules if spec.validation_rules else []
+
+        return []
+
+    def _get_requirements_from_spec(self, spec) -> list:
+        """
+        Extract functional requirements from spec, handling both ApplicationIR and SpecRequirements.
+
+        Args:
+            spec: Either ApplicationIR or SpecRequirements object
+
+        Returns:
+            List of requirement objects with .type, .id, .description
+        """
+        # 1) ApplicationIR: metadata.requirements or requirements_model
+        if hasattr(spec, "metadata") and spec.metadata is not None:
+            if isinstance(spec.metadata, dict) and "requirements" in spec.metadata:
+                return spec.metadata["requirements"]
+
+        # 2) Object has requirements attribute directly
+        if hasattr(spec, "requirements"):
+            reqs = spec.requirements
+            if reqs is not None:
+                return list(reqs) if hasattr(reqs, '__iter__') else []
+
+        # 3) Legacy functional_requirements
+        if hasattr(spec, "functional_requirements"):
+            return spec.functional_requirements if spec.functional_requirements else []
+
+        return []
+
+    def _get_attributes_from_entity(self, entity) -> list:
+        """
+        Extract attributes/fields from entity, handling Entity (IR) and Entity/EntityDetail (legacy).
+
+        Args:
+            entity: Entity with .attributes (IR) or .fields (legacy)
+
+        Returns:
+            List of attribute-like objects
+        """
+        # 1) Entity moderno (IR): .attributes
+        if hasattr(entity, "attributes") and entity.attributes is not None:
+            return list(entity.attributes)
+
+        # 2) Entity/EntityDetail legacy: .fields
+        if hasattr(entity, "fields") and entity.fields is not None:
+            return list(entity.fields)
+
+        logger.warning(f"Could not extract attributes from entity: {type(entity).__name__}")
+        return []
+
+    def _is_attr_required(self, attr) -> bool:
+        """
+        Check if attribute is required, handling both Attribute (IR) and Field (legacy).
+
+        Args:
+            attr: Attribute or Field object
+
+        Returns:
+            True if required/not nullable
+        """
+        # Attribute (IR): is_nullable=False means required
+        if hasattr(attr, "is_nullable"):
+            return not attr.is_nullable
+        # Field (legacy): required=True means required
+        if hasattr(attr, "required"):
+            return attr.required
+        return False
+
+    def _get_attr_constraints(self, attr) -> dict:
+        """
+        Get constraints dict from attribute, normalizing both Attribute (dict) and Field (list).
+
+        Args:
+            attr: Attribute or Field object
+
+        Returns:
+            Dict of constraint_key: constraint_value
+        """
+        if not hasattr(attr, "constraints") or attr.constraints is None:
+            return {}
+
+        # Attribute (IR): constraints is already a dict
+        if isinstance(attr.constraints, dict):
+            return attr.constraints
+
+        # Field (legacy): constraints is a list like ["unique", "length:1-255", "gt=0"]
+        if isinstance(attr.constraints, list):
+            result = {}
+            for c in attr.constraints:
+                if ":" in c:
+                    key, val = c.split(":", 1)
+                    result[key] = val
+                elif "=" in c:
+                    key, val = c.split("=", 1)
+                    result[key] = val
+                else:
+                    result[c] = True
+            return result
+
+        return {}
+
+    def _get_attr_type(self, attr) -> str:
+        """
+        Get data type string from attribute, handling Attribute (enum) and Field (str).
+
+        Args:
+            attr: Attribute or Field object
+
+        Returns:
+            Type as string
+        """
+        # Attribute (IR): data_type is an enum
+        if hasattr(attr, "data_type"):
+            return attr.data_type.value if hasattr(attr.data_type, "value") else str(attr.data_type)
+        # Field (legacy): type is a string
+        if hasattr(attr, "type"):
+            return attr.type
+        return "unknown"
+
     def validate(
         self, spec_requirements: SpecRequirements, generated_code: str
     ) -> ComplianceReport:
@@ -173,9 +387,13 @@ class ComplianceValidator:
         endpoints_found = self.analyzer.extract_endpoints(generated_code)
         validations_found = self.analyzer.extract_validations(generated_code)
 
-        # 2. Extract what was expected
-        entities_expected = [e.name for e in spec_requirements.entities]
-        endpoints_expected = [f"{ep.method} {ep.path}" for ep in spec_requirements.endpoints]
+        # 2. Extract what was expected (IR-centric with defensive helpers)
+        # Supports both ApplicationIR and legacy SpecRequirements
+        entities_from_ir = self._get_entities_from_spec(spec_requirements)
+        endpoints_from_ir = self._get_endpoints_from_spec(spec_requirements)
+
+        entities_expected = [e.name for e in entities_from_ir]
+        endpoints_expected = [f"{ep.method} {ep.path}" for ep in endpoints_from_ir]
 
         # ARCHITECTURE RULE #1: NO Manual Ground Truth in Code
         # Per ARCHITECTURE_RULES.md, ground truth must ONLY come from automated extraction.
@@ -185,36 +403,33 @@ class ComplianceValidator:
         # (entities, endpoints, business logic), not a pre-defined manual list.
         validations_expected = []
 
-        # Build expected validations from spec requirements (not from manual YAML)
-        for entity in spec_requirements.entities:
-            for field in entity.fields:
-                # Add required constraint
-                if field.required:
-                    sig = f"{entity.name}.{field.name}: required"
+        # Build expected validations from IR entities (defensive: handles both .attributes and .fields)
+        for entity in entities_from_ir:
+            # Use defensive helper to get attributes/fields
+            for attr in self._get_attributes_from_entity(entity):
+                # Add required constraint (defensive helper handles is_nullable vs required)
+                if self._is_attr_required(attr):
+                    sig = f"{entity.name}.{attr.name}: required"
                     if sig not in validations_expected:
                         validations_expected.append(sig)
 
-                # Add other constraints
-                if field.constraints:
-                    for constraint in field.constraints:
+                # Add other constraints from IR (defensive helper normalizes dict vs list)
+                constraints = self._get_attr_constraints(attr)
+                if constraints:
+                    for constraint_key, constraint_val in constraints.items():
                         # Normalize constraint to match code format
-                        constraint = self._normalize_constraint(constraint)
+                        constraint_str = f"{constraint_key}={constraint_val}" if constraint_val is not True else constraint_key
+                        constraint_str = self._normalize_constraint(constraint_str)
 
-                        sig = f"{entity.name}.{field.name}: {constraint}"
+                        sig = f"{entity.name}.{attr.name}: {constraint_str}"
                         if sig not in validations_expected:
                             validations_expected.append(sig)
 
-        # If no explicit validations found at all, use fallback
+        # If no explicit validations from entities, use ValidationModelIR rules
         if not validations_expected:
-            # Fallback to old logic
-            for bl in spec_requirements.business_logic:
-                if bl.type == "validation":
-                    validations_expected.append(bl.description)
-
-            # If still no explicit validations, use a minimum count based on entities
-            if not validations_expected and entities_expected:
-                # Expect at least 2 validations per entity (heuristic)
-                validations_expected = [f"validation_{i}" for i in range(len(entities_expected) * 2)]
+            validation_rules = self._get_validation_rules_from_spec(spec_requirements)
+            for rule in validation_rules:
+                validations_expected.append(f"{rule.entity}.{rule.field}: {rule.type.value}")
 
         # 3. Calculate compliance per category
         entity_compliance = self._calculate_compliance(entities_found, entities_expected)
@@ -467,8 +682,9 @@ class ComplianceValidator:
             entities_found = []
             schemas = openapi_schema.get("components", {}).get("schemas", {})
 
-            # Build set of expected entity names (lowercase for comparison)
-            entities_expected_lower = {e.lower() for e in [ent.name for ent in spec_requirements.entities]}
+            # Build set of expected entity names (lowercase for comparison) - IR-centric with defensive helper
+            entities_from_ir = self._get_entities_from_spec(spec_requirements)
+            entities_expected_lower = {e.lower() for e in [ent.name for ent in entities_from_ir]}
             logger.debug(f"Looking for entities: {entities_expected_lower}")
 
             # Check all schemas and extract base entity names
@@ -799,9 +1015,13 @@ class ComplianceValidator:
             else:
                 logger.debug(f"entities.py not found at {entities_file}")
 
-            # 4. Extract what was expected from spec
-            entities_expected = [e.name for e in spec_requirements.entities]
-            endpoints_expected = [f"{ep.method} {ep.path}" for ep in spec_requirements.endpoints]
+            # 4. Extract what was expected from spec (IR-centric with defensive helpers)
+            # Supports both ApplicationIR and legacy SpecRequirements
+            entities_from_ir = self._get_entities_from_spec(spec_requirements)
+            endpoints_from_ir = self._get_endpoints_from_spec(spec_requirements)
+
+            entities_expected = [e.name for e in entities_from_ir]
+            endpoints_expected = [f"{ep.method} {ep.path}" for ep in endpoints_from_ir]
 
             # ARCHITECTURE RULE #1: NO Manual Ground Truth in Code
             # Per ARCHITECTURE_RULES.md, ground truth must ONLY come from automated extraction.
@@ -811,36 +1031,33 @@ class ComplianceValidator:
             # (entities, endpoints, business logic), not a pre-defined manual list.
             validations_expected = []
 
-            # Build expected validations from spec requirements (not from manual YAML)
-            for entity in spec_requirements.entities:
-                for field in entity.fields:
-                    # Add required constraint
-                    if field.required:
-                        sig = f"{entity.name}.{field.name}: required"
+            # Build expected validations from IR entities (defensive: handles both .attributes and .fields)
+            for entity in entities_from_ir:
+                # Use defensive helper to get attributes/fields
+                for attr in self._get_attributes_from_entity(entity):
+                    # Add required constraint (defensive helper handles is_nullable vs required)
+                    if self._is_attr_required(attr):
+                        sig = f"{entity.name}.{attr.name}: required"
                         if sig not in validations_expected:
                             validations_expected.append(sig)
 
-                    # Add other constraints
-                    if field.constraints:
-                        for constraint in field.constraints:
+                    # Add other constraints from IR (defensive helper normalizes dict vs list)
+                    constraints = self._get_attr_constraints(attr)
+                    if constraints:
+                        for constraint_key, constraint_val in constraints.items():
                             # Normalize constraint to match code format
-                            constraint = self._normalize_constraint(constraint)
+                            constraint_str = f"{constraint_key}={constraint_val}" if constraint_val is not True else constraint_key
+                            constraint_str = self._normalize_constraint(constraint_str)
 
-                            sig = f"{entity.name}.{field.name}: {constraint}"
+                            sig = f"{entity.name}.{attr.name}: {constraint_str}"
                             if sig not in validations_expected:
                                 validations_expected.append(sig)
 
-            # If no explicit validations found at all, use fallback
+            # If no explicit validations from entities, use ValidationModelIR rules
             if not validations_expected:
-                # Fallback to old logic (business_logic)
-                for bl in spec_requirements.business_logic:
-                    if bl.type == "validation":
-                        validations_expected.append(bl.description)
-
-                # If still no explicit validations, use a minimum count based on entities
-                if not validations_expected and entities_expected:
-                    # Expect at least 2 validations per entity (heuristic)
-                    validations_expected = [f"validation_{i}" for i in range(len(entities_expected) * 2)]
+                validation_rules = self._get_validation_rules_from_spec(spec_requirements)
+                for rule in validation_rules:
+                    validations_expected.append(f"{rule.entity}.{rule.field}: {rule.type.value}")
 
             # 5. Calculate compliance per category
             entity_compliance = self._calculate_compliance(entities_found, entities_expected)
@@ -2153,12 +2370,16 @@ class ComplianceValidator:
         if len(missing_endpoints) > 5:
             missing.append(f"... and {len(missing_endpoints) - 5} more endpoints")
 
-        # Missing functional requirements (sample)
-        for req in spec.requirements[:5]:
-            if req.type == "functional":
+        # Missing functional requirements (sample) - use defensive helper
+        requirements = self._get_requirements_from_spec(spec)
+        for req in requirements[:5]:
+            # Handle both object with .type and dict with 'type' key
+            req_type = getattr(req, 'type', None) or (req.get('type') if isinstance(req, dict) else None)
+            if req_type == "functional":
                 # Check if requirement keywords are in code (heuristic)
-                # This is a simplified check
-                missing.append(f"Requirement {req.id}: {req.description[:60]}...")
+                req_id = getattr(req, 'id', None) or (req.get('id', 'N/A') if isinstance(req, dict) else 'N/A')
+                req_desc = getattr(req, 'description', '') or (req.get('description', '') if isinstance(req, dict) else '')
+                missing.append(f"Requirement {req_id}: {req_desc[:60]}...")
 
         return missing
 
@@ -2399,28 +2620,33 @@ class ComplianceValidator:
         Returns:
             SpecRequirements compatible with existing validation logic
         """
-        # Extract entities from DomainModelIR
+        # Extract entities from DomainModelIR (defensive: handles both Entity types)
         entities = []
         for entity in application_ir.domain_model.entities:
+            # Build attributes list using defensive helpers
+            attrs_list = []
+            for attr in self._get_attributes_from_entity(entity):
+                attrs_list.append({
+                    "name": attr.name,
+                    "type": self._get_attr_type(attr),
+                    "required": self._is_attr_required(attr),
+                    "constraints": self._get_attr_constraints(attr),
+                })
+
+            # Build relationships list (defensive for missing relationships attr)
+            rels_list = []
+            if hasattr(entity, "relationships") and entity.relationships:
+                for rel in entity.relationships:
+                    rels_list.append({
+                        "target": rel.target_entity,
+                        "type": rel.type.value if hasattr(rel.type, "value") else str(rel.type),
+                        "field": rel.field_name,
+                    })
+
             entities.append({
                 "name": entity.name,
-                "attributes": [
-                    {
-                        "name": attr.name,
-                        "type": attr.data_type.value,
-                        "required": not attr.is_nullable,
-                        "constraints": attr.constraints,
-                    }
-                    for attr in entity.attributes
-                ],
-                "relationships": [
-                    {
-                        "target": rel.target_entity,
-                        "type": rel.type.value,
-                        "field": rel.field_name,
-                    }
-                    for rel in entity.relationships
-                ],
+                "attributes": attrs_list,
+                "relationships": rels_list,
             })
 
         # Extract endpoints from APIModelIR

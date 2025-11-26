@@ -157,21 +157,30 @@ Can be used for:
 - ✅ **Backward compatible**: SpecParser still available
 - ✅ **Non-blocking**: Failure doesn't stop E2E test
 
-### Phase 2: Code Generation (Future)
-- 🔄 Use ApplicationIR for entity generation
-- 🔄 Use APIModelIR for endpoint generation
-- 🔄 Use ValidationModelIR for schema validation
-- 🔄 Use BehaviorModelIR for service logic
+### Phase 2: Code Generation ✅ DONE
+- ✅ Use ApplicationIR for entity generation (`generate_from_application_ir()`)
+- ✅ Use APIModelIR for endpoint generation
+- ✅ Use DomainModelIR for schema validation
+- ✅ Use BehaviorModelIR for service logic → `ServiceGeneratorFromIR`
 
-### Phase 3: Test Generation (Future)
-- 🔄 Use ValidationModelIR for test cases
-- 🔄 Use BehaviorModelIR for integration tests
-- 🔄 Use APIModelIR for contract tests
+### Phase 6.5: Test Generation ✅ INTEGRATED
+- ✅ Use ValidationModelIR for test cases → `TestGeneratorFromIR`
+- ✅ Use BehaviorModelIR for integration tests → `IntegrationTestGeneratorFromIR`
+- ✅ Use APIModelIR for contract tests → `APIContractValidatorFromIR`
+- ✅ Runs automatically in E2E pipeline after Phase 6
 
-### Phase 7: Compliance Validation
-- 🔄 Compare generated code against ApplicationIR
-- 🔄 Validate flows implemented against BehaviorModelIR
-- 🔄 Verify validation rules against ValidationModelIR
+### Phase 6.6: Service Generation ✅ INTEGRATED
+- ✅ Generate service methods from BehaviorModelIR flows → `ServiceGeneratorFromIR`
+- ✅ Generate standalone BusinessFlowService for cross-entity flows
+- ✅ Flow coverage reporting → `get_flow_coverage_report()`
+- ✅ Runs automatically in E2E pipeline after Phase 6.5
+
+### Phase 9: Compliance Validation ✅ INTEGRATED
+- ✅ Compare generated code against ApplicationIR (via `generate_from_application_ir`)
+- ✅ Validate flows implemented against BehaviorModelIR → `FlowComplianceChecker`
+- ✅ Verify validation rules against ValidationModelIR → `ConstraintComplianceChecker`
+- ✅ Entity compliance checking → `EntityComplianceChecker`
+- ✅ Runs automatically in E2E pipeline Phase 9
 
 ---
 
@@ -209,23 +218,81 @@ async with client.messages.stream(...) as stream:
 
 ---
 
-## Next Steps (Planned)
+## Progress & Next Steps
 
-### Phase 2: Code Generation Integration
-1. Modify CodeGenerationService to use ApplicationIR
-2. Generate entities from DomainModelIR
-3. Generate endpoints from APIModelIR
-4. Generate services from BehaviorModelIR
+### ✅ COMPLETED: Code Generation Integration
+1. ✅ Created `generate_from_application_ir()` in CodeGenerationService
+2. ✅ Phase 6 now uses ApplicationIR directly (no IR reconstruction)
+3. ✅ Entities generated from DomainModelIR
+4. ✅ Endpoints generated from APIModelIR
 
-### Phase 3: Test Generation
-1. Generate tests from ValidationModelIR
-2. Generate integration tests from BehaviorModelIR
-3. Add contract validation using APIModelIR
+### ✅ COMPLETED: DAG Ground Truth Migration
+1. ✅ Created `_get_dag_ground_truth_from_ir()` helper
+2. ✅ Phase 3 Multi-Pass Planning uses ApplicationIR for DAG
+3. ✅ Fallback to spec_requirements for backward compatibility
 
-### Phase 7: Compliance Validation
-1. Compare generated entities vs DomainModelIR
-2. Validate flows implemented vs BehaviorModelIR
-3. Verify constraints vs ValidationModelIR
+### ✅ COMPLETED: Architecture Debt Resolution
+
+**Problem (RESOLVED)**: E2E test file had business logic that belonged in `/src`.
+
+**Solution Applied**:
+
+| Step | Status | Description |
+|------|--------|-------------|
+| 1. Add methods to ApplicationIR | ✅ Done | Added `get_entities()`, `get_endpoints()`, `get_dag_ground_truth()`, `get_requirements_summary()`, `get_metadata()` |
+| 2. Update E2E helpers to use ApplicationIR | ✅ Done | Helpers now delegate to `self.application_ir.get_*()` |
+| 3. Remove duplicate logic from E2E | ✅ Done | Reduced from ~4000 lines to ~3900 lines (~100 lines of duplication removed) |
+| 4. Extract E2E phases to separate files | 🔜 Future | Split file into phase modules |
+
+**Target Architecture** (ACHIEVED):
+```
+src/cognitive/ir/application_ir.py  ← Business logic (getters, derived data) ✅
+tests/e2e/real_e2e_full_pipeline.py ← Orchestration + fallback logic ✅
+```
+
+---
+
+### ✅ COMPLETED: SpecParser Deprecation Plan
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| 1. IR as Primary | ✅ Done | ApplicationIR is primary source for code gen |
+| 2. Enrich IR | ✅ Done | Added convenience methods to ApplicationIR |
+| 3. Mark Deprecated | ✅ Done | Added `@deprecated` warning to SpecParser |
+| 4. Remove Legacy | 🗑️ Future | Remove SpecParser completely (after migration complete) |
+
+**Remaining spec_requirements usages (to migrate)**:
+- `requirements` list (descriptions) → derive from APIModelIR + BehaviorModelIR
+- `entities` list → DomainModelIR.entities
+- `endpoints` list → APIModelIR.endpoints
+- `metadata` dict → ApplicationIR metadata
+- `classification_ground_truth` (detailed) → needs IR enrichment
+
+### ✅ COMPLETED: Test Generation
+
+1. ✅ Generate tests from ValidationModelIR → `TestGeneratorFromIR`
+2. ✅ Generate integration tests from BehaviorModelIR → `IntegrationTestGeneratorFromIR`
+3. ✅ Add contract validation using APIModelIR → `APIContractValidatorFromIR`
+
+**New File**: `src/services/ir_test_generator.py`
+
+- `TestGeneratorFromIR`: ValidationRule → pytest test methods
+- `IntegrationTestGeneratorFromIR`: Flow → integration test class
+- `APIContractValidatorFromIR`: Endpoint → contract test + validate_endpoints()
+- `generate_all_tests_from_ir()`: One-call test generation
+
+### ✅ COMPLETED: Compliance Validation
+
+1. ✅ Compare generated entities vs DomainModelIR → `EntityComplianceChecker`
+2. ✅ Validate flows implemented vs BehaviorModelIR → `FlowComplianceChecker`
+3. ✅ Verify constraints vs ValidationModelIR → `ConstraintComplianceChecker`
+
+**New File**: `src/services/ir_compliance_checker.py`
+
+- `EntityComplianceChecker`: AST-based entity validation
+- `FlowComplianceChecker`: Service method coverage validation
+- `ConstraintComplianceChecker`: Constraint enforcement validation
+- `check_full_ir_compliance()`: One-call compliance check
 
 ---
 
@@ -234,7 +301,14 @@ async with client.messages.stream(...) as stream:
 - ✅ `tests/e2e/real_e2e_full_pipeline.py`
   - Added SpecToApplicationIR import
   - Added Phase 1 ApplicationIR extraction
+  - Added `_get_dag_ground_truth_from_ir()` helper
+  - Phase 3 uses IR-centric DAG ground truth
+  - Phase 6 uses `generate_from_application_ir()`
   - Self.application_ir available for downstream phases
+
+- ✅ `src/services/code_generation_service.py`
+  - Added `generate_from_application_ir()` method (lines 515-710)
+  - Accepts ApplicationIR directly, avoids IR reconstruction
 
 - ✅ `src/specs/spec_to_application_ir.py`
   - Implemented streaming for large specs
@@ -245,7 +319,7 @@ async with client.messages.stream(...) as stream:
 
 ## Error Handling
 
-ApplicationIR extraction is **non-blocking**:
+ApplicationIR extraction is **non-blocking** (mensaje de ariel, si falla IR falla todo asi q cada vez q falle IR para el test y avisa con error especifico):
 
 ```python
 try:
@@ -272,6 +346,88 @@ If extraction fails:
 
 ---
 
+---
+
+## IR Usage by Phase
+
+| Phase | Usa IR? | Detalle |
+|-------|---------|---------|
+| **1** | ✅ **EXTRAE** | `SpecToApplicationIR` → genera ApplicationIR |
+| **1.5** | ✅ | ValidationModelIR enrichment |
+| **2** | ✅ | `get_dag_ground_truth()` desde ApplicationIR |
+| **3** | ✅ **MIGRADO** | DAG nodos desde IR (entities, endpoints, flows) |
+| **4** | ❌ | Atomization - planning intermedio |
+| **5** | ✅ | Hereda nodos IR de Phase 3 |
+| **6** | ✅ **REQUIERE** | `generate_from_application_ir()` |
+| **6.5** | ✅ **REQUIERE** | TestGeneratorFromIR |
+| **6.6** | ✅ **REQUIERE** | ServiceGeneratorFromIR |
+| **7** | ✅ **MIGRADO** | CodeRepairAgent usa ApplicationIR (DomainModelIR, APIModelIR) |
+| **8** | ❌ | Test Execution - opera sobre output |
+| **9** | ✅ **REQUIERE** | ComplianceValidator contra IR |
+| **10-11** | ❌ | Operacional / Learning |
+
+### ✅ Phase 7 (Code Repair) - MIGRADO
+
+**Estado**: ✅ COMPLETADO (Nov 26, 2025)
+
+CodeRepairAgent ahora usa ApplicationIR como fuente de verdad:
+
+```python
+# Constructor actualizado:
+self.code_repair_agent = CodeRepairAgent(
+    output_path=self.output_path,
+    application_ir=self.application_ir  # ← IR-centric
+)
+
+# Repair usando IR:
+entity_def = next(
+    (e for e in self.application_ir.domain_model.entities
+     if e.name.lower() == entity_name.lower()),
+    None
+)
+```
+
+**Beneficio**: Ground truth consistente entre generación (Phase 6) y repair (Phase 7)
+
+---
+
+### ✅ Phase 3 & 5 - MIGRADO
+
+**Estado**: ✅ COMPLETADO (Nov 26, 2025)
+
+**Phase 3 (Multi-Pass Planning)**: DAG nodos ahora vienen de IR:
+
+```python
+def _get_dag_nodes_from_ir(self):
+    nodes = []
+    # Entities desde DomainModelIR
+    for entity in self.application_ir.domain_model.entities:
+        nodes.append({"id": f"entity_{entity.name.lower()}", "type": "entity"})
+    # Endpoints desde APIModelIR
+    for endpoint in self.application_ir.api_model.endpoints:
+        nodes.append({"id": f"{endpoint.method}_{endpoint.path}", "type": "endpoint"})
+    # Flows desde BehaviorModelIR
+    for flow in self.application_ir.behavior_model.flows:
+        nodes.append({"id": f"flow_{flow.name}", "type": "flow"})
+    return nodes
+```
+
+**Phase 5 (DAG Construction)**: Hereda nodos IR de Phase 3 ✅
+
+**Beneficio**: Grafo 100% derivado de IR - consistencia total
+
+---
+
+## Migration Status
+
+| Fase | Estado | Fecha |
+|------|--------|-------|
+| **Phase 7** | ✅ COMPLETADO | Nov 26, 2025 |
+| **Phase 3/5** | ✅ COMPLETADO | Nov 26, 2025 |
+| **Phase 4** | ❌ No requerido | Transformación interna |
+
+---
+
 ## Conclusion
 
 ✅ **E2E test now uses IR-centric architecture**
@@ -280,3 +436,10 @@ If extraction fails:
 - Spec → SpecRequirements → Code (legacy path)
 - Both coexist for gradual migration
 - Foundation for Phase 2-7 enhancements
+
+### Remaining Legacy Usage
+
+| Component | Usa spec_requirements | Migration Status |
+|-----------|----------------------|------------------|
+| **Phase 7 CodeRepair** | ❌ No (usa IR) | ✅ MIGRADO |
+| **Compliance detailed** | ✅ Sí (req IDs) | 🔜 Necesita IR enrichment |

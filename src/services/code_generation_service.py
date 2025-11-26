@@ -18,7 +18,7 @@ import os
 import uuid
 import asyncio
 import re
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
 from datetime import datetime
 from jinja2 import Template
@@ -507,6 +507,278 @@ class CodeGenerationService:
                 "code_length": len(generated_code),
                 "entities_expected": len(spec_requirements.entities),
                 "endpoints_expected": len(spec_requirements.endpoints),
+            },
+        )
+
+        return generated_code
+
+    async def generate_from_application_ir(
+        self,
+        application_ir,
+        allow_syntax_errors: bool = False,
+        repair_context: Optional[str] = None
+    ) -> str:
+        """
+        Generate code directly from ApplicationIR (IR-centric approach)
+
+        This method accepts pre-built ApplicationIR from Phase 1 (spec extraction),
+        avoiding duplication of IR construction and avoiding the need to rebuild
+        from spec_requirements.
+
+        Args:
+            application_ir: ApplicationIR object from SpecToApplicationIR
+            allow_syntax_errors: If True, return code even with syntax errors.
+                                Useful when repair loop will fix errors post-generation.
+            repair_context: Optional repair context with compliance failures and
+                           instructions for fixing the code. Used in Phase 6.5 repair loop.
+
+        Returns:
+            Complete generated code as string (models + routes + main)
+        """
+        app_ir = application_ir
+        logger.info(
+            "Generating code from ApplicationIR (IR-centric)",
+            extra={
+                "app_name": app_ir.name,
+                "app_id": str(app_ir.app_id),
+                "has_domain_model": app_ir.domain_model is not None,
+                "has_api_model": app_ir.api_model is not None,
+                "has_behavior_model": app_ir.behavior_model is not None,
+                "has_validation_model": app_ir.validation_model is not None,
+                "is_repair": repair_context is not None,
+            },
+        )
+
+        # PRE-GENERATION VALIDATION: Ensure IR has minimum required data
+        validation_errors = self._validate_ir_for_generation(app_ir)
+        if validation_errors:
+            error_msg = f"ApplicationIR validation failed: {'; '.join(validation_errors)}"
+            logger.error(
+                error_msg,
+                extra={
+                    "validation_errors": validation_errors,
+                    "app_name": app_ir.name,
+                    "phase": "pre_generation"
+                }
+            )
+            if allow_syntax_errors:
+                # Return fallback structure instead of crashing
+                return self._generate_fallback_structure(app_ir, error_msg)
+            else:
+                raise ValueError(error_msg)
+
+        logger.info(
+            "IR validation passed",
+            extra={
+                "entities_count": len(app_ir.domain_model.entities) if app_ir.domain_model else 0,
+                "endpoints_count": len(app_ir.api_model.endpoints) if app_ir.api_model else 0,
+                "phase": "pre_generation"
+            }
+        )
+
+        # Persist ApplicationIR to Neo4j (if not already persisted)
+        repo = Neo4jIRRepository()
+        repo.save_application_ir(app_ir)
+        repo.close()
+        logger.info(
+            "ApplicationIR persisted to Neo4j",
+            extra={
+                "app_id": str(app_ir.app_id),
+                "app_name": app_ir.name,
+                "uses_application_ir": True
+            }
+        )
+
+        # PRODUCTION MODE: Use PatternBank and modular architecture
+        logger.info(
+            "Using production-ready templates",
+            extra={"pattern_bank_available": self.pattern_bank is not None}
+        )
+
+        logger.info("Retrieving production-ready patterns from PatternBank")
+
+        # Pass app_ir to retrieve patterns
+        patterns = await self._retrieve_production_patterns(app_ir=app_ir)
+
+        # Count patterns retrieved
+        total_patterns = sum(len(p) for p in patterns.values())
+        logger.info(
+            "Retrieved patterns from PatternBank",
+            extra={
+                "categories": len(patterns),
+                "total_patterns": total_patterns,
+                "uses_application_ir": True
+            }
+        )
+
+        # Compose all files from patterns
+        logger.info("Composing production-ready application from patterns")
+
+        try:
+            # Pass app_ir to compose patterns
+            files_dict = await self._compose_patterns(patterns, app_ir=app_ir)
+
+            # Fallback for missing essential files (requirements.txt, README.md, etc.)
+            logger.info("Checking for missing essential files")
+            llm_generated = await self._generate_with_llm_fallback(
+                files_dict,
+                spec_requirements=None,
+                application_ir=app_ir
+            )
+            files_dict.update(llm_generated)
+
+            # Generate behavior code (workflows, state machines, validators)
+            if app_ir and app_ir.behavior_model:
+                logger.info('Generating behavior code from BehaviorModelIR')
+                behavior_files = self.behavior_generator.generate_business_logic(app_ir.behavior_model)
+
+                logger.info(
+                    'Generated behavior code',
+                    extra={
+                        'files_count': len(behavior_files),
+                        'workflows': len([f for f in behavior_files if 'workflows' in f]),
+                        'state_machines': len([f for f in behavior_files if 'state_machines' in f]),
+                        'validators': len([f for f in behavior_files if 'validators' in f]),
+                        'event_handlers': len([f for f in behavior_files if 'events' in f]),
+                    }
+                )
+
+                # Add behavior files to the generated files dict
+                files_dict.update(behavior_files)
+            else:
+                logger.info('No BehaviorModelIR found, skipping behavior generation')
+
+            # Add __init__.py files for Python packages
+            package_dirs = [
+                "src",
+                "src/core",
+                "src/models",
+                "src/repositories",
+                "src/services",
+                "src/api",
+                "src/api/routes",
+                "tests",
+                "tests/unit",
+                "tests/integration",
+            ]
+            for pkg_dir in package_dirs:
+                files_dict[f"{pkg_dir}/__init__.py"] = '"""Package initialization."""\n'
+
+            # Check if generation succeeded
+            if not files_dict:
+                logger.error(
+                    "Modular generation produced no files",
+                    extra={
+                        "reason": "ModularArchitectureGenerator may have failed or ApplicationIR incomplete"
+                    }
+                )
+                raise RuntimeError("Failed to generate application files")
+
+            # POST-GENERATION VALIDATION: Ensure output has minimum required structure
+            structure_errors = self._validate_generated_structure(files_dict)
+            if structure_errors:
+                error_msg = f"Generated structure incomplete: {'; '.join(structure_errors)}"
+                logger.error(
+                    error_msg,
+                    extra={
+                        "structure_errors": structure_errors,
+                        "files_generated": list(files_dict.keys()),
+                        "phase": "post_generation"
+                    }
+                )
+                if allow_syntax_errors:
+                    # Log but continue - repair loop may fix it
+                    logger.warning(
+                        "Structure validation failed but allow_syntax_errors=True, continuing",
+                        extra={"errors": structure_errors}
+                    )
+                else:
+                    raise RuntimeError(error_msg)
+
+            logger.info(
+                "Structure validation passed",
+                extra={
+                    "files_count": len(files_dict),
+                    "has_main": "src/main.py" in files_dict,
+                    "has_entities": "src/models/entities.py" in files_dict,
+                    "has_schemas": "src/models/schemas.py" in files_dict,
+                    "phase": "post_generation"
+                }
+            )
+
+            # Convert multi-file dict to single string for compatibility
+            # Format: "=== FILE: path/to/file.py ===\n<content>\n\n"
+            code_parts = []
+            for filepath, content in sorted(files_dict.items()):
+                code_parts.append(f"=== FILE: {filepath} ===")
+                code_parts.append(content)
+                code_parts.append("")  # Empty line separator
+
+            generated_code = "\n".join(code_parts)
+
+            logger.info(
+                "Production mode generation complete",
+                extra={
+                    "files_generated": len(files_dict),
+                    "code_length": len(generated_code),
+                    "mode": "ir_centric_generation"
+                }
+            )
+
+        except Exception as gen_error:
+            # RECORD ERROR (Milestone 4)
+            if self.enable_feedback_loop and self.pattern_store:
+                error_id = str(uuid.uuid4())
+                await self.pattern_store.store_error(
+                    ErrorPattern(
+                        error_id=error_id,
+                        task_id="ir_gen",
+                        task_description=app_ir.name,
+                        error_type="generation_error",
+                        error_message=str(gen_error),
+                        failed_code=str(gen_error),
+                        attempt=1,
+                        timestamp=datetime.now()
+                    )
+                )
+
+            # Log the full error with traceback for debugging
+            import traceback
+            logger.error(
+                f"Code generation from ApplicationIR failed: {gen_error}",
+                extra={
+                    "error_type": type(gen_error).__name__,
+                    "error_message": str(gen_error),
+                    "traceback": traceback.format_exc()
+                }
+            )
+
+            # ALWAYS FAIL ON GENERATION ERROR - No fallback mode
+            # This ensures we see the real error and can fix it
+            logger.error(
+                f"🛑 Code generation failed - NO FALLBACK: {gen_error}",
+                extra={"fallback_mode": False, "allow_syntax_errors": allow_syntax_errors}
+            )
+            raise ValueError(f"Code generation failed: {gen_error}") from gen_error
+
+        # RECORD SUCCESS CANDIDATE (Milestone 4 - Pattern Promotion)
+        if self.enable_pattern_promotion and self.pattern_feedback:
+            try:
+                await self.pattern_feedback.register_candidate(
+                    code=generated_code,
+                    spec_metadata={"app_name": app_ir.name, "app_id": str(app_ir.app_id)},
+                    validation_result={"syntax_valid": True}
+                )
+                logger.info("Registered pattern candidate for promotion")
+            except Exception as e:
+                logger.warning(f"Failed to register pattern candidate: {e}")
+
+        logger.info(
+            "Code generation from ApplicationIR successful",
+            extra={
+                "code_length": len(generated_code),
+                "app_name": app_ir.name,
+                "uses_ir_centric": True,
             },
         )
 
@@ -1235,7 +1507,7 @@ Your task is to generate complete, working code based on task descriptions. Foll
 
 4. **Output Format**:
    - Wrap code in markdown code blocks with language specified
-   - Example: ```python\\ncode here\\n```
+   - Example: ```python\ncode here\n```
    - Do not include explanations outside code blocks
 
 5. **Scope**:
@@ -1463,8 +1735,7 @@ Code MUST pass Python compile() without SyntaxError."""
         generated_files = await self._compose_patterns(patterns, spec_requirements)
 
         # 2.5. Fallback for missing essential files (no patterns available)
-        # Hardcoded generators in PRODUCTION_MODE, LLM otherwise
-        # User requirement: "SI NO HAY PATTERNS DEBEMOS PASARLE CONTEXTO NECESARIO PARA Q EL LLM ESCRIBA EL CODIGO"
+        # Uses LLM with context to generate code when patterns are unavailable
         llm_generated = await self._generate_with_llm_fallback(generated_files, spec_requirements)
         generated_files.update(llm_generated)
 
@@ -1804,17 +2075,13 @@ Code MUST pass Python compile() without SyntaxError."""
                 exact_main = p
                 break
 
-        # Production mode: Always use hardcoded main.py (ensures docs enabled, correct config)
-        if os.getenv("PRODUCTION_MODE") == "true":
-            logger.info("🔨 PRODUCTION_MODE: Using hardcoded main.py (docs always enabled)")
-            # Use app_ir if available, otherwise use spec_requirements for entity extraction
-            main_py_code = self._generate_main_py(app_ir if app_ir is not None else spec_requirements)
-            files["src/main.py"] = main_py_code
-        elif exact_main:
+        # Always try PatternBank first, fallback to generator
+        if exact_main:
             # Use app_ir if available, otherwise fall back to spec_requirements
             files["src/main.py"] = self._adapt_pattern(
                 exact_main.code,
-                app_ir if app_ir is not None else spec_requirements
+                app_ir=app_ir,
+                spec_requirements=spec_requirements
             )
             logger.info("✅ Added main.py from PatternBank")
         else:
@@ -1827,45 +2094,53 @@ Code MUST pass Python compile() without SyntaxError."""
         return files
 
     async def _generate_with_llm_fallback(
-        self, existing_files: Dict[str, str], spec_requirements
+        self, existing_files: Dict[str, str], spec_requirements=None, application_ir=None
     ) -> Dict[str, str]:
         """
-        Generate missing essential files (hardcoded in PRODUCTION_MODE, LLM otherwise when no patterns available).
+        Generate missing essential files using LLM when no patterns available.
 
-        User requirement: "SI NO HAY PATTERNS DEBEMOS PASARLE CONTEXTO NECESARIO PARA Q EL LLM
-        ESCRIBA EL CODIGO COMO MEJOR CREA, LUEGO ITERAR SI FALLA CON EL REPAIR LOOP LEARNING"
+        Uses IR context to generate code, then iterates with repair loop learning if needed.
+        Supports both spec_requirements (legacy) and application_ir (IR-centric) modes.
 
         Args:
             existing_files: Dictionary of files already generated from patterns
-            spec_requirements: SpecRequirements with project context
+            spec_requirements: SpecRequirements with project context (legacy mode)
+            application_ir: ApplicationIR for IR-centric generation (preferred)
 
         Returns:
             Dictionary of generated files for missing essentials (hardcoded or LLM-based)
         """
         logger.info(
             "🔍 Checking for missing essential files",
-            extra={"existing_count": len(existing_files)}
+            extra={
+                "existing_count": len(existing_files),
+                "mode": "ir_centric" if application_ir else "spec_requirements"
+            }
         )
         llm_files = {}
 
         # Define essential files that should exist
+        # Note: requirements.txt and poetry.lock don't need spec_requirements
         essential_files = {
             "requirements.txt": self._generate_requirements_txt,
             "poetry.lock": self._generate_poetry_lock,
-            "README.md": self._generate_readme_md,
         }
 
-        # Generate missing files (hardcoded in PRODUCTION_MODE, LLM otherwise)
+        # README.md needs spec_requirements or application_ir
+        if spec_requirements or application_ir:
+            essential_files["README.md"] = self._generate_readme_md
+
+        # Generate missing files using IR-aware generators
         for file_path, generator_func in essential_files.items():
             if file_path not in existing_files:
-                is_production = os.getenv("PRODUCTION_MODE") == "true"
-                method = "Hardcoded generator" if is_production else "LLM fallback"
                 logger.info(
-                    f"🤖 {method}: Generating {file_path} (no pattern in PatternBank)",
-                    extra={"file": file_path, "production_mode": is_production}
+                    f"🤖 Generating {file_path} (no pattern in PatternBank)",
+                    extra={"file": file_path}
                 )
                 try:
-                    content = await generator_func(spec_requirements, existing_files)
+                    # Pass either spec_requirements or application_ir
+                    context = spec_requirements if spec_requirements else application_ir
+                    content = await generator_func(context, existing_files)
                     llm_files[file_path] = content
                     logger.info(f"✅ Generated: {file_path}")
                 except Exception as e:
@@ -1880,71 +2155,8 @@ Code MUST pass Python compile() without SyntaxError."""
     async def _generate_requirements_txt(
         self, spec_requirements, existing_files: Dict[str, str]
     ) -> str:
-        """Generate requirements.txt using LLM with rich context."""
-
-        # PRODUCTION_MODE: Use hardcoded requirements with verified versions
-        if os.getenv("PRODUCTION_MODE") == "true":
-            logger.info("🔨 PRODUCTION_MODE: Using verified requirements.txt (psycopg 3.2.12)")
-            return self._generate_requirements_hardcoded()
-
-        # Extract metadata safely
-        project_name = spec_requirements.metadata.get("project_name", "FastAPI Application")
-        description = spec_requirements.metadata.get("description", "Production-ready FastAPI application")
-
-        # Build context about the project
-        context = f"""Generate PRODUCTION ONLY requirements.txt for this FastAPI application.
-NO testing, linting, or development tools - ONLY runtime dependencies!
-
-Project: {project_name}
-Description: {description}
-
-Technology Stack (PRODUCTION ONLY):
-- FastAPI 0.109+ (async web framework)
-- SQLAlchemy 2.0+ with asyncpg (async PostgreSQL runtime)
-- psycopg 3.2.12 (sync PostgreSQL for Alembic migrations - CRITICAL: Use 3.2.12, NOT 3.14.x)
-- Pydantic v2 with pydantic-settings (config management)
-- Alembic (database migrations)
-- structlog (structured logging)
-- prometheus-client (metrics)
-- httpx (async HTTP client)
-- bleach (HTML sanitization)
-- slowapi (rate limiting)
-
-Entities: {', '.join(e.name for e in spec_requirements.entities)}
-Endpoints: {len(spec_requirements.endpoints)} REST endpoints
-
-CRITICAL REQUIREMENTS:
-1. Pin ALL versions (use ==, not >=)
-2. ONLY production runtime dependencies, NO testing/dev tools
-3. NO pytest, black, mypy, ruff, pre-commit, faker, coverage, etc.
-4. Group by category (web, database, config, logging, metrics, security)
-5. Add comments for each group
-6. Ensure compatibility (FastAPI 0.109+, SQLAlchemy 2.0+, Pydantic 2.5+)
-7. Keep versions compatible with Python 3.11
-8. Use psycopg==3.2.12 (latest stable version that exists in PyPI)
-
-Generate ONLY the requirements.txt content, no explanations."""
-
-        # Use LLM to generate with caching
-        response = await self.llm_client.generate_with_caching(
-            task_type="documentation",
-            complexity="low",
-            cacheable_context={"system_prompt": "You are a Python dependency management expert."},
-            variable_prompt=context,
-            max_tokens=1000,
-            temperature=0.3  # Lower temperature for more deterministic dependency versions
-        )
-
-        # Clean markdown delimiters that LLM might include
-        content = response["content"].strip()
-        if content.startswith("```"):
-            # Remove opening ```txt or ``` delimiter
-            content = content.lstrip("`").lstrip("txt").lstrip("\n")
-        if content.endswith("```"):
-            # Remove closing ``` delimiter
-            content = content.rstrip("`").rstrip("\n")
-
-        return content
+        """Generate requirements.txt - always use hardcoded verified versions for stability."""
+        return self._generate_requirements_hardcoded()
 
     async def _generate_poetry_lock(
         self, spec_requirements, existing_files: Dict[str, str]
@@ -2005,25 +2217,51 @@ content-hash = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890
         return lock_content
 
     async def _generate_readme_md(
-        self, spec_requirements, existing_files: Dict[str, str]
+        self, context_source, existing_files: Dict[str, str]
     ) -> str:
-        """Generate README.md using LLM with rich context."""
+        """Generate README.md using LLM with rich context.
 
-        # Extract metadata safely
-        project_name = spec_requirements.metadata.get("project_name", "FastAPI Application")
-        description = spec_requirements.metadata.get("description", "Production-ready FastAPI application")
-        version = spec_requirements.metadata.get("version", "1.0.0")
+        Supports both SpecRequirements (legacy) and ApplicationIR (IR-centric).
+        """
+        # Detect if we're using ApplicationIR or SpecRequirements
+        is_application_ir = hasattr(context_source, 'domain_model') and hasattr(context_source, 'api_model')
 
-        # Build context about the project and generated files
-        entity_details = "\n".join([
-            f"- **{e.name}**: {', '.join(f.name for f in e.fields)}"
-            for e in spec_requirements.entities
-        ])
+        if is_application_ir:
+            # ApplicationIR mode
+            project_name = context_source.name or "FastAPI Application"
+            description = context_source.description or "Production-ready FastAPI application"
+            version = context_source.version or "1.0.0"
 
-        endpoint_details = "\n".join([
-            f"- `{ep.method} {ep.path}`: {ep.description}"
-            for ep in spec_requirements.endpoints[:10]  # Limit to first 10
-        ])
+            # Extract entities from DomainModelIR
+            entities = context_source.domain_model.entities if context_source.domain_model else []
+            entity_details = "\n".join([
+                f"- **{e.name}**: {', '.join(f.name for f in e.fields)}"
+                for e in entities
+            ])
+
+            # Extract endpoints from APIModelIR
+            endpoints = context_source.api_model.endpoints if context_source.api_model else []
+            endpoint_details = "\n".join([
+                f"- `{ep.method} {ep.path}`: {ep.description or 'No description'}"
+                for ep in endpoints[:10]  # Limit to first 10
+            ])
+            endpoint_count = len(endpoints)
+        else:
+            # SpecRequirements mode (legacy)
+            project_name = context_source.metadata.get("project_name", "FastAPI Application")
+            description = context_source.metadata.get("description", "Production-ready FastAPI application")
+            version = context_source.metadata.get("version", "1.0.0")
+
+            entity_details = "\n".join([
+                f"- **{e.name}**: {', '.join(f.name for f in e.fields)}"
+                for e in context_source.entities
+            ])
+
+            endpoint_details = "\n".join([
+                f"- `{ep.method} {ep.path}`: {ep.description}"
+                for ep in context_source.endpoints[:10]  # Limit to first 10
+            ])
+            endpoint_count = len(context_source.endpoints)
 
         file_structure = "\n".join([
             f"- {path}" for path in sorted(existing_files.keys())[:20]  # Sample of files
@@ -2041,7 +2279,7 @@ Version: {version}
 
 # API Endpoints
 {endpoint_details}
-{"... and more" if len(spec_requirements.endpoints) > 10 else ""}
+{"... and more" if endpoint_count > 10 else ""}
 
 # Technology Stack
 - FastAPI with async/await
@@ -2262,19 +2500,15 @@ Generate ONLY the README.md content, no additional explanations."""
                 elif "metrics" in purpose_lower or "prometheus" in purpose_lower:
                     files["src/api/routes/metrics.py"] = adapt_pattern_helper(p.code)
 
-            # Production mode: Always use optimized routes (prevents issues)
-            if os.getenv("PRODUCTION_MODE") == "true":
-                logger.info("🔨 PRODUCTION_MODE: Using deduplicated metrics route (imports from middleware)")
-                metrics_code = self._generate_metrics_route()
-                files["src/api/routes/metrics.py"] = metrics_code
+            # Always use optimized routes (better than patterns)
+            logger.info("🔧 Generating optimized metrics route")
+            files["src/api/routes/metrics.py"] = self._generate_metrics_route()
 
-                logger.info("🔨 PRODUCTION_MODE: Using health routes with text() fix (SQLAlchemy 2.0)")
-                health_code = self._generate_health_routes()
-                files["src/api/routes/health.py"] = health_code
+            logger.info("🔧 Generating health routes with SQLAlchemy 2.0 text() fix")
+            files["src/api/routes/health.py"] = self._generate_health_routes()
 
-                logger.info("🔨 PRODUCTION_MODE: Using middleware with relaxed CSP for Swagger UI")
-                middleware_code = self._generate_middleware()
-                files["src/core/middleware.py"] = middleware_code
+            logger.info("🔧 Generating middleware with relaxed CSP for Swagger UI")
+            files["src/core/middleware.py"] = self._generate_middleware()
 
         # Data Layer - Pydantic Models
         elif category == "models_pydantic":
@@ -2339,7 +2573,7 @@ Generate ONLY the README.md content, no additional explanations."""
             entities = get_entities()
             if entities:
                 for entity in entities:
-                    service_code = generate_service_method(entity.name)
+                    service_code = generate_service_method(entity.name, entity.attributes)
                     if service_code:
                         # INJECT VALIDATIONS if app_ir is available
                         try:
@@ -2551,35 +2785,20 @@ Generate ONLY the README.md content, no additional explanations."""
                 elif "validation script" in purpose_lower or ".sh" in purpose_lower:
                     files["docker/validate-docker-setup.sh"] = adapt_pattern_helper(p.code)
 
-            # Production mode: Always use optimized Docker files (not patterns)
-            # This ensures consistent, pip-based Dockerfiles that work without manual steps
-            if os.getenv("PRODUCTION_MODE") == "true":
-                logger.info("🔨 PRODUCTION_MODE: Using optimized pip-based Dockerfile")
-                # Pass the appropriate object to generator - for ApplicationIR, pass app_ir from enclosing scope
-                from src.cognitive.ir.application_ir import ApplicationIR
-                if isinstance(spec_or_ir, ApplicationIR):
-                    # For ApplicationIR, we need to pass something the generator can work with
-                    # Create a simple wrapper or use the app_ir from parent scope
-                    # Since _generate_dockerfile expects spec_requirements, pass None and generator will use defaults
-                    dockerfile = self._generate_dockerfile(None)
-                else:
-                    dockerfile = self._generate_dockerfile(spec_or_ir)
-                files["docker/Dockerfile"] = dockerfile
+            # Always use optimized Docker files (better than patterns)
+            logger.info("🔧 Generating optimized pip-based Dockerfile")
+            files["docker/Dockerfile"] = self._generate_dockerfile(None)
 
-                logger.info("🔨 PRODUCTION_MODE: Using optimized docker-compose.yml")
-                if isinstance(spec_or_ir, ApplicationIR):
-                    docker_compose = self._generate_docker_compose(None)
-                else:
-                    docker_compose = self._generate_docker_compose(spec_or_ir)
-                files["docker/docker-compose.yml"] = docker_compose
+            logger.info("🔧 Generating optimized docker-compose.yml")
+            files["docker/docker-compose.yml"] = self._generate_docker_compose(None)
 
-                # Ensure Prometheus and Grafana configurations exist
-                logger.info("🔨 PRODUCTION_MODE: Generating Prometheus scrape configuration")
-                files["docker/prometheus.yml"] = self._generate_prometheus_config()
+            # Ensure Prometheus and Grafana configurations exist
+            logger.info("🔧 Generating Prometheus scrape configuration")
+            files["docker/prometheus.yml"] = self._generate_prometheus_config()
 
-                logger.info("🔨 PRODUCTION_MODE: Generating Grafana provisioning files")
-                files["docker/grafana/dashboards/dashboard-provider.yml"] = self._generate_grafana_dashboard_provider()
-                files["docker/grafana/datasources/prometheus.yml"] = self._generate_grafana_prometheus_datasource()
+            logger.info("🔧 Generating Grafana provisioning files")
+            files["docker/grafana/dashboards/dashboard-provider.yml"] = self._generate_grafana_dashboard_provider()
+            files["docker/grafana/datasources/prometheus.yml"] = self._generate_grafana_prometheus_datasource()
 
         # Project config & Alembic migrations
         elif category == "project_config":
@@ -2612,95 +2831,75 @@ Generate ONLY the README.md content, no additional explanations."""
                     files["README.md"] = adapt_pattern_helper(p.code)
                     found_files.add("README.md")
 
-            # Hardcoded fallback for missing critical files (production mode)
-            if os.getenv("PRODUCTION_MODE") == "true":
-                if "alembic.ini" not in found_files:
-                    logger.info("🔨 Hardcoded generator: Generating alembic.ini (no pattern in PatternBank)")
-                    # For ApplicationIR, pass None to let the generator use defaults
-                    spec_arg = spec_or_ir if not is_app_ir else None
-                    alembic_ini = self._generate_alembic_ini(spec_arg)
-                    files["alembic.ini"] = alembic_ini
+            # Fallback for missing critical files (always generate if missing)
+            if "alembic.ini" not in found_files:
+                logger.info("🔧 Generating alembic.ini")
+                spec_arg = spec_or_ir if not is_app_ir else None
+                files["alembic.ini"] = self._generate_alembic_ini(spec_arg)
 
-                if "alembic/env.py" not in found_files:
-                    logger.info("🔨 Hardcoded generator: Generating alembic/env.py (no pattern in PatternBank)")
-                    # For ApplicationIR, we can pass None to let the generator use defaults
-                    spec_arg = spec_or_ir if not is_app_ir else None
-                    alembic_env = self._generate_alembic_env(spec_arg)
-                    files["alembic/env.py"] = alembic_env
+            if "alembic/env.py" not in found_files:
+                logger.info("🔧 Generating alembic/env.py")
+                spec_arg = spec_or_ir if not is_app_ir else None
+                files["alembic/env.py"] = self._generate_alembic_env(spec_arg)
 
-                if "alembic/script.py.mako" not in found_files:
-                    logger.info("🔨 Hardcoded generator: Generating alembic/script.py.mako (no pattern in PatternBank)")
-                    alembic_script = self._generate_alembic_script_template()
-                    # For ApplicationIR, adapt_pattern_helper will use app_ir
-                    files["alembic/script.py.mako"] = adapt_pattern_helper(alembic_script, skip_jinja=True)
+            if "alembic/script.py.mako" not in found_files:
+                logger.info("🔧 Generating alembic/script.py.mako")
+                alembic_script = self._generate_alembic_script_template()
+                files["alembic/script.py.mako"] = adapt_pattern_helper(alembic_script, skip_jinja=True)
 
-                # Generate initial migration using hardcoded production-ready generator
-                entities = get_entities()
-                if entities:
-                    logger.info("✅ Generating initial migration (hardcoded production generator)")
+            # Generate initial migration
+            entities = get_entities()
+            if entities:
+                logger.info("🔧 Generating initial migration")
 
-                    def _entity_to_dict(entity) -> dict:
-                        """Convert parsed entity to a plain dict for the migration generator.
+                def _entity_to_dict(entity) -> dict:
+                    """Convert parsed entity to a plain dict for the migration generator."""
+                    fields = []
+                    raw_fields = getattr(entity, "attributes", None) or getattr(entity, "fields", []) or []
+                    for f in raw_fields:
+                        if hasattr(f, "data_type"):
+                            field_type = f.data_type.value if hasattr(f.data_type, 'value') else str(f.data_type)
+                            fields.append({
+                                "name": f.name,
+                                "type": field_type,
+                                "required": not getattr(f, "is_nullable", False),
+                                "default": getattr(f, "default_value", None),
+                                "constraints": getattr(f, "constraints", {}),
+                            })
+                        else:
+                            fields.append({
+                                "name": getattr(f, "name", None),
+                                "type": getattr(f, "type", None),
+                                "required": getattr(f, "required", None),
+                                "default": getattr(f, "default", None),
+                                "constraints": getattr(f, "constraints", None),
+                            })
+                    return {
+                        "name": getattr(entity, "name", "Unknown"),
+                        "plural": (getattr(entity, "name", "Unknown") + "s").lower(),
+                        "fields": fields,
+                    }
 
-                        Handles both ApplicationIR (uses 'attributes') and SpecRequirements (uses 'fields').
-                        This ensures migrations are synchronized with entities.py.
-                        """
-                        fields = []
-                        # ApplicationIR uses 'attributes', SpecRequirements uses 'fields'
-                        raw_fields = getattr(entity, "attributes", None) or getattr(entity, "fields", []) or []
-                        for f in raw_fields:
-                            # Handle ApplicationIR Attribute objects
-                            if hasattr(f, "data_type"):
-                                field_type = f.data_type.value if hasattr(f.data_type, 'value') else str(f.data_type)
-                                fields.append({
-                                    "name": f.name,
-                                    "type": field_type,
-                                    "required": not getattr(f, "is_nullable", False),
-                                    "default": getattr(f, "default_value", None),
-                                    "constraints": getattr(f, "constraints", {}),
-                                })
-                            else:
-                                # Handle SpecRequirements field objects/dicts
-                                fields.append({
-                                    "name": getattr(f, "name", None),
-                                    "type": getattr(f, "type", None),
-                                    "required": getattr(f, "required", None),
-                                    "default": getattr(f, "default", None),
-                                    "constraints": getattr(f, "constraints", None),
-                                })
-                        return {
-                            "name": getattr(entity, "name", "Unknown"),
-                            "plural": (getattr(entity, "name", "Unknown") + "s").lower(),
-                            "fields": fields,
-                        }
+                migration_code = generate_initial_migration([_entity_to_dict(e) for e in entities])
+                if migration_code:
+                    files["alembic/versions/001_initial.py"] = migration_code
 
-                    migration_code = generate_initial_migration(
-                        [_entity_to_dict(e) for e in entities]
-                    )
-                    if migration_code:
-                        files["alembic/versions/001_initial.py"] = migration_code
+            if "pyproject.toml" not in found_files:
+                logger.info("🔧 Generating pyproject.toml")
+                spec_arg = spec_or_ir if not is_app_ir else None
+                files["pyproject.toml"] = self._generate_pyproject_toml(spec_arg)
 
-                if "pyproject.toml" not in found_files:
-                    logger.info("🔨 Hardcoded generator: Generating pyproject.toml (no pattern in PatternBank)")
-                    # For ApplicationIR, pass spec_or_ir if it's SpecRequirements, otherwise None
-                    spec_arg = spec_or_ir if not is_app_ir else None
-                    pyproject = self._generate_pyproject_toml(spec_arg)
-                    files["pyproject.toml"] = pyproject
+            if ".env.example" not in found_files:
+                logger.info("🔧 Generating .env.example")
+                files[".env.example"] = self._generate_env_example()
 
-                if ".env.example" not in found_files:
-                    logger.info("🔨 Hardcoded generator: Generating .env.example (no pattern in PatternBank)")
-                    env_example = self._generate_env_example()
-                    files[".env.example"] = env_example
+            if ".gitignore" not in found_files:
+                logger.info("🔧 Generating .gitignore")
+                files[".gitignore"] = self._generate_gitignore()
 
-                if ".gitignore" not in found_files:
-                    logger.info("🔨 Hardcoded generator: Generating .gitignore (no pattern in PatternBank)")
-                    gitignore = self._generate_gitignore()
-                    files[".gitignore"] = gitignore
-
-                if "Makefile" not in found_files:
-                    logger.info("🔨 Hardcoded generator: Generating Makefile (no pattern in PatternBank)")
-                    makefile = self._generate_makefile()
-                    files["Makefile"] = makefile
+            if "Makefile" not in found_files:
+                logger.info("🔧 Generating Makefile")
+                files["Makefile"] = self._generate_makefile()
 
         # Log summary for this category
         logger.info(
@@ -2823,7 +3022,20 @@ Generate ONLY the README.md content, no additional explanations."""
         # Render Jinja2 template (handles {{ }} and {% %} syntax) unless explicitly skipped
         if not skip_jinja:
             try:
-                template = Template(pattern_code)
+                # Create Environment with custom filters for template rendering
+                import re as regex_module
+                from jinja2 import Environment
+
+                def snake_case_filter(value):
+                    """Convert CamelCase to snake_case."""
+                    if not value:
+                        return value
+                    return regex_module.sub(r'(?<!^)(?=[A-Z])', '_', str(value)).lower()
+
+                env = Environment()
+                env.filters['snake_case'] = snake_case_filter
+
+                template = env.from_string(pattern_code)
                 rendered = template.render(context)
             except Exception as e:
                 # If Jinja2 rendering fails (e.g., syntax error in template),
@@ -2980,9 +3192,11 @@ router = APIRouter(
             for param in path_params:
                 params.append(f'{param}: str')
 
-            # Add request body for POST/PUT
-            if method in ['post', 'put']:
+            # Add request body for POST/PUT - use correct schema type
+            if method == 'post':
                 params.append(f'{entity_snake}_data: {entity.name}Create')
+            elif method == 'put':
+                params.append(f'{entity_snake}_data: {entity.name}Update')
 
             params.append('db: AsyncSession = Depends(get_db)')
             params_str = ',\n    '.join(params)
@@ -2996,9 +3210,9 @@ router = APIRouter(
 
             if method == 'get':
                 if response_model and 'List[' in response_model:
-                    # List endpoint
-                    body += f'''    {entity_plural} = await service.get_all(skip=0, limit=100)
-    return {entity_plural}
+                    # List endpoint - use service.list(page, size) which matches Service template
+                    body += f'''    result = await service.list(page=1, size=100)
+    return result.items
 '''
                 else:
                     # Single item endpoint
@@ -3101,6 +3315,274 @@ formatter = generic
 format = %(levelname)-5.5s [%(name)s] %(message)s
 datefmt = %H:%M:%S
 """
+
+    def _validate_ir_for_generation(self, app_ir) -> List[str]:
+        """Validate ApplicationIR has minimum required data for code generation.
+
+        PRE-GENERATION VALIDATION: Ensures IR integrity before attempting generation.
+        This separates "IR incomplete" errors from "generation bug" errors.
+
+        Args:
+            app_ir: ApplicationIR object to validate
+
+        Returns:
+            List of validation error messages (empty if valid)
+        """
+        errors = []
+
+        # Check if IR exists
+        if app_ir is None:
+            errors.append("ApplicationIR is None")
+            return errors
+
+        # Check DomainModelIR (required for entities)
+        if not app_ir.domain_model:
+            errors.append("DomainModelIR is missing")
+        elif not app_ir.domain_model.entities:
+            errors.append("DomainModelIR has no entities")
+        else:
+            # Validate each entity has attributes
+            for entity in app_ir.domain_model.entities:
+                if not hasattr(entity, 'attributes') or not entity.attributes:
+                    errors.append(f"Entity '{entity.name}' has no attributes")
+
+        # Check APIModelIR (required for endpoints)
+        if not app_ir.api_model:
+            errors.append("APIModelIR is missing")
+        elif not app_ir.api_model.endpoints:
+            errors.append("APIModelIR has no endpoints")
+
+        # Check app metadata
+        if not hasattr(app_ir, 'name') or not app_ir.name:
+            errors.append("ApplicationIR has no name")
+
+        if not hasattr(app_ir, 'app_id') or not app_ir.app_id:
+            errors.append("ApplicationIR has no app_id")
+
+        return errors
+
+    def _validate_generated_structure(self, files_dict: Dict[str, str]) -> List[str]:
+        """Validate generated files have minimum required structure.
+
+        POST-GENERATION VALIDATION: Ensures output integrity before returning.
+        This prevents partial/broken output from reaching downstream phases.
+
+        Args:
+            files_dict: Dictionary of generated file paths to content
+
+        Returns:
+            List of validation error messages (empty if valid)
+        """
+        errors = []
+
+        # Required files for a valid FastAPI app
+        required_files = [
+            "src/main.py",
+            "src/models/entities.py",
+            "src/models/schemas.py",
+        ]
+
+        for required_file in required_files:
+            if required_file not in files_dict:
+                errors.append(f"Missing required file: {required_file}")
+            elif not files_dict[required_file] or len(files_dict[required_file].strip()) < 50:
+                errors.append(f"File too small or empty: {required_file}")
+
+        # Check for at least one route file
+        route_files = [f for f in files_dict.keys() if f.startswith("src/api/routes/") and f.endswith(".py")]
+        if len(route_files) < 2:  # health.py + at least one entity route
+            errors.append(f"Insufficient route files: found {len(route_files)}, expected at least 2")
+
+        # Validate main.py has FastAPI app
+        if "src/main.py" in files_dict:
+            main_content = files_dict["src/main.py"]
+            if "FastAPI" not in main_content:
+                errors.append("src/main.py does not contain FastAPI app")
+            if "FALLBACK MODE" in main_content:
+                errors.append("src/main.py is in FALLBACK MODE (generation failed)")
+
+        return errors
+
+    def _generate_fallback_structure(self, app_ir, error_message: str) -> str:
+        """Generate minimal valid app structure when generation fails.
+
+        CRITICAL: This method ensures that even when generation fails, we return
+        a syntactically valid structure (not error messages as code).
+
+        The fallback structure:
+        - Contains valid Python syntax
+        - Has the expected directory structure
+        - Includes clear error markers in comments
+        - Can be parsed by downstream pipeline phases
+
+        Args:
+            app_ir: ApplicationIR object (may have incomplete data)
+            error_message: The error that caused generation to fail
+
+        Returns:
+            Multi-file string with minimal valid structure
+        """
+        logger.warning(
+            "Generating fallback structure due to generation failure",
+            extra={"error": error_message[:200], "app_name": getattr(app_ir, 'name', 'Unknown')}
+        )
+
+        # Extract entity names safely from IR
+        entity_names = []
+        try:
+            if app_ir and hasattr(app_ir, 'domain_model') and app_ir.domain_model:
+                entity_names = [e.name for e in app_ir.domain_model.entities]
+        except Exception:
+            entity_names = ['Entity']  # Fallback name
+
+        # Generate minimal valid files
+        files = {}
+
+        # 1. Main entry point (always valid)
+        files["src/main.py"] = f'''"""
+API Entry Point - FALLBACK MODE
+
+WARNING: This file was generated in fallback mode due to a generation error.
+Original error: {error_message[:500]}
+
+Please investigate and regenerate.
+"""
+from fastapi import FastAPI
+
+app = FastAPI(
+    title="API (Fallback Mode)",
+    version="0.0.1",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+
+@app.get("/")
+async def root():
+    """Root endpoint."""
+    return {{"status": "fallback_mode", "error": "Generation failed, check logs"}}
+
+
+@app.get("/health")
+async def health():
+    """Health check endpoint."""
+    return {{"status": "unhealthy", "reason": "fallback_mode"}}
+'''
+
+        # 2. Config (minimal valid)
+        files["src/core/config.py"] = '''"""
+Configuration - FALLBACK MODE
+"""
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    """Minimal settings."""
+    app_name: str = "API (Fallback)"
+    debug: bool = True
+    log_level: str = "INFO"
+
+    class Config:
+        env_file = ".env"
+
+
+def get_settings() -> Settings:
+    """Get settings singleton."""
+    return Settings()
+'''
+
+        # 3. Database (minimal valid)
+        files["src/core/database.py"] = '''"""
+Database - FALLBACK MODE
+"""
+from sqlalchemy.ext.declarative import declarative_base
+
+Base = declarative_base()
+'''
+
+        # 4. Entities (minimal valid with entity names)
+        entity_classes = []
+        for name in entity_names:
+            entity_classes.append(f'''
+class {name}Entity(Base):
+    """Fallback entity for {name}."""
+    __tablename__ = "{name.lower()}s"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+''')
+
+        files["src/models/entities.py"] = f'''"""
+SQLAlchemy Models - FALLBACK MODE
+"""
+from sqlalchemy import Column, DateTime
+from sqlalchemy.dialects.postgresql import UUID
+from datetime import datetime, timezone
+import uuid
+from src.core.database import Base
+
+{"".join(entity_classes) if entity_classes else "# No entities defined"}
+'''
+
+        # 5. Schemas (minimal valid)
+        schema_classes = []
+        for name in entity_names:
+            schema_classes.append(f'''
+class {name}Base(BaseModel):
+    """Base schema for {name}."""
+    pass
+
+
+class {name}Create({name}Base):
+    """Create schema for {name}."""
+    pass
+
+
+class {name}Response({name}Base):
+    """Response schema for {name}."""
+    id: UUID
+''')
+
+        files["src/models/schemas.py"] = f'''"""
+Pydantic Schemas - FALLBACK MODE
+"""
+from pydantic import BaseModel
+from uuid import UUID
+
+{"".join(schema_classes) if schema_classes else "# No schemas defined"}
+'''
+
+        # 6. __init__.py files
+        for pkg in ["src", "src/core", "src/models", "src/api", "src/api/routes"]:
+            files[f"{pkg}/__init__.py"] = '"""Package initialization - FALLBACK MODE."""\n'
+
+        # 7. Health routes
+        files["src/api/routes/health.py"] = '''"""
+Health Routes - FALLBACK MODE
+"""
+from fastapi import APIRouter
+
+router = APIRouter(prefix="/health", tags=["health"])
+
+
+@router.get("/")
+async def health():
+    """Health check."""
+    return {"status": "unhealthy", "mode": "fallback"}
+'''
+
+        # Convert to multi-file string format
+        code_parts = []
+        for filepath, content in sorted(files.items()):
+            code_parts.append(f"=== FILE: {filepath} ===")
+            code_parts.append(content)
+            code_parts.append("")
+
+        logger.info(
+            "Generated fallback structure",
+            extra={"files_count": len(files), "mode": "fallback"}
+        )
+
+        return "\n".join(code_parts)
 
     def _generate_main_py(self, spec_requirements) -> str:
         """Generate main.py entry point with FastAPI app, middleware, and routes.

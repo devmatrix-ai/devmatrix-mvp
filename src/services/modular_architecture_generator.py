@@ -547,6 +547,26 @@ class {entity_name}Repository:
 
         await self.db.delete(entity)
         return True
+
+    async def count(self) -> int:
+        """Count total {entity_snake} records"""
+        from sqlalchemy import func
+        result = await self.db.execute(
+            select(func.count()).select_from({entity_name}Entity)
+        )
+        return result.scalar() or 0
+
+    async def clear_items(self, id: UUID) -> bool:
+        """
+        Clear all child items from {entity_snake}.
+
+        For entities with child relationships (e.g., Cart → CartItems).
+        Override this method in specialized repositories to implement
+        the actual clearing logic based on the relationship.
+        """
+        # Default implementation - override in specialized repos
+        # This base version just returns True (no-op)
+        return True
 '''
 
     def _generate_service(self, entity) -> str:
@@ -746,6 +766,42 @@ class {entity_name}Service:
                     '    deleted = await service.delete(id)',
                     '    if not deleted:',
                     f'        raise HTTPException(status_code=404, detail="{entity_name} not found")',
+                    '',
+                ])
+
+            elif endpoint.operation == 'deactivate':
+                # Custom operation: deactivate (set is_active=false)
+                code_parts.extend([
+                    '@router.post("/{id}/deactivate", response_model=' + entity_name + ')',
+                    f'async def deactivate_{entity_snake}(',
+                    '    id: UUID,',
+                    f'    service: {entity_name}Service = Depends(get_{entity_snake}_service)',
+                    f'):',
+                    f'    """Deactivate {entity_snake} (set is_active=false)"""',
+                    '    result = await service.get(id)',
+                    '    if not result:',
+                    f'        raise HTTPException(status_code=404, detail="{entity_name} not found")',
+                    f'    # Update is_active to false',
+                    f'    updated = await service.update(id, {entity_name}Update(is_active=False))',
+                    '    return updated',
+                    '',
+                ])
+
+            elif endpoint.operation == 'clear' or endpoint.operation == 'clear_items':
+                # Custom operation: clear items from a parent entity (e.g., clear cart items)
+                code_parts.extend([
+                    '@router.post("/{id}/clear", response_model=' + entity_name + ')',
+                    f'async def clear_{entity_snake}(',
+                    '    id: UUID,',
+                    f'    service: {entity_name}Service = Depends(get_{entity_snake}_service)',
+                    f'):',
+                    f'    """Clear all items from {entity_snake}"""',
+                    '    result = await service.get(id)',
+                    '    if not result:',
+                    f'        raise HTTPException(status_code=404, detail="{entity_name} not found")',
+                    '    # Clear items (implementation depends on relationship)',
+                    '    cleared = await service.clear_items(id)',
+                    '    return cleared',
                     '',
                 ])
 

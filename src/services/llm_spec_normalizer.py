@@ -68,7 +68,7 @@ RESPOND WITH ONLY VALID JSON. START WITH {{ AND END WITH }}. NO MARKDOWN. NO EXP
         self.client = Anthropic()
         # Use provided model or default to best available
         if model is None:
-            model = "claude-haiku-4-5-20251001"
+            model = "claude-sonnet-4-5-20250929"  # Sonnet for semantic analysis
         self.model = model
 
     def normalize(self, markdown_spec: str) -> Dict[str, Any]:

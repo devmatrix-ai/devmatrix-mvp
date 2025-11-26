@@ -509,7 +509,7 @@ Provide a complete DDD analysis in the specified JSON format."""
 
         # Stream discovery with callbacks for real-time entity extraction
         response = await self.llm.stream_with_callbacks(
-            model="claude-haiku-4-5-20251001",
+            model="claude-opus-4-5-20251101",  # Opus for deep DDD analysis
             messages=[
                 {
                     "role": "user",
@@ -534,7 +534,7 @@ Provide a complete DDD analysis in the specified JSON format."""
 
         logger.info(
             "Discovery LLM generation complete",
-            model="claude-haiku-4-5-20251001",
+            model="claude-opus-4-5-20251101",  # Opus for deep DDD analysis
             duration_seconds=duration,
             input_tokens=response["usage"]["input_tokens"],
             output_tokens=response["usage"]["output_tokens"]

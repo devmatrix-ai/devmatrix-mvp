@@ -762,8 +762,50 @@ ItemSchema = Dict[str, Any]
                         value = constraint[1:].strip()
                         field_constraints['lt'] = f'lt={value}'
                         logger.debug(f"✅ Parsed constraint '{constraint}' → 'lt={value}' for {field_name}")
-                    # Parse named constraints
-                    elif '=' in constraint:
+                    # NEW: Parse range format: "range:>0", "range:>=1", "range: >= 0.01", "range:0-100"
+                    elif constraint.startswith('range:') or constraint.startswith('range '):
+                        range_part = constraint.split(':', 1)[1].strip() if ':' in constraint else constraint[6:].strip()
+
+                        # Handle compound ranges like "0-100" (without operators)
+                        if '-' in range_part and not any(op in range_part for op in ['>=', '<=', '>', '<']):
+                            parts = range_part.split('-')
+                            if len(parts) == 2:
+                                min_val, max_val = parts[0].strip(), parts[1].strip()
+                                field_constraints['ge'] = f'ge={min_val}'
+                                field_constraints['le'] = f'le={max_val}'
+                                logger.debug(f"✅ Parsed range '{constraint}' → ge={min_val}, le={max_val} for {field_name}")
+                        # Handle operator-based ranges like ">=1", ">0"
+                        elif range_part.startswith('>='):
+                            value = range_part[2:].strip()
+                            field_constraints['ge'] = f'ge={value}'
+                            logger.debug(f"✅ Parsed range '{constraint}' → ge={value} for {field_name}")
+                        elif range_part.startswith('>'):
+                            value = range_part[1:].strip()
+                            field_constraints['gt'] = f'gt={value}'
+                            logger.debug(f"✅ Parsed range '{constraint}' → gt={value} for {field_name}")
+                        elif range_part.startswith('<='):
+                            value = range_part[2:].strip()
+                            field_constraints['le'] = f'le={value}'
+                            logger.debug(f"✅ Parsed range '{constraint}' → le={value} for {field_name}")
+                        elif range_part.startswith('<'):
+                            value = range_part[1:].strip()
+                            field_constraints['lt'] = f'lt={value}'
+                            logger.debug(f"✅ Parsed range '{constraint}' → lt={value} for {field_name}")
+                        else:
+                            logger.warning(f"⚠️ Unknown range format '{constraint}' for {field_name} - SKIPPING")
+                    # NEW: Skip unparseable constraint types (business rules go to service layer)
+                    elif constraint.startswith('custom:') or constraint.startswith('custom '):
+                        logger.debug(f"ℹ️ Skipping custom rule for {field_name}: {constraint[:60]}... (handled in service layer)")
+                    elif constraint.startswith('format:') or constraint.startswith('format '):
+                        # Handle format constraints that should be converted
+                        format_part = constraint.split(':', 1)[1].strip() if ':' in constraint else constraint[7:].strip()
+                        if 'length' in format_part.lower():
+                            # "format: length >= 1" → skip (already handled by min_length)
+                            logger.debug(f"ℹ️ Skipping length format constraint for {field_name}: {constraint[:60]}...")
+                        else:
+                            logger.debug(f"ℹ️ Skipping format constraint for {field_name}: {constraint[:60]}...")
+                    # Parse named constraints (MUST be proper format like "ge=0", NOT "range: >= 1")
+                    elif '=' in constraint and ':' not in constraint:
                         # Direct constraint like "gt=0", "min_length=1"
                         key = constraint.split('=')[0]
                         field_constraints[key] = constraint
@@ -853,12 +895,24 @@ ItemSchema = Dict[str, Any]
 
             # Convert JavaScript/JSON boolean values to Python
             python_default = field_default
+            use_default_factory = False  # Flag for datetime.now() factory pattern
             if field_default is not None:
                 if isinstance(field_default, str):
                     if field_default.lower() == 'true':
                         python_default = 'True'
                     elif field_default.lower() == 'false':
                         python_default = 'False'
+                    # NEW: Handle "now" default for datetime fields
+                    elif field_default.lower() == 'now':
+                        if python_type == 'datetime' or 'datetime' in str(python_type).lower():
+                            # Use default_factory pattern for dynamic datetime
+                            use_default_factory = True
+                            python_default = None  # Will be handled specially
+                            logger.debug(f"✅ Converting 'now' default to default_factory=datetime.now for {field_name}")
+                        else:
+                            # Not a datetime field, skip the "now" default
+                            python_default = None
+                            logger.warning(f"⚠️ 'now' default on non-datetime field {field_name} - removing default")
 
             # NEW: Check for enforcement strategy from validation ground truth
             enforcement = _get_enforcement_for_field(entity_name, field_name, validation_ground_truth)
@@ -908,6 +962,17 @@ ItemSchema = Dict[str, Any]
                     else:
                         pydantic_fields.append(f'    {field_name}: {python_type} = Field(..., description="{description}")')
                     continue  # Skip normal field generation
+
+            # NEW: Handle datetime fields with "now" default using default_factory
+            if use_default_factory:
+                # Use Field with default_factory for datetime.now()
+                if field_constraints_list:
+                    constraints_str = ', '.join(field_constraints_list)
+                    pydantic_fields.append(f"    {field_name}: {python_type} = Field(default_factory=datetime.now, {constraints_str})")
+                else:
+                    pydantic_fields.append(f"    {field_name}: {python_type} = Field(default_factory=datetime.now)")
+                logger.debug(f"✅ Generated datetime field with default_factory: {field_name}")
+                continue  # Skip normal field generation
 
             # Build field definition with or without Field() (EXISTING LOGIC)
             if field_constraints_list:
@@ -1069,16 +1134,20 @@ ItemSchema = Dict[str, Any]
     return code.strip()
 
 
-def generate_service_method(entity_name: str) -> str:
+def generate_service_method(entity_name: str, attributes: list = None) -> str:
     """
     Generate a complete service method without indentation errors.
 
     Args:
         entity_name: Name of the entity
+        attributes: List of entity attributes for field-based logic detection
 
     Returns:
         Complete service file code
     """
+    # Default to empty list if not provided
+    if attributes is None:
+        attributes = []
     # Convert CamelCase to snake_case (CartItem → cart_item)
     import re
     entity_snake = re.sub(r'(?<!^)(?=[A-Z])', '_', entity_name).lower()
@@ -1148,6 +1217,25 @@ class {entity_name}Service:
     async def delete(self, id: UUID) -> bool:
         """Delete {entity_name.lower()}."""
         return await self.repo.delete(id)
+
+    async def clear_items(self, id: UUID) -> Optional[{entity_name}Response]:
+        """
+        Clear all items/children from this {entity_name.lower()}.
+
+        Used for entities that have child relationships (e.g., Cart → CartItems).
+        Returns the updated entity after clearing items.
+        """
+        # Get the entity first
+        db_obj = await self.repo.get(id)
+        if not db_obj:
+            return None
+
+        # Clear items through repository (implementation depends on relationship)
+        await self.repo.clear_items(id)
+
+        # Return the updated entity
+        refreshed = await self.repo.get(id)
+        return {entity_name}Response.model_validate(refreshed) if refreshed else None
 '''
 
     # PHASE 2: Add checkout/cancel logic for orderable entities
@@ -1155,7 +1243,7 @@ class {entity_name}Service:
     # Now uses field-based detection: entities with both 'status' and 'payment_status' fields
     # are considered "orderable" and get checkout/cancel methods.
     # TODO: This should ultimately come from BehaviorModelIR.flows/operations
-    field_names = {f.name if hasattr(f, 'name') else f.get('name', '') for f in fields}
+    field_names = {f.name if hasattr(f, 'name') else f.get('name', '') for f in attributes}
     is_orderable_entity = 'status' in field_names and 'payment_status' in field_names
 
     if is_orderable_entity:
@@ -1347,8 +1435,8 @@ def upgrade() -> None:
         # FIRST: Use explicit type if provided (from IR)
         if field_type:
             ft_lower = field_type.lower()
-            if ft_lower in sql_type_map:
-                return sql_type_map[ft_lower]
+            if ft_lower in type_mapping:
+                return type_mapping[ft_lower]
             if 'uuid' in ft_lower:
                 return 'postgresql.UUID(as_uuid=True)'
             if 'decimal' in ft_lower or 'numeric' in ft_lower:
@@ -1422,7 +1510,7 @@ def upgrade() -> None:
             # NOTE: Hardcoded fname == 'email' REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
             # Unique constraint should come from field constraints, not field name
             # Check if field has unique constraint from IR/spec
-            field_constraints = f.get('constraints', {}) if isinstance(f, dict) else getattr(f, 'constraints', {})
+            field_constraints = field.get('constraints', {}) if isinstance(field, dict) else getattr(field, 'constraints', {})
             constraint_strs = [str(c).lower() for c in (field_constraints if isinstance(field_constraints, list) else [field_constraints])]
             if any('unique' in c for c in constraint_strs):
                 column_def = column_def.rstrip(')') + ', unique=True)'
