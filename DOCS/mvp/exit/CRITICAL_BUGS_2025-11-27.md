@@ -92,7 +92,7 @@ OpenAPI-based compliance validation complete: 93.0%
 
 **Severity**: CRITICAL
 **Category**: IR Extraction
-**Status**: IN_PROGRESS - Fix implemented, needs E2E testing
+**Status**: ✅ FIXED (2025-11-27)
 
 ### Síntoma
 ```
@@ -150,9 +150,28 @@ Modified `enrich_api_model()` to accept:
 
 Updated `spec_to_application_ir.py` (line 657) to pass these parameters during enrichment.
 
-**Expected Result**: Endpoints like `PATCH /products/{id}/deactivate`, `PUT /carts/{id}/items/{product_id}`, `DELETE /carts/{id}/items/{product_id}` should now appear in APIModelIR.
+**Test Results** (2025-11-27):
+```
+📊 Total endpoints en APIModelIR: 45
 
-**Status**: Implementation complete, needs E2E test validation.
+✅ Custom operations encontradas: 16
+   PATCH /products/{id}/deactivate (inferred=True)
+   PATCH /products/{id}/activate (inferred=True)
+   POST /carts/{id}/checkout (inferred=True)
+   ...
+
+✅ Nested resources encontradas: 5
+   PUT /carts/{id}/items/{product_id} (inferred=True)
+   DELETE /carts/{id}/items/{product_id} (inferred=True)
+   ...
+
+🔍 Verificación Bug #47:
+   ✅ PATCH /products/{id}/deactivate
+   ✅ PUT /carts/{id}/items/{product_id}
+   ✅ DELETE /carts/{id}/items/{product_id}
+
+🎉 Bug #47 FIXED - Todos los endpoints faltantes ahora están en el IR!
+```
 
 ---
 
@@ -264,20 +283,20 @@ Semantic Compliance: 98.6%  ← Subió de 93% a 98.6%?
 
 ## Summary Table
 
-| Bug | Severity | Category | Quick Description |
-|-----|----------|----------|-------------------|
-| #45 | HIGH | Code Repair | Same repairs applied repeatedly |
-| #46 | CRITICAL | Code Repair | 44 repairs but 0% improvement |
-| #47 | CRITICAL | IR Extraction | Spec endpoints missing from IR |
-| #48 | MEDIUM | Semantic Matching | Cart.items/Order.items never match |
-| #49 | HIGH | Metrics | Inconsistent numbers between phases |
-| #50 | HIGH | Testing | 0% tests pass but says PASSED |
+| Bug | Severity | Category | Status | Quick Description |
+|-----|----------|----------|--------|-------------------|
+| #45 | HIGH | Code Repair | NEW | Same repairs applied repeatedly |
+| #46 | CRITICAL | Code Repair | NEW | 44 repairs but 0% improvement |
+| #47 | CRITICAL | IR Extraction | ✅ FIXED | Spec endpoints missing from IR |
+| #48 | MEDIUM | Semantic Matching | NEW | Cart.items/Order.items never match |
+| #49 | HIGH | Metrics | NEW | Inconsistent numbers between phases |
+| #50 | HIGH | Testing | NEW | 0% tests pass but says PASSED |
 
 ---
 
 ## Recommended Fix Priority
 
-1. **Bug #47** (IR Extraction) - Root cause of many issues
+1. ~~**Bug #47** (IR Extraction) - Root cause of many issues~~ ✅ FIXED
 2. **Bug #46** (Repair Effectiveness) - Core functionality broken
 3. **Bug #50** (Tests) - False confidence is dangerous
 4. **Bug #49** (Metrics) - Trust issue
