@@ -653,7 +653,12 @@ Output JSON only, no explanation:"""
         # PHASE 0: IR-Level Best Practice Inference
         # Enrich with inferred endpoints (list, delete, health, metrics)
         # All inferred endpoints are marked with inferred=True for traceability
-        api_model = enrich_api_model(api_model)
+        # Bug #47 Fix: Pass domain_model and flows_data for advanced inference
+        api_model = enrich_api_model(
+            api_model,
+            domain_model=domain_model,
+            flows_data=ir_data.get("flows", [])
+        )
 
         # Build InfrastructureModelIR
         db_data = ir_data.get("database", {"type": "postgresql", "name": "app_db"})

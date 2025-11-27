@@ -9,7 +9,7 @@ Key principle: If it appears in code, it MUST appear in IR first.
 
 import logging
 import re
-from typing import List, Dict, Set, Optional
+from typing import List, Dict, Set, Optional, TYPE_CHECKING
 from dataclasses import dataclass
 
 from src.cognitive.ir.api_model import (
@@ -20,6 +20,10 @@ from src.cognitive.ir.api_model import (
     ParameterLocation,
     InferenceSource,
 )
+
+# Avoid circular imports
+if TYPE_CHECKING:
+    from src.cognitive.ir.domain_model import DomainModelIR
 
 logger = logging.getLogger(__name__)
 
@@ -59,12 +63,21 @@ class InferredEndpointEnricher:
         self.config = config or EnrichmentConfig()
         self._inferred_count = 0
 
-    def enrich(self, api_model: APIModelIR) -> APIModelIR:
+    def enrich(
+        self,
+        api_model: APIModelIR,
+        domain_model: Optional['DomainModelIR'] = None,
+        flows_data: Optional[List[Dict]] = None
+    ) -> APIModelIR:
         """
         Enrich APIModelIR with inferred endpoints.
 
+        Bug #47 Fix: Now infers custom operations and nested resources.
+
         Args:
             api_model: Original APIModelIR from spec extraction
+            domain_model: DomainModelIR for relationship-based inference
+            flows_data: Raw flow data for custom operation detection
 
         Returns:
             Enriched APIModelIR with inferred endpoints added
@@ -91,6 +104,18 @@ class InferredEndpointEnricher:
         if self.config.infer_delete_endpoints:
             new_endpoints.extend(
                 self._infer_delete_endpoints(api_model, existing_endpoints)
+            )
+
+        # Bug #47 Fix: Infer custom operations from flows
+        if flows_data:
+            new_endpoints.extend(
+                self._infer_custom_operations(flows_data, existing_endpoints)
+            )
+
+        # Bug #47 Fix: Infer nested resource endpoints from relationships
+        if domain_model:
+            new_endpoints.extend(
+                self._infer_nested_resource_endpoints(domain_model, existing_endpoints)
             )
 
         # Infer health endpoints
@@ -265,6 +290,195 @@ class InferredEndpointEnricher:
 
         return inferred
 
+    def _infer_custom_operations(
+        self,
+        flows_data: List[Dict],
+        existing: Set[tuple]
+    ) -> List[Endpoint]:
+        """
+        Bug #47 Fix: Infer custom operation endpoints from flow descriptions.
+
+        Detects patterns like:
+        - "Desactivar Producto" → PATCH /products/{id}/deactivate
+        - "Activar Producto" → PATCH /products/{id}/activate
+        - "Agregar al Carrito" → PUT /carts/{id}/items/{product_id}
+        """
+        inferred = []
+
+        # Custom operation patterns (action → HTTP method + path suffix)
+        CUSTOM_OPS = {
+            # Deactivation/activation
+            "deactivate": ("PATCH", "/deactivate"),
+            "desactivar": ("PATCH", "/deactivate"),
+            "activate": ("PATCH", "/activate"),
+            "activar": ("PATCH", "/activate"),
+            # Cart/order operations
+            "checkout": ("POST", "/checkout"),
+            "cancel": ("POST", "/cancel"),
+            "cancelar": ("POST", "/cancel"),
+            "pay": ("POST", "/pay"),
+            "pagar": ("POST", "/pay"),
+        }
+
+        for flow in flows_data:
+            flow_name = flow.get("name", "").lower()
+            flow_desc = flow.get("description", "").lower()
+            target_entities = flow.get("target_entities", [])
+
+            # Check if flow name contains custom operation
+            for operation, (method, path_suffix) in CUSTOM_OPS.items():
+                if operation in flow_name or operation in flow_desc:
+                    # Infer resource from target entities
+                    for entity in target_entities:
+                        entity_lower = entity.lower()
+                        # Pluralize entity name
+                        resource = self._pluralize(entity_lower)
+                        path = f"/{resource}/{{id}}{path_suffix}"
+                        normalized = self._normalize_path(path)
+
+                        if (method, normalized) not in existing:
+                            endpoint = Endpoint(
+                                path=path,
+                                method=HttpMethod[method],
+                                operation_id=f"{operation}_{entity_lower}",
+                                summary=f"{operation.capitalize()} {entity}",
+                                description=f"Custom operation: {flow_name} (inferred from flow)",
+                                parameters=[
+                                    APIParameter(
+                                        name="id",
+                                        location=ParameterLocation.PATH,
+                                        data_type="string",
+                                        required=True,
+                                        description=f"The {entity_lower} ID",
+                                    )
+                                ],
+                                tags=[resource],
+                                auth_required=True,
+                                inferred=True,
+                                inference_source=InferenceSource.SPEC,
+                                inference_reason=f"Custom operation from flow: {flow.get('name')}",
+                            )
+                            inferred.append(endpoint)
+                            existing.add((method, normalized))
+                            self._inferred_count += 1
+                            logger.debug(f"  + Inferred custom op: {method} {path}")
+
+        return inferred
+
+    def _infer_nested_resource_endpoints(
+        self,
+        domain_model: 'DomainModelIR',
+        existing: Set[tuple]
+    ) -> List[Endpoint]:
+        """
+        Bug #47 Fix: Infer nested resource endpoints from entity relationships.
+
+        Detects patterns like:
+        - Cart has CartItems → PUT /carts/{id}/items/{product_id}
+        - Cart has CartItems → DELETE /carts/{id}/items/{product_id}
+        - Order has OrderItems → GET /orders/{id}/items
+        """
+        inferred = []
+
+        # Patterns for nested resources
+        NESTED_PATTERNS = {
+            "cartitem": ("cart", "carts", "item", "product_id"),
+            "orderitem": ("order", "orders", "item", "product_id"),
+        }
+
+        for entity in domain_model.entities:
+            entity_lower = entity.name.lower()
+
+            # Check if this is a child entity (CartItem, OrderItem)
+            for child_pattern, (parent_singular, parent_plural, item_name, item_id_field) in NESTED_PATTERNS.items():
+                if child_pattern in entity_lower:
+                    # Infer: PUT /parents/{id}/items/{item_id}
+                    add_path = f"/{parent_plural}/{{id}}/{item_name}s/{{" + item_id_field + "}}"
+                    add_normalized = self._normalize_path(add_path)
+
+                    if ("PUT", add_normalized) not in existing:
+                        endpoint = Endpoint(
+                            path=add_path,
+                            method=HttpMethod.PUT,
+                            operation_id=f"add_{item_name}_to_{parent_singular}",
+                            summary=f"Add item to {parent_singular}",
+                            description=f"Add/update item in {parent_singular} (nested resource)",
+                            parameters=[
+                                APIParameter(
+                                    name="id",
+                                    location=ParameterLocation.PATH,
+                                    data_type="string",
+                                    required=True,
+                                    description=f"The {parent_singular} ID",
+                                ),
+                                APIParameter(
+                                    name=item_id_field,
+                                    location=ParameterLocation.PATH,
+                                    data_type="string",
+                                    required=True,
+                                    description=f"The {item_name} ID",
+                                ),
+                            ],
+                            tags=[parent_plural],
+                            auth_required=True,
+                            inferred=True,
+                            inference_source=InferenceSource.CRUD_BEST_PRACTICE,
+                            inference_reason=f"Nested resource endpoint for {entity.name}",
+                        )
+                        inferred.append(endpoint)
+                        existing.add(("PUT", add_normalized))
+                        self._inferred_count += 1
+                        logger.debug(f"  + Inferred nested: PUT {add_path}")
+
+                    # Infer: DELETE /parents/{id}/items/{item_id}
+                    delete_path = f"/{parent_plural}/{{id}}/{item_name}s/{{" + item_id_field + "}}"
+                    delete_normalized = self._normalize_path(delete_path)
+
+                    if ("DELETE", delete_normalized) not in existing:
+                        endpoint = Endpoint(
+                            path=delete_path,
+                            method=HttpMethod.DELETE,
+                            operation_id=f"remove_{item_name}_from_{parent_singular}",
+                            summary=f"Remove item from {parent_singular}",
+                            description=f"Remove item from {parent_singular} (nested resource)",
+                            parameters=[
+                                APIParameter(
+                                    name="id",
+                                    location=ParameterLocation.PATH,
+                                    data_type="string",
+                                    required=True,
+                                    description=f"The {parent_singular} ID",
+                                ),
+                                APIParameter(
+                                    name=item_id_field,
+                                    location=ParameterLocation.PATH,
+                                    data_type="string",
+                                    required=True,
+                                    description=f"The {item_name} ID",
+                                ),
+                            ],
+                            tags=[parent_plural],
+                            auth_required=True,
+                            inferred=True,
+                            inference_source=InferenceSource.CRUD_BEST_PRACTICE,
+                            inference_reason=f"Nested resource endpoint for {entity.name}",
+                        )
+                        inferred.append(endpoint)
+                        existing.add(("DELETE", delete_normalized))
+                        self._inferred_count += 1
+                        logger.debug(f"  + Inferred nested: DELETE {delete_path}")
+
+        return inferred
+
+    def _pluralize(self, word: str) -> str:
+        """Simple pluralization (product -> products)."""
+        if word.endswith("y"):
+            return word[:-1] + "ies"
+        elif word.endswith("s"):
+            return word + "es"
+        else:
+            return word + "s"
+
     def _extract_resources(self, api_model: APIModelIR) -> Set[str]:
         """Extract resource names from existing endpoints."""
         resources = set()
@@ -317,18 +531,24 @@ def get_endpoint_enricher(
 
 def enrich_api_model(
     api_model: APIModelIR,
-    strict_mode: bool = False
+    strict_mode: bool = False,
+    domain_model: Optional['DomainModelIR'] = None,
+    flows_data: Optional[List[Dict]] = None
 ) -> APIModelIR:
     """
     Convenience function to enrich APIModelIR.
 
+    Bug #47 Fix: Now accepts domain_model and flows_data for advanced inference.
+
     Args:
         api_model: Original APIModelIR
         strict_mode: If True, skip inference
+        domain_model: DomainModelIR for relationship-based inference
+        flows_data: Raw flow data for custom operation detection
 
     Returns:
         Enriched APIModelIR
     """
     config = EnrichmentConfig(strict_mode=strict_mode)
     enricher = InferredEndpointEnricher(config)
-    return enricher.enrich(api_model)
+    return enricher.enrich(api_model, domain_model, flows_data)

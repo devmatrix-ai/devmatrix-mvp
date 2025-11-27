@@ -92,7 +92,7 @@ OpenAPI-based compliance validation complete: 93.0%
 
 **Severity**: CRITICAL
 **Category**: IR Extraction
-**Status**: NEW
+**Status**: IN_PROGRESS - Fix implemented, needs E2E testing
 
 ### Síntoma
 ```
@@ -128,6 +128,31 @@ Acciones permitidas:
 - `src/specs/spec_to_application_ir.py`
 - `src/services/business_logic_extractor.py`
 - `src/cognitive/ir/api_model.py`
+- `src/services/inferred_endpoint_enricher.py` (FIXED)
+
+### Fix Implemented (2025-11-27)
+
+Added two new inference methods to `InferredEndpointEnricher`:
+
+1. **`_infer_custom_operations()`**
+   - Detects custom operations from flow names: deactivate, activate, checkout, cancel, pay
+   - Generates endpoints like `PATCH /products/{id}/deactivate`
+   - Triggered when flows mention these operations
+
+2. **`_infer_nested_resource_endpoints()`**
+   - Detects nested resources from entity relationships
+   - For CartItem → generates `PUT /carts/{id}/items/{product_id}` and `DELETE /carts/{id}/items/{product_id}`
+   - For OrderItem → generates similar nested endpoints
+
+Modified `enrich_api_model()` to accept:
+- `domain_model` - for relationship inference
+- `flows_data` - for custom operation detection
+
+Updated `spec_to_application_ir.py` (line 657) to pass these parameters during enrichment.
+
+**Expected Result**: Endpoints like `PATCH /products/{id}/deactivate`, `PUT /carts/{id}/items/{product_id}`, `DELETE /carts/{id}/items/{product_id}` should now appear in APIModelIR.
+
+**Status**: Implementation complete, needs E2E test validation.
 
 ---
 
