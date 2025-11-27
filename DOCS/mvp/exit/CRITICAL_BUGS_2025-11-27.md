@@ -2,7 +2,7 @@
 
 **Analysis Date**: 2025-11-27
 **Test Run**: `ecommerce-api-spec-human_1764201312`
-**Status**: 🔄 IN PROGRESS - 3/6 bugs fixed, 3 pending
+**Status**: 🔄 IN PROGRESS - 4/6 bugs fixed, 2 pending
 
 ---
 
@@ -12,15 +12,17 @@
 El pipeline E2E mostraba resultados engañosos. Decía "✅ PASSED" con 98.6% compliance pero:
 - ~~Code Repair no funciona (aplica repairs que no persisten)~~ → ✅ FIXED (cache invalidation)
 - ~~Endpoints del spec no están en el IR~~ → ✅ FIXED (custom ops + nested resources)
-- Métricas inconsistentes entre fases → 🔄 PENDING
+- ~~Métricas inconsistentes entre fases~~ → ✅ FIXED (IR unification)
 - ~~Tests no ejecutan (0% pass rate pero dice PASSED)~~ → ✅ FIXED (collection errors)
 
 ### Progress Summary
+
 | Fixed | Pending |
 |-------|---------|
 | Bug #46 (Cache) ✅ | Bug #45 (Repeated Repairs) |
 | Bug #47 (IR Endpoints) ✅ | Bug #48 (Semantic Matching) |
-| Bug #50 (Test Collection) ✅ | Bug #49 (Inconsistent Metrics) |
+| Bug #49 (IR Unification) ✅ | |
+| Bug #50 (Test Collection) ✅ | |
 
 ---
 
@@ -244,7 +246,7 @@ Aparece en TODAS las iteraciones, nunca se resuelve.
 
 **Severity**: HIGH
 **Category**: Metrics/Reporting
-**Status**: NEW
+**Status**: ✅ FIXED (2025-11-27)
 
 ### Síntoma
 
@@ -268,13 +270,36 @@ Semantic Compliance: 98.6%  ← Subió de 93% a 98.6%?
 │ IR Compliance (Strict):   91.8% ✅              │
 ```
 
-### Root Cause
-- Diferentes fases usan diferentes fuentes de verdad
-- Phase 6.5 usa OpenAPI extraction
-- Phase 7 usa ApplicationIR
-- Los números no coinciden
+### Root Cause (Confirmed - 2025-11-27)
+- Phase 6.5 usaba `self.spec_requirements` (SpecRequirements legacy)
+- Phase 7 usaba `self.application_ir` (ApplicationIR nuevo)
+- Dos fuentes de verdad diferentes = métricas diferentes
 
-### Impact
+### Fix Implemented (2025-11-27)
+Unificación a ApplicationIR como única fuente de verdad:
+
+```python
+# ANTES (Bug #49):
+compliance_report = self.compliance_validator.validate_from_app(
+    spec_requirements=self.spec_requirements,  # ← Legacy
+    output_path=self.output_path
+)
+
+# DESPUÉS:
+compliance_report = self.compliance_validator.validate_from_app(
+    spec_requirements=self.application_ir,  # ← IR-centric (unified)
+    output_path=self.output_path
+)
+```
+
+**Files Changed**:
+- `tests/e2e/real_e2e_full_pipeline.py`
+  - Line 2893: Pre-check ahora requiere ApplicationIR
+  - Line 2923: `validate_from_app()` usa `self.application_ir`
+  - Line 3197: `code_repair_agent.repair()` usa `self.application_ir`
+  - Line 3236: Re-validation usa `self.application_ir`
+
+### Impact (Before Fix)
 - No se puede confiar en ninguna métrica
 - "98.6% compliance" es engañoso
 - Due diligence imposible de realizar

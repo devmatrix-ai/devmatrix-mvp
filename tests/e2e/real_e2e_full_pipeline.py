@@ -2889,10 +2889,11 @@ Once running, visit:
             self.metrics_collector.complete_phase("code_repair")
             return
 
-        if not self.spec_requirements:
-            print("  ⚠️ SpecRequirements not available, skipping repair phase")
+        # Bug #49 Fix: Check ApplicationIR instead of legacy spec_requirements
+        if not self.application_ir:
+            print("  ⚠️ ApplicationIR not available, skipping repair phase")
             self.metrics_collector.add_checkpoint("code_repair", "CP-6.5.SKIP", {
-                "reason": "SpecRequirements not available"
+                "reason": "ApplicationIR not available (IR-centric architecture required)"
             })
             self.metrics_collector.complete_phase("code_repair")
             return
@@ -2911,8 +2912,16 @@ Once running, visit:
             # Run pre-check compliance validation using OpenAPI
             # CRITICAL FIX: Use validate_from_app() instead of validate()
             # to get REAL compliance across modular architecture
+            # Bug #49 Fix: Use ApplicationIR as single source of truth (same as Phase 7)
+            # ApplicationIR is REQUIRED - no legacy fallback (deprecated)
+            if not self.application_ir:
+                raise RuntimeError(
+                    "❌ ApplicationIR not available. Phase 6.5 requires IR-centric architecture. "
+                    "Ensure Phase 1 ApplicationIR extraction completes successfully."
+                )
+
             compliance_report = self.compliance_validator.validate_from_app(
-                spec_requirements=self.spec_requirements,
+                spec_requirements=self.application_ir,
                 output_path=self.output_path
             )
 
@@ -3182,9 +3191,10 @@ Once running, visit:
 
             # CRITICAL FIX: Use CURRENT compliance report, not initial
             # This ensures repair agent sees the actual current state, not stale data
+            # Bug #49 Fix: Use ApplicationIR instead of legacy spec_requirements
             repair_result = await self.code_repair_agent.repair(
                 compliance_report=current_compliance_report,
-                spec_requirements=self.spec_requirements,  # fallback for legacy mode
+                spec_requirements=self.application_ir,  # IR-centric (Bug #49)
                 max_attempts=3
             )
 
@@ -3221,8 +3231,9 @@ Once running, visit:
 
             try:
                 # Use validate_from_app() to get real compliance after repair
+                # Bug #49 Fix: Use ApplicationIR instead of legacy spec_requirements
                 new_compliance_report = self.compliance_validator.validate_from_app(
-                    spec_requirements=self.spec_requirements,
+                    spec_requirements=self.application_ir,
                     output_path=self.output_path
                 )
                 new_compliance = new_compliance_report.overall_compliance
