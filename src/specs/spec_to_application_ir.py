@@ -43,6 +43,9 @@ from src.cognitive.ir.api_model import (
     APIParameter,
     ParameterLocation,
 )
+
+# IR-Level Best Practice Inference (Phase 0 - single source of truth)
+from src.services.inferred_endpoint_enricher import enrich_api_model
 from src.cognitive.ir.infrastructure_model import (
     InfrastructureModelIR,
     DatabaseConfig,
@@ -56,8 +59,90 @@ from src.cognitive.ir.validation_model import (
     ValidationRule,
     ValidationModelIR,
 )
+from src.utils.constraint_helpers import normalize_constraints
+from src.state.redis_manager import RedisManager
 
 logger = logging.getLogger(__name__)
+
+
+# Bug #16 Fix: Spanish→English translation dictionary for flow names
+# DevMatrix works internally in English only - this post-processes LLM output
+SPANISH_TO_ENGLISH = {
+    # Verbs (infinitive and conjugated forms)
+    "crear": "create", "listar": "list", "obtener": "get", "ver": "view",
+    "actualizar": "update", "eliminar": "delete", "agregar": "add",
+    "procesar": "process", "cancelar": "cancel", "vaciar": "clear",
+    "desactivar": "deactivate", "activar": "activate", "registrar": "register",
+    "pagar": "pay", "checkout": "checkout",
+    # Nouns
+    "producto": "product", "productos": "products", "carrito": "cart",
+    "orden": "order", "órdenes": "orders", "ordenes": "orders",
+    "cliente": "customer", "clientes": "customers",
+    "ítem": "item", "item": "item", "items": "items",
+    "pago": "payment", "cantidad": "quantity", "detalles": "details",
+    "activos": "active", "actual": "current", "simulado": "simulated",
+    # Prepositions and articles (to remove or translate)
+    "del": "of", "de": "of", "al": "to", "el": "the", "la": "the",
+    "los": "the", "las": "the", "un": "a", "una": "a",
+}
+
+
+def _translate_to_english(text: str) -> str:
+    """
+    Bug #16 Fix: Translate Spanish flow names to English.
+
+    This is post-processing because LLM sometimes ignores translation instructions.
+    DevMatrix internally works ONLY in English.
+
+    Examples:
+        "F1: Crear Producto" → "F1: Create Product"
+        "F9: Agregar Ítem al Carrito" → "F9: Add Item to Cart"
+    """
+    if not text:
+        return text
+
+    # Preserve the F# prefix if present
+    prefix = ""
+    rest = text
+    if text.startswith("F") and ":" in text[:5]:
+        colon_idx = text.index(":")
+        prefix = text[:colon_idx + 1] + " "
+        rest = text[colon_idx + 1:].strip()
+
+    # Split into words and translate each
+    words = rest.split()
+    translated_words = []
+
+    for word in words:
+        # Preserve capitalization
+        lower_word = word.lower()
+        # Remove accents for matching
+        lower_word_clean = lower_word.replace("í", "i").replace("é", "e").replace("á", "a").replace("ó", "o").replace("ú", "u")
+
+        if lower_word in SPANISH_TO_ENGLISH:
+            english = SPANISH_TO_ENGLISH[lower_word]
+            # Preserve original capitalization
+            if word[0].isupper():
+                english = english.capitalize()
+            translated_words.append(english)
+        elif lower_word_clean in SPANISH_TO_ENGLISH:
+            english = SPANISH_TO_ENGLISH[lower_word_clean]
+            if word[0].isupper():
+                english = english.capitalize()
+            translated_words.append(english)
+        else:
+            translated_words.append(word)
+
+    # Clean up: remove "of the" patterns, join words
+    result = " ".join(translated_words)
+    # Clean common patterns
+    result = result.replace(" Of The ", " ").replace(" of the ", " ")
+    result = result.replace(" The ", " ").replace(" the ", " ")
+    result = result.replace(" To The ", " To ").replace(" to the ", " to ")
+    result = result.replace(" Of ", " ").replace(" of ", " ")
+    result = result.replace("  ", " ").strip()
+
+    return prefix + result
 
 
 class SpecToApplicationIR:
@@ -79,19 +164,23 @@ class SpecToApplicationIR:
         app_ir = await converter.get_application_ir(spec_markdown, "ecommerce-spec.md")
     """
 
-    CACHE_DIR = Path(".devmatrix/ir_cache")
+    CACHE_DIR = Path(".devmatrix/ir_cache")  # Filesystem fallback
     LLM_MODEL = "claude-sonnet-4-5-20250929"  # Sonnet 4.5 - balanced speed/quality for spec extraction
 
     def __init__(self, cache_dir: Optional[Path] = None):
-        """Initialize the converter."""
+        """Initialize the converter with Redis as primary cache."""
         if ANTHROPIC_AVAILABLE:
             self.client = AsyncAnthropic()
         else:
             self.client = None
             logger.warning("Anthropic not available - LLM extraction disabled")
 
+        # Filesystem cache as fallback (cold start, debugging)
         self.CACHE_DIR = cache_dir or self.CACHE_DIR
         self.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+        # Redis as primary cache (fast, TTL auto-expire)
+        self.redis = RedisManager(enable_fallback=True)
 
     async def get_application_ir(
         self,
@@ -100,7 +189,12 @@ class SpecToApplicationIR:
         force_refresh: bool = False
     ) -> ApplicationIR:
         """
-        Get ApplicationIR for spec, using cache if available.
+        Get ApplicationIR for spec, using multi-tier cache.
+
+        CACHE STRATEGY:
+        1. Redis (primary) - fast, TTL auto-expire (7 days)
+        2. Filesystem (fallback) - cold start recovery, debugging
+        3. LLM generation - only when no cache exists
 
         Args:
             spec_markdown: Raw markdown content of specification
@@ -111,22 +205,60 @@ class SpecToApplicationIR:
             ApplicationIR representing the spec
         """
         spec_hash = self._hash_spec(spec_markdown)
-        cache_path = self.CACHE_DIR / f"{Path(spec_path).stem}_{spec_hash[:8]}.json"
+        code_version = self._get_code_version_hash()  # Bug #44 Fix
+        cache_key = f"{Path(spec_path).stem}_{spec_hash[:8]}_{code_version}"
+        cache_path = self.CACHE_DIR / f"{cache_key}.json"
 
-        # Check cache first
-        if not force_refresh and cache_path.exists():
-            logger.info(f"📦 Loading cached ApplicationIR from {cache_path}")
-            return self._load_from_cache(cache_path)
+        if not force_refresh:
+            # TIER 1: Try Redis first (fast)
+            cached_data = self.redis.get_cached_ir(cache_key)
+            if cached_data:
+                try:
+                    ir_dict = cached_data.get("application_ir")
+                    if ir_dict:
+                        app_ir = ApplicationIR.model_validate(ir_dict)
+                        logger.info(f"📦 Redis cache hit for {cache_key}")
+                        return app_ir
+                except Exception as e:
+                    logger.warning(f"Redis cache invalid, falling back: {e}")
 
-        # Generate with LLM
+            # TIER 2: Try filesystem fallback (cold start)
+            if cache_path.exists():
+                try:
+                    app_ir = self._load_from_cache(cache_path)
+                    logger.info(f"📁 Filesystem cache hit for {cache_key}")
+                    # Warm up Redis with filesystem data
+                    self._cache_to_redis(app_ir, cache_key, spec_hash, spec_path)
+                    return app_ir
+                except Exception as e:
+                    logger.warning(f"Filesystem cache invalid: {e}")
+
+        # TIER 3: Generate with LLM
         logger.info(f"🤖 Generating ApplicationIR with LLM for {spec_path}")
         application_ir = await self._generate_with_llm(spec_markdown, spec_path)
 
-        # Cache for future use
+        # Save to both caches
         self._save_to_cache(application_ir, cache_path, spec_hash, spec_path)
-        logger.info(f"💾 Cached ApplicationIR to {cache_path}")
+        self._cache_to_redis(application_ir, cache_key, spec_hash, spec_path)
 
         return application_ir
+
+    def _cache_to_redis(
+        self,
+        application_ir: ApplicationIR,
+        cache_key: str,
+        spec_hash: str,
+        spec_path: str
+    ):
+        """Save ApplicationIR to Redis cache."""
+        cache_data = {
+            "spec_hash": spec_hash,
+            "spec_path": spec_path,
+            "generated_at": datetime.utcnow().isoformat(),
+            "application_ir": application_ir.model_dump(mode="json"),
+        }
+        if self.redis.cache_ir(cache_key, cache_data):
+            logger.info(f"💾 Cached ApplicationIR to Redis: {cache_key}")
 
     async def _generate_with_llm(
         self,
@@ -252,10 +384,10 @@ Output ONLY valid JSON in this EXACT format:
 
   "flows": [
     {{
-      "name": "Flow Name from spec",
+      "name": "F1: English Flow Name (NEVER Spanish, ALWAYS translate)",
       "type": "workflow|state_transition|policy|event_handler",
-      "trigger": "What triggers this flow",
-      "description": "Description of the flow from spec",
+      "trigger": "What triggers this flow (in English)",
+      "description": "Description in English (translate if spec is Spanish)",
       "target_entities": ["Entity1", "Entity2"],
       "steps": [
         {{
@@ -322,6 +454,32 @@ IMPORTANT:
 4. Be thorough with validation rules
 5. Extract ALL flows from the spec, including CRUD operations as simple flows
 6. Extract entity dependencies from relationships and flow descriptions
+
+*******************************************************************************
+** MANDATORY TRANSLATION RULE - READ THIS CAREFULLY **
+*******************************************************************************
+ALL OUTPUT MUST BE IN ENGLISH. If the spec is in Spanish, French, German, or
+any other language, YOU MUST TRANSLATE to English.
+
+FLOW NAMES - MUST BE IN ENGLISH:
+  WRONG: "F1: Crear Producto"           → DO NOT OUTPUT THIS
+  RIGHT: "F1: Create Product"           → OUTPUT THIS INSTEAD
+
+  WRONG: "F9: Agregar Ítem al Carrito"  → DO NOT OUTPUT THIS
+  RIGHT: "F9: Add Item to Cart"         → OUTPUT THIS INSTEAD
+
+  WRONG: "F13: Procesar Pago"           → DO NOT OUTPUT THIS
+  RIGHT: "F13: Process Payment"         → OUTPUT THIS INSTEAD
+
+TRANSLATION TABLE (use these):
+  crear → create, listar → list, obtener → get, actualizar → update,
+  eliminar → delete, agregar → add, procesar → process, cancelar → cancel,
+  ver → view, vaciar → clear, desactivar → deactivate, activar → activate,
+  producto → product, carrito → cart, orden → order, cliente → customer,
+  ítem/item → item, pago → payment, cantidad → quantity
+
+If you output Spanish text in flow names, the system will FAIL.
+*******************************************************************************
 
 SPECIFICATION:
 {spec_markdown}
@@ -492,6 +650,11 @@ Output JSON only, no explanation:"""
 
         api_model = APIModelIR(endpoints=endpoints, schemas=schemas)
 
+        # PHASE 0: IR-Level Best Practice Inference
+        # Enrich with inferred endpoints (list, delete, health, metrics)
+        # All inferred endpoints are marked with inferred=True for traceability
+        api_model = enrich_api_model(api_model)
+
         # Build InfrastructureModelIR
         db_data = ir_data.get("database", {"type": "postgresql", "name": "app_db"})
         db_type = self._parse_database_type(db_data.get("type", "postgresql"))
@@ -566,8 +729,12 @@ Output JSON only, no explanation:"""
                 )
                 steps.append(step)
 
+            # Bug #16 Fix: Translate flow name from Spanish to English
+            raw_name = flow_data.get("name", "Unknown")
+            translated_name = _translate_to_english(raw_name)
+
             flow = Flow(
-                name=flow_data.get("name", "Unknown"),
+                name=translated_name,
                 type=self._parse_flow_type(flow_data.get("type", "workflow")),
                 trigger=flow_data.get("trigger", ""),
                 steps=steps,
@@ -599,7 +766,8 @@ Output JSON only, no explanation:"""
     def _extract_implicit_rules(self, entity_name: str, attr: Attribute) -> list[ValidationRule]:
         """Extract implicit validation rules from attribute constraints."""
         rules = []
-        constraints = attr.constraints or {}
+        # Bug #36 fix: normalize constraints to dict (can be list or dict)
+        constraints = normalize_constraints(attr.constraints)
 
         # Required/presence
         if not attr.is_nullable:
@@ -771,6 +939,27 @@ Output JSON only, no explanation:"""
         """Generate hash of spec content for cache invalidation."""
         return hashlib.sha256(spec_markdown.encode()).hexdigest()
 
+    def _get_code_version_hash(self) -> str:
+        """
+        Bug #44 Fix: Hash of IR-related source files for cache invalidation.
+
+        When IR extraction/validation code changes, the cache should be invalidated
+        even if the spec content hasn't changed.
+        """
+        files_to_hash = [
+            "src/cognitive/ir/api_model.py",
+            "src/cognitive/ir/ir_builder.py",
+            "src/services/business_logic_extractor.py",
+            "src/validation/compliance_validator.py",
+            "src/specs/spec_to_application_ir.py",
+        ]
+        combined = ""
+        for f in files_to_hash:
+            file_path = Path(f)
+            if file_path.exists():
+                combined += hashlib.md5(file_path.read_bytes()).hexdigest()
+        return hashlib.md5(combined.encode()).hexdigest()[:8]
+
     def _load_from_cache(self, cache_path: Path) -> ApplicationIR:
         """Load ApplicationIR from cached JSON."""
         try:
@@ -816,47 +1005,84 @@ Output JSON only, no explanation:"""
             json.dump(cache_data, f, indent=2, default=str)
 
     def clear_cache(self, spec_path: Optional[str] = None):
-        """Clear cached ApplicationIR files."""
+        """
+        Clear cached ApplicationIR from both Redis and filesystem.
+
+        FLUSH STRATEGY:
+        - Redis: Uses SCAN (non-blocking, safe for production)
+        - Filesystem: Direct file deletion
+
+        Args:
+            spec_path: If provided, only clear cache for this spec.
+                      If None, clear ALL IR cache entries.
+        """
+        spec_name = Path(spec_path).stem if spec_path else None
+
+        # Clear Redis first (uses SCAN, non-blocking)
+        redis_deleted = self.redis.clear_ir_cache(spec_name)
+        if redis_deleted > 0:
+            logger.info(f"🗑️ Cleared {redis_deleted} entries from Redis IR cache")
+
+        # Clear filesystem
         if spec_path:
-            pattern = f"{Path(spec_path).stem}_*.json"
+            pattern = f"{spec_name}_*.json"
             for cache_file in self.CACHE_DIR.glob(pattern):
                 cache_file.unlink()
-                logger.info(f"🗑️ Removed cache: {cache_file}")
+                logger.info(f"🗑️ Removed filesystem cache: {cache_file}")
         else:
             for cache_file in self.CACHE_DIR.glob("*.json"):
                 cache_file.unlink()
-                logger.info(f"🗑️ Removed cache: {cache_file}")
+                logger.info(f"🗑️ Removed filesystem cache: {cache_file}")
 
     def get_cache_info(self, spec_path: str) -> dict[str, Any]:
-        """Get information about cached ApplicationIR."""
-        pattern = f"{Path(spec_path).stem}_*.json"
-        cache_files = list(self.CACHE_DIR.glob(pattern))
+        """Get information about cached ApplicationIR from both tiers."""
+        spec_name = Path(spec_path).stem
+        pattern = f"{spec_name}_*.json"
 
-        if not cache_files:
-            return {"cached": False}
-
-        cache_file = cache_files[0]
-        with open(cache_file) as f:
-            data = json.load(f)
-
-        validation_rules_count = len(
-            data.get("application_ir", {})
-            .get("validation_model", {})
-            .get("rules", [])
-        )
-
-        return {
-            "cached": True,
-            "cache_path": str(cache_file),
-            "spec_hash": data.get("spec_hash", "")[:8],
-            "generated_at": data.get("generated_at"),
-            "rules_count": validation_rules_count,
-            "entities_count": len(
-                data.get("application_ir", {})
-                .get("domain_model", {})
-                .get("entities", [])
-            ),
+        info = {
+            "cached": False,
+            "redis_cached": False,
+            "filesystem_cached": False,
         }
+
+        # Check Redis first
+        redis_stats = self.redis.get_ir_cache_stats()
+        redis_keys = [k for k in redis_stats.get("keys", []) if spec_name in str(k)]
+        if redis_keys:
+            info["redis_cached"] = True
+            info["redis_keys"] = redis_keys
+            info["redis_source"] = redis_stats.get("source", "unknown")
+
+        # Check filesystem
+        cache_files = list(self.CACHE_DIR.glob(pattern))
+        if cache_files:
+            info["filesystem_cached"] = True
+            cache_file = cache_files[0]
+            info["cache_path"] = str(cache_file)
+
+            try:
+                with open(cache_file) as f:
+                    data = json.load(f)
+
+                validation_rules_count = len(
+                    data.get("application_ir", {})
+                    .get("validation_model", {})
+                    .get("rules", [])
+                )
+
+                info["spec_hash"] = data.get("spec_hash", "")[:8]
+                info["generated_at"] = data.get("generated_at")
+                info["rules_count"] = validation_rules_count
+                info["entities_count"] = len(
+                    data.get("application_ir", {})
+                    .get("domain_model", {})
+                    .get("entities", [])
+                )
+            except Exception as e:
+                info["filesystem_error"] = str(e)
+
+        info["cached"] = info["redis_cached"] or info["filesystem_cached"]
+        return info
 
 
 # Sync wrapper for non-async contexts
