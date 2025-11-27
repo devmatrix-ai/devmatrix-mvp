@@ -4259,10 +4259,12 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
 
         try:
             # Run pytest with JSON report
+            # Bug #57 Fix: Use relative path "tests" since cwd is already output_path
+            # Using absolute path str(test_dir) could fail if output_path is relative
             result = subprocess.run(
                 [
                     "python", "-m", "pytest",
-                    str(test_dir),
+                    "tests",  # Bug #57: Relative path from cwd (output_path)
                     "-v",
                     "--tb=short",
                     "--json-report",
@@ -4271,7 +4273,7 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
                 ],
                 capture_output=True,
                 text=True,
-                cwd=str(self.output_path),
+                cwd=str(self.output_path.resolve()),  # Bug #57: Ensure absolute path
                 timeout=120
             )
 
