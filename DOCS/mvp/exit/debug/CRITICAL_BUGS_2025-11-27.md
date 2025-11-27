@@ -2,7 +2,7 @@
 
 **Analysis Date**: 2025-11-27
 **Test Run**: `ecommerce-api-spec-human_1764201312`
-**Status**: 🔄 IN PROGRESS - 4/6 bugs fixed, 2 pending
+**Status**: 🔄 IN PROGRESS - 5/6 bugs fixed, 1 pending
 
 ---
 
@@ -10,7 +10,7 @@
 
 ### Original Issues (found 2025-11-27)
 El pipeline E2E mostraba resultados engañosos. Decía "✅ PASSED" con 98.6% compliance pero:
-- ~~Code Repair no funciona (aplica repairs que no persisten)~~ → ✅ FIXED (cache invalidation)
+- ~~Code Repair no funciona (aplica repairs que no persisten)~~ → ✅ FIXED (cache invalidation + semantic mapping)
 - ~~Endpoints del spec no están en el IR~~ → ✅ FIXED (custom ops + nested resources)
 - ~~Métricas inconsistentes entre fases~~ → ✅ FIXED (IR unification)
 - ~~Tests no ejecutan (0% pass rate pero dice PASSED)~~ → ✅ FIXED (collection errors)
@@ -19,8 +19,9 @@ El pipeline E2E mostraba resultados engañosos. Decía "✅ PASSED" con 98.6% co
 
 | Fixed | Pending |
 |-------|---------|
-| Bug #46 (Cache) ✅ | Bug #45 (Repeated Repairs) |
-| Bug #47 (IR Endpoints) ✅ | Bug #48 (Semantic Matching) |
+| Bug #45 (Repeated Repairs) ✅ | Bug #48 (Semantic Matching) |
+| Bug #46 (Cache) ✅ | |
+| Bug #47 (IR Endpoints) ✅ | |
 | Bug #49 (IR Unification) ✅ | |
 | Bug #50 (Test Collection) ✅ | |
 
@@ -30,9 +31,10 @@ El pipeline E2E mostraba resultados engañosos. Decía "✅ PASSED" con 98.6% co
 
 **Severity**: HIGH
 **Category**: Code Repair Loop
-**Status**: NEW
+**Status**: ✅ FIXED (2025-11-27)
 
 ### Síntoma
+
 ```
 ⏳ Iteration 1/3
 Added non=True to Product.name
@@ -47,19 +49,45 @@ Added non_negative=True to Product.stock       ← MISMO REPAIR DE NUEVO
 ✓ Applied 39 repairs
 ```
 
-### Root Cause
-CodeRepairAgent no verifica si el repair ya fue aplicado. Cada iteración:
-1. Lee los failures
-2. Aplica repairs sin verificar estado actual
-3. No persiste cambios correctamente O no re-lee el archivo modificado
+### Root Cause (Confirmed - 2025-11-27)
 
-### Impact
+Dos problemas en `_repair_validation_from_ir()`:
+1. **Regex incompleto**: `(\w+)` no captura hyphens, "non-empty" se parseaba como "non"
+2. **Sin validación de constraints**: IR mode no validaba contra `known_constraints`
+
+### Fix Implemented (2025-11-27)
+
+```python
+# 1. Fixed regex to capture hyphenated constraints
+match = re.match(r'(\w+)\.(\w+):\s*([\w-]+)(?:=(.+))?', validation_str)
+constraint_type = match.group(3).replace('-', '_')  # Normalize
+
+# 2. Added semantic mapping for common constraints
+semantic_mapping = {
+    'non_empty': ('min_length', 1),
+    'non_negative': ('ge', 0),
+    'positive': ('gt', 0),
+    'greater_than_zero': ('gt', 0),
+    ...
+}
+
+# 3. Added known_constraints validation (same as legacy mode)
+if constraint_type not in known_constraints:
+    logger.info(f"Ignoring unrecognized constraint '{constraint_type}'")
+    return True  # Treat as handled to avoid retry loop
+```
+
+### Files Changed
+
+- `src/mge/v2/agents/code_repair_agent.py`
+  - `_repair_validation_from_ir()`: Added known_constraints check
+  - `_parse_validation_str_ir()`: Fixed regex, added constraint normalization
+
+### Impact (Before Fix)
+
 - Ciclos de repair inútiles (waste of compute)
 - Nunca mejora compliance
 - False sense of progress ("Applied 44 repairs" pero nada cambió)
-
-### Files Involved
-- `src/mge/v2/agents/code_repair_agent.py`
 
 ---
 

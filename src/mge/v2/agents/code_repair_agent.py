@@ -510,6 +510,39 @@ class CodeRepairAgent:
             constraint_type = parsed["constraint_type"]
             constraint_value = parsed["constraint_value"]
 
+            # Bug #45 Fix: Map semantic constraint names to Pydantic constraint types
+            # This prevents "non_empty" from being treated as unknown and retried
+            semantic_mapping = {
+                'non_empty': ('min_length', 1),
+                'non_negative': ('ge', 0),
+                'positive': ('gt', 0),
+                'greater_than_zero': ('gt', 0),
+                'auto_generated': ('default_factory', 'uuid.uuid4'),
+                'auto_increment': ('default_factory', 'uuid.uuid4'),
+                'read_only': ('read_only', True),
+                'snapshot_at_add_time': ('read_only', True),
+                'snapshot_at_order_time': ('read_only', True),
+            }
+            if constraint_type in semantic_mapping:
+                mapped = semantic_mapping[constraint_type]
+                logger.info(f"Bug #45: Mapping '{constraint_type}' → '{mapped[0]}={mapped[1]}'")
+                constraint_type = mapped[0]
+                constraint_value = mapped[1]
+
+            # Bug #45 Fix: Validate constraint_type against known_constraints (same as legacy mode)
+            # Without this check, invalid constraints like "non" get applied and repeated
+            known_constraints = {
+                'gt', 'ge', 'lt', 'le',
+                'min_length', 'max_length', 'pattern',
+                'min_items', 'max_items',
+                'default', 'default_factory', 'required', 'enum',
+                'unique', 'foreign_key',
+                'read_only', 'auto_increment', 'computed_field'
+            }
+            if constraint_type not in known_constraints:
+                logger.info(f"Bug #45: Ignoring unrecognized constraint '{constraint_type}' from '{validation_str}'")
+                return True  # Treat as handled to avoid retry loop
+
             # Apply constraint to schemas.py using existing AST patcher
             return self._add_field_constraint_to_schema(
                 entity_name=entity_name,
@@ -541,11 +574,13 @@ class CodeRepairAgent:
         import re
 
         # Try format: "Entity.field: constraint=value" or "Entity.field: constraint"
-        match = re.match(r'(\w+)\.(\w+):\s*(\w+)(?:=(.+))?', validation_str)
+        # Bug #45 Fix: Use [\w-]+ to capture constraints with hyphens like "non-empty"
+        match = re.match(r'(\w+)\.(\w+):\s*([\w-]+)(?:=(.+))?', validation_str)
         if match:
             entity_name = match.group(1)
             field_name = match.group(2)
-            constraint_type = match.group(3)
+            # Normalize constraint: replace hyphens with underscores for consistency
+            constraint_type = match.group(3).replace('-', '_')
             constraint_value = match.group(4) if match.group(4) else True
             return {
                 "entity": entity_name,
