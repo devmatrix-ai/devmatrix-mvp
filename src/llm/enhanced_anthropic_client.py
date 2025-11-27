@@ -266,6 +266,39 @@ class EnhancedAnthropicClient:
         )
     """
 
+    # Bug #22 Fix: Class-level metrics for global tracking across all instances
+    _global_api_calls: int = 0
+    _global_input_tokens: int = 0
+    _global_output_tokens: int = 0
+    _global_total_latency_ms: float = 0.0
+
+    @classmethod
+    def get_global_metrics(cls) -> dict:
+        """Get aggregated metrics across all client instances."""
+        return {
+            "total_api_calls": cls._global_api_calls,
+            "total_input_tokens": cls._global_input_tokens,
+            "total_output_tokens": cls._global_output_tokens,
+            "total_tokens": cls._global_input_tokens + cls._global_output_tokens,
+            "avg_latency_ms": cls._global_total_latency_ms / cls._global_api_calls if cls._global_api_calls > 0 else 0,
+        }
+
+    @classmethod
+    def reset_global_metrics(cls):
+        """Reset global metrics (call at start of E2E test)."""
+        cls._global_api_calls = 0
+        cls._global_input_tokens = 0
+        cls._global_output_tokens = 0
+        cls._global_total_latency_ms = 0.0
+
+    @classmethod
+    def _record_global_usage(cls, input_tokens: int, output_tokens: int, latency_ms: float = 0.0):
+        """Record usage to global metrics."""
+        cls._global_api_calls += 1
+        cls._global_input_tokens += input_tokens
+        cls._global_output_tokens += output_tokens
+        cls._global_total_latency_ms += latency_ms
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -406,6 +439,13 @@ class EnhancedAnthropicClient:
                 # Emit cost savings metric
                 from src.mge.v2.caching.metrics import CACHE_COST_SAVINGS_USD
                 CACHE_COST_SAVINGS_USD.labels(cache_layer="llm").inc(full_cost)
+
+                # Bug #22 Fix: Record cached tokens to global metrics (counts as usage even if cached)
+                EnhancedAnthropicClient._record_global_usage(
+                    input_tokens=cached_response.prompt_tokens,
+                    output_tokens=cached_response.completion_tokens,
+                    latency_ms=(time.time() - start_time) * 1000
+                )
 
                 # Return cached response in same format as API response
                 return {
@@ -607,6 +647,13 @@ class EnhancedAnthropicClient:
                 cost_usd=cost_analysis["cost_with_cache"],
                 duration=result["duration_seconds"],
                 status="success"
+            )
+
+            # Bug #22 Fix: Record to global metrics
+            EnhancedAnthropicClient._record_global_usage(
+                input_tokens=cache_stats.get("input_tokens", 0),
+                output_tokens=cache_stats.get("output_tokens", 0),
+                latency_ms=result["duration_seconds"] * 1000
             )
 
             logger.info(
