@@ -1,0 +1,49 @@
+{
+  "description": "Known regression patterns to detect in ecommerce golden app",
+  "version": "1.0.0",
+  "created": "2025-11-26",
+  "patterns": [
+    "server_default=func.now()",
+    "func.now()",
+    "datetime.utcnow",
+    "datetime.now()",
+    "TODO",
+    "FIXME",
+    "NotImplementedError",
+    "pass  # placeholder",
+    "raise NotImplemented",
+    "from decimal import decimal",
+    "import decimal",
+    "self.session = session",
+    "class.*\\(\\):",
+    "async def.*pass$"
+  ],
+  "severity_levels": {
+    "critical": [
+      "server_default=func.now()",
+      "func.now()",
+      "NotImplementedError"
+    ],
+    "high": [
+      "datetime.utcnow",
+      "datetime.now()",
+      "TODO",
+      "FIXME"
+    ],
+    "medium": [
+      "pass  # placeholder",
+      "from decimal import decimal"
+    ],
+    "low": [
+      "self.session = session"
+    ]
+  },
+  "documentation": {
+    "server_default=func.now()": "Should use default=datetime.utcnow or default_factory",
+    "func.now()": "SQLAlchemy func.now() causes issues - use Python datetime",
+    "datetime.utcnow": "Deprecated in Python 3.12, use datetime.now(timezone.utc)",
+    "NotImplementedError": "Incomplete implementation - all methods should be complete",
+    "TODO": "Incomplete code marked for future work",
+    "pass  # placeholder": "Empty method body that should have implementation"
+  }
+}

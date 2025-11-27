@@ -128,7 +128,8 @@ class PipelineDashboard:
 
         # E2E Precision Metrics
         metrics_text.append("🎯 E2E Precision\n", style="bold cyan")
-        metrics_text.append(f"  Overall Accuracy: {self.metrics.get('overall_accuracy', 0):.1%}\n")
+        # Bug #24 fix: Renamed to avoid confusion with IR compliance
+        metrics_text.append(f"  Pipeline Ops Rate: {self.metrics.get('overall_accuracy', 0):.1%}\n")
         metrics_text.append(f"  Pipeline Precision: {self.metrics.get('pipeline_precision', 0):.1%}\n")
         metrics_text.append(f"  Pattern F1-Score: {self.metrics.get('pattern_f1', 0):.1%}\n")
         metrics_text.append(f"  Classification Acc: {self.metrics.get('classification_accuracy', 0):.1%}\n\n")

@@ -1,0 +1,48 @@
+{
+  "description": "Expected metrics for ecommerce golden app",
+  "version": "1.0.0",
+  "created": "2025-11-26",
+  "ir_stats": {
+    "total_endpoints": 17,
+    "total_entities": 6,
+    "total_relationships": 7
+  },
+  "compliance": {
+    "semantic_compliance": 1.0,
+    "ir_compliance_relaxed": 0.85,
+    "ir_compliance_strict": 0.70
+  },
+  "entities": [
+    "Product",
+    "Customer",
+    "Cart",
+    "CartItem",
+    "Order",
+    "OrderItem"
+  ],
+  "endpoints_summary": {
+    "products": {
+      "count": 5,
+      "operations": ["create", "list", "get", "update", "deactivate"]
+    },
+    "customers": {
+      "count": 2,
+      "operations": ["register", "get"]
+    },
+    "carts": {
+      "count": 4,
+      "operations": ["create", "get", "add_item", "clear"]
+    },
+    "orders": {
+      "count": 5,
+      "operations": ["checkout", "pay", "cancel", "list", "get"]
+    }
+  },
+  "validation_rules": {
+    "price_positive": true,
+    "stock_non_negative": true,
+    "quantity_positive": true,
+    "email_unique": true,
+    "one_open_cart_per_customer": true
+  }
+}
