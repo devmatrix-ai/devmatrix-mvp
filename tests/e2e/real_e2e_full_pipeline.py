@@ -3837,22 +3837,28 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         }
         is_valid = self.contract_validator.validate_phase_output("validation", phase_output)
 
+        # Bug #58 Fix: Use ApplicationIR as source of truth for expected counts (not spec_requirements)
+        # spec_requirements only has endpoints explicitly in spec (19), ApplicationIR includes inferred (46)
+        entities_expected = len(self.application_ir.domain_model.entities) if hasattr(self, 'application_ir') and self.application_ir else len(self.spec_requirements.entities) if hasattr(self, 'spec_requirements') else len(entities_implemented)
+        endpoints_expected = len(self.application_ir.api_model.endpoints) if hasattr(self, 'application_ir') and self.application_ir else len(self.spec_requirements.endpoints) if hasattr(self, 'spec_requirements') else len(endpoints_implemented)
+
         # Track items validated for progress display
         if PROGRESS_TRACKING_AVAILABLE:
             add_item("Validation", f"Tests", self.precision.tests_passed, self.precision.tests_executed)
-            add_item("Validation", f"Entities", len(entities_implemented), len(self.spec_requirements.entities) if hasattr(self, 'spec_requirements') else len(entities_implemented))
-            add_item("Validation", f"Endpoints", len(endpoints_implemented), len(self.spec_requirements.endpoints) if hasattr(self, 'spec_requirements') else len(endpoints_implemented))
+            add_item("Validation", f"Entities", len(entities_implemented), entities_expected)
+            add_item("Validation", f"Endpoints", len(endpoints_implemented), endpoints_expected)
 
         self.metrics_collector.complete_phase("validation")
 
         # Display elegant Phase 7 validation summary
+        # Bug #58 Fix: Use ApplicationIR for expected counts in summary display
         self._display_phase_7_summary(
             compliance_score=compliance_score,
             files_count=len(self.generated_code),
             entities_impl=len(entities_implemented),
-            entities_exp=len(self.spec_requirements.entities) if hasattr(self, 'spec_requirements') else 0,
+            entities_exp=entities_expected,  # Bug #58: Use IR-based count
             endpoints_impl=len(endpoints_implemented),
-            endpoints_exp=len(self.spec_requirements.endpoints) if hasattr(self, 'spec_requirements') else 0,
+            endpoints_exp=endpoints_expected,  # Bug #58: Use IR-based count
             test_pass_rate=self.precision.calculate_test_pass_rate(),
             contract_valid=is_valid
         )

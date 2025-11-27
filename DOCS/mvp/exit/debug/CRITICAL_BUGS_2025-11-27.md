@@ -2,8 +2,8 @@
 
 **Analysis Date**: 2025-11-27
 **Test Run**: `ecommerce-api-spec-human_1764201312`
-**Status**: ✅ **COMPLETE** - 12/12 bugs fixed
-**Last Updated**: 2025-11-27 (Bug #56 fixed - IR cache now invalidates when enricher changes)
+**Status**: 🔄 **IN PROGRESS** - 13/14 bugs fixed
+**Last Updated**: 2025-11-27 (Bug #58 fixed, #57 pendiente)
 
 ---
 
@@ -37,7 +37,76 @@ El pipeline E2E mostraba resultados engañosos. Decía "✅ PASSED" con 98.6% co
 | #53 | HIGH | Endpoint Inference | `7bae385e` |
 | #54 | MEDIUM | Test Execution | `50710ce3` |
 | #55 | LOW | Constraint Mapping | `381be889` |
-| #56 | CRITICAL | IR Cache | ✅ FIXED |
+| #56 | CRITICAL | IR Cache | `510addcb` |
+| #57 | MEDIUM | Test Execution | 🔴 PENDING |
+| #58 | HIGH | Metrics Display | ✅ FIXED |
+
+---
+
+## Bug #58: Endpoints Expected Count Incorrecto (42/19 en vez de 42/46)
+
+**Severity**: HIGH
+**Category**: Metrics Display
+**Status**: ✅ FIXED
+
+### Síntoma
+
+```
+✅ Validation [██████████████████] 100% (Tests: 0/0, Entities: 6/6, Endpoints: 42/19)
+```
+
+El expected count de endpoints muestra 19 cuando debería ser 46 (según ApplicationIR).
+
+### Root Cause
+
+`spec_requirements.endpoints` viene de SpecParser que solo parsea endpoints explícitos en el spec (19).
+`ApplicationIR.api_model.endpoints` tiene todos los endpoints incluyendo los inferidos de flows (46).
+
+La validación usaba spec_requirements en vez de ApplicationIR.
+
+### Fix Aplicado
+
+```python
+# Bug #58 Fix: Use ApplicationIR as source of truth for expected counts
+entities_expected = len(self.application_ir.domain_model.entities) if hasattr(self, 'application_ir')...
+endpoints_expected = len(self.application_ir.api_model.endpoints) if hasattr(self, 'application_ir')...
+
+add_item("Validation", f"Endpoints", len(endpoints_implemented), endpoints_expected)
+```
+
+### Files Changed
+
+- `tests/e2e/real_e2e_full_pipeline.py` - Use ApplicationIR for expected counts
+
+---
+
+## Bug #57: Tests Directory Not Found en Generated App
+
+**Severity**: MEDIUM
+**Category**: Test Execution
+**Status**: 🔴 PENDING
+
+### Síntoma
+
+```
+Error: ERROR: file or directory not found: tests/e2e/generated_apps/ecommerce-api-spec-human_1764236807/tests
+```
+
+### Root Cause (Probable)
+
+El pipeline de pytest busca la carpeta `tests/` pero:
+1. La carpeta existe en apps anteriores
+2. No se crea en apps nuevas, o
+3. El path está mal construido
+
+### Verificación
+
+```bash
+ls tests/e2e/generated_apps/ecommerce-api-spec-human_1764236807/tests/
+# Resultado: tests/generated/, tests/integration/, tests/unit/ existen
+```
+
+La carpeta **sí existe** pero el error sugiere un problema de timing o path.
 
 ---
 
