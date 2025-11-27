@@ -12,7 +12,9 @@ Architecture:
 import json
 import logging
 from typing import Any, Dict, Optional
-from anthropic import Anthropic
+
+# Bug #22 Fix: Use EnhancedAnthropicClient for global metrics tracking
+from src.llm import EnhancedAnthropicClient
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +32,13 @@ class LLMSpecNormalizer:
     - Input: Markdown specification (ecommerce_api_simple.md style)
     - Process: Claude understands and extracts all constraints
     - Output: Formal JSON (ecommerce_api_formal.json style)
+
+    Bug #10 Fix: Now tracks token usage for stratum metrics.
     """
+
+    # Token tracking for Bug #10
+    last_input_tokens: int = 0
+    last_output_tokens: int = 0
 
     NORMALIZATION_PROMPT = """You are a JSON conversion expert. Convert the markdown specification below into VALID JSON format ONLY.
 
@@ -56,6 +64,17 @@ Rules for conversion:
 2. For each field, identify: type, required, unique, primary_key, constraints
 3. Extract all relationships and foreign keys
 4. Extract all API endpoints
+5. CRITICAL: ALL field names MUST be in English using snake_case convention, regardless of the spec language:
+   - "estado_activo" → "is_active"
+   - "nombre_completo" → "full_name"
+   - "fecha_de_registro" → "registration_date"
+   - "fecha_creacion" or "creation_date" → "created_at"
+   - "cliente_propietario" → "customer_id"
+   - "monto_total" → "total_amount"
+   - "precio_unitario" → "unit_price"
+   - "cantidad" → "quantity"
+   - "producto" → "product_id" (if it's a foreign key)
+   - Use standard Python/SQLAlchemy naming conventions (snake_case, English)
 
 Markdown specification:
 
@@ -65,7 +84,9 @@ RESPOND WITH ONLY VALID JSON. START WITH {{ AND END WITH }}. NO MARKDOWN. NO EXP
 
     def __init__(self, model: Optional[str] = None):
         """Initialize with Anthropic client"""
-        self.client = Anthropic()
+        # Bug #22 Fix: Use EnhancedAnthropicClient for global metrics tracking
+        self._enhanced_client = EnhancedAnthropicClient()
+        self.client = self._enhanced_client.anthropic  # Access underlying sync client
         # Use provided model or default to best available
         if model is None:
             model = "claude-sonnet-4-5-20250929"  # Sonnet for semantic analysis
@@ -100,6 +121,17 @@ RESPOND WITH ONLY VALID JSON. START WITH {{ AND END WITH }}. NO MARKDOWN. NO EXP
                         "content": prompt
                     }
                 ]
+            )
+
+            # Bug #10 Fix: Track token usage for stratum metrics
+            self.last_input_tokens = response.usage.input_tokens
+            self.last_output_tokens = response.usage.output_tokens
+            logger.info(f"LLM tokens: input={self.last_input_tokens}, output={self.last_output_tokens}")
+
+            # Bug #22 Fix: Record usage to global metrics for E2E tracking
+            EnhancedAnthropicClient._record_global_usage(
+                input_tokens=self.last_input_tokens,
+                output_tokens=self.last_output_tokens
             )
 
             json_text = response.content[0].text.strip()
@@ -188,6 +220,17 @@ RESPOND WITH ONLY VALID JSON. START WITH {{ AND END WITH }}. NO MARKDOWN. NO EXP
                 raise SpecValidationError("'endpoints' must be a list")
 
         logger.info("All structural validations passed")
+
+    def get_last_token_usage(self) -> tuple:
+        """
+        Get token usage from last normalize() call.
+
+        Bug #10 Fix: Provides token counts for stratum metrics integration.
+
+        Returns:
+            Tuple of (input_tokens, output_tokens)
+        """
+        return (self.last_input_tokens, self.last_output_tokens)
 
 
 class HybridSpecNormalizer:
