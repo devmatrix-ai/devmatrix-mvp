@@ -158,18 +158,27 @@ if not {ref_entity.lower()}:
     raise ValueError("{error_msg}")"""
 
     def _generate_stock_validation(self, rule: ValidationRule) -> str:
-        """Generate stock/inventory constraint validation code."""
-        entity = rule.entity
-        attr = rule.attribute
-        error_msg = rule.error_message or f"Insufficient {attr}"
-        condition = rule.condition or "product.stock < item.quantity"
+        """Generate stock/inventory constraint validation code.
 
-        return f"""# Validate stock availability
-product_repo = ProductRepository(self.db)
+        Bug #95 Fix: Use dynamic entity/attribute names from rule instead of
+        hardcoding 'product', 'stock', 'item', 'quantity'.
+        """
+        entity = rule.entity  # e.g., "Product", "Inventory", "Item"
+        entity_lower = entity.lower()
+        attr = rule.attribute  # e.g., "stock", "quantity", "available"
+        error_msg = rule.error_message or f"Insufficient {attr}"
+
+        # Build dynamic condition from rule or infer from entity/attr
+        # Default: {entity}.{attr} < requested_quantity
+        condition = rule.condition or f"{entity_lower}.{attr} < requested_quantity"
+
+        return f"""# Validate {attr} availability for {entity}
+{entity_lower}_repo = {entity}Repository(self.db)
 for item in data.items:
-    product = await product_repo.get(item.product_id)
-    if not product:
-        raise ValueError("Product not found")
+    {entity_lower} = await {entity_lower}_repo.get(item.{entity_lower}_id)
+    if not {entity_lower}:
+        raise ValueError("{entity} not found")
+    requested_quantity = getattr(item, 'quantity', 1)
     if {condition}:
         raise ValueError("{error_msg}")"""
 

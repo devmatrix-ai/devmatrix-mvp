@@ -2,8 +2,8 @@
 
 **Analysis Date**: 2025-11-27
 **Test Run**: `ecommerce-api-spec-human_1764237803`
-**Status**: ✅ **COMPLETE** - 48 bugs tracked (48 FIXED, 0 OPEN)
-**Last Updated**: 2025-11-27 (FIXED: #84-#94 - Dynamic seed_db from IR)
+**Status**: ✅ **COMPLETE** - 50 bugs tracked (50 FIXED, 0 OPEN)
+**Last Updated**: 2025-11-27 (FIXED: #84-#96 - Removed all ecommerce hardcoding)
 
 ---
 
@@ -104,6 +104,8 @@ El pipeline E2E mostraba resultados engañosos. Decía "✅ PASSED" con 98.6% co
 | **#92** | CRITICAL | seed_db.py imports wrong entity names (Product vs ProductEntity) | ✅ FIXED (`code_generation_service.py:4683`) |
 | **#93** | HIGH | seed_db.py Order uses wrong fields (status vs order_status/payment_status) | ✅ FIXED (`code_generation_service.py:4722`) |
 | **#94** | CRITICAL | seed_db.py hardcodes fields → refactored to read from IR dynamically | ✅ FIXED (`code_generation_service.py:4661-4768`) |
+| **#95** | MEDIUM | validation_code_generator hardcodes 'product', 'stock', 'item' | ✅ FIXED (`validation_code_generator.py:160-183`) |
+| **#96** | MEDIUM | business_logic_extractor hardcodes 'product.stock >= item.quantity' | ✅ FIXED (`business_logic_extractor.py:205-215`) |
 
 ---
 

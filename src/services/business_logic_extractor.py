@@ -203,13 +203,15 @@ class BusinessLogicExtractor:
                     ))
 
                 # Check for stock/inventory constraints
-                if field_name in ["stock", "quantity", "available"]:
+                # Bug #96 Fix: Use dynamic entity/field names instead of hardcoding 'product.stock'
+                if field_name in ["stock", "quantity", "available", "inventory"]:
+                    entity_lower = entity_name.lower()
                     rules.append(ValidationRule(
                         entity=entity_name,
                         attribute=field_name,
                         type=ValidationType.STOCK_CONSTRAINT,
-                        condition="product.stock >= item.quantity",
-                        error_message="Insufficient stock"
+                        condition=f"{entity_lower}.{field_name} >= requested_quantity",
+                        error_message=f"Insufficient {field_name}"
                     ))
 
                 # Check for status fields with enums
