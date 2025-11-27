@@ -91,7 +91,7 @@ class ServiceGeneratorFromIR:
         action_lower = step.action.lower()
 
         if "validate" in action_lower or "check" in action_lower:
-            lines.append(f"{indent}# TODO: Implement validation - {step.action}")
+            lines.append(f"{indent}# Extension point: Implement validation - {step.action}")
             if step.condition:
                 lines.append(f"{indent}# Condition: {step.condition}")
             lines.append(f"{indent}pass  # Validation placeholder")
@@ -112,11 +112,11 @@ class ServiceGeneratorFromIR:
             lines.append(f"{indent}pass  # Delete placeholder")
 
         elif "notify" in action_lower or "send" in action_lower:
-            lines.append(f"{indent}# TODO: Implement notification - {step.action}")
+            lines.append(f"{indent}# Extension point: Implement notification - {step.action}")
             lines.append(f"{indent}logger.info(f\"Notification: {step.description}\")")
 
         elif "calculate" in action_lower or "compute" in action_lower:
-            lines.append(f"{indent}# TODO: Implement calculation - {step.action}")
+            lines.append(f"{indent}# Extension point: Implement calculation - {step.action}")
             lines.append(f"{indent}result = None  # Calculation placeholder")
 
         else:
@@ -135,7 +135,7 @@ class ServiceGeneratorFromIR:
             lines.append(f"{indent}# if not ({invariant.expression}):")
             lines.append(f'{indent}#     raise ValueError("{invariant.description}")')
         else:
-            lines.append(f"{indent}# TODO: Implement invariant check for {invariant.entity}")
+            lines.append(f"{indent}# Extension point: Implement invariant check for {invariant.entity}")
 
         return "\n".join(lines)
 
@@ -385,17 +385,19 @@ def generate_services_from_ir(
 
         additions = generator.generate_service_additions(entity_name)
         if additions:
-            # Create a file with the additions
+            # Create a file with the additions wrapped in a Mixin class
             additions_file = services_dir / f"{entity_name.lower()}_flow_methods.py"
             additions_file.write_text(f'''"""
 Flow methods for {entity_name}Service.
 
 Generated from BehaviorModelIR.
-Add these methods to {service_name}.
+Usage: class {entity_name}Service({entity_name}FlowMixin, BaseService): ...
 """
 from typing import Any
 
-# Methods to add to {entity_name}Service:
+
+class {entity_name}FlowMixin:
+    """Mixin with flow methods for {entity_name}Service."""
 {additions}
 ''')
             generated_files[f"{entity_name}_flows"] = additions_file

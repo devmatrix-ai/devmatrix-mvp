@@ -26,6 +26,7 @@ from pathlib import Path
 import logging
 
 from src.llm.enhanced_anthropic_client import EnhancedAnthropicClient
+from src.services.production_code_generators import normalize_field_name
 
 # IR-centric imports (optional - for migration)
 try:
@@ -40,6 +41,20 @@ except ImportError:
     IR_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_path_params(path: str) -> str:
+    """
+    Normalize path parameters for comparison.
+
+    /products/{product_id} → /products/{_}
+    /products/{id} → /products/{_}
+    /carts/{cart_id}/items/{item_id} → /carts/{_}/items/{_}
+
+    This allows matching endpoints regardless of parameter naming conventions.
+    """
+    import re
+    return re.sub(r'\{[^}]+\}', '{_}', path)
 
 
 @dataclass
@@ -296,7 +311,8 @@ class CodeRepairAgent:
                             else:
                                 logger.warning(f"Failed to add entity from IR: {entity_name}")
                         else:
-                            logger.warning(f"Entity {entity_name} not found in DomainModelIR")
+                            # Bug #21 fix: Clarified warning (consistent with endpoint message)
+                            logger.info(f"Entity {entity_name} marked missing but not in DomainModelIR (may be inferred)")
                     except Exception as e:
                         logger.error(f"Error adding entity {entity_name} from IR: {e}")
 
@@ -310,10 +326,12 @@ class CodeRepairAgent:
                             method = parts[0].upper()
                             path = parts[1]
 
-                            # Find endpoint in APIModelIR
+                            # Find endpoint in APIModelIR (with path param normalization)
+                            # /products/{product_id} should match /products/{id}
+                            normalized_path = normalize_path_params(path)
                             endpoint_ir = next(
                                 (e for e in api_model.endpoints
-                                 if e.method.upper() == method and e.path == path),
+                                 if e.method.upper() == method and normalize_path_params(e.path) == normalized_path),
                                 None
                             )
 
@@ -326,9 +344,36 @@ class CodeRepairAgent:
                                 else:
                                     logger.warning(f"Failed to add endpoint from IR: {endpoint_str}")
                             else:
-                                logger.warning(f"Endpoint {endpoint_str} not found in APIModelIR")
+                                # Bug #21 fix: Clarified warning message
+                                # This happens when compliance reports a missing endpoint that isn't in APIModelIR
+                                # Either: (a) endpoint was inferred but not in IR, or (b) IR parsing missed it
+                                logger.info(f"Endpoint {endpoint_str} marked missing but not in APIModelIR (may be inferred or custom)")
                     except Exception as e:
                         logger.error(f"Error adding endpoint {endpoint_str} from IR: {e}")
+
+            # Bug #20 fix: Add validation/constraint repair to IR-centric mode
+            # Previously only entities and endpoints were repaired, constraints were ignored
+            missing_validations = [
+                v for v in compliance_report.validations_expected
+                if v.lower() not in [i.lower() for i in compliance_report.validations_implemented]
+            ]
+
+            if missing_validations:
+                logger.info(f"CodeRepair (IR): {len(missing_validations)} missing validations/constraints")
+                for validation_str in missing_validations:
+                    try:
+                        # Use IR-based constraint repair
+                        success = await self._repair_validation_from_ir(validation_str)
+                        if success:
+                            repairs_applied.append(f"Added validation (IR): {validation_str}")
+                            schemas_file = str(self.output_path / "src" / "models" / "schemas.py")
+                            if schemas_file not in repaired_files:
+                                repaired_files.append(schemas_file)
+                        else:
+                            # Log as info, not warning - constraints can be complex
+                            logger.info(f"Constraint not auto-repairable: {validation_str}")
+                    except Exception as e:
+                        logger.error(f"Error adding validation {validation_str} from IR: {e}")
 
             if repairs_applied:
                 return RepairResult(
@@ -337,11 +382,16 @@ class CodeRepairAgent:
                     repairs_applied=repairs_applied
                 )
             else:
+                # Bug #20: Report what couldn't be repaired
+                constraint_gap = len(missing_validations) if missing_validations else 0
+                error_msg = "No repairs could be applied from IR"
+                if constraint_gap > 0:
+                    error_msg += f" ({constraint_gap} constraints require manual IR adjustment)"
                 return RepairResult(
                     success=False,
                     repaired_files=[],
                     repairs_applied=[],
-                    error_message="No repairs could be applied from IR"
+                    error_message=error_msg
                 )
 
         except Exception as e:
@@ -429,6 +479,125 @@ class CodeRepairAgent:
         except Exception as e:
             logger.error(f"_repair_endpoint_from_ir failed: {e}")
             return None
+
+    async def _repair_validation_from_ir(self, validation_str: str) -> bool:
+        """
+        Add missing validation/constraint using ApplicationIR.
+
+        Bug #20 fix: This method enables IR-centric constraint repair.
+        Previously only legacy mode had validation repair.
+
+        Args:
+            validation_str: Validation description (e.g., "Order.items: required")
+
+        Returns:
+            True if successfully repaired, False otherwise
+        """
+        try:
+            domain_model = self.application_ir.domain_model
+            if not domain_model or not domain_model.entities:
+                logger.info(f"No DomainModelIR available for constraint repair: {validation_str}")
+                return False
+
+            # Try to parse validation string: "Entity.field: constraint" or "field constraint"
+            parsed = self._parse_validation_str_ir(validation_str, domain_model)
+            if not parsed:
+                logger.info(f"Could not parse IR validation: {validation_str}")
+                return False
+
+            entity_name = parsed["entity"]
+            field_name = parsed["field"]
+            constraint_type = parsed["constraint_type"]
+            constraint_value = parsed["constraint_value"]
+
+            # Apply constraint to schemas.py using existing AST patcher
+            return self._add_field_constraint_to_schema(
+                entity_name=entity_name,
+                field_name=field_name,
+                constraint_type=constraint_type,
+                constraint_value=constraint_value
+            )
+
+        except Exception as e:
+            logger.error(f"_repair_validation_from_ir failed for '{validation_str}': {e}")
+            return False
+
+    def _parse_validation_str_ir(self, validation_str: str, domain_model) -> Optional[Dict[str, Any]]:
+        """
+        Parse validation string using IR context.
+
+        Formats supported:
+        - "Entity.field: constraint=value"
+        - "Entity.field: constraint"
+        - "field > 0" (will search IR for which entity has this field)
+
+        Args:
+            validation_str: Validation description
+            domain_model: DomainModelIR with entity definitions
+
+        Returns:
+            Dict with entity, field, constraint_type, constraint_value or None
+        """
+        import re
+
+        # Try format: "Entity.field: constraint=value" or "Entity.field: constraint"
+        match = re.match(r'(\w+)\.(\w+):\s*(\w+)(?:=(.+))?', validation_str)
+        if match:
+            entity_name = match.group(1)
+            field_name = match.group(2)
+            constraint_type = match.group(3)
+            constraint_value = match.group(4) if match.group(4) else True
+            return {
+                "entity": entity_name,
+                "field": field_name,
+                "constraint_type": constraint_type,
+                "constraint_value": constraint_value
+            }
+
+        # Try format: "field > 0" or "field >= 0" etc.
+        match = re.match(r'(\w+)\s*(>|>=|<|<=|==)\s*(\d+)', validation_str)
+        if match:
+            field_name = match.group(1)
+            operator = match.group(2)
+            value = int(match.group(3))
+
+            # Map operator to constraint type
+            op_map = {'>': 'gt', '>=': 'ge', '<': 'lt', '<=': 'le', '==': 'eq'}
+            constraint_type = op_map.get(operator, 'gt')
+
+            # Find entity containing this field
+            entity_name = self._find_entity_for_field_ir(field_name, domain_model)
+            if entity_name:
+                return {
+                    "entity": entity_name,
+                    "field": field_name,
+                    "constraint_type": constraint_type,
+                    "constraint_value": value
+                }
+
+        return None
+
+    def _find_entity_for_field_ir(self, field_name: str, domain_model) -> Optional[str]:
+        """
+        Find which entity contains a given field using DomainModelIR.
+
+        Args:
+            field_name: Name of the field
+            domain_model: DomainModelIR with entity definitions
+
+        Returns:
+            Entity name or None
+        """
+        if not domain_model or not domain_model.entities:
+            return None
+
+        for entity in domain_model.entities:
+            if hasattr(entity, 'attributes'):
+                for attr in entity.attributes:
+                    attr_name = attr.name if hasattr(attr, 'name') else str(attr)
+                    if attr_name.lower() == field_name.lower():
+                        return entity.name
+        return None
 
     # =========================================================================
     # LEGACY REPAIR METHODS (preserved for backward compatibility)
@@ -1048,6 +1217,9 @@ JSON OUTPUT:"""
             True if successful, False otherwise
         """
         try:
+            # Fix #3: Normalize field names (e.g., creation_date -> created_at)
+            field_name = normalize_field_name(field_name)
+
             # CRITICAL: Route constraints to the correct file
             # Database-level constraints belong in entities.py (SQLAlchemy)
             # Validation constraints (gt, pattern, etc.) belong in schemas.py (Pydantic)
@@ -1391,6 +1563,9 @@ JSON OUTPUT:"""
             True if successful, False otherwise
         """
         try:
+            # Fix #3: Normalize field names (e.g., creation_date -> created_at)
+            field_name = normalize_field_name(field_name)
+
             entities_file = self.output_path / "src" / "models" / "entities.py"
             
             if not entities_file.exists():

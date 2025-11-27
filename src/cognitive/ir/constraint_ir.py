@@ -14,6 +14,7 @@ from src.cognitive.ir.validation_model import (
     EnforcementStrategy,
     ValidationRule,
 )
+from src.services.production_code_generators import normalize_field_name
 
 
 @dataclass
@@ -191,6 +192,8 @@ class ConstraintIR:
             # Parse entity.field
             if "." in entity_field:
                 entity, field = entity_field.rsplit(".", 1)
+                # Bug #14 Fix: Normalize field names (e.g., creation_date -> created_at)
+                field = normalize_field_name(field)
             else:
                 entity = entity_field
                 field = "unknown"

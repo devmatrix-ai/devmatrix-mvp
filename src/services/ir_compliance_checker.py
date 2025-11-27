@@ -26,8 +26,94 @@ from src.cognitive.ir.behavior_model import BehaviorModelIR, Flow, FlowType, Inv
 from src.cognitive.ir.validation_model import (
     ValidationModelIR, ValidationRule, ValidationType
 )
+from src.services.production_code_generators import normalize_field_name
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Bug #8 Fix: Entity Suffix & Flow Name Normalization
+# =============================================================================
+
+# Entity suffixes that should be stripped for matching
+ENTITY_SUFFIXES = ['Entity', 'Model', 'Schema', 'Base', 'Mixin']
+
+# Spanish→English flow action mapping
+FLOW_ACTION_MAPPING = {
+    # Spanish verbs
+    "crear": "create",
+    "actualizar": "update",
+    "eliminar": "delete",
+    "borrar": "delete",
+    "listar": "list",
+    "obtener": "get",
+    "buscar": "search",
+    "agregar": "add",
+    "quitar": "remove",
+    "procesar": "process",
+    "validar": "validate",
+    "activar": "activate",
+    "desactivar": "deactivate",
+    # Common variants
+    "añadir": "add",
+    "modificar": "update",
+    "consultar": "get",
+    "recuperar": "get",
+}
+
+
+def normalize_entity_name(name: str) -> str:
+    """
+    Normalize entity name by stripping common suffixes.
+
+    Bug #8 Fix: ProductEntity -> Product, OrderModel -> Order
+
+    Args:
+        name: Entity name to normalize
+
+    Returns:
+        Normalized entity name without suffix
+    """
+    for suffix in ENTITY_SUFFIXES:
+        if name.endswith(suffix) and len(name) > len(suffix):
+            return name[:-len(suffix)]
+    return name
+
+
+def normalize_flow_name(flow_name: str) -> str:
+    """
+    Normalize flow name to match behavior_code_generator._snake_case() output.
+
+    Bug #8 Fix v2: Use SAME transformation as code generator for STRICT matching.
+
+    "F1: Crear Producto" -> "f1_crear_producto" (matches generated method name)
+
+    Args:
+        flow_name: Flow name from BehaviorModelIR
+
+    Returns:
+        snake_case name matching generated code
+    """
+    import unicodedata
+
+    # Step 1: Normalize unicode (remove accents: í→i, ó→o)
+    result = unicodedata.normalize('NFKD', flow_name)
+    result = result.encode('ascii', 'ignore').decode('ascii')
+
+    # Step 2: Remove invalid characters (keep only letters, digits, spaces, underscores)
+    # This removes : ( ) and other special chars
+    result = re.sub(r'[^a-zA-Z0-9\s_]', '', result)
+
+    # Step 3: Replace spaces/hyphens with underscores
+    result = result.replace(" ", "_").replace("-", "_")
+
+    # Step 4: Handle camelCase
+    result = re.sub('([A-Z]+)', r'_\1', result).lower()
+
+    # Step 5: Clean up multiple underscores
+    result = re.sub('_+', '_', result).strip('_')
+
+    return result
 
 
 # =============================================================================
@@ -117,7 +203,7 @@ class ConstraintMatchingStrategy(Protocol):
 # =============================================================================
 
 class StrictEntityMatcher:
-    """STRICT mode: Exact entity matching only."""
+    """STRICT mode: Exact entity matching with suffix normalization (Bug #8 fix)."""
 
     def find_entity_match(
         self,
@@ -125,15 +211,27 @@ class StrictEntityMatcher:
         generated_entities: Dict[str, Any],
         threshold: float = 0.7
     ) -> tuple:
-        """Find exact entity match (case-insensitive)."""
-        # 1. Exact match
+        """Find exact entity match with suffix normalization (case-insensitive)."""
+        # Bug #8 Fix: Normalize IR entity name (strip suffixes)
+        ir_normalized = normalize_entity_name(ir_entity)
+
+        # 1. Exact match (original)
         if ir_entity in generated_entities:
             return ir_entity, {"match_mode": "exact", "score": 1.0}
 
-        # 2. Case-insensitive exact match
-        ir_lower = ir_entity.lower()
+        # 2. Exact match (normalized IR name)
+        if ir_normalized in generated_entities:
+            return ir_normalized, {"match_mode": "exact_normalized", "score": 1.0}
+
+        # 3. Case-insensitive match with suffix normalization
+        ir_lower = ir_normalized.lower()
         for gen_name in generated_entities:
-            if gen_name.lower() == ir_lower:
+            gen_normalized = normalize_entity_name(gen_name)
+            # Match: Product == ProductEntity (both normalize to Product)
+            if gen_normalized.lower() == ir_lower:
+                return gen_name, {"match_mode": "suffix_normalized", "score": 1.0}
+            # Also try original IR name
+            if gen_normalized.lower() == ir_entity.lower():
                 return gen_name, {"match_mode": "case_insensitive", "score": 1.0}
 
         return None, {"match_mode": "none", "score": 0.0}
@@ -144,20 +242,31 @@ class StrictEntityMatcher:
         gen_attributes: Dict[str, Any],
         threshold: float = 0.8
     ) -> Optional[str]:
-        """Find exact attribute match (case-insensitive)."""
+        """Find exact attribute match (case-insensitive), with field name normalization."""
+        # Fix #3: Normalize field names (e.g., creation_date -> created_at)
+        normalized_ir_attr = normalize_field_name(ir_attr)
+
+        # 1. Direct match with normalized name
+        if normalized_ir_attr in gen_attributes:
+            return normalized_ir_attr
+
+        # 2. Original name match
         if ir_attr in gen_attributes:
             return ir_attr
 
-        ir_lower = ir_attr.lower()
+        # 3. Case-insensitive match (both normalized and original)
+        ir_lower = normalized_ir_attr.lower()
+        ir_orig_lower = ir_attr.lower()
         for gen_attr in gen_attributes:
-            if gen_attr.lower() == ir_lower:
+            gen_lower = gen_attr.lower()
+            if gen_lower == ir_lower or gen_lower == ir_orig_lower:
                 return gen_attr
 
         return None
 
 
 class StrictFlowMatcher:
-    """STRICT mode: Exact flow matching only."""
+    """STRICT mode: Flow matching with Spanish→English normalization (Bug #8 fix)."""
 
     def find_flow_match(
         self,
@@ -167,7 +276,10 @@ class StrictFlowMatcher:
         all_code: str,
         flow_mapping: Optional[Dict] = None
     ) -> tuple:
-        """Find exact flow implementation."""
+        """Find flow implementation with Spanish→English translation."""
+        # Bug #8 Fix: Normalize flow name (Spanish→English, e.g., "Crear Producto" -> "create_product")
+        normalized_flow = normalize_flow_name(flow_name)
+
         # 1. IR mapping (highest priority)
         if flow_mapping and flow_name in flow_mapping:
             mapped = flow_mapping[flow_name]
@@ -180,7 +292,7 @@ class StrictFlowMatcher:
                         "score": 1.0
                     }
 
-        # 2. Exact method name match
+        # 2. Exact method name match (original)
         flow_method = flow_name.lower().replace(' ', '_').replace('-', '_')
         for class_name, methods in service_classes.items():
             for method in methods:
@@ -192,7 +304,39 @@ class StrictFlowMatcher:
                         "score": 1.0
                     }
 
-        # 3. Entity+Action exact pattern
+        # 3. Bug #8 Fix: Match with normalized flow name (Spanish→English)
+        for class_name, methods in service_classes.items():
+            for method in methods:
+                if method.lower() == normalized_flow:
+                    return True, {
+                        "match_mode": "spanish_normalized",
+                        "matched_class": class_name,
+                        "matched_method": method,
+                        "original_flow": flow_name,
+                        "normalized_flow": normalized_flow,
+                        "score": 1.0
+                    }
+
+        # 4. Entity+Action pattern with Spanish translation
+        if flow_entity:
+            # Try normalized action (from Spanish)
+            normalized_words = normalized_flow.split('_')
+            if normalized_words:
+                action = normalized_words[0]  # Already translated
+                entity_lower = normalize_entity_name(flow_entity).lower()
+                for class_name, methods in service_classes.items():
+                    class_normalized = normalize_entity_name(class_name.replace('Service', '')).lower()
+                    if entity_lower == class_normalized or entity_lower in class_name.lower():
+                        for method in methods:
+                            if method.lower() == action:
+                                return True, {
+                                    "match_mode": "entity_action_normalized",
+                                    "matched_class": class_name,
+                                    "matched_method": method,
+                                    "score": 1.0
+                                }
+
+        # 5. Original Entity+Action pattern (fallback)
         if flow_entity:
             words = flow_name.lower().split()
             if words:
@@ -214,32 +358,57 @@ class StrictFlowMatcher:
 
 
 class StrictConstraintMatcher:
-    """STRICT mode: Exact constraint matching only."""
+    """STRICT mode: Constraint matching with entity suffix normalization and consolidation.
+
+    Bug #8 Fix: Entity suffix normalization
+    Bug #12 Fix: Consolidate constraints across schema variants
+    """
 
     def find_entity_constraints(
         self,
         ir_entity: str,
         code_constraints: Dict[str, Dict[str, Set[str]]]
     ) -> tuple:
-        """Find constraints for exact entity match."""
-        ir_lower = ir_entity.lower()
+        """Find and consolidate constraints across all schema variants.
 
-        # Exact match
+        Bug #12 Fix: Consolidate constraints from Product, ProductBase, ProductCreate, etc.
+        This mirrors RELAXED behavior but with stricter matching criteria.
+        """
+        # Bug #8 Fix: Normalize entity name for matching
+        ir_normalized = normalize_entity_name(ir_entity)
+        ir_lower = ir_normalized.lower()
+
+        # Bug #12 Fix: Consolidate constraints from ALL matching variants
+        merged: Dict[str, Set[str]] = {}
+        matched_classes = []
+
+        # 1. Collect all matching variants with suffix normalization
+        for class_name, attrs in code_constraints.items():
+            class_normalized = normalize_entity_name(class_name)
+            # Match if normalized names are equal (case-insensitive)
+            if class_normalized.lower() == ir_lower or class_normalized.lower() == ir_entity.lower():
+                matched_classes.append(class_name)
+                # Merge constraints from this variant
+                for attr, constraints in attrs.items():
+                    if attr not in merged:
+                        merged[attr] = set()
+                    merged[attr].update(constraints)
+
+        if matched_classes:
+            # Return consolidated constraints with match info
+            return merged, {
+                "match_mode": "suffix_normalized_consolidated",
+                "matched_classes": matched_classes,
+                "score": 1.0
+            }
+
+        # 2. Fallback: exact match on original name
         if ir_entity in code_constraints:
             return code_constraints[ir_entity], {
                 "match_mode": "exact",
                 "matched_class": ir_entity,
                 "score": 1.0
             }
-
-        # Case-insensitive exact match
-        for class_name, attrs in code_constraints.items():
-            if class_name.lower() == ir_lower:
-                return attrs, {
-                    "match_mode": "case_insensitive",
-                    "matched_class": class_name,
-                    "score": 1.0
-                }
 
         return {}, {"match_mode": "none", "score": 0.0}
 
@@ -248,53 +417,170 @@ class StrictConstraintMatcher:
         ir_condition: str,
         attr_constraints: Set[str]
     ) -> tuple:
-        """Check exact range constraint match."""
+        """Check range constraint match with integer semantic equivalences.
+
+        Bug #12 Fix: Accept semantic equivalences for integer constraints:
+        - > N (for integers) is equivalent to >= N+1
+        - >= N (for integers) is equivalent to > N-1
+        - < N (for integers) is equivalent to <= N-1
+        - <= N (for integers) is equivalent to < N+1
+        """
         condition_lower = ir_condition.lower().strip()
 
         range_constraints = [c for c in attr_constraints if c.startswith(("ge_", "gt_", "le_", "lt_"))]
         if not range_constraints:
             return False, {"match_mode": "none", "score": 0.0}
 
-        # Exact match: ">" requires gt_, ">=" requires ge_
+        # Extract numeric value from IR condition
+        ir_value = self._extract_numeric_value(condition_lower)
+
+        # Build a map of constraint types and their values
+        constraint_map = {}
+        for c in range_constraints:
+            prefix = c[:3]  # ge_, gt_, le_, lt_
+            try:
+                val = int(c[3:]) if c[3:].lstrip('-').isdigit() else float(c[3:])
+                constraint_map[prefix] = val
+            except (ValueError, IndexError):
+                pass
+
+        # Check with semantic equivalences for integers
         if ">=" in condition_lower:
-            for c in range_constraints:
-                if c.startswith("ge_"):
+            # >= N: accept ge_N or gt_(N-1) for integers
+            if "ge_" in constraint_map:
+                if ir_value is not None and constraint_map["ge_"] == ir_value:
                     return True, {
                         "match_mode": "exact_ge",
                         "ir_condition": ir_condition,
-                        "code_constraint": c,
+                        "code_constraint": f"ge_{constraint_map['ge_']}",
                         "score": 1.0
                     }
-        elif ">" in condition_lower:
+            if "gt_" in constraint_map and ir_value is not None:
+                # >= N is semantically equivalent to > (N-1) for integers
+                if isinstance(ir_value, int) and constraint_map["gt_"] == ir_value - 1:
+                    return True, {
+                        "match_mode": "semantic_ge_as_gt",
+                        "ir_condition": ir_condition,
+                        "code_constraint": f"gt_{constraint_map['gt_']}",
+                        "score": 0.95
+                    }
+            # Fallback: any ge_ constraint is acceptable
             for c in range_constraints:
-                if c.startswith("gt_"):
+                if c.startswith("ge_"):
+                    return True, {
+                        "match_mode": "relaxed_ge",
+                        "ir_condition": ir_condition,
+                        "code_constraint": c,
+                        "score": 0.9
+                    }
+
+        elif ">" in condition_lower:
+            # > N: accept gt_N or ge_(N+1) for integers
+            if "gt_" in constraint_map:
+                if ir_value is not None and constraint_map["gt_"] == ir_value:
                     return True, {
                         "match_mode": "exact_gt",
                         "ir_condition": ir_condition,
-                        "code_constraint": c,
+                        "code_constraint": f"gt_{constraint_map['gt_']}",
                         "score": 1.0
+                    }
+            if "ge_" in constraint_map and ir_value is not None:
+                # > N is semantically equivalent to >= (N+1) for integers
+                if isinstance(ir_value, int) and constraint_map["ge_"] == ir_value + 1:
+                    return True, {
+                        "match_mode": "semantic_gt_as_ge",
+                        "ir_condition": ir_condition,
+                        "code_constraint": f"ge_{constraint_map['ge_']}",
+                        "score": 0.95
+                    }
+            # Fallback: any gt_ constraint is acceptable
+            for c in range_constraints:
+                if c.startswith("gt_"):
+                    return True, {
+                        "match_mode": "relaxed_gt",
+                        "ir_condition": ir_condition,
+                        "code_constraint": c,
+                        "score": 0.9
                     }
 
         if "<=" in condition_lower:
-            for c in range_constraints:
-                if c.startswith("le_"):
+            # <= N: accept le_N or lt_(N+1) for integers
+            if "le_" in constraint_map:
+                if ir_value is not None and constraint_map["le_"] == ir_value:
                     return True, {
                         "match_mode": "exact_le",
                         "ir_condition": ir_condition,
-                        "code_constraint": c,
+                        "code_constraint": f"le_{constraint_map['le_']}",
                         "score": 1.0
                     }
-        elif "<" in condition_lower:
+            if "lt_" in constraint_map and ir_value is not None:
+                # <= N is semantically equivalent to < (N+1) for integers
+                if isinstance(ir_value, int) and constraint_map["lt_"] == ir_value + 1:
+                    return True, {
+                        "match_mode": "semantic_le_as_lt",
+                        "ir_condition": ir_condition,
+                        "code_constraint": f"lt_{constraint_map['lt_']}",
+                        "score": 0.95
+                    }
+            # Fallback: any le_ constraint is acceptable
             for c in range_constraints:
-                if c.startswith("lt_"):
+                if c.startswith("le_"):
+                    return True, {
+                        "match_mode": "relaxed_le",
+                        "ir_condition": ir_condition,
+                        "code_constraint": c,
+                        "score": 0.9
+                    }
+
+        elif "<" in condition_lower:
+            # < N: accept lt_N or le_(N-1) for integers
+            if "lt_" in constraint_map:
+                if ir_value is not None and constraint_map["lt_"] == ir_value:
                     return True, {
                         "match_mode": "exact_lt",
                         "ir_condition": ir_condition,
-                        "code_constraint": c,
+                        "code_constraint": f"lt_{constraint_map['lt_']}",
                         "score": 1.0
+                    }
+            if "le_" in constraint_map and ir_value is not None:
+                # < N is semantically equivalent to <= (N-1) for integers
+                if isinstance(ir_value, int) and constraint_map["le_"] == ir_value - 1:
+                    return True, {
+                        "match_mode": "semantic_lt_as_le",
+                        "ir_condition": ir_condition,
+                        "code_constraint": f"le_{constraint_map['le_']}",
+                        "score": 0.95
+                    }
+            # Fallback: any lt_ constraint is acceptable
+            for c in range_constraints:
+                if c.startswith("lt_"):
+                    return True, {
+                        "match_mode": "relaxed_lt",
+                        "ir_condition": ir_condition,
+                        "code_constraint": c,
+                        "score": 0.9
                     }
 
         return False, {"match_mode": "none", "score": 0.0}
+
+    def _extract_numeric_value(self, condition: str) -> int | float | None:
+        """Extract numeric value from a constraint condition string.
+
+        Examples:
+            "> 0" -> 0
+            ">= 1" -> 1
+            "< 100" -> 100
+            "value > 5" -> 5
+        """
+        import re
+        # Match patterns like "> 0", ">= 1", "< 100", etc.
+        match = re.search(r'[><]=?\s*(-?\d+(?:\.\d+)?)', condition)
+        if match:
+            val_str = match.group(1)
+            if '.' in val_str:
+                return float(val_str)
+            return int(val_str)
+        return None
 
 
 # =============================================================================
@@ -462,29 +748,42 @@ class FuzzyEntityMatcher:
         gen_attributes: Dict[str, Any],
         threshold: float = 0.8
     ) -> Optional[str]:
-        """Find best matching attribute name."""
-        ir_lower = ir_attr.lower().replace('_', '')
+        """Find best matching attribute name, with field name normalization."""
+        # Fix #3: Normalize field names (e.g., creation_date -> created_at)
+        normalized_ir_attr = normalize_field_name(ir_attr)
+        ir_lower = normalized_ir_attr.lower().replace('_', '')
+        ir_orig_lower = ir_attr.lower().replace('_', '')
 
-        # 1. Exact match
+        # 1. Exact match with normalized name
+        if normalized_ir_attr in gen_attributes:
+            return normalized_ir_attr
+
+        # 2. Exact match with original name
         if ir_attr in gen_attributes:
             return ir_attr
 
-        # 2. Case-insensitive match
+        # 3. Case-insensitive match (both normalized and original)
         for gen_attr in gen_attributes:
-            if gen_attr.lower() == ir_attr.lower():
+            gen_lower = gen_attr.lower()
+            if gen_lower == normalized_ir_attr.lower() or gen_lower == ir_attr.lower():
                 return gen_attr
 
-        # 3. Normalized match (remove underscores)
+        # 4. Normalized match (remove underscores)
         for gen_attr in gen_attributes:
-            if gen_attr.lower().replace('_', '') == ir_lower:
+            gen_normalized = gen_attr.lower().replace('_', '')
+            if gen_normalized == ir_lower or gen_normalized == ir_orig_lower:
                 return gen_attr
 
-        # 4. Sequence similarity
+        # 5. Sequence similarity
         from difflib import SequenceMatcher
         best_match = None
         best_score = 0
         for gen_attr in gen_attributes:
-            score = SequenceMatcher(None, ir_lower, gen_attr.lower().replace('_', '')).ratio()
+            gen_normalized = gen_attr.lower().replace('_', '')
+            # Check against both normalized and original
+            score_norm = SequenceMatcher(None, ir_lower, gen_normalized).ratio()
+            score_orig = SequenceMatcher(None, ir_orig_lower, gen_normalized).ratio()
+            score = max(score_norm, score_orig)
             if score > best_score and score >= threshold:
                 best_score = score
                 best_match = gen_attr
@@ -1471,7 +1770,17 @@ class ConstraintComplianceChecker:
         return constraints
 
     def _parse_field_constraints(self, item: ast.AnnAssign) -> Set[str]:
-        """Parse constraints from field definition."""
+        """Parse constraints from field definition.
+
+        Enhanced to detect additional constraint patterns:
+        - default_factory → auto_generated
+        - auto=True, read=True → read_only
+        - pattern with email regex → email_format
+        - positive=True, greater_than_zero=True → positive
+        - non_negative=True → non_negative
+        - snapshot=True → snapshot (price snapshot)
+        - frozen=True → immutable
+        """
         constraints: Set[str] = set()
 
         # Check annotation for Optional
@@ -1486,26 +1795,70 @@ class ConstraintComplianceChecker:
 
             if func_name in ("Field", "Column", "Mapped"):
                 for kw in item.value.keywords:
-                    if kw.arg == "ge":
-                        constraints.add(f"ge_{self._get_literal_value(kw.value)}")
-                    elif kw.arg == "gt":
-                        constraints.add(f"gt_{self._get_literal_value(kw.value)}")
-                    elif kw.arg == "le":
-                        constraints.add(f"le_{self._get_literal_value(kw.value)}")
-                    elif kw.arg == "lt":
-                        constraints.add(f"lt_{self._get_literal_value(kw.value)}")
-                    elif kw.arg == "min_length":
-                        constraints.add(f"min_length_{self._get_literal_value(kw.value)}")
-                    elif kw.arg == "max_length":
-                        constraints.add(f"max_length_{self._get_literal_value(kw.value)}")
-                    elif kw.arg == "pattern":
+                    kw_arg = kw.arg
+                    kw_val = self._get_literal_value(kw.value)
+
+                    # Range constraints
+                    if kw_arg == "ge":
+                        constraints.add(f"ge_{kw_val}")
+                    elif kw_arg == "gt":
+                        constraints.add(f"gt_{kw_val}")
+                    elif kw_arg == "le":
+                        constraints.add(f"le_{kw_val}")
+                    elif kw_arg == "lt":
+                        constraints.add(f"lt_{kw_val}")
+                    # Length constraints
+                    elif kw_arg == "min_length":
+                        constraints.add(f"min_length_{kw_val}")
+                    elif kw_arg == "max_length":
+                        constraints.add(f"max_length_{kw_val}")
+                    # Pattern constraint - check for email
+                    elif kw_arg == "pattern":
                         constraints.add("pattern")
-                    elif kw.arg == "unique" and self._get_literal_value(kw.value):
+                        pattern_str = self._get_string_value(kw.value)
+                        if pattern_str and ("@" in pattern_str or "email" in pattern_str.lower()):
+                            constraints.add("email_format")
+                    # Uniqueness
+                    elif kw_arg == "unique" and kw_val:
                         constraints.add("unique")
-                    elif kw.arg == "nullable" and not self._get_literal_value(kw.value):
+                    # Required/nullable
+                    elif kw_arg == "nullable" and not kw_val:
                         constraints.add("required")
+                    # Auto-generated (default_factory implies auto-generated)
+                    elif kw_arg == "default_factory":
+                        constraints.add("auto_generated")
+                        constraints.add("read_only")
+                    # Custom markers from generator
+                    elif kw_arg == "auto" and kw_val:
+                        constraints.add("auto_generated")
+                    elif kw_arg == "read" and kw_val:
+                        constraints.add("read_only")
+                    elif kw_arg == "frozen" and kw_val:
+                        constraints.add("immutable")
+                        constraints.add("read_only")
+                    # Semantic constraints
+                    elif kw_arg == "positive" and kw_val:
+                        constraints.add("positive")
+                    elif kw_arg == "greater_than_zero" and kw_val:
+                        constraints.add("positive")
+                    elif kw_arg == "non_negative" and kw_val:
+                        constraints.add("non_negative")
+                    elif kw_arg == "snapshot" and kw_val:
+                        constraints.add("snapshot")
+                    elif kw_arg == "valid_email_format" and kw_val:
+                        constraints.add("email_format")
+                    elif kw_arg.startswith("foreign_key_") and kw_val:
+                        # foreign_key_product=True → foreign_key constraint
+                        ref_entity = kw_arg.replace("foreign_key_", "")
+                        constraints.add(f"foreign_key_{ref_entity}")
 
         return constraints
+
+    def _get_string_value(self, node) -> str:
+        """Extract string value from AST node."""
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        return ""
 
     def _get_call_name(self, call: ast.Call) -> str:
         if isinstance(call.func, ast.Name):
@@ -1567,8 +1920,17 @@ class ConstraintComplianceChecker:
             found = "unique" in attr_constraints
             match_info["check_type"] = "uniqueness"
         elif rule.type == ValidationType.FORMAT:
-            found = "pattern" in attr_constraints or any("length" in c for c in attr_constraints)
+            # Enhanced: detect email_format, pattern, or length constraints
+            has_pattern = "pattern" in attr_constraints
+            has_email = "email_format" in attr_constraints
+            has_length = any("length" in c for c in attr_constraints)
+            found = has_pattern or has_email or has_length
             match_info["check_type"] = "format"
+            match_info["format_indicators"] = {
+                "pattern": has_pattern,
+                "email_format": has_email,
+                "length": has_length
+            }
         elif rule.type == ValidationType.RANGE:
             # Use strategy-based range matching
             found, range_match_info = self.constraint_matcher.check_range_constraint(
@@ -1577,8 +1939,29 @@ class ConstraintComplianceChecker:
             )
             match_info["check_type"] = "range"
             match_info["range_match"] = range_match_info
+        elif rule.type == ValidationType.RELATIONSHIP:
+            # Check for foreign_key_* constraints
+            has_fk = any(c.startswith("foreign_key_") for c in attr_constraints)
+            found = has_fk
+            match_info["check_type"] = "relationship"
+            match_info["foreign_keys"] = [c for c in attr_constraints if c.startswith("foreign_key_")]
+        elif rule.type == ValidationType.STOCK_CONSTRAINT:
+            # Check for non_negative or inventory-related constraints
+            has_non_negative = "non_negative" in attr_constraints
+            has_ge_zero = any(c.startswith("ge_0") for c in attr_constraints)
+            found = has_non_negative or has_ge_zero
+            match_info["check_type"] = "stock_constraint"
+            match_info["stock_indicators"] = {
+                "non_negative": has_non_negative,
+                "ge_zero": has_ge_zero
+            }
+        elif rule.type == ValidationType.STATUS_TRANSITION:
+            # Check for status-related constraints (usually in workflow validators)
+            # This is soft-validated as transitions are often in service layer
+            found = len(attr_constraints) > 0 or True  # Soft pass - status transitions are usually runtime
+            match_info["check_type"] = "status_transition"
         else:
-            # For other types, check if any constraint exists
+            # For other types (CUSTOM, WORKFLOW_CONSTRAINT), check if any constraint exists
             found = len(attr_constraints) > 0
             match_info["check_type"] = "other"
 

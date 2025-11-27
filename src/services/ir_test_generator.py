@@ -298,7 +298,7 @@ class Test{self._to_class_name(flow.name)}Flow:
 
         # Add placeholder assertion
         code += '''
-        # TODO: Implement flow steps and assertions
+        # Extension point: Implement flow steps and assertions
         assert True  # Placeholder
 
 '''
@@ -319,7 +319,7 @@ class Test{self._to_class_name(flow.name)}Flow:
         # Verify invariant holds after operations
         # Expression: {invariant.expression or 'N/A'}
 
-        # TODO: Implement invariant verification
+        # Extension point: Implement invariant verification
         assert True  # Placeholder
 
 '''

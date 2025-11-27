@@ -19,6 +19,7 @@ from src.config.constants import (
     REDIS_PORT,
     CACHE_TTL_SHORT,
     LLM_CACHE_TTL,
+    IR_CACHE_TTL,
     SOCKET_CONNECT_TIMEOUT,
     SOCKET_TIMEOUT,
 )
@@ -75,8 +76,15 @@ class RedisManager:
         self._fallback_store = {}
         self._fallback_ttl = {}  # Track expiry times
 
-        # Attempt initial connection
-        self._connect()
+        # Bug #35 fix: Skip auto-connection in E2E tests where Redis is not needed
+        # Set SKIP_REDIS=1 to avoid unnecessary Redis connections during E2E testing
+        skip_redis = os.getenv("SKIP_REDIS", "").lower() in ("1", "true", "yes")
+        if skip_redis and enable_fallback:
+            # E2E test mode - use fallback silently without attempting connection
+            self.logger.debug("SKIP_REDIS set - using in-memory fallback mode")
+        else:
+            # Default behavior - attempt connection (maintains backward compatibility)
+            self._connect()
 
     def _connect(self) -> bool:
         """
@@ -410,6 +418,205 @@ class RedisManager:
             }
 
         return {"mode": "disconnected", "connected": False}
+
+    # =========================================================================
+    # IR Cache Methods - ApplicationIR caching with long TTL
+    # =========================================================================
+
+    def cache_ir(
+        self,
+        cache_key: str,
+        ir_data: dict[str, Any],
+        ttl: int = IR_CACHE_TTL
+    ) -> bool:
+        """
+        Cache ApplicationIR data for a spec.
+
+        Uses SCAN-safe key pattern: ir_cache:{cache_key}
+
+        Args:
+            cache_key: Unique cache key (e.g., "spec_name_hash8")
+            ir_data: Serialized ApplicationIR dict
+            ttl: TTL in seconds (default 7 days)
+
+        Returns:
+            True if successful
+        """
+        import time
+
+        key = f"ir_cache:{cache_key}"
+
+        # Try Redis first
+        if self._ensure_connected():
+            try:
+                data_json = json.dumps(ir_data, default=str)
+                self.client.setex(key, ttl, data_json)
+                self.logger.info("Cached IR to Redis",
+                               cache_key=cache_key,
+                               ttl_days=ttl // 86400)
+                return True
+            except Exception as e:
+                self.logger.warning("Failed to cache IR in Redis",
+                                  cache_key=cache_key,
+                                  error=str(e))
+
+        # Fallback storage
+        if self.enable_fallback:
+            self._fallback_store[key] = ir_data
+            self._fallback_ttl[key] = time.time() + ttl
+            self.logger.debug("Cached IR to fallback storage", cache_key=cache_key)
+            return True
+
+        return False
+
+    def get_cached_ir(self, cache_key: str) -> Optional[dict[str, Any]]:
+        """
+        Retrieve cached ApplicationIR data.
+
+        Args:
+            cache_key: Cache key used when storing
+
+        Returns:
+            IR data dict if found, None otherwise
+        """
+        import time
+
+        key = f"ir_cache:{cache_key}"
+
+        # Try Redis first
+        if self._ensure_connected():
+            try:
+                data_json = self.client.get(key)
+                if data_json:
+                    self.logger.debug("IR cache hit from Redis", cache_key=cache_key)
+                    return json.loads(data_json)
+            except Exception as e:
+                self.logger.warning("Failed to retrieve IR from Redis",
+                                  cache_key=cache_key,
+                                  error=str(e))
+
+        # Check fallback
+        if self.enable_fallback and key in self._fallback_store:
+            if key in self._fallback_ttl and time.time() < self._fallback_ttl[key]:
+                self.logger.debug("IR cache hit from fallback", cache_key=cache_key)
+                return self._fallback_store[key]
+            elif key not in self._fallback_ttl:
+                return self._fallback_store[key]
+            else:
+                # Expired, clean up
+                del self._fallback_store[key]
+                if key in self._fallback_ttl:
+                    del self._fallback_ttl[key]
+
+        return None
+
+    def clear_ir_cache(self, spec_name: Optional[str] = None) -> int:
+        """
+        Clear IR cache entries using SCAN (non-blocking).
+
+        FLUSH STRATEGY:
+        - Uses SCAN instead of KEYS to avoid blocking Redis in production
+        - Iterates in batches of 100 keys
+        - Safe for large datasets
+
+        Args:
+            spec_name: If provided, only clear cache for this spec.
+                      If None, clear ALL IR cache entries.
+
+        Returns:
+            Number of keys deleted
+        """
+        import time
+
+        pattern = f"ir_cache:{spec_name}_*" if spec_name else "ir_cache:*"
+        deleted_count = 0
+
+        # Clear from Redis using SCAN (non-blocking)
+        if self._ensure_connected():
+            try:
+                cursor = 0
+                while True:
+                    cursor, keys = self.client.scan(cursor=cursor, match=pattern, count=100)
+                    if keys:
+                        deleted_count += self.client.delete(*keys)
+                    if cursor == 0:
+                        break
+                self.logger.info("Cleared IR cache from Redis",
+                               pattern=pattern,
+                               deleted=deleted_count)
+            except Exception as e:
+                self.logger.warning("Failed to clear IR cache from Redis",
+                                  error=str(e))
+
+        # Clear from fallback storage
+        if self.enable_fallback:
+            fallback_pattern = f"ir_cache:{spec_name}_" if spec_name else "ir_cache:"
+            keys_to_delete = [k for k in self._fallback_store.keys()
+                            if k.startswith(fallback_pattern)]
+            for key in keys_to_delete:
+                del self._fallback_store[key]
+                if key in self._fallback_ttl:
+                    del self._fallback_ttl[key]
+                deleted_count += 1
+            if keys_to_delete:
+                self.logger.debug("Cleared IR cache from fallback",
+                                pattern=pattern,
+                                deleted=len(keys_to_delete))
+
+        return deleted_count
+
+    def get_ir_cache_stats(self) -> dict[str, Any]:
+        """
+        Get statistics about IR cache usage.
+
+        Returns:
+            Dict with cache stats (count, keys, memory estimate)
+        """
+        stats = {
+            "source": "unknown",
+            "ir_cache_keys": 0,
+            "keys": [],
+            "total_size_estimate_kb": 0
+        }
+
+        # Try Redis first
+        if self._ensure_connected():
+            try:
+                cursor = 0
+                keys = []
+                total_size = 0
+                while True:
+                    cursor, batch = self.client.scan(cursor=cursor, match="ir_cache:*", count=100)
+                    keys.extend(batch)
+                    if cursor == 0:
+                        break
+
+                # Get memory usage for each key (approximate)
+                for key in keys:
+                    try:
+                        size = self.client.memory_usage(key) or 0
+                        total_size += size
+                    except:
+                        pass
+
+                stats["source"] = "redis"
+                stats["ir_cache_keys"] = len(keys)
+                stats["keys"] = keys
+                stats["total_size_estimate_kb"] = total_size / 1024
+                return stats
+            except Exception as e:
+                self.logger.warning("Failed to get IR cache stats from Redis", error=str(e))
+
+        # Fallback stats
+        if self.enable_fallback:
+            ir_keys = [k for k in self._fallback_store.keys() if k.startswith("ir_cache:")]
+            stats["source"] = "fallback"
+            stats["ir_cache_keys"] = len(ir_keys)
+            stats["keys"] = ir_keys
+            # Rough estimate
+            stats["total_size_estimate_kb"] = len(ir_keys) * 50  # ~50KB per IR
+
+        return stats
 
     def close(self):
         """Close Redis connection and clear fallback storage."""

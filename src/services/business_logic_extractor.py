@@ -19,6 +19,7 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 from src.cognitive.ir.validation_model import ValidationRule, ValidationType, ValidationModelIR
 from src.services.llm_validation_extractor import LLMValidationExtractor
+from src.utils.constraint_helpers import normalize_constraints
 import re
 import yaml
 import anthropic
@@ -125,9 +126,28 @@ class BusinessLogicExtractor:
             fields = entity.get("fields", [])
 
             for field in fields:
+                # Bug #36 fix: Handle case where field might be a list (malformed data)
+                if not isinstance(field, dict):
+                    logger.warning(f"Skipping non-dict field in entity {entity_name}: {type(field)}")
+                    continue
+
                 field_name = field.get("name")
                 field_type = field.get("type")
-                constraints = field.get("constraints", {})
+                raw_constraints = field.get("constraints", {})
+
+                # Bug #36 fix: constraints can be a list (["gt=0"]) or dict ({"min": 0})
+                # Normalize to dict for consistent access
+                if isinstance(raw_constraints, list):
+                    # Convert list constraints to dict format
+                    constraints = {}
+                    for c in raw_constraints:
+                        if isinstance(c, str) and "=" in c:
+                            key, val = c.split("=", 1)
+                            constraints[key] = val
+                        elif isinstance(c, str):
+                            constraints[c] = True
+                else:
+                    constraints = raw_constraints or {}
 
                 # Check for required/presence constraints
                 if field.get("required") or constraints.get("required"):
@@ -397,7 +417,7 @@ class BusinessLogicExtractor:
             return "return sum(self.values) / len(self.values) if self.values else 0"
 
         # Default fallback
-        return "pass  # TODO: Implement calculation logic"
+        return "pass  # Extension point: Implement calculation logic"
 
     def _determine_enforcement_strategy(self, rule: ValidationRule, field: Dict[str, Any] = None) -> Optional['EnforcementStrategy']:
         """
@@ -784,6 +804,8 @@ class BusinessLogicExtractor:
                 # Match against type patterns
                 if field_type in type_patterns:
                     type_config = type_patterns[field_type]
+                    # Bug #36 fix: normalize constraints to dict (can be list or dict)
+                    field_constraints = normalize_constraints(field.get("constraints"))
                     for validation in type_config.get("validations", []):
                         # Check applies_to_when conditions
                         applies_to_when = validation.get("applies_to_when", [])
@@ -792,7 +814,7 @@ class BusinessLogicExtractor:
                             has_condition = False
                             for condition in applies_to_when:
                                 if (field.get(condition) or
-                                    field.get("constraints", {}).get(condition)):
+                                    field_constraints.get(condition)):
                                     has_condition = True
                                     break
                             if not has_condition:

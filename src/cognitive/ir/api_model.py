@@ -37,6 +37,14 @@ class APISchema(BaseModel):
     name: str
     fields: List[APISchemaField]
 
+class InferenceSource(str, Enum):
+    """Source of inferred endpoints."""
+    SPEC = "spec"                    # Explicitly in spec
+    CRUD_BEST_PRACTICE = "crud_best_practice"  # list, delete inferred
+    INFRA_BEST_PRACTICE = "infra_best_practice"  # health, metrics
+    PATTERN_BANK = "pattern_bank"    # From successful patterns
+
+
 class Endpoint(BaseModel):
     path: str
     method: HttpMethod
@@ -48,6 +56,11 @@ class Endpoint(BaseModel):
     response_schema: Optional[APISchema] = None
     auth_required: bool = True
     tags: List[str] = Field(default_factory=list)
+
+    # Inference tracking - IR as single source of truth
+    inferred: bool = False
+    inference_source: InferenceSource = InferenceSource.SPEC
+    inference_reason: Optional[str] = None
 
 class APIModelIR(BaseModel):
     endpoints: List[Endpoint]

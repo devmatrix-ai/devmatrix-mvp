@@ -12,6 +12,27 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Fix #3: Field name normalization mapping
+# Maps spec/IR field names to standard code field names
+FIELD_NAME_MAPPING = {
+    "creation_date": "created_at",
+    "modification_date": "updated_at",
+    "fecha_creacion": "created_at",
+    "fecha_modificacion": "updated_at",
+}
+
+def normalize_field_name(field_name: str) -> str:
+    """
+    Normalize field names from spec/IR to standard code names.
+
+    Args:
+        field_name: Original field name from spec or IR
+
+    Returns:
+        Normalized field name for code generation
+    """
+    return FIELD_NAME_MAPPING.get(field_name.lower(), field_name)
+
 
 def validate_python_syntax(code: str, filename: str = "generated") -> bool:
     """
@@ -91,7 +112,7 @@ class {entity_name}Entity(Base):
         # Generate columns dynamically from entity fields
         # Skip system fields that are added automatically (id, created_at, updated_at)
         for field in fields:
-            field_name = field.name
+            field_name = normalize_field_name(field.name)  # Fix #3: normalize field names
 
             # Skip system fields - they are added separately
             if field_name in ['id', 'created_at', 'updated_at']:
@@ -407,7 +428,7 @@ class BaseSchema(BaseModel):
         if 'validations' in validation_ground_truth:
             for val_id, val_data in validation_ground_truth['validations'].items():
                 entity_name = val_data.get('entity')
-                field_name = val_data.get('field')
+                field_name = normalize_field_name(val_data.get('field') or '')  # Fix #3
                 constraint = val_data.get('constraint')
                 if entity_name and field_name and constraint:
                     validation_lookup[(entity_name, field_name)] = constraint
@@ -422,12 +443,12 @@ class BaseSchema(BaseModel):
                 # Handle both dict and object access
                 if isinstance(rule, dict):
                     entity_name = rule.get('entity')
-                    field_name = rule.get('attribute') # ApplicationIR uses 'attribute'
+                    field_name = normalize_field_name(rule.get('attribute') or '')  # Fix #3
                     v_type = rule.get('type', '')
                     condition = rule.get('condition', '')
                 else:
                     entity_name = getattr(rule, 'entity', None)
-                    field_name = getattr(rule, 'attribute', None)
+                    field_name = normalize_field_name(getattr(rule, 'attribute', None) or '')  # Fix #3
                     v_type = getattr(rule, 'type', '')
                     condition = getattr(rule, 'condition', '')
 
@@ -612,7 +633,7 @@ ItemSchema = Dict[str, Any]
         for field_obj in fields_list:
             # Extract field attributes
             if hasattr(field_obj, 'name'):
-                field_name = field_obj.name
+                field_name = normalize_field_name(field_obj.name)  # Fix #3
                 field_type = getattr(field_obj, 'type', 'str')
                 required = getattr(field_obj, 'required', True)
                 field_default = getattr(field_obj, 'default', None)
@@ -620,7 +641,7 @@ ItemSchema = Dict[str, Any]
                 constraints = getattr(field_obj, 'constraints', [])
             else:
                 # Fallback for dict-based fields
-                field_name = field_obj.get('name', 'unknown')
+                field_name = normalize_field_name(field_obj.get('name', 'unknown'))  # Fix #3
                 field_type = field_obj.get('type', 'str')
                 required = field_obj.get('required', True)
                 field_default = field_obj.get('default', None)
@@ -638,6 +659,17 @@ ItemSchema = Dict[str, Any]
 
             # Map type to Python type
             python_type = type_mapping.get(field_type, field_type)
+
+            # Fix #4: Detect relationship fields (e.g., Order.items → List[OrderItemResponse])
+            # Check if field name suggests a relationship and corresponding entity exists
+            if field_name == 'items':
+                # Construct potential item entity name: Order → OrderItem
+                item_entity_name = f"{entity_name}Item"
+                if item_entity_name.lower() in entity_names_lower:
+                    python_type = f"List[{item_entity_name}Response]"
+                    required = False
+                    field_default = []
+                    logger.info(f"🔗 Detected relationship field {entity_name}.{field_name} → List[{item_entity_name}Response]")
 
             # Special-case server-managed fields: make them optional on input schemas
             if field_name in ['id', 'created_at']:
@@ -902,17 +934,18 @@ ItemSchema = Dict[str, Any]
                         python_default = 'True'
                     elif field_default.lower() == 'false':
                         python_default = 'False'
-                    # NEW: Handle "now" default for datetime fields
-                    elif field_default.lower() == 'now':
+                    # NEW: Handle "now" default for datetime fields (Bug #17 fix)
+                    # Match: 'now', 'now()', 'datetime.now()', 'datetime.now', etc.
+                    elif field_default.lower().replace('()', '').replace('datetime.', '') == 'now':
                         if python_type == 'datetime' or 'datetime' in str(python_type).lower():
                             # Use default_factory pattern for dynamic datetime
                             use_default_factory = True
                             python_default = None  # Will be handled specially
-                            logger.debug(f"✅ Converting 'now' default to default_factory=datetime.now for {field_name}")
+                            logger.debug(f"✅ Converting '{field_default}' default to default_factory=datetime.now for {field_name}")
                         else:
                             # Not a datetime field, skip the "now" default
                             python_default = None
-                            logger.warning(f"⚠️ 'now' default on non-datetime field {field_name} - removing default")
+                            logger.warning(f"⚠️ '{field_default}' default on non-datetime field {field_name} - removing default")
 
             # NEW: Check for enforcement strategy from validation ground truth
             enforcement = _get_enforcement_for_field(entity_name, field_name, validation_ground_truth)
@@ -931,7 +964,7 @@ ItemSchema = Dict[str, Any]
                         if 'total' in field_name.lower():
                             calc_code = f"return sum(item.unit_price * item.quantity for item in self.items)"
                         else:
-                            calc_code = "pass  # TODO: Implement calculation logic"
+                            calc_code = "pass  # Extension point: Implement calculation logic"
 
                     pydantic_fields.append(f"""    @computed_field
     @property
@@ -982,6 +1015,15 @@ ItemSchema = Dict[str, Any]
                     # Required field: Field(...)
                     pydantic_fields.append(f"    {field_name}: {python_type} = Field(..., {constraints_str})")
                 elif python_default is not None:
+                    # Bug #17 safety net: catch any "now" variants in constrained fields
+                    if isinstance(python_default, str) and python_default.lower().replace('()', '').replace('datetime.', '') == 'now':
+                        if python_type == 'datetime' or 'datetime' in str(python_type).lower():
+                            pydantic_fields.append(f"    {field_name}: {python_type} = Field(default_factory=datetime.now, {constraints_str})")
+                            logger.debug(f"✅ Safety net (constrained): caught '{python_default}' for {field_name}")
+                            continue
+                        else:
+                            pydantic_fields.append(f"    {field_name}: Optional[{python_type}] = Field(None, {constraints_str})")
+                            continue
                     # Field with default value
                     needs_quotes = python_type == 'str' or (isinstance(python_type, str) and python_type.startswith('Literal['))
                     default_val = f'"{python_default}"' if needs_quotes else python_default
@@ -997,6 +1039,16 @@ ItemSchema = Dict[str, Any]
                     # Required field without default
                     pydantic_fields.append(f"    {field_name}: {python_type}")
                 elif python_default is not None:
+                    # Bug #17 safety net: catch any "now" variants that escaped earlier detection
+                    if isinstance(python_default, str) and python_default.lower().replace('()', '').replace('datetime.', '') == 'now':
+                        if python_type == 'datetime' or 'datetime' in str(python_type).lower():
+                            pydantic_fields.append(f"    {field_name}: {python_type} = Field(default_factory=datetime.now)")
+                            logger.debug(f"✅ Safety net: caught '{python_default}' for {field_name}, using default_factory")
+                            continue
+                        else:
+                            python_default = None  # Skip invalid now default
+                            pydantic_fields.append(f"    {field_name}: Optional[{python_type}] = None")
+                            continue
                     # Field with default value
                     needs_quotes = python_type == 'str' or (isinstance(python_type, str) and python_type.startswith('Literal['))
                     default_val = f'"{python_default}"' if needs_quotes else python_default
@@ -1515,17 +1567,31 @@ def upgrade() -> None:
             if any('unique' in c for c in constraint_strs):
                 column_def = column_def.rstrip(')') + ', unique=True)'
 
-            # Simple defaults
+            # Simple defaults - DETERMINISTIC RULE (AST stratum, not LLM)
+            # Rule: SQL function → sa.text(), everything else → literal string
             if default not in [None, '...']:
+                SQL_FUNCTIONS = ['now()', 'gen_random_uuid()', 'current_timestamp', 'uuid_generate_v4()']
+                default_str = str(default).lower()
+
                 if ftype in ['datetime', 'date']:
+                    # Datetime defaults are SQL functions → sa.text()
                     column_def = column_def.rstrip(')') + ", server_default=sa.text('now()'))"
+                elif any(fn in default_str for fn in SQL_FUNCTIONS):
+                    # SQL function → sa.text()
+                    column_def = column_def.rstrip(')') + f", server_default=sa.text('{default}'))"
                 elif ftype in ['str', 'string', 'text']:
-                    column_def = column_def.rstrip(')') + f", server_default=sa.text('{default}'))"
+                    # String literal → plain quoted string (NOT sa.text!)
+                    column_def = column_def.rstrip(')') + f", server_default='{default}')"
                 elif ftype in ['bool', 'boolean']:
+                    # Boolean → plain string literal
                     bool_default = 'true' if str(default).lower() == 'true' else 'false'
-                    column_def = column_def.rstrip(')') + f", server_default=sa.text('{bool_default}'))"
+                    column_def = column_def.rstrip(')') + f", server_default='{bool_default}')"
+                elif ftype in ['int', 'integer', 'float', 'decimal', 'numeric']:
+                    # Numeric → plain literal (no quotes)
+                    column_def = column_def.rstrip(')') + f", server_default='{default}')"
                 else:
-                    column_def = column_def.rstrip(')') + f", server_default=sa.text('{default}'))"
+                    # Unknown type → plain string (safe default)
+                    column_def = column_def.rstrip(')') + f", server_default='{default}')"
 
             code += column_def + ',\n'
 

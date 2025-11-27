@@ -59,6 +59,8 @@ LLM_CACHE_TTL = int(os.getenv("LLM_CACHE_TTL", str(CACHE_TTL_MEDIUM)))
 AGENT_CACHE_TTL = int(os.getenv("AGENT_CACHE_TTL", str(CACHE_TTL_SHORT)))
 ARTIFACT_TTL = int(os.getenv("ARTIFACT_TTL", str(CACHE_TTL_LONG)))
 CHECKPOINT_TTL = int(os.getenv("CHECKPOINT_TTL", str(CACHE_TTL_MEDIUM)))
+# IR Cache TTL: 7 days - spec IR only changes when spec content changes (hash-based invalidation)
+IR_CACHE_TTL = int(os.getenv("IR_CACHE_TTL", "604800"))
 
 
 # ============================================================================

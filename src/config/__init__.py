@@ -27,6 +27,7 @@ from src.config.constants import (
     AGENT_CACHE_TTL,
     ARTIFACT_TTL,
     CHECKPOINT_TTL,
+    IR_CACHE_TTL,
     API_PORT,
     UI_PORT,
     POSTGRES_PORT,
@@ -100,6 +101,7 @@ __all__ = [
     "DEFAULT_CACHE_TTL",
     "LLM_CACHE_TTL",
     "AGENT_CACHE_TTL",
+    "IR_CACHE_TTL",
     # Timeout Configuration
     "DEFAULT_REQUEST_TIMEOUT",
     "LLM_API_TIMEOUT",

@@ -71,9 +71,12 @@ class ApplicationIRNormalizer:
         for entity in self.app_ir.domain_model.entities:
             # Generate snake_case name for imports and file names
             snake_name = re.sub(r'(?<!^)(?=[A-Z])', '_', entity.name).lower()
+            # table_name: lowercase plural for API URLs and DB tables (e.g., "products")
+            table_name = self.pluralize(entity.name).lower()
             normalized_entity = {
                 'name': entity.name,
                 'snake_name': snake_name,  # For {{ entity.snake_name }} in templates
+                'table_name': table_name,  # For {{ entity.table_name }} in test templates (Bug #12 fix)
                 'plural': self.pluralize(entity.name),
                 'fields': self._normalize_attributes(entity.attributes),
                 'description': entity.description or f"{entity.name} entity",

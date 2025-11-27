@@ -1,11 +1,22 @@
 """
 IR Builder.
 
-Responsible for constructing the initial ApplicationIR from SpecRequirements.
-This acts as the bridge between the "Analysis Phase" (SpecRequirements) and the "Generation Phase" (ApplicationIR).
+DEPRECATED: This module is the LEGACY path for constructing ApplicationIR.
+Use SpecToApplicationIR instead for production code generation.
+
+IRBuilder limitations:
+- Uses hardcoded generic flows ("State Transition", "Workflow")
+- Does not extract business logic from spec
+- Does not support LLM-based semantic extraction
+
+Production path: src/specs/spec_to_application_ir.py (SpecToApplicationIR)
+
+This module is kept for backward compatibility with code_generation_service.generate()
+but the E2E pipeline uses SpecToApplicationIR.generate_from_application_ir().
 """
 import uuid
 import logging
+import warnings
 from datetime import datetime
 from typing import Any, Dict, List
 
@@ -14,6 +25,9 @@ logger = logging.getLogger(__name__)
 from src.cognitive.ir.application_ir import ApplicationIR
 from src.cognitive.ir.domain_model import DomainModelIR, Entity, Attribute, Relationship, DataType, RelationshipType
 from src.cognitive.ir.api_model import APIModelIR, Endpoint, HttpMethod, ParameterLocation, APIParameter
+
+# IR-Level Best Practice Inference (Phase 0 - single source of truth)
+from src.services.inferred_endpoint_enricher import enrich_api_model
 from src.cognitive.ir.infrastructure_model import InfrastructureModelIR, DatabaseConfig, DatabaseType, ObservabilityConfig
 from src.cognitive.ir.behavior_model import BehaviorModelIR, Invariant, Flow, FlowType
 from src.cognitive.ir.validation_model import ValidationModelIR, ValidationRule, ValidationType, EnforcementType
@@ -25,13 +39,26 @@ from src.parsing.spec_parser import SpecRequirements
 from src.services.business_logic_extractor import BusinessLogicExtractor
 
 class IRBuilder:
-    """Builder for ApplicationIR."""
+    """
+    Builder for ApplicationIR.
+
+    DEPRECATED: Use SpecToApplicationIR for production code generation.
+    This class uses hardcoded generic flows and does not support LLM extraction.
+    """
 
     @staticmethod
     def build_from_spec(spec: SpecRequirements) -> ApplicationIR:
         """
         Convert SpecRequirements to ApplicationIR.
+
+        DEPRECATED: Use SpecToApplicationIR.get_application_ir() instead.
         """
+        warnings.warn(
+            "IRBuilder.build_from_spec() is deprecated. "
+            "Use SpecToApplicationIR.get_application_ir() for production code generation.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         # 1. Build Domain Model
         domain_model = IRBuilder._build_domain_model(spec)
 
@@ -98,7 +125,12 @@ class IRBuilder:
                 tags=[ep_spec.entity] if hasattr(ep_spec, 'entity') and ep_spec.entity else []
             ))
             
-        return APIModelIR(endpoints=endpoints)
+        api_model = APIModelIR(endpoints=endpoints)
+
+        # PHASE 0: IR-Level Best Practice Inference
+        # Enrich with inferred endpoints (list, delete, health, metrics)
+        # All inferred endpoints are marked with inferred=True for traceability
+        return enrich_api_model(api_model)
 
     @staticmethod
     def _build_infrastructure_model(spec: SpecRequirements) -> InfrastructureModelIR:

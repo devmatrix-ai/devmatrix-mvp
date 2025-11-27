@@ -2464,22 +2464,29 @@ class ComplianceValidator:
                 additional_endpoints.append(endpoint)
 
         # Format output
+        # Bug #19 fix: Clarified endpoint counts to avoid confusion
+        # "matched" = endpoints that match the required ones
+        # "inferred" = additional best-practice endpoints
         lines = []
-        lines.append(f"\n🌐 Endpoints ({len(report.endpoints_expected)} required, {len(required_endpoints)} present):")
-        
+        total_impl = len(report.endpoints_implemented)
+        lines.append(f"\n🌐 Endpoints: {len(required_endpoints)}/{len(report.endpoints_expected)} required matched (+{len(additional_endpoints)} inferred = {total_impl} total)")
+
         if required_endpoints:
             # Show sample of required endpoints (first 5)
             sample = required_endpoints[:5]
             lines.append(f"   ✅ {', '.join(sample)}")
             if len(required_endpoints) > 5:
-                lines.append(f"   ... and {len(required_endpoints) - 5} more")
+                lines.append(f"   ... and {len(required_endpoints) - 5} more required")
         else:
             lines.append(f"   ❌ No required endpoints found")
 
         if additional_endpoints:
-            lines.append(f"\n   📝 Additional endpoints (best practices):")
-            for endpoint in additional_endpoints:
+            lines.append(f"\n   📝 Inferred endpoints (best practices): {len(additional_endpoints)}")
+            # Only show first 3 inferred to keep output manageable
+            for endpoint in additional_endpoints[:3]:
                 lines.append(f"   - {endpoint}")
+            if len(additional_endpoints) > 3:
+                lines.append(f"   ... and {len(additional_endpoints) - 3} more inferred")
 
         return "\n".join(lines)
 
@@ -2649,15 +2656,26 @@ class ComplianceValidator:
                 "relationships": rels_list,
             })
 
-        # Extract endpoints from APIModelIR
+        # Extract endpoints from APIModelIR (includes inferred best-practice endpoints)
         endpoints = []
+        inferred_count = 0
         for ep in application_ir.api_model.endpoints:
-            endpoints.append({
+            ep_dict = {
                 "path": ep.path,
                 "method": ep.method.value,
                 "operation_id": ep.operation_id,
                 "summary": ep.summary,
-            })
+            }
+            # Track inferred endpoints for traceability (Phase 0: IR as single source of truth)
+            if getattr(ep, 'inferred', False):
+                ep_dict["inferred"] = True
+                ep_dict["inference_source"] = getattr(ep, 'inference_source', None)
+                ep_dict["inference_reason"] = getattr(ep, 'inference_reason', None)
+                inferred_count += 1
+            endpoints.append(ep_dict)
+
+        if inferred_count > 0:
+            logger.info(f"📊 IR contains {len(endpoints)} endpoints ({inferred_count} inferred best-practice)")
 
         # Extract business_logic from ValidationModelIR
         business_logic = []

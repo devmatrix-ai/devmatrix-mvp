@@ -236,7 +236,7 @@ class {class_name}:
         self.logger.debug(f"Executing step {{step_num}}: {step.description}")
         {condition_check}
 
-        # TODO: Implement {step.action} logic
+        # Extension point: Implement {step.action} logic
         # This is where you would:
         # 1. Perform the actual {step.action} operation
         # 2. Update any relevant entities
@@ -476,7 +476,7 @@ class {class_name}:
         """Generate validation method for an invariant."""
         method_name = f"_validate_{self._snake_case(invariant.description[:30])}"
 
-        validation_logic = "# TODO: Implement validation logic"
+        validation_logic = "# Extension point: Implement validation logic"
         if invariant.expression:
             validation_logic = f'''# Expression: {invariant.expression}
         try:
@@ -595,7 +595,7 @@ class EventContext:
         for step in sorted(steps, key=lambda s: s.order):
             step_code.append(f'''        # Step {step.order}: {step.description}
         # Action: {step.action}
-        # TODO: Implement {step.action} logic
+        # Extension point: Implement {step.action} logic
         ''')
 
         return "\n".join(step_code)
@@ -750,7 +750,7 @@ class PolicyEnforcer:
 
         for step in sorted(steps, key=lambda s: s.order):
             step_code.append(f'''            # Step {step.order}: {step.description}
-            # TODO: Implement {step.action}''')
+            # Extension point: Implement {step.action}''')
 
         return "\n".join(step_code)
 
@@ -883,7 +883,7 @@ class BusinessOrchestrator:
         result: Dict[str, Any]
     ) -> bool:
         """Validate postconditions after process execution."""
-        # TODO: Implement postcondition validation
+        # Extension point: Implement postcondition validation
         return True
 '''
         return code
@@ -922,7 +922,7 @@ class BusinessOrchestrator:
 
         if has_validators:
             validation_lines.append('''        # Validate entity invariants
-        # TODO: Call appropriate validators based on process''')
+        # Extension point: Call appropriate validators based on process''')
 
         if has_policies:
             validation_lines.append('''        # Enforce business policies
@@ -937,7 +937,7 @@ class BusinessOrchestrator:
         """Generate process execution code."""
         if has_workflows:
             return '''        # Execute workflow based on process name
-        # TODO: Map process_name to appropriate workflow
+        # Extension point: Map process_name to appropriate workflow
         # Example:
         # workflow = self.workflows.get(process_name)
         # if workflow:
@@ -1027,10 +1027,10 @@ class {self._pascal_case(entity)}State(Enum):
             if inv.expression:
                 checks.append(f'''        # Check: {inv.description}
         # Expression: {inv.expression}
-        # TODO: Implement invariant check''')
+        # Extension point: Implement invariant check''')
             else:
                 checks.append(f'''        # Check: {inv.description}
-        # TODO: Implement invariant check''')
+        # Extension point: Implement invariant check''')
 
         return "\n        \n".join(checks)
 
@@ -1073,20 +1073,41 @@ class {self._pascal_case(entity)}State(Enum):
     # Utility methods
 
     def _snake_case(self, text: str) -> str:
-        """Convert text to snake_case."""
-        # Simple conversion - handle spaces and basic camelCase
-        result = text.replace(" ", "_").replace("-", "_")
-
-        # Handle camelCase
+        """Convert text to snake_case with proper sanitization."""
         import re
+        import unicodedata
+
+        # Step 1: Normalize unicode (remove accents: í→i, ó→o)
+        result = unicodedata.normalize('NFKD', text)
+        result = result.encode('ascii', 'ignore').decode('ascii')
+
+        # Step 2: Remove invalid characters (keep only letters, digits, spaces, underscores)
+        # This removes : ( ) and other special chars
+        result = re.sub(r'[^a-zA-Z0-9\s_]', '', result)
+
+        # Step 3: Replace spaces/hyphens with underscores
+        result = result.replace(" ", "_").replace("-", "_")
+
+        # Step 4: Handle camelCase
         result = re.sub('([A-Z]+)', r'_\1', result).lower()
+
+        # Step 5: Clean up multiple underscores
         result = re.sub('_+', '_', result).strip('_')
 
         return result
 
     def _pascal_case(self, text: str) -> str:
-        """Convert text to PascalCase."""
-        # Split by spaces, underscores, hyphens
+        """Convert text to PascalCase with proper sanitization."""
         import re
-        words = re.split(r'[\s_\-]+', text)
+        import unicodedata
+
+        # Step 1: Normalize unicode (remove accents)
+        result = unicodedata.normalize('NFKD', text)
+        result = result.encode('ascii', 'ignore').decode('ascii')
+
+        # Step 2: Remove invalid characters (keep only letters, digits, spaces)
+        result = re.sub(r'[^a-zA-Z0-9\s]', '', result)
+
+        # Step 3: Split by spaces, underscores, hyphens
+        words = re.split(r'[\s_\-]+', result)
         return ''.join(word.capitalize() for word in words if word)

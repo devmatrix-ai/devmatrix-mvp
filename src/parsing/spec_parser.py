@@ -29,6 +29,9 @@ from src.parsing.entity_locator import find_entity_locations, extract_context_wi
 from src.parsing.prompts import get_global_context_prompt
 from src.parsing.field_extractor import extract_entity_fields
 
+# Bug #11 Fix: Use robust YAML parsing helpers
+from src.utils.yaml_helpers import safe_yaml_load, robust_yaml_parse
+
 logger = logging.getLogger(__name__)
 
 
@@ -988,8 +991,8 @@ DO NOT return JSON, just the plain text description."""
 
                 yaml_content = match.group(1).strip()
 
-            # Parse YAML
-            data = yaml.safe_load(yaml_content)
+            # Parse YAML (Bug #11 Fix: use safe_yaml_load with fallback)
+            data = safe_yaml_load(yaml_content, default={})
 
             if data and isinstance(data, dict):
                 ground_truth = data
@@ -1052,8 +1055,8 @@ DO NOT return JSON, just the plain text description."""
 
                 yaml_content = match.group(1).strip()
 
-            # Parse YAML
-            data = yaml.safe_load(yaml_content)
+            # Parse YAML (Bug #11 Fix: use safe_yaml_load with fallback)
+            data = safe_yaml_load(yaml_content, default={})
 
             if data and isinstance(data, dict):
                 # Extract nodes
@@ -1151,8 +1154,8 @@ DO NOT return JSON, just the plain text description."""
 
                 yaml_content = match.group(1).strip()
 
-            # Parse YAML
-            data = yaml.safe_load(yaml_content)
+            # Parse YAML (Bug #11 Fix: use safe_yaml_load with fallback)
+            data = safe_yaml_load(yaml_content, default={})
 
             if data and isinstance(data, dict):
                 # Extract validation_count
@@ -1290,13 +1293,18 @@ Generate ONLY the YAML block, no explanation."""
 
             if yaml_match:
                 yaml_content = yaml_match.group(1)
-                classification_gt = yaml.safe_load(yaml_content)
+                # Bug #11 Fix: use robust_yaml_parse for LLM responses
+                classification_gt = robust_yaml_parse(yaml_content)
 
-                logger.info(
-                    f"✅ Generated classification ground truth with LLM: "
-                    f"{len(classification_gt)} entries"
-                )
-                return classification_gt
+                if classification_gt:
+                    logger.info(
+                        f"✅ Generated classification ground truth with LLM: "
+                        f"{len(classification_gt)} entries"
+                    )
+                    return classification_gt
+                else:
+                    logger.warning("robust_yaml_parse failed for classification ground truth")
+                    return {}
             else:
                 logger.warning(f"LLM response did not contain valid YAML. Response preview: {response_text[:200]}")
                 return {}
@@ -1587,13 +1595,18 @@ Generate ONLY the YAML block, no explanation."""
 
             if yaml_match:
                 yaml_content = yaml_match.group(1)
-                validation_gt = yaml.safe_load(yaml_content)
+                # Bug #11 Fix: use robust_yaml_parse for LLM responses
+                validation_gt = robust_yaml_parse(yaml_content)
 
-                logger.info(
-                    f"✅ Generated validation ground truth with LLM: "
-                    f"{validation_gt.get('validation_count', 0)} validations"
-                )
-                return validation_gt
+                if validation_gt:
+                    logger.info(
+                        f"✅ Generated validation ground truth with LLM: "
+                        f"{validation_gt.get('validation_count', 0)} validations"
+                    )
+                    return validation_gt
+                else:
+                    logger.warning("robust_yaml_parse failed for validation ground truth")
+                    return {}
             else:
                 logger.warning(f"LLM response did not contain valid YAML. Response preview: {response_text[:200]}")
                 return {}
