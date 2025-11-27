@@ -16,6 +16,7 @@ from src.cognitive.ir.validation_model import (
 )
 from src.cognitive.ir.behavior_model import BehaviorModelIR, Flow, FlowType, Invariant
 from src.cognitive.ir.api_model import APIModelIR, Endpoint, HttpMethod
+from src.cognitive.ir.domain_model import DomainModelIR, Entity, Attribute, DataType
 
 logger = logging.getLogger(__name__)
 
@@ -33,16 +34,26 @@ class TestGeneratorFromIR:
     - STATUS_TRANSITION → test valid/invalid state changes
     """
 
-    def generate_tests(self, validation_model: ValidationModelIR) -> str:
-        """Generate pytest code from validation rules."""
-        test_code = self._generate_header()
+    def generate_tests(
+        self,
+        validation_model: ValidationModelIR,
+        domain_model: Optional[DomainModelIR] = None
+    ) -> str:
+        """Generate pytest code from validation rules.
 
+        Bug #59 Fix: Now generates pytest fixtures for each entity to provide
+        valid test data that the test methods require.
+        """
         # Group rules by entity
         rules_by_entity: Dict[str, List[ValidationRule]] = {}
         for rule in validation_model.rules:
             if rule.entity not in rules_by_entity:
                 rules_by_entity[rule.entity] = []
             rules_by_entity[rule.entity].append(rule)
+
+        # Bug #59 Fix: Generate header with fixtures
+        entities = list(rules_by_entity.keys())
+        test_code = self._generate_header_with_fixtures(entities, domain_model, rules_by_entity)
 
         # Generate test class per entity
         for entity, rules in rules_by_entity.items():
@@ -59,6 +70,176 @@ from pydantic import ValidationError
 
 
 '''
+
+    def _generate_header_with_fixtures(
+        self,
+        entities: List[str],
+        domain_model: Optional[DomainModelIR],
+        rules_by_entity: Dict[str, List[ValidationRule]]
+    ) -> str:
+        """
+        Bug #59 Fix: Generate header with pytest fixtures for each entity.
+
+        Generates fixtures that provide valid test data based on:
+        1. Entity attributes from domain_model (if available)
+        2. Validation rules to ensure valid values (e.g., positive for range > 0)
+        """
+        # Build imports for schema classes
+        schema_imports = ", ".join([f"{e}Create" for e in entities])
+        entity_imports = ", ".join(entities)
+
+        header = f'''"""
+Auto-generated validation tests from ValidationModelIR.
+Bug #59 Fix: Now includes pytest fixtures for valid entity data.
+"""
+import pytest
+import uuid
+from datetime import datetime
+from pydantic import ValidationError
+from src.models.schemas import {schema_imports}
+from src.models.entities import {entity_imports}
+
+
+'''
+        # Generate a fixture for each entity
+        for entity in entities:
+            header += self._generate_entity_fixture(entity, domain_model, rules_by_entity.get(entity, []))
+
+        return header
+
+    def _generate_entity_fixture(
+        self,
+        entity: str,
+        domain_model: Optional[DomainModelIR],
+        rules: List[ValidationRule]
+    ) -> str:
+        """
+        Bug #59 Fix: Generate a pytest fixture for valid entity data.
+
+        Creates fixture data that passes all validation rules.
+        """
+        entity_lower = entity.lower()
+
+        # Collect attributes from domain_model if available
+        attributes: Dict[str, Attribute] = {}
+        if domain_model:
+            for dm_entity in domain_model.entities:
+                if dm_entity.name == entity:
+                    attributes = {attr.name: attr for attr in dm_entity.attributes}
+                    break
+
+        # Collect attributes from validation rules
+        rule_attrs: Dict[str, ValidationRule] = {}
+        for rule in rules:
+            rule_attrs[rule.attribute] = rule
+
+        # Merge attributes from both sources
+        all_attrs = set(attributes.keys()) | set(rule_attrs.keys())
+
+        # Generate valid values for each attribute
+        fixture_data = {}
+        for attr_name in all_attrs:
+            attr = attributes.get(attr_name)
+            rule = rule_attrs.get(attr_name)
+            fixture_data[attr_name] = self._generate_valid_value(attr_name, attr, rule)
+
+        # Format the fixture data as Python dict
+        data_lines = []
+        for key, value in fixture_data.items():
+            data_lines.append(f'        "{key}": {value},')
+
+        fixture_code = f'''@pytest.fixture
+def valid_{entity_lower}_data():
+    """
+    Bug #59 Fix: Fixture providing valid {entity} data for tests.
+    Generated from DomainModelIR and ValidationModelIR.
+    """
+    return {{
+{chr(10).join(data_lines)}
+    }}
+
+
+'''
+        return fixture_code
+
+    def _generate_valid_value(
+        self,
+        attr_name: str,
+        attr: Optional[Attribute],
+        rule: Optional[ValidationRule]
+    ) -> str:
+        """Generate a valid value for an attribute based on its type and rules."""
+        # Determine data type
+        data_type = DataType.STRING
+        if attr:
+            data_type = attr.data_type
+
+        # Check if we have specific validation rules
+        if rule:
+            # Handle specific validation types
+            if rule.type == ValidationType.RANGE:
+                # For range validations, generate value that's valid (> 0 or >= 0)
+                if rule.condition and ">=" in rule.condition:
+                    return "0"
+                return "10"  # Safe positive value for > 0
+
+            if rule.type == ValidationType.FORMAT:
+                if "email" in attr_name.lower():
+                    return '"test@example.com"'
+                if "date" in attr_name.lower() or "time" in attr_name.lower():
+                    return 'datetime.utcnow()'
+                if "uuid" in (rule.condition or "").lower():
+                    return 'str(uuid.uuid4())'
+
+            if rule.type == ValidationType.STATUS_TRANSITION:
+                # Use a valid initial status
+                return '"active"'
+
+        # Default values based on data type and common attribute names
+        if "id" in attr_name.lower():
+            return 'str(uuid.uuid4())'
+
+        if "email" in attr_name.lower():
+            return '"test@example.com"'
+
+        if "name" in attr_name.lower():
+            return f'"Test {attr_name.replace("_", " ").title()}"'
+
+        if "date" in attr_name.lower() or "time" in attr_name.lower() or "created_at" in attr_name.lower():
+            return 'datetime.utcnow()'
+
+        if "status" in attr_name.lower():
+            return '"active"'
+
+        if "price" in attr_name.lower() or "amount" in attr_name.lower() or "cost" in attr_name.lower():
+            return "99.99"  # Positive float for price
+
+        if "quantity" in attr_name.lower() or "stock" in attr_name.lower() or "count" in attr_name.lower():
+            return "10"  # Positive int for quantity
+
+        if "is_" in attr_name.lower() or "has_" in attr_name.lower():
+            return "True"
+
+        if "description" in attr_name.lower():
+            return '"Test description"'
+
+        # Type-based defaults
+        if attr:
+            if attr.data_type == DataType.STRING:
+                return '"test_value"'
+            elif attr.data_type == DataType.INTEGER:
+                return "1"
+            elif attr.data_type == DataType.FLOAT:
+                return "1.0"
+            elif attr.data_type == DataType.BOOLEAN:
+                return "True"
+            elif attr.data_type == DataType.DATETIME:
+                return "datetime.utcnow()"
+            elif attr.data_type == DataType.UUID:
+                return "str(uuid.uuid4())"
+
+        # Ultimate fallback
+        return '"test_value"'
 
     def _generate_entity_test_class(self, entity: str, rules: List[ValidationRule]) -> str:
         """Generate test class for an entity's validation rules."""
@@ -509,13 +690,17 @@ def generate_all_tests_from_ir(app_ir: ApplicationIR, output_dir: Path) -> Dict[
     generated_files = {}
 
     # Validation tests
+    # Bug #59 Fix: Pass domain_model to generate entity data fixtures
     if app_ir.validation_model and app_ir.validation_model.rules:
         generator = TestGeneratorFromIR()
-        test_code = generator.generate_tests(app_ir.validation_model)
+        test_code = generator.generate_tests(
+            app_ir.validation_model,
+            domain_model=app_ir.domain_model  # Bug #59: Pass domain model for fixtures
+        )
         validation_test_path = output_dir / "test_validation_generated.py"
         validation_test_path.write_text(test_code)
         generated_files["validation"] = validation_test_path
-        logger.info(f"✅ Generated validation tests: {validation_test_path}")
+        logger.info(f"✅ Generated validation tests with fixtures: {validation_test_path}")
 
     # Integration tests from flows
     if app_ir.behavior_model and app_ir.behavior_model.flows:
