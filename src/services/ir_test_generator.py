@@ -84,13 +84,17 @@ from pydantic import ValidationError
         1. Entity attributes from domain_model (if available)
         2. Validation rules to ensure valid values (e.g., positive for range > 0)
         """
-        # Build imports for schema classes
+        # Build imports for schema and entity classes
+        # Bug #67 Fix: Re-add entity imports for behavioral tests (status transitions, uniqueness, etc.)
+        # Bug #60 was overly aggressive - some validation tests DO need entity classes
+        # Bug #67 Part 2: Entities have "Entity" suffix (ProductEntity, CartEntity, etc.)
         schema_imports = ", ".join([f"{e}Create" for e in entities])
-        entity_imports = ", ".join(entities)
+        entity_imports = ", ".join([f"{e}Entity" for e in entities])
 
         header = f'''"""
 Auto-generated validation tests from ValidationModelIR.
 Bug #59 Fix: Now includes pytest fixtures for valid entity data.
+Bug #67 Fix: Re-added entity imports for behavioral validation tests.
 """
 import pytest
 import uuid
@@ -336,17 +340,18 @@ def valid_{entity_lower}_data():
 '''
 
     def _generate_uniqueness_test(self, entity: str, rule: ValidationRule, method_name: str) -> str:
+        # Bug #67 Part 3: Use {entity}Entity to match generated code naming convention
         return f'''    async def {method_name}(self, db_session, valid_{entity.lower()}_data):
         """{rule.attribute} must be unique for {entity}."""
         # Create first entity
-        {entity.lower()}1 = {entity}(**valid_{entity.lower()}_data)
+        {entity.lower()}1 = {entity}Entity(**valid_{entity.lower()}_data)
         db_session.add({entity.lower()}1)
         await db_session.commit()
 
         # Try to create duplicate
         duplicate_data = valid_{entity.lower()}_data.copy()
         duplicate_data["{rule.attribute}"] = {entity.lower()}1.{rule.attribute}
-        {entity.lower()}2 = {entity}(**duplicate_data)
+        {entity.lower()}2 = {entity}Entity(**duplicate_data)
         db_session.add({entity.lower()}2)
 
         with pytest.raises(Exception) as exc:  # IntegrityError
@@ -356,10 +361,11 @@ def valid_{entity_lower}_data():
 '''
 
     def _generate_relationship_test(self, entity: str, rule: ValidationRule, method_name: str) -> str:
+        # Bug #67 Part 4: Use {entity}Entity to match generated code naming convention
         return f'''    async def {method_name}_valid_fk(self, db_session, valid_{entity.lower()}_data):
         """{rule.attribute} references valid foreign key."""
         # FK should exist before creating
-        {entity.lower()} = {entity}(**valid_{entity.lower()}_data)
+        {entity.lower()} = {entity}Entity(**valid_{entity.lower()}_data)
         db_session.add({entity.lower()})
         await db_session.commit()
         assert {entity.lower()}.{rule.attribute} is not None
@@ -368,7 +374,7 @@ def valid_{entity_lower}_data():
         """{rule.attribute} rejects non-existent foreign key."""
         data = valid_{entity.lower()}_data.copy()
         data["{rule.attribute}"] = 99999  # Non-existent FK
-        {entity.lower()} = {entity}(**data)
+        {entity.lower()} = {entity}Entity(**data)
         db_session.add({entity.lower()})
 
         with pytest.raises(Exception):  # IntegrityError
@@ -377,16 +383,17 @@ def valid_{entity_lower}_data():
 '''
 
     def _generate_status_transition_test(self, entity: str, rule: ValidationRule, method_name: str) -> str:
+        # Bug #67 Part 5: Use {entity}Entity to match generated code naming convention
         return f'''    def {method_name}_valid_transition(self, valid_{entity.lower()}_data):
         """{entity} allows valid status transitions."""
-        {entity.lower()} = {entity}(**valid_{entity.lower()}_data)
+        {entity.lower()} = {entity}Entity(**valid_{entity.lower()}_data)
         # Test valid transition (implementation depends on business logic)
         # This is a placeholder - actual transitions depend on spec
         assert {entity.lower()}.{rule.attribute} is not None
 
     def {method_name}_invalid_transition(self, valid_{entity.lower()}_data):
         """{entity} rejects invalid status transitions."""
-        {entity.lower()} = {entity}(**valid_{entity.lower()}_data)
+        {entity.lower()} = {entity}Entity(**valid_{entity.lower()}_data)
         # Test invalid transition
         with pytest.raises(ValueError):
             {entity.lower()}.transition_to("invalid_status")
@@ -428,17 +435,13 @@ class IntegrationTestGeneratorFromIR:
         return test_code
 
     def _generate_header(self) -> str:
+        # Bug #64 Fix: Use 'client' fixture from conftest.py instead of defining app_client(app)
         return '''"""
 Auto-generated integration tests from BehaviorModelIR flows.
+
+Bug #64 Fix: Uses 'client' fixture from conftest.py (not custom app_client).
 """
 import pytest
-from httpx import AsyncClient
-
-
-@pytest.fixture
-def app_client(app):
-    """Create test client for API."""
-    return AsyncClient(app=app, base_url="http://test")
 
 
 '''
@@ -456,7 +459,7 @@ class Test{self._to_class_name(flow.name)}Flow:
     """Integration tests for {flow.name} flow."""
 
     @pytest.mark.asyncio
-    async def {test_name}(self, app_client, db_session):
+    async def {test_name}(self, client, db_session):
         """
         Test complete {flow.name} flow.
 
@@ -541,28 +544,35 @@ class APIContractValidatorFromIR:
         self.api_model = api_model
 
     def generate_contract_tests(self) -> str:
-        """Generate pytest contract tests for API endpoints."""
+        """Generate pytest contract tests for API endpoints.
+
+        Bug #66 Fix: Skip inferred endpoints to avoid testing endpoints that
+        may not have corresponding code implementation. Only test endpoints
+        that are explicitly defined in the spec.
+        """
         test_code = self._generate_header()
 
         for endpoint in self.api_model.endpoints:
+            # Bug #66 Fix: Skip inferred endpoints - they may not have code
+            if getattr(endpoint, 'inferred', False):
+                logger.debug(f"Bug #66: Skipping inferred endpoint {endpoint.method.value} {endpoint.path}")
+                continue
             test_code += self._generate_endpoint_test(endpoint)
 
         return test_code
 
     def _generate_header(self) -> str:
+        # Bug #63 Fix: Use 'client' fixture from conftest.py instead of defining api_client(app)
+        # The conftest.py already has a properly configured 'client' fixture that handles
+        # db_session injection and FastAPI app setup.
         return f'''"""
 Auto-generated API contract tests from APIModelIR.
 Base Path: {self.api_model.base_path}
 API Version: {self.api_model.version}
+
+Bug #63 Fix: Uses 'client' fixture from conftest.py (not custom api_client).
 """
 import pytest
-from httpx import AsyncClient
-
-
-@pytest.fixture
-def api_client(app):
-    """Create test client for API."""
-    return AsyncClient(app=app, base_url="http://test")
 
 
 '''
@@ -573,42 +583,43 @@ def api_client(app):
         path_slug = endpoint.path.replace('/', '_').replace('{', '').replace('}', '').strip('_')
         test_name = f"test_{method_lower}_{path_slug}"
 
+        # Bug #63 Fix: Use 'client' fixture from conftest.py
         code = f'''
 class Test{self._to_class_name(endpoint.operation_id)}Endpoint:
     """Contract tests for {endpoint.method.value} {endpoint.path}"""
 
     @pytest.mark.asyncio
-    async def {test_name}_exists(self, api_client):
+    async def {test_name}_exists(self, client):
         """Endpoint {endpoint.method.value} {endpoint.path} exists and is accessible."""
-        response = await api_client.{method_lower}("{self.api_model.base_path}{endpoint.path}")
+        response = await client.{method_lower}("{self.api_model.base_path}{endpoint.path}")
         # Should not return 404 or 405
         assert response.status_code != 404, "Endpoint not found"
         assert response.status_code != 405, "Method not allowed"
 
 '''
 
-        # Add parameter tests
+        # Add parameter tests - Bug #63 Fix: Use 'client' fixture
         for param in endpoint.parameters:
             if param.required:
                 code += f'''
     @pytest.mark.asyncio
-    async def {test_name}_requires_{param.name}(self, api_client):
+    async def {test_name}_requires_{param.name}(self, client):
         """Endpoint requires {param.name} parameter."""
         # Missing required parameter should fail
-        response = await api_client.{method_lower}("{self.api_model.base_path}{endpoint.path}")
+        response = await client.{method_lower}("{self.api_model.base_path}{endpoint.path}")
         # If param is required, missing it should cause an error
         if {param.required}:
             assert response.status_code in [400, 422], f"Missing {param.name} should cause error"
 
 '''
 
-        # Add response schema test if defined
+        # Add response schema test if defined - Bug #63 Fix: Use 'client' fixture
         if endpoint.response_schema:
             code += f'''
     @pytest.mark.asyncio
-    async def {test_name}_response_schema(self, api_client):
+    async def {test_name}_response_schema(self, client):
         """Response matches {endpoint.response_schema.name} schema."""
-        response = await api_client.{method_lower}("{self.api_model.base_path}{endpoint.path}")
+        response = await client.{method_lower}("{self.api_model.base_path}{endpoint.path}")
         if response.status_code == 200:
             data = response.json()
             # Verify schema fields
