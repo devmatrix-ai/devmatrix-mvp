@@ -32,6 +32,14 @@ sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)
 os.environ['PYTHONUNBUFFERED'] = '1'
 
+# Bug #35 fix: Skip unnecessary Redis connections in E2E tests
+# Redis is not needed for code generation pipeline
+os.environ['SKIP_REDIS'] = '1'
+
+# Bug #19 fix: Force IR refresh for development testing
+# Set FORCE_IR_REFRESH=true to regenerate ApplicationIR even if cached
+FORCE_IR_REFRESH = os.environ.get('FORCE_IR_REFRESH', '').lower() == 'true'
+
 # Test framework
 from tests.e2e.metrics_framework import MetricsCollector, PipelineMetrics
 from tests.e2e.precision_metrics import (
@@ -83,6 +91,9 @@ from src.validation.compliance_validator import ComplianceValidator, ComplianceV
 # ApplicationIR Extraction (IR-centric architecture)
 from src.specs.spec_to_application_ir import SpecToApplicationIR
 
+# Bug #22 Fix: Import LLM client for global metrics access
+from src.llm import EnhancedAnthropicClient
+
 # IR-based Test Generation and Compliance Checking
 try:
     from src.services.ir_test_generator import (
@@ -126,6 +137,105 @@ except ImportError as e:
 
 # Phase 6.5 Code Repair Integration (Task Group 3)
 from tests.e2e.adapters.test_result_adapter import TestResultAdapter
+
+# Stratified Architecture Integration (Phase 2.5)
+try:
+    from src.services.execution_modes import (
+        ExecutionModeManager,
+        ExecutionMode,
+        get_execution_mode_manager,
+    )
+    from src.services.generation_manifest import (
+        ManifestBuilder,
+        GenerationManifest,
+        record_template_generation,
+        record_ast_generation,
+        record_llm_generation,
+        finalize_manifest,
+        get_manifest_builder,
+        reset_manifest_builder,
+    )
+    from src.validation.basic_pipeline import (
+        validate_generated_files,
+        BasicValidationPipeline,
+        ValidationResult,
+    )
+    from src.validation.qa_levels import (
+        QALevel,
+        QAExecutor,
+        run_fast_qa,
+        run_heavy_qa,
+    )
+    from src.services.stratum_classification import Stratum, AtomKind
+    from src.services.stratum_metrics import (
+        MetricsCollector as StratumMetricsCollector,
+        MetricsSnapshot,
+        format_ascii_table,
+        get_metrics_collector,
+        reset_metrics_collector,
+        track_stratum,
+        record_error,
+        record_repair,
+        record_validation_result,
+        get_stratum_report,
+    )
+    from src.services.quality_gate import (
+        QualityGate,
+        QualityGateResult,
+        GateStatus,
+        Environment,
+        get_quality_gate,
+        format_gate_report,
+    )
+    # Phase 5: Golden Apps Framework
+    from tests.golden_apps.runner import (
+        GoldenAppRunner,
+        GoldenAppResult,
+        GoldenApp,
+        run_golden_app,
+        format_golden_apps_report,
+        list_golden_apps,
+    )
+    # Phase 6: Skeleton + Holes
+    from src.services.skeleton_generator import (
+        SkeletonGenerator,
+        LLMSlotFiller,
+        create_skeleton_for_entity,
+        create_skeleton_for_service,
+        SlotType,
+        SlotConstraint,
+    )
+    from src.services.skeleton_llm_integration import (
+        SkeletonLLMIntegration,
+        create_slot_fill_request,
+        validate_llm_slot_content,
+        LLMGenerationMode,
+    )
+    # Phase 7: Promotion Criteria
+    from src.services.pattern_promoter import (
+        PatternPromoter,
+        PROMOTION_CRITERIA_FORMAL,
+        get_pattern_promoter,
+        PromotionStatus,
+    )
+    STRATIFIED_ARCHITECTURE_AVAILABLE = True
+    GOLDEN_APPS_AVAILABLE = True
+    SKELETON_GENERATOR_AVAILABLE = True
+    PROMOTION_CRITERIA_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Stratified architecture modules not available: {e}")
+    STRATIFIED_ARCHITECTURE_AVAILABLE = False
+    GOLDEN_APPS_AVAILABLE = False
+    SKELETON_GENERATOR_AVAILABLE = False
+    PROMOTION_CRITERIA_AVAILABLE = False
+    ExecutionModeManager = None
+    ExecutionMode = None
+    ManifestBuilder = None
+    validate_generated_files = None
+    QALevel = None
+    SkeletonGenerator = None
+    SkeletonLLMIntegration = None
+    PatternPromoter = None
 
 # Real cognitive services (optional - will fallback if not available)
 try:
@@ -427,6 +537,217 @@ class RealE2ETest:
         # IR Compliance Metrics (STRICT + RELAXED dual-mode)
         self.ir_compliance_metrics = None
 
+        # Basic validation result (for quality gate evaluation in validation phase)
+        self.basic_validation_result = None
+
+        # Stratum metrics snapshot (for quality gate evaluation in validation phase)
+        self.stratum_metrics_snapshot = None
+
+        # Stratified Architecture Integration (Phase 2.5)
+        self.execution_manager = None
+        self.manifest_builder = None
+        self.basic_validation_pipeline = None
+        # Phase 3: Stratum Metrics
+        self.stratum_metrics_collector = None
+        # Phase 4: Quality Gate
+        self.quality_gate = None
+        # Phase 5: Golden Apps
+        self.golden_app_runner = None
+        # Phase 6: Skeleton + Holes
+        self.skeleton_generator = None
+        self.skeleton_llm_integration = None
+        # Phase 7: Pattern Promotion
+        self.pattern_promoter = None
+        self._init_stratified_architecture()
+
+    def _init_stratified_architecture(self):
+        """
+        Initialize stratified architecture components (Phase 2.5).
+
+        Sets up:
+        - ExecutionModeManager: Controls stratum routing
+        - ManifestBuilder: Tracks per-file generation metadata
+        - BasicValidationPipeline: Fast QA before code acceptance
+        """
+        if not STRATIFIED_ARCHITECTURE_AVAILABLE:
+            print("⚠️ Stratified architecture not available - running without stratum tracking")
+            return
+
+        # Initialize execution mode from environment
+        mode_str = os.getenv("EXECUTION_MODE", "hybrid")
+        try:
+            mode = ExecutionMode(mode_str)
+        except ValueError:
+            print(f"⚠️ Invalid EXECUTION_MODE '{mode_str}', using 'hybrid'")
+            mode = ExecutionMode.HYBRID
+
+        self.execution_manager = get_execution_mode_manager(mode)
+        print(f"🎚️ Stratified Architecture: {mode.value.upper()} mode")
+
+        # Initialize manifest builder with app ID
+        reset_manifest_builder()  # Clear any previous state
+        self.manifest_builder = get_manifest_builder(f"{self.spec_name}_{self.timestamp}")
+        self.manifest_builder.set_execution_mode(mode.value)
+
+        # Initialize basic validation pipeline
+        self.basic_validation_pipeline = BasicValidationPipeline()
+
+        # Initialize stratum metrics collector (Phase 3)
+        reset_metrics_collector()
+        self.stratum_metrics_collector = get_metrics_collector(
+            app_id=f"{self.spec_name}_{self.timestamp}",
+            execution_mode=mode.value,
+        )
+
+        # Initialize quality gate (Phase 4)
+        env_str = os.getenv("QUALITY_GATE_ENV", "dev")
+        self.quality_gate = get_quality_gate(env_str)
+
+        # Initialize golden app runner (Phase 5)
+        if GOLDEN_APPS_AVAILABLE:
+            self.golden_app_runner = GoldenAppRunner(strict_mode=False)
+
+        # Initialize skeleton generator (Phase 6)
+        if SKELETON_GENERATOR_AVAILABLE:
+            self.skeleton_generator = SkeletonGenerator(strict_mode=True)
+            self.skeleton_llm_integration = SkeletonLLMIntegration(
+                strict_mode=True,
+                max_retries=2,
+            )
+
+        # Initialize pattern promoter (Phase 7)
+        if PROMOTION_CRITERIA_AVAILABLE:
+            self.pattern_promoter = get_pattern_promoter()
+
+        print(f"   📋 Manifest tracking enabled")
+        print(f"   📊 Stratum metrics collection enabled")
+        print(f"   🚦 Quality gate: {env_str.upper()}")
+        print(f"   🏆 Golden apps validation: {'enabled' if GOLDEN_APPS_AVAILABLE else 'disabled'}")
+        print(f"   🦴 Skeleton generator: {'enabled' if SKELETON_GENERATOR_AVAILABLE else 'disabled'}")
+        print(f"   📈 Pattern promotion: {'enabled' if PROMOTION_CRITERIA_AVAILABLE else 'disabled'}")
+        print(f"   ✅ Basic validation pipeline ready")
+
+    def _record_file_in_manifest(self, filename: str, content: str, llm_tokens: int = 0, duration_ms: float = 0.0) -> None:
+        """
+        Record a generated file in the manifest with stratum classification.
+
+        Phase 2.5: Heuristically classifies files into strata based on path/content.
+        Phase 3: Also records stratum metrics for performance tracking.
+        Bug #9 Fix: Now tracks duration per file.
+        """
+        if not self.manifest_builder:
+            return
+
+        # Classify stratum based on file path patterns
+        stratum = self._classify_file_stratum(filename)
+        atoms = self._extract_atoms_from_file(filename, content)
+
+        # Phase 3: Record in stratum metrics (Bug #9 Fix: with duration)
+        if self.stratum_metrics_collector:
+            from src.services.stratum_metrics import Stratum as MetricsStratum
+            stratum_enum = {
+                "template": MetricsStratum.TEMPLATE,
+                "ast": MetricsStratum.AST,
+                "llm": MetricsStratum.LLM,
+            }.get(stratum, MetricsStratum.AST)
+            self.stratum_metrics_collector.record_file(stratum_enum, tokens=llm_tokens, duration_ms=duration_ms)
+
+        if stratum == "template":
+            self.manifest_builder.add_template_file(
+                file_path=filename,
+                atoms=atoms,
+                template_name=filename.split("/")[-1],
+            )
+        elif stratum == "ast":
+            self.manifest_builder.add_ast_file(
+                file_path=filename,
+                atoms=atoms,
+                source="ApplicationIR",
+            )
+        else:  # llm
+            self.manifest_builder.add_llm_file(
+                file_path=filename,
+                atoms=atoms,
+                model="claude-3.5-sonnet",  # Default model used
+                tokens_in=llm_tokens,
+                tokens_out=0,
+            )
+
+    def _classify_file_stratum(self, filename: str) -> str:
+        """
+        Classify a file into stratum based on path patterns.
+
+        Phase 2.5: Heuristic classification using path matching.
+        """
+        # TEMPLATE stratum - infrastructure files
+        template_patterns = [
+            "docker-compose", "Dockerfile", "requirements.txt",
+            "pyproject.toml", "alembic.ini", "prometheus.yml",
+            "core/config.py", "core/database.py", "routes/health.py",
+            "models/base.py", "main.py", "README.md", ".env",
+            "__init__.py", "grafana/",
+        ]
+        for pattern in template_patterns:
+            if pattern in filename:
+                return "template"
+
+        # AST stratum - structured code
+        ast_patterns = [
+            "models/entities.py", "models/schemas.py",
+            "repositories/", "alembic/versions/",
+            "routes/", "_crud.py",
+        ]
+        for pattern in ast_patterns:
+            if pattern in filename:
+                return "ast"
+
+        # LLM stratum - business logic
+        llm_patterns = [
+            "services/", "_flow.py", "_business.py",
+            "_custom.py", "_logic.py",
+        ]
+        for pattern in llm_patterns:
+            if pattern in filename:
+                return "llm"
+
+        # Default to AST for Python files, template for others
+        if filename.endswith(".py"):
+            return "ast"
+        return "template"
+
+    def _extract_atoms_from_file(self, filename: str, content: str) -> List[str]:
+        """
+        Extract atom identifiers from a file.
+
+        Phase 2.5: Basic extraction for manifest tracking.
+        """
+        atoms = []
+
+        # Extract class names
+        import re
+        class_matches = re.findall(r'class\s+(\w+)', content)
+        for cls in class_matches:
+            if cls.endswith("Base"):
+                atoms.append(f"base:{cls}")
+            elif cls.endswith(("Create", "Update", "Read", "Response")):
+                atoms.append(f"schema:{cls}")
+            else:
+                atoms.append(f"entity:{cls}")
+
+        # Extract function names (top-level)
+        func_matches = re.findall(r'^(?:async\s+)?def\s+(\w+)', content, re.MULTILINE)
+        for func in func_matches[:5]:  # Limit to first 5
+            if func.startswith("_"):
+                continue
+            atoms.append(f"func:{func}")
+
+        # If no atoms found, use filename as identifier
+        if not atoms:
+            base_name = filename.split("/")[-1].replace(".py", "")
+            atoms.append(f"file:{base_name}")
+
+        return atoms[:10]  # Limit to 10 atoms per file
+
     def _sample_performance(self):
         """
         Sample current memory and CPU usage for performance profiling.
@@ -670,6 +991,9 @@ class RealE2ETest:
         print(f"📁 Output: {self.output_dir}")
         print("="*70 + "\n")
 
+        # Bug #22 Fix: Reset global LLM metrics at start of each test
+        EnhancedAnthropicClient.reset_global_metrics()
+
         # Initialize progress tracker if available
         tracker = None
         if PROGRESS_TRACKING_AVAILABLE:
@@ -776,6 +1100,7 @@ class RealE2ETest:
 
         services = []
         failed = []
+        critical_failures = []  # Services that MUST work for pipeline to run
 
         print("\n  🔄 Loading PatternBank...", end="", flush=True)
         try:
@@ -786,6 +1111,20 @@ class RealE2ETest:
         except Exception as e:
             failed.append(("PatternBank", str(e)))
             print(" ❌", flush=True)
+
+        # Early Qdrant validation - fail fast if Qdrant unavailable
+        print("  🔄 Connecting to Qdrant...", end="", flush=True)
+        try:
+            if self.pattern_bank:
+                with silent_logs():
+                    self.pattern_bank.connect()
+                services.append("Qdrant")
+                print(" ✓", flush=True)
+            else:
+                print(" ⊘ (PatternBank not loaded)", flush=True)
+        except Exception as e:
+            critical_failures.append(("Qdrant", str(e)))
+            print(" ❌ CRITICAL", flush=True)
 
         print("  🔄 Loading PatternClassifier...", end="", flush=True)
         try:
@@ -893,6 +1232,19 @@ class RealE2ETest:
             for service_name, error_msg in failed:
                 print(f"    ❌ {service_name}: {error_msg[:80]}")
 
+        # CRITICAL: Abort early if essential services are unavailable
+        if critical_failures:
+            print("\n" + "="*60)
+            print("🚨 CRITICAL FAILURE - Pipeline cannot continue")
+            print("="*60)
+            for service_name, error_msg in critical_failures:
+                print(f"  ❌ {service_name}: {error_msg[:100]}")
+            print("\n💡 Required services:")
+            print("  - Qdrant: docker compose up -d qdrant")
+            print("  - Neo4j:  docker compose up -d neo4j")
+            print("="*60)
+            raise RuntimeError(f"Critical services unavailable: {[s for s, _ in critical_failures]}")
+
     async def _phase_1_spec_ingestion(self):
         """
         Phase 1: Ingest and parse spec
@@ -920,13 +1272,17 @@ class RealE2ETest:
             self.spec_requirements = parser.parse(spec_path)
 
         # NEW: Extract ApplicationIR (IR-centric architecture)
+        # Bug #19 fix: Support FORCE_IR_REFRESH env var for development
+        force_refresh = FORCE_IR_REFRESH
+        if force_refresh:
+            print("    - ⚠️  FORCE_IR_REFRESH=true: Regenerating ApplicationIR (ignoring cache)")
         print("    - Extracting ApplicationIR (domain, API, behavior models)...")
         try:
             ir_converter = SpecToApplicationIR()
             self.application_ir = await ir_converter.get_application_ir(
                 self.spec_content,
                 spec_path.name,
-                force_refresh=False
+                force_refresh=force_refresh
             )
             ir_entities = len(self.application_ir.domain_model.entities)
             ir_endpoints = len(self.application_ir.api_model.endpoints)
@@ -1049,6 +1405,15 @@ class RealE2ETest:
                     print(f"    - Normalizing with LLM...")
                     normalized_spec = normalizer.normalize(self.spec_content)
                     spec_dict = normalized_spec
+
+                    # Bug #10 Fix: Track LLM tokens in stratum metrics
+                    input_tokens, output_tokens = normalizer.get_last_token_usage()
+                    total_tokens = input_tokens + output_tokens
+                    if self.stratum_metrics_collector and total_tokens > 0:
+                        from src.services.stratum_metrics import Stratum as MetricsStratum
+                        self.stratum_metrics_collector.record_tokens(MetricsStratum.LLM, total_tokens)
+                        print(f"    - 📊 LLM tokens tracked: {input_tokens} in + {output_tokens} out = {total_tokens} total")
+
                     print(f"    - ✅ LLM normalization succeeded ({len(spec_dict.get('entities', []))} entities)")
                 except Exception as e:
                     print(f"    - ❌ LLM normalization FAILED: {e}")
@@ -2079,9 +2444,10 @@ class RealE2ETest:
                 "Recovery Rate": f"{self.precision.calculate_recovery_rate():.1%}",
                 "Contract Validation": "PASSED" if is_valid else "FAILED"
             })
-            # Update live metrics
+            # Update live metrics - Bug #22 Fix: Use real LLM metrics
             if PROGRESS_TRACKING_AVAILABLE:
-                logger.update_live_metrics(neo4j=145, qdrant=45, tokens=750000)
+                llm_metrics = EnhancedAnthropicClient.get_global_metrics()
+                logger.update_live_metrics(neo4j=145, qdrant=45, tokens=llm_metrics["total_tokens"])
                 display_progress()
         else:
             # Show meaningful metrics: file generation success (should be 100%) instead of atom execution
@@ -2456,6 +2822,39 @@ Once running, visit:
         print("  " + "-" * 110)
         print(f"    ✅ All {files_saved} files successfully deployed to disk" + " " * (50 - len(str(files_saved))))
         print("  " + "─" * 110 + "\n")
+
+    def _find_matching_golden_app(self) -> Optional[str]:
+        """
+        Find if current spec matches a known golden app.
+
+        Phase 5: Matches spec name patterns to golden apps for comparison.
+
+        Returns:
+            Golden app name if found, None otherwise
+        """
+        if not GOLDEN_APPS_AVAILABLE:
+            return None
+
+        spec_name_lower = self.spec_name.lower()
+
+        # Mapping of spec name patterns to golden apps
+        pattern_map = {
+            "ecommerce": "ecommerce",
+            "e-commerce": "ecommerce",
+            "task_api": "task_api",
+            "task-api": "task_api",
+            "jira": "jira_lite",
+        }
+
+        # Check if any pattern matches
+        for pattern, golden_app_name in pattern_map.items():
+            if pattern in spec_name_lower:
+                # Verify the golden app exists
+                available_apps = list_golden_apps()
+                if golden_app_name in available_apps:
+                    return golden_app_name
+
+        return None
 
     async def _phase_8_code_repair(self):
         """
@@ -3447,6 +3846,59 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
             contract_valid=is_valid
         )
 
+        # Bug #16 fix: Evaluate quality gate HERE after ir_compliance_metrics is calculated
+        # Previously this was in _phase_7_deployment() which runs BEFORE validation
+        quality_gate_result = None
+        if STRATIFIED_ARCHITECTURE_AVAILABLE and self.quality_gate:
+            # Get compliance scores from correct sources
+            # Semantic compliance from compliance_report (spec-level validation)
+            semantic_compliance = 1.0
+            if self.compliance_report and hasattr(self.compliance_report, 'compliance_rate'):
+                semantic_compliance = self.compliance_report.compliance_rate
+
+            # IR compliance from ir_compliance_metrics (values are 0-100, convert to 0-1)
+            # Bug #42 Fix: Extract both relaxed and strict IR compliance
+            ir_compliance_relaxed = 0.0
+            ir_compliance_strict = 0.0
+            if hasattr(self, 'ir_compliance_metrics') and self.ir_compliance_metrics:
+                ir_compliance_relaxed = getattr(self.ir_compliance_metrics, 'relaxed_overall', 0.0) / 100.0
+                ir_compliance_strict = getattr(self.ir_compliance_metrics, 'strict_overall', 0.0) / 100.0
+
+            # Count errors/warnings from basic validation (stored during deployment)
+            validation_result = self.basic_validation_result
+            error_count = len(validation_result.errors) if validation_result else 0
+            warning_count = len(validation_result.warnings) if validation_result else 0
+
+            # Evaluate quality gate
+            # Bug #42 Fix: Pass ir_compliance_strict to evaluate()
+            quality_gate_result = self.quality_gate.evaluate(
+                semantic_compliance=semantic_compliance,
+                ir_compliance_relaxed=ir_compliance_relaxed,
+                ir_compliance_strict=ir_compliance_strict,
+                error_count=error_count,
+                warning_count=warning_count,
+                syntax_check=GateStatus.PASS if (validation_result and validation_result.passed) else GateStatus.FAIL,
+                stratum_metrics=self.stratum_metrics_snapshot.to_dict() if self.stratum_metrics_snapshot else {},
+            )
+
+            # Display quality gate report
+            print(format_gate_report(quality_gate_result))
+
+            # Save quality gate result to JSON
+            gate_path = os.path.join(self.output_dir, "quality_gate.json")
+            with open(gate_path, 'w') as f:
+                json.dump(quality_gate_result.to_dict(), f, indent=2)
+            print(f"  🚦 Quality gate result saved: {gate_path}")
+
+            # Add quality gate checkpoint
+            self.metrics_collector.add_checkpoint("validation", "CP-7.7: Quality gate evaluated", {
+                "environment": quality_gate_result.environment.value,
+                "passed": quality_gate_result.passed,
+                "semantic_compliance": quality_gate_result.semantic_compliance,
+                "ir_compliance_relaxed": quality_gate_result.ir_compliance_relaxed,
+                "failures": quality_gate_result.failures,
+            })
+
         self.precision.total_operations += 1
         self.precision.successful_operations += 1
 
@@ -3456,6 +3908,34 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         self._sample_performance()  # Sample memory/CPU at phase start
         print("\n📦 Phase 8: Deployment")
 
+        # Phase 2.5: Run basic validation BEFORE saving files
+        # Phase 3: Track QA stratum metrics
+        validation_result = None
+        if STRATIFIED_ARCHITECTURE_AVAILABLE and self.basic_validation_pipeline:
+            print("\n  🔍 Running basic validation pipeline...")
+            validation_start = time.time()
+            validation_result = self.basic_validation_pipeline.validate(self.generated_code)
+            validation_duration_ms = (time.time() - validation_start) * 1000
+            print(f"  {validation_result.summary()}")
+
+            # Phase 3: Record QA metrics
+            if self.stratum_metrics_collector:
+                from src.services.stratum_metrics import Stratum as MetricsStratum
+                qa_metrics = self.stratum_metrics_collector.snapshot.qa_metrics
+                qa_metrics.add_duration(validation_duration_ms)
+                qa_metrics.errors_detected += len(validation_result.errors)
+                qa_metrics.validation_calls += 1
+
+            # Bug #16 fix: Store validation result for quality gate evaluation in validation phase
+            self.basic_validation_result = validation_result
+
+            if not validation_result.passed:
+                print(f"  ⚠️ Basic validation found {len(validation_result.errors)} errors:")
+                for error in validation_result.errors[:5]:  # Show first 5
+                    print(f"    ❌ [{error.category}] {error.file_path}:{error.line_number}: {error.message}")
+                if len(validation_result.errors) > 5:
+                    print(f"    ... and {len(validation_result.errors) - 5} more errors")
+
         # Track deployment stats
         files_saved = 0
         total_size = 0
@@ -3463,6 +3943,9 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
 
         # Save all generated files
         for filename, content in self.generated_code.items():
+            # Bug #9 Fix: Track time per file for stratum metrics
+            file_start_time = time.time()
+
             filepath = os.path.join(self.output_dir, filename)
             # Create parent directories if they don't exist (for modular structure)
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
@@ -3471,7 +3954,41 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
             files_saved += 1
             total_size += len(content)
 
+            # Phase 2.5: Track file in manifest (classify stratum heuristically)
+            if STRATIFIED_ARCHITECTURE_AVAILABLE and self.manifest_builder:
+                # Bug #9 Fix: Pass duration to stratum metrics
+                file_duration_ms = (time.time() - file_start_time) * 1000
+                self._record_file_in_manifest(filename, content, duration_ms=file_duration_ms)
+
         deployment_duration_ms = (time.time() - deployment_start_time) * 1000
+
+        # Phase 2.5: Finalize and save manifest
+        manifest_path = None
+        if STRATIFIED_ARCHITECTURE_AVAILABLE and self.manifest_builder:
+            manifest_path = finalize_manifest(self.output_dir)
+            print(f"\n  📋 Generation manifest saved: {manifest_path}")
+
+            # Display stratum distribution
+            manifest = self.manifest_builder.build()
+            print(manifest.get_stratum_report())
+
+        # Phase 3: Finalize and display stratum metrics
+        stratum_metrics_snapshot = None
+        if STRATIFIED_ARCHITECTURE_AVAILABLE and self.stratum_metrics_collector:
+            stratum_metrics_snapshot = self.stratum_metrics_collector.finalize()
+            # Bug #16 fix: Store for quality gate evaluation in validation phase
+            self.stratum_metrics_snapshot = stratum_metrics_snapshot
+            print(format_ascii_table(stratum_metrics_snapshot))
+
+            # Save metrics to JSON
+            metrics_path = os.path.join(self.output_dir, "stratum_metrics.json")
+            import json
+            with open(metrics_path, 'w') as f:
+                json.dump(stratum_metrics_snapshot.to_dict(), f, indent=2)
+            print(f"  📊 Stratum metrics saved: {metrics_path}")
+
+        # NOTE: Quality gate evaluation moved to _phase_9_validation() (Bug #16 fix)
+        # This ensures ir_compliance_metrics is calculated before quality gate evaluation
 
         # Track items deployed for progress display
         if PROGRESS_TRACKING_AVAILABLE:
@@ -3486,11 +4003,61 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
 
         self.metrics_collector.add_checkpoint("deployment", "CP-8.2: Directory structure created", {})
 
-        self.metrics_collector.add_checkpoint("deployment", "CP-8.3: README generated", {})
+        # Bug #25 fix: Only report README as generated if it was actually saved
+        readme_generated = "README.md" in self.generated_code
+        if readme_generated:
+            self.metrics_collector.add_checkpoint("deployment", "CP-8.3: README generated", {})
+        else:
+            self.metrics_collector.add_checkpoint("deployment", "CP-8.3: README not generated (missing from code generation)", {})
 
         self.metrics_collector.add_checkpoint("deployment", "CP-8.4: Dependencies documented", {})
 
-        self.metrics_collector.add_checkpoint("deployment", "CP-8.5: Deployment complete", {})
+        # Phase 2.5: Add manifest checkpoint
+        if manifest_path:
+            self.metrics_collector.add_checkpoint("deployment", "CP-8.5: Generation manifest saved", {
+                "manifest_path": manifest_path,
+                "validation_passed": validation_result.passed if validation_result else None,
+            })
+
+        # Phase 3: Add stratum metrics checkpoint
+        if stratum_metrics_snapshot:
+            self.metrics_collector.add_checkpoint("deployment", "CP-8.6: Stratum metrics saved", {
+                "total_files": stratum_metrics_snapshot.total_files,
+                "total_errors": stratum_metrics_snapshot.total_errors,
+                "total_repaired": stratum_metrics_snapshot.total_repaired,
+                "llm_tokens": stratum_metrics_snapshot.total_llm_tokens,
+                "success_rate": stratum_metrics_snapshot.overall_success_rate,
+            })
+
+        # NOTE: Quality gate checkpoint moved to _phase_9_validation() (Bug #16 fix)
+
+        # Phase 5: Run golden app comparison if available
+        golden_app_result = None
+        if GOLDEN_APPS_AVAILABLE and self.golden_app_runner:
+            # Check if current spec matches a golden app
+            golden_app_name = self._find_matching_golden_app()
+            if golden_app_name:
+                print(f"\n  🏆 Running golden app comparison: {golden_app_name}")
+                try:
+                    golden_app_result = self.golden_app_runner.run(golden_app_name)
+                    print(golden_app_result.summary())
+
+                    # Save golden app result
+                    golden_path = os.path.join(self.output_dir, "golden_app_comparison.json")
+                    with open(golden_path, 'w') as f:
+                        json.dump(golden_app_result.to_dict(), f, indent=2)
+                    print(f"  🏆 Golden app comparison saved: {golden_path}")
+
+                    self.metrics_collector.add_checkpoint("deployment", "CP-8.8: Golden app comparison", {
+                        "golden_app": golden_app_name,
+                        "passed": golden_app_result.passed,
+                        "ir_match": golden_app_result.ir_comparison.match_percentage if golden_app_result.ir_comparison else None,
+                        "metrics_status": golden_app_result.metrics_comparison.status.value if golden_app_result.metrics_comparison else None,
+                    })
+                except Exception as e:
+                    print(f"  ⚠️ Golden app comparison failed: {e}")
+
+        self.metrics_collector.add_checkpoint("deployment", "CP-8.9: Deployment complete", {})
 
         self.metrics_collector.complete_phase("deployment")
         print(f"  ✅ Generated app saved to: {self.output_dir}")
@@ -3509,13 +4076,26 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         expected_files = [
             ("src/main.py", "src/main.py"),
             ("requirements.txt", "requirements.txt"),
-            ("README.md", "README.md")
         ]
         for display_name, filename in expected_files:
             filepath = os.path.join(self.output_dir, filename)
             exists = os.path.exists(filepath)
             status = "✓" if exists else "✗"
             print(f"  {status} File check: {display_name}")
+
+        # Bug #25 fix: README.md might be in root, docs/, or docker/ - check all locations
+        readme_locations = ["README.md", "docs/README.md", "docker/README.md"]
+        readme_found = False
+        readme_location = None
+        for readme_path in readme_locations:
+            filepath = os.path.join(self.output_dir, readme_path)
+            if os.path.exists(filepath):
+                readme_found = True
+                readme_location = readme_path
+                break
+        status = "✓" if readme_found else "✗"
+        location_hint = f" ({readme_location})" if readme_location else ""
+        print(f"  {status} File check: README.md{location_hint}")
 
         for i in range(5):
             self.metrics_collector.add_checkpoint("health_verification", f"CP-9.{i+1}: Step {i+1}", {})
@@ -3644,10 +4224,20 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         """
         import subprocess
         import json
+        import glob as glob_module
 
         test_dir = self.output_path / "tests"
         if not test_dir.exists():
             print("  ⚠️  No tests directory found in generated app")
+            return 0, 0, 0
+
+        # Bug #18 fix: Count test files found before execution for diagnostic
+        test_files = list(test_dir.rglob("test_*.py"))
+        test_files_count = len(test_files)
+        print(f"  📋 Test files discovered: {test_files_count}")
+
+        if test_files_count == 0:
+            print("  ⚠️  No test_*.py files found in tests directory")
             return 0, 0, 0
 
         try:
@@ -3677,7 +4267,7 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
                     tests_failed = report.get("summary", {}).get("failed", 0)
 
                     if tests_executed > 0:
-                        print(f"  ✅ Tests executed: {tests_executed} total")
+                        print(f"  ✅ Tests executed: {tests_executed} total (from {test_files_count} files)")
                         print(f"     - Passed: {tests_passed}")
                         print(f"     - Failed: {tests_failed}")
                         return tests_executed, tests_passed, tests_failed
@@ -3695,17 +4285,23 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
                 total = passed + failed
 
                 if total > 0:
-                    print(f"  ✅ Tests executed: {total} total")
+                    print(f"  ✅ Tests executed: {total} total (from {test_files_count} files)")
                     print(f"     - Passed: {passed}")
                     print(f"     - Failed: {failed}")
                     return total, passed, failed
 
-            # No tests found
-            print("  ⚠️  No tests found in generated app")
+            # Bug #18 fix: Show why tests weren't discovered/executed
+            print(f"  ⚠️  Tests found ({test_files_count} files) but none executed")
+            if result.returncode != 0:
+                print(f"     pytest exit code: {result.returncode}")
+            if result.stderr and len(result.stderr.strip()) > 0:
+                # Show first 200 chars of stderr for diagnosis
+                stderr_preview = result.stderr.strip()[:200]
+                print(f"     Error: {stderr_preview}")
             return 0, 0, 0
 
         except subprocess.TimeoutExpired:
-            print("  ⚠️  Test execution timeout (120s)")
+            print(f"  ⚠️  Test execution timeout (120s) - {test_files_count} test files")
             return 0, 0, 0
         except Exception as e:
             print(f"  ⚠️  Error running tests: {e}")
@@ -3804,17 +4400,17 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         """Finalize metrics and generate report"""
 
         # INTEGRATE LLM USAGE METRICS (Fase 2)
-        llm_summary = self.llm_tracker.get_summary()
-        self.metrics_collector.metrics.llm_total_tokens = llm_summary["total_tokens"]
-        self.metrics_collector.metrics.llm_prompt_tokens = llm_summary["prompt_tokens"]
-        self.metrics_collector.metrics.llm_completion_tokens = llm_summary[
-            "completion_tokens"
-        ]
-        self.metrics_collector.metrics.llm_cost_usd = llm_summary["total_cost_usd"]
-        self.metrics_collector.metrics.llm_calls_count = llm_summary["total_calls"]
-        self.metrics_collector.metrics.llm_avg_latency_ms = llm_summary[
-            "avg_latency_ms"
-        ]
+        # Bug #22 Fix: Use global metrics from EnhancedAnthropicClient instead of empty llm_tracker
+        global_llm_metrics = EnhancedAnthropicClient.get_global_metrics()
+        self.metrics_collector.metrics.llm_total_tokens = global_llm_metrics["total_tokens"]
+        self.metrics_collector.metrics.llm_prompt_tokens = global_llm_metrics["total_input_tokens"]
+        self.metrics_collector.metrics.llm_completion_tokens = global_llm_metrics["total_output_tokens"]
+        # Cost estimation: $3/1M input + $15/1M output (Claude 3.5 Sonnet pricing)
+        estimated_cost = (global_llm_metrics["total_input_tokens"] / 1_000_000 * 3.0 +
+                         global_llm_metrics["total_output_tokens"] / 1_000_000 * 15.0)
+        self.metrics_collector.metrics.llm_cost_usd = estimated_cost
+        self.metrics_collector.metrics.llm_calls_count = global_llm_metrics["total_api_calls"]
+        self.metrics_collector.metrics.llm_avg_latency_ms = global_llm_metrics["avg_latency_ms"]
 
         # Calculate precision
         overall_precision = self.precision.calculate_overall_precision()
@@ -3841,6 +4437,18 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
 
         # PERFORMANCE METRICS (Fix #3): Calculate peak/average from samples before finalize
         self._finalize_performance_metrics()
+
+        # Bug #17 fix: Add basic validation errors to metrics total count
+        # These errors were detected in deployment but not counted in metrics
+        if self.basic_validation_result and self.basic_validation_result.errors:
+            for error in self.basic_validation_result.errors:
+                self.metrics_collector.record_error("basic_validation", {
+                    "file": error.file_path,
+                    "line": error.line_number,
+                    "message": error.message,
+                    "category": error.category,
+                    "severity": error.severity.value if hasattr(error.severity, 'value') else str(error.severity)
+                })
 
         # Finalize
         final_metrics = self.metrics_collector.finalize()
@@ -3900,13 +4508,21 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
 
         Strategic cleanup point: All code generation is done, cache is no longer needed.
         Frees memory and ensures clean state for next pipeline run.
-        """
-        try:
-            import os
-            import redis.asyncio as redis
 
-            # Get Redis URL (same as LLMPromptCache)
-            redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+        Bug #29 fix: Only connect to Redis if REDIS_URL is explicitly configured.
+        Skip flush in E2E tests where Redis is not needed.
+        """
+        import os
+
+        # Bug #29 fix: Only flush if Redis is explicitly configured
+        # Skip unnecessary Redis connections in E2E tests
+        redis_url = os.getenv("REDIS_URL")
+        if not redis_url:
+            # Redis not configured - skip flush (no cache was used)
+            return
+
+        try:
+            import redis.asyncio as redis
 
             # Connect to Redis
             redis_client = await redis.from_url(redis_url, decode_responses=False)
@@ -3949,7 +4565,8 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         print(f"  Duration:            {(metrics.total_duration_ms or 0) / 1000 / 60:.1f} minutes ({metrics.total_duration_ms or 0:.0f}ms)")
         print(f"  Overall Progress:    {metrics.overall_progress:.1%}")
         print(f"  Execution Success:   {metrics.execution_success_rate:.1%}")
-        print(f"  Overall Accuracy:    {metrics.overall_accuracy:.1%}")
+        # Bug #24 fix: Renamed from "Overall Accuracy" to avoid confusion with IR compliance
+        print(f"  Pipeline Ops Rate:   {metrics.overall_accuracy:.1%}")
 
         # 🧪 TESTING & QUALITY
         print(f"\n🧪 TESTING & QUALITY")
@@ -4071,8 +4688,9 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         # 📊 PRECISION & ACCURACY
         print(f"\n📊 PRECISION & ACCURACY METRICS")
         print("-" * 90)
+        # Bug #24 fix: Clarified that "Ops Success" means pipeline operation success, not IR compliance
         print(f"  🎯 Overall Pipeline Performance:")
-        print(f"     Accuracy:         {metrics.overall_accuracy:.1%}")
+        print(f"     Ops Success:      {metrics.overall_accuracy:.1%}")
         print(f"     Precision:        {metrics.pipeline_precision:.1%}")
         print(f"")
         print(f"  📊 Pattern Matching Performance:")
