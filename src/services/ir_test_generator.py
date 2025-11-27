@@ -330,11 +330,17 @@ class Test{self._to_class_name(flow.name)}Flow:
 
     def _to_class_name(self, name: str) -> str:
         """Convert name to PascalCase class name."""
-        return ''.join(word.capitalize() for word in name.replace('_', ' ').split())
+        # Bug #50 fix: Remove non-alphanumeric characters (like ':') that cause SyntaxError
+        import re
+        clean_name = re.sub(r'[^a-zA-Z0-9_\s]', ' ', name)
+        return ''.join(word.capitalize() for word in clean_name.replace('_', ' ').split())
 
     def _to_snake_case(self, name: str) -> str:
         """Convert name to snake_case."""
-        return name.lower().replace(' ', '_').replace('-', '_')[:50]
+        # Bug #50 fix: Remove non-alphanumeric characters before conversion
+        import re
+        clean_name = re.sub(r'[^a-zA-Z0-9_\s-]', '', name)
+        return clean_name.lower().replace(' ', '_').replace('-', '_')[:50]
 
 
 class APIContractValidatorFromIR:
@@ -433,7 +439,10 @@ class Test{self._to_class_name(endpoint.operation_id)}Endpoint:
 
     def _to_class_name(self, name: str) -> str:
         """Convert operation_id to PascalCase class name."""
-        return ''.join(word.capitalize() for word in name.replace('_', ' ').split())
+        # Bug #50 fix: Remove non-alphanumeric characters (like ':') that cause SyntaxError
+        import re
+        clean_name = re.sub(r'[^a-zA-Z0-9_\s]', ' ', name)
+        return ''.join(word.capitalize() for word in clean_name.replace('_', ' ').split())
 
     def validate_endpoints(self, generated_routes: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
