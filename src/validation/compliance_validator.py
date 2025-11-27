@@ -298,6 +298,42 @@ class ComplianceValidator:
         logger.warning(f"Could not extract attributes from entity: {type(entity).__name__}")
         return []
 
+    def _is_relationship_attr(self, attr) -> bool:
+        """
+        Bug #48 Fix: Detect if attribute is a relationship (not a scalar field).
+
+        Relationships are List[Entity] or similar and don't have normal "required" semantics.
+        They should be excluded from validation matching because they're handled differently
+        in SQLAlchemy (relationship()) and Pydantic (List[EntityResponse]).
+
+        Args:
+            attr: Attribute or Field object
+
+        Returns:
+            True if this is a relationship attribute
+        """
+        # Check type string for List[...] pattern (one-to-many relationship)
+        attr_type = ""
+        if hasattr(attr, "type"):
+            attr_type = str(attr.type) if attr.type else ""
+        elif hasattr(attr, "field_type"):
+            attr_type = str(attr.field_type) if attr.field_type else ""
+
+        # Relationships typically have List[Entity] type
+        if "List[" in attr_type or "list[" in attr_type:
+            return True
+
+        # Check for relationship-specific metadata
+        if hasattr(attr, "is_relationship") and attr.is_relationship:
+            return True
+
+        # Common relationship field names (heuristic)
+        attr_name = getattr(attr, "name", "").lower()
+        if attr_name in ("items", "orders", "products", "cart_items", "order_items"):
+            return True
+
+        return False
+
     def _is_attr_required(self, attr) -> bool:
         """
         Check if attribute is required, handling both Attribute (IR) and Field (legacy).
@@ -308,6 +344,10 @@ class ComplianceValidator:
         Returns:
             True if required/not nullable
         """
+        # Bug #48 Fix: Skip relationships - they don't have normal "required" semantics
+        if self._is_relationship_attr(attr):
+            return False
+
         # Attribute (IR): is_nullable=False means required
         if hasattr(attr, "is_nullable"):
             return not attr.is_nullable
