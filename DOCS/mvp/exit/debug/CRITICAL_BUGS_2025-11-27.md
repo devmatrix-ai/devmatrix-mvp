@@ -41,7 +41,7 @@ El pipeline E2E mostraba resultados engañosos. Decía "✅ PASSED" con 98.6% co
 | #56 | CRITICAL | IR Cache | `510addcb` |
 | #57 | MEDIUM | Test Execution | `0443c112` |
 | #58 | HIGH | Metrics Display | ✅ FIXED |
-| #59 | CRITICAL | Test Fixtures | ✅ FIXED |
+| #59 | CRITICAL | Test Fixtures | `a9f3b768` |
 
 ---
 
