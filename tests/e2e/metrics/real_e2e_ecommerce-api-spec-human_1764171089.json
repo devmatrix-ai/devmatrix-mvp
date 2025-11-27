@@ -1,0 +1,328 @@
+{
+  "pipeline_id": "real_e2e_1764171089",
+  "spec_name": "ecommerce-api-spec-human",
+  "start_time": 1764171089.4139683,
+  "end_time": 1764171295.4261258,
+  "total_duration_ms": 206012,
+  "phases": {
+    "spec_ingestion": {
+      "phase_name": "spec_ingestion",
+      "status": "PhaseStatus.COMPLETED",
+      "start_time": 1764171100.71164,
+      "end_time": 1764171146.4230275,
+      "duration_ms": 45711,
+      "checkpoints_total": 4,
+      "checkpoints_completed": 4,
+      "errors": [],
+      "retries": 0,
+      "custom_metrics": {
+        "total_requirements": 134,
+        "functional_requirements": 42,
+        "non_functional_requirements": 92,
+        "entities": 6,
+        "endpoints": 19,
+        "business_logic": 18,
+        "source": "ApplicationIR",
+        "complexity": 1.0,
+        "base_complexity": 1.0,
+        "entity_complexity": 0.3,
+        "endpoint_complexity": 0.3
+      },
+      "memory_usage_mb": null,
+      "cpu_percent": null
+    },
+    "requirements_analysis": {
+      "phase_name": "requirements_analysis",
+      "status": "PhaseStatus.COMPLETED",
+      "start_time": 1764171247.2803922,
+      "end_time": 1764171247.834638,
+      "duration_ms": 554,
+      "checkpoints_total": 5,
+      "checkpoints_completed": 5,
+      "errors": [],
+      "retries": 0,
+      "custom_metrics": {
+        "count": 0,
+        "domain_distribution": {
+          "crud": 14,
+          "payment": 1,
+          "workflow": 2
+        },
+        "dependency_count": 3,
+        "is_valid_dag": true,
+        "avg_complexity": 0.4994117647058823,
+        "risk_distribution": {
+          "medium": 5,
+          "low": 9,
+          "high": 3
+        },
+        "patterns_count": 10
+      },
+      "memory_usage_mb": null,
+      "cpu_percent": null
+    },
+    "multi_pass_planning": {
+      "phase_name": "multi_pass_planning",
+      "status": "PhaseStatus.COMPLETED",
+      "start_time": 1764171247.9359841,
+      "end_time": 1764171248.0386353,
+      "duration_ms": 102,
+      "checkpoints_total": 5,
+      "checkpoints_completed": 5,
+      "errors": [],
+      "retries": 0,
+      "custom_metrics": {
+        "nodes": 42,
+        "edges": 11
+      },
+      "memory_usage_mb": null,
+      "cpu_percent": null
+    },
+    "atomization": {
+      "phase_name": "atomization",
+      "status": "PhaseStatus.COMPLETED",
+      "start_time": 1764171248.0415695,
+      "end_time": 1764171249.3446019,
+      "duration_ms": 1303,
+      "checkpoints_total": 5,
+      "checkpoints_completed": 5,
+      "errors": [],
+      "retries": 0,
+      "custom_metrics": {
+        "atoms_generated": 42,
+        "atoms_valid": 42,
+        "atoms_invalid": 0,
+        "atomization_quality": 1.0
+      },
+      "memory_usage_mb": null,
+      "cpu_percent": null
+    },
+    "dag_construction": {
+      "phase_name": "dag_construction",
+      "status": "PhaseStatus.COMPLETED",
+      "start_time": 1764171249.345781,
+      "end_time": 1764171250.9497366,
+      "duration_ms": 1603,
+      "checkpoints_total": 5,
+      "checkpoints_completed": 5,
+      "errors": [],
+      "retries": 0,
+      "custom_metrics": {},
+      "memory_usage_mb": null,
+      "cpu_percent": null
+    },
+    "wave_execution": {
+      "phase_name": "wave_execution",
+      "status": "PhaseStatus.COMPLETED",
+      "start_time": 1764171250.9501252,
+      "end_time": 1764171253.476498,
+      "duration_ms": 2526,
+      "checkpoints_total": 5,
+      "checkpoints_completed": 5,
+      "errors": [],
+      "retries": 0,
+      "custom_metrics": {
+        "files_generated": 96
+      },
+      "memory_usage_mb": null,
+      "cpu_percent": null
+    },
+    "validation": {
+      "phase_name": "validation",
+      "status": "PhaseStatus.COMPLETED",
+      "start_time": 1764171291.9984503,
+      "end_time": 1764171294.2006435,
+      "duration_ms": 2202,
+      "checkpoints_total": 5,
+      "checkpoints_completed": 10,
+      "errors": [],
+      "retries": 0,
+      "custom_metrics": {
+        "files_generated": 96,
+        "waves": 2,
+        "compliance_score": 1.0,
+        "entities_implemented": 6,
+        "endpoints_implemented": 28,
+        "missing_requirements_count": 5,
+        "strict_entities": 0,
+        "strict_flows": 0,
+        "strict_constraints": 43.47826086956522,
+        "relaxed_entities": 100.0,
+        "relaxed_flows": 100.0,
+        "relaxed_constraints": 58.69565217391305,
+        "tests_executed": 0,
+        "tests_passed": 0,
+        "tests_failed": 0,
+        "coverage": 0.0,
+        "quality_score": 1.0,
+        "environment": "dev",
+        "passed": false,
+        "semantic_compliance": 1.0,
+        "ir_compliance_relaxed": 0.8623188405797102,
+        "failures": [
+          "syntax_check: FAILED"
+        ]
+      },
+      "memory_usage_mb": null,
+      "cpu_percent": null
+    },
+    "deployment": {
+      "phase_name": "deployment",
+      "status": "PhaseStatus.COMPLETED",
+      "start_time": 1764171253.5845885,
+      "end_time": 1764171288.3404157,
+      "duration_ms": 34755,
+      "checkpoints_total": 5,
+      "checkpoints_completed": 8,
+      "errors": [],
+      "retries": 0,
+      "custom_metrics": {
+        "output_dir": "tests/e2e/generated_apps/ecommerce-api-spec-human_1764171089",
+        "manifest_path": "tests/e2e/generated_apps/ecommerce-api-spec-human_1764171089/generation_manifest.json",
+        "validation_passed": false,
+        "total_files": 96,
+        "total_errors": 2,
+        "total_repaired": 0,
+        "llm_tokens": 0,
+        "success_rate": 90.0,
+        "golden_app": "ecommerce",
+        "passed": false,
+        "ir_match": null,
+        "metrics_status": "regressed"
+      },
+      "memory_usage_mb": null,
+      "cpu_percent": null
+    },
+    "health_verification": {
+      "phase_name": "health_verification",
+      "status": "PhaseStatus.COMPLETED",
+      "start_time": 1764171294.2019482,
+      "end_time": 1764171295.3049946,
+      "duration_ms": 1103,
+      "checkpoints_total": 5,
+      "checkpoints_completed": 5,
+      "errors": [],
+      "retries": 0,
+      "custom_metrics": {},
+      "memory_usage_mb": null,
+      "cpu_percent": null
+    },
+    "learning": {
+      "phase_name": "learning",
+      "status": "PhaseStatus.COMPLETED",
+      "start_time": 1764171295.305511,
+      "end_time": 1764171295.4251885,
+      "duration_ms": 119,
+      "checkpoints_total": 5,
+      "checkpoints_completed": 5,
+      "errors": [],
+      "retries": 0,
+      "custom_metrics": {
+        "execution_successful": true,
+        "candidate_id": "d6d1c691-8c46-4455-9816-14dd0782c7de",
+        "total_candidates": 0,
+        "promotions_succeeded": 0
+      },
+      "memory_usage_mb": null,
+      "cpu_percent": null
+    }
+  },
+  "overall_status": "success",
+  "overall_progress": 1.1099999999999999,
+  "pattern_reuse_rate": 0.0,
+  "patterns_matched": 0,
+  "new_patterns_learned": 0,
+  "patterns_stored": 1,
+  "patterns_promoted": 0,
+  "patterns_reused": 0,
+  "learning_time_ms": 0.0,
+  "candidates_created": 1,
+  "test_coverage": 0.0,
+  "code_quality_score": 0.0,
+  "acceptance_criteria_met": 0,
+  "acceptance_criteria_total": 0,
+  "peak_memory_mb": 109.62,
+  "avg_memory_mb": 39.81,
+  "peak_cpu_percent": 0.0,
+  "avg_cpu_percent": 0.0,
+  "neo4j_queries": 0,
+  "neo4j_avg_query_ms": 0.0,
+  "qdrant_queries": 0,
+  "qdrant_avg_query_ms": 0.0,
+  "total_errors": 2,
+  "recovered_errors": 0,
+  "critical_errors": 0,
+  "recovery_success_rate": 0.0,
+  "overall_accuracy": 1.0,
+  "pipeline_precision": 0.7173202614379086,
+  "pattern_precision": 0.8,
+  "pattern_recall": 0.47058823529411764,
+  "pattern_f1": 0.5925925925925927,
+  "classification_accuracy": 0.4117647058823529,
+  "execution_success_rate": 1.0,
+  "test_pass_rate": 0.0,
+  "contract_violations": 0,
+  "repair_applied": true,
+  "repair_iterations": 2,
+  "repair_improvement": 0.0,
+  "tests_fixed": 0,
+  "regressions_detected": 0,
+  "pattern_reuse_count": 0,
+  "repair_time_ms": 3556.2679767608643,
+  "repair_skipped": false,
+  "repair_skip_reason": "",
+  "llm_total_tokens": 0,
+  "llm_prompt_tokens": 0,
+  "llm_completion_tokens": 0,
+  "llm_cost_usd": 0.0,
+  "llm_calls_count": 0,
+  "llm_avg_latency_ms": 0.0,
+  "timestamp": "2025-11-26T16:34:55.427334",
+  "ir_compliance": {
+    "semantic": {
+      "overall": 100.0,
+      "entities": 100.0,
+      "endpoints": 100.0,
+      "validations": 100.0
+    },
+    "strict": {
+      "overall": 43.47826086956522,
+      "entities": 0,
+      "flows": 0,
+      "constraints": 43.47826086956522
+    },
+    "relaxed": {
+      "overall": 86.23188405797102,
+      "entities": 100.0,
+      "flows": 100.0,
+      "constraints": 58.69565217391305
+    },
+    "comparison": {
+      "semantic_compliance": {
+        "overall": 100.0,
+        "entities": 100.0,
+        "endpoints": 100.0,
+        "validations": 100.0
+      },
+      "ir_compliance": {
+        "strict": {
+          "overall": 43.5,
+          "entities": 0,
+          "flows": 0,
+          "constraints": 43.5
+        },
+        "relaxed": {
+          "overall": 86.2,
+          "entities": 100.0,
+          "flows": 100.0,
+          "constraints": 58.7
+        }
+      },
+      "compliance_comparison": {
+        "semantic_vs_ir_relaxed_delta": 13.8,
+        "strict_vs_relaxed_delta": 42.8,
+        "explanation": "Semantic-IR gap (14%): Naming conventions or flow structure differences; STRICT-RELAXED gap (43%): Entity suffixes, action synonyms, or constraint equivalences"
+      }
+    }
+  }
+}
