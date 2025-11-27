@@ -2,8 +2,8 @@
 
 **Analysis Date**: 2025-11-27
 **Test Run**: `ecommerce-api-spec-human_1764201312`
-**Status**: 🔄 **IN PROGRESS** - 8/8 bugs fixed
-**Last Updated**: 2025-11-27 (Bug #51 found and fixed)
+**Status**: 🔄 **IN PROGRESS** - 9/11 bugs fixed
+**Last Updated**: 2025-11-27 (Bug #53 fixed)
 
 ---
 
@@ -34,6 +34,9 @@ El pipeline E2E mostraba resultados engañosos. Decía "✅ PASSED" con 98.6% co
 | #50 | HIGH | Testing | `39620119` |
 | #51 | CRITICAL | Code Repair | `8eacde21` |
 | #52 | HIGH | Code Repair | `ae608219` |
+| #53 | HIGH | Endpoint Inference | (pending commit) |
+| #54 | MEDIUM | Test Execution | 🔴 NEW |
+| #55 | LOW | Constraint Mapping | 🔴 NEW |
 
 ---
 
@@ -382,6 +385,134 @@ attr_dict = {
 
 ---
 
+## Bug #53: Checkout Endpoints Generados en Entidades Incorrectas
+
+**Severity**: HIGH
+**Category**: Endpoint Inference
+**Status**: ✅ FIXED
+**Impact**: Endpoints 89.1% → 100% expected
+
+### Síntoma
+
+```
+Added endpoint POST /cartitems/{id}/checkout to cartitem.py
+Added endpoint POST /orderitems/{id}/checkout to orderitem.py
+```
+
+Pero el checkout debería ser:
+```
+POST /carts/{id}/checkout  ← CORRECTO (checkout de un carrito)
+```
+
+### Root Cause
+
+En `_infer_custom_operations()` línea 332, el código genera endpoints para CADA `target_entity` del flow:
+
+```python
+for entity in target_entities:  # Itera ALL entities, no solo la principal
+    resource = self._pluralize(entity_lower)
+    path = f"/{resource}/{{id}}{path_suffix}"
+```
+
+Si el flow de checkout tiene `target_entities: ["Cart", "CartItem", "Order"]`, genera checkout para los 3.
+
+### Proposed Fix
+
+```python
+# Bug #53 Fix: Solo generar custom ops para entidades "principales"
+# Excluir entidades que son sub-items (CartItem, OrderItem)
+ITEM_ENTITIES = {"cartitem", "orderitem", "lineitem", "item"}
+if entity_lower in ITEM_ENTITIES:
+    continue  # Skip item entities for checkout/cancel ops
+```
+
+### Files to Change
+
+- `src/services/inferred_endpoint_enricher.py`
+
+---
+
+## Bug #54: Tests Directory Not Found (pytest exit code 4)
+
+**Severity**: MEDIUM
+**Category**: Test Execution
+**Status**: 🔴 NEW
+
+### Síntoma
+
+```
+📋 Test files discovered: 3
+⚠️  Tests found (3 files) but none executed
+   pytest exit code: 4
+   Error: ERROR: file or directory not found: tests/e2e/generated_apps/ecommerce-api-spec-human_1764235499/tests
+```
+
+Test Pass Rate: 0.0%
+
+### Root Cause
+
+El pipeline intenta ejecutar pytest en un subdirectorio `tests/` dentro de la app generada, pero ese directorio no existe o los tests se generan en otra ubicación.
+
+### Proposed Fix
+
+Verificar dónde se generan realmente los test files y ajustar el path de pytest.
+
+### Files to Change
+
+- `tests/e2e/real_e2e_full_pipeline.py` (pytest invocation path)
+- O `src/services/code_generation_service.py` (test file generation location)
+
+---
+
+## Bug #55: Constraints Válidos Siendo Ignorados
+
+**Severity**: LOW
+**Category**: Constraint Mapping
+**Status**: 🔴 NEW
+
+### Síntoma
+
+```
+Bug #45: Ignoring unrecognized constraint 'min_value' from 'Product.price: min_value=0.01'
+Bug #45: Ignoring unrecognized constraint 'min_value' from 'Product.stock: min_value=0'
+Bug #45: Ignoring unrecognized constraint 'format' from 'Customer.id: format=uuid'
+Bug #45: Ignoring unrecognized constraint 'format' from 'Customer.email: format=email'
+```
+
+Estos constraints son VÁLIDOS pero no están mapeados a Pydantic equivalents.
+
+### Root Cause
+
+`known_constraints` en `code_repair_agent.py` no incluye mappings para:
+- `min_value` → `ge` (greater or equal)
+- `max_value` → `le` (less or equal)
+- `format=uuid` → pattern regex
+- `format=email` → `EmailStr` type o pattern
+
+### Proposed Fix
+
+Agregar mappings semánticos:
+
+```python
+semantic_mapping = {
+    # Existing...
+    'min_value': ('ge', None),  # Bug #55: Map min_value to ge
+    'max_value': ('le', None),  # Bug #55: Map max_value to le
+}
+
+format_mapping = {
+    'uuid': r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    'email': r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$',
+    'datetime': None,  # Use datetime type instead of pattern
+}
+```
+
+### Files to Change
+
+- `src/mge/v2/agents/code_repair_agent.py`
+
+---
+
 ## Validation Checklist
 
 Run E2E test to verify all fixes:
@@ -419,8 +550,9 @@ ce923f47 fix(Bug #46): Add cache invalidation for repair loop re-validation
 
 ## Conclusion
 
-**All 8 critical bugs have been fixed.** The fixes address:
+**8/11 bugs fixed. 3 new bugs discovered.**
 
+### Fixed (8):
 1. **Code Repair Loop** - Now properly maps semantic constraints and validates against known types
 2. **Cache Invalidation** - Forces Python to re-read modified files during validation
 3. **IR Completeness** - Custom operations and nested resources now inferred
@@ -430,4 +562,19 @@ ce923f47 fix(Bug #46): Add cache invalidation for repair loop re-validation
 7. **Constraint Value Validation** - Skip 'none' values for numeric/pattern constraints
 8. **Entity Repair IR Attribute** - Use `data_type.value` instead of `type`
 
-**Next Step**: Run E2E test to validate all fixes work together.
+### Pending (3):
+9. **Bug #53** - Checkout endpoints en entidades incorrectas (HIGH) → Bloquea 100% endpoints
+10. **Bug #54** - Tests directory not found (MEDIUM) → Test pass rate 0%
+11. **Bug #55** - Constraints válidos ignorados (LOW) → Mejora de validación
+
+### Current Metrics
+```
+Overall Compliance:  95.7%
+├─ Entities:       100.0% (6/6)    ✅
+├─ Endpoints:       89.1% (42/46)  ⚠️ Bug #53
+└─ Validations:    100.0%          ✅
+
+Test Pass Rate:      0.0%          ❌ Bug #54
+```
+
+**Next Step**: Fix Bug #53 to achieve 100% endpoints.

@@ -331,6 +331,14 @@ class InferredEndpointEnricher:
                     # Infer resource from target entities
                     for entity in target_entities:
                         entity_lower = entity.lower()
+
+                        # Bug #53 Fix: Skip sub-item entities for custom operations
+                        # Checkout/cancel/pay should be on Cart/Order, not CartItem/OrderItem
+                        ITEM_ENTITIES = {"cartitem", "orderitem", "lineitem", "item"}
+                        if entity_lower in ITEM_ENTITIES:
+                            logger.debug(f"  - Bug #53: Skipping {entity} for {operation} (sub-item entity)")
+                            continue
+
                         # Pluralize entity name
                         resource = self._pluralize(entity_lower)
                         path = f"/{resource}/{{id}}{path_suffix}"
