@@ -582,6 +582,25 @@ class ComplianceValidator:
             # Extra safety: Explicitly remove 'src' if it exists (DevMatrix namespace collision)
             sys.modules.pop('src', None)
 
+            # Bug #46 Fix: Invalidate importlib caches to force re-reading modified .py files
+            # Without this, Python may use cached bytecode (.pyc) instead of fresh source
+            # This is critical for repair loops where code is modified between validations
+            importlib.invalidate_caches()
+            logger.debug("Invalidated importlib caches for fresh module loading")
+
+            # Bug #46 Fix: Clear __pycache__ directories to prevent stale bytecode
+            # This is especially important when CodeRepairAgent modifies schemas.py/entities.py
+            try:
+                import shutil
+                pycache_dirs = list(output_path.rglob("__pycache__"))
+                for pycache in pycache_dirs:
+                    if pycache.is_dir():
+                        shutil.rmtree(pycache, ignore_errors=True)
+                if pycache_dirs:
+                    logger.debug(f"Cleared {len(pycache_dirs)} __pycache__ directories for fresh imports")
+            except Exception as e:
+                logger.debug(f"Could not clear __pycache__: {e}")
+
             # Clear Prometheus metrics registry to avoid "Duplicated timeseries" errors
             # This happens when we import the app multiple times in the same Python process
             try:

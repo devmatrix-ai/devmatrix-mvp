@@ -57,7 +57,7 @@ CodeRepairAgent no verifica si el repair ya fue aplicado. Cada iteración:
 
 **Severity**: CRITICAL
 **Category**: Code Repair Effectiveness
-**Status**: NEW
+**Status**: IN_PROGRESS - Fix implemented, needs E2E testing
 
 ### Síntoma
 ```
@@ -71,11 +71,14 @@ OpenAPI-based compliance validation complete: 93.0%
     ├─ Delta: +0.0%
 ```
 
-### Root Cause Options
-1. **Repairs no se escriben a disco** - Solo en memoria
-2. **Repairs se escriben pero validator no re-lee** - Cache stale
-3. **Repairs son sintácticamente incorrectos** - Se agregan pero no son válidos
-4. **Validator mide algo diferente** - Mismatch entre lo que repair agrega y lo que validator busca
+### Root Cause (Confirmed)
+**Option 2: Repairs se escriben pero validator no re-lee (Cache stale)**
+
+Python caches modules in `sys.modules` and bytecode in `__pycache__/`. When:
+1. CodeRepairAgent modifies `schemas.py` or `entities.py`
+2. Compliance validator calls `validate_from_app()` to re-validate
+3. Python uses **cached modules/bytecode** instead of fresh files
+4. Validation sees no changes, compliance stays the same
 
 ### Impact
 - Code Repair phase es completamente inútil
@@ -84,7 +87,31 @@ OpenAPI-based compliance validation complete: 93.0%
 
 ### Files Involved
 - `src/mge/v2/agents/code_repair_agent.py`
-- `src/validation/compliance_validator.py`
+- `src/validation/compliance_validator.py` (FIXED)
+
+### Fix Implemented (2025-11-27)
+
+Added two cache invalidation mechanisms to `validate_from_app()`:
+
+1. **`importlib.invalidate_caches()`**
+   - Forces Python to re-scan finders/loaders
+   - Critical for repair loops where code is modified between validations
+
+2. **`__pycache__` cleanup**
+   - Removes all `__pycache__` directories in generated app
+   - Prevents stale bytecode from being used
+
+```python
+# Bug #46 Fix: Invalidate importlib caches to force re-reading modified .py files
+importlib.invalidate_caches()
+
+# Bug #46 Fix: Clear __pycache__ directories to prevent stale bytecode
+pycache_dirs = list(output_path.rglob("__pycache__"))
+for pycache in pycache_dirs:
+    shutil.rmtree(pycache, ignore_errors=True)
+```
+
+**Status**: Implementation complete, needs E2E test validation.
 
 ---
 
@@ -286,7 +313,7 @@ Semantic Compliance: 98.6%  ← Subió de 93% a 98.6%?
 | Bug | Severity | Category | Status | Quick Description |
 |-----|----------|----------|--------|-------------------|
 | #45 | HIGH | Code Repair | NEW | Same repairs applied repeatedly |
-| #46 | CRITICAL | Code Repair | NEW | 44 repairs but 0% improvement |
+| #46 | CRITICAL | Code Repair | IN_PROGRESS | 44 repairs but 0% improvement (cache fix) |
 | #47 | CRITICAL | IR Extraction | ✅ FIXED | Spec endpoints missing from IR |
 | #48 | MEDIUM | Semantic Matching | NEW | Cart.items/Order.items never match |
 | #49 | HIGH | Metrics | NEW | Inconsistent numbers between phases |
