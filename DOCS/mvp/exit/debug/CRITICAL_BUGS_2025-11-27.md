@@ -2,7 +2,7 @@
 
 **Analysis Date**: 2025-11-27
 **Test Run**: `ecommerce-api-spec-human_1764201312`
-**Status**: 🔄 **IN PROGRESS** - 7/7 bugs fixed
+**Status**: 🔄 **IN PROGRESS** - 8/8 bugs fixed
 **Last Updated**: 2025-11-27 (Bug #51 found and fixed)
 
 ---
@@ -20,6 +20,7 @@ El pipeline E2E mostraba resultados engañosos. Decía "✅ PASSED" con 98.6% co
 | Repairs se repiten | Invalid constraints applied | ✅ known_constraints validation |
 | Relationships fallan | Treated as scalar fields | ✅ Skip relationship attributes |
 | Constraints 'none' rompen Pydantic | String 'none' applied literally | ✅ Validate numeric/pattern values |
+| Entity repair falla en IR | attr.type vs attr.data_type | ✅ Use data_type.value |
 
 ### All Bugs Fixed
 
@@ -31,7 +32,8 @@ El pipeline E2E mostraba resultados engañosos. Decía "✅ PASSED" con 98.6% co
 | #48 | MEDIUM | Semantic Matching | `e285d062` |
 | #49 | HIGH | Metrics | `71efdcda` |
 | #50 | HIGH | Testing | `39620119` |
-| #51 | CRITICAL | Code Repair | (pending commit) |
+| #51 | CRITICAL | Code Repair | `8eacde21` |
+| #52 | HIGH | Code Repair | (pending commit) |
 
 ---
 
@@ -342,6 +344,44 @@ if constraint_type == 'pattern':
 
 ---
 
+## Bug #52: Entity Repair Falla por Atributo Incorrecto
+
+**Severity**: HIGH
+**Category**: Code Repair
+**Status**: ✅ FIXED
+**Commit**: (pending)
+
+### Síntoma
+
+```
+_repair_entity_from_ir failed: 'Attribute' object has no attribute 'type'
+Failed to add entity from IR: Product
+Failed to add entity from IR: Customer
+... (todas las entidades)
+```
+
+### Root Cause
+
+`_repair_entity_from_ir()` accedía a `attr.type` pero el modelo `Attribute` del IR usa `data_type` (que es un enum `DataType`).
+
+### Fix
+
+```python
+# Bug #52 Fix: Use data_type (not type) and convert enum to string
+attr_type = attr.data_type.value if hasattr(attr.data_type, 'value') else str(attr.data_type)
+attr_dict = {
+    'name': attr.name,
+    'type': attr_type,  # Now uses the correct property
+    'required': not attr.is_nullable if hasattr(attr, 'is_nullable') else True
+}
+```
+
+### Files Changed
+
+- `src/mge/v2/agents/code_repair_agent.py`
+
+---
+
 ## Validation Checklist
 
 Run E2E test to verify all fixes:
@@ -379,7 +419,7 @@ ce923f47 fix(Bug #46): Add cache invalidation for repair loop re-validation
 
 ## Conclusion
 
-**All 7 critical bugs have been fixed.** The fixes address:
+**All 8 critical bugs have been fixed.** The fixes address:
 
 1. **Code Repair Loop** - Now properly maps semantic constraints and validates against known types
 2. **Cache Invalidation** - Forces Python to re-read modified files during validation
@@ -388,5 +428,6 @@ ce923f47 fix(Bug #46): Add cache invalidation for repair loop re-validation
 5. **Metrics Unification** - Single source of truth (ApplicationIR) across all phases
 6. **Test Execution** - Sanitized class names and skipped broken PatternBank tests
 7. **Constraint Value Validation** - Skip 'none' values for numeric/pattern constraints
+8. **Entity Repair IR Attribute** - Use `data_type.value` instead of `type`
 
 **Next Step**: Run E2E test to validate all fixes work together.

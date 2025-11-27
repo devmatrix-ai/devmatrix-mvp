@@ -428,9 +428,11 @@ class CodeRepairAgent:
             attributes = []
             if entity_ir.attributes:
                 for attr in entity_ir.attributes:
+                    # Bug #52 Fix: Use data_type (not type) and convert enum to string
+                    attr_type = attr.data_type.value if hasattr(attr.data_type, 'value') else str(attr.data_type)
                     attr_dict = {
                         'name': attr.name,
-                        'type': attr.type,
+                        'type': attr_type,
                         'required': not attr.is_nullable if hasattr(attr, 'is_nullable') else True
                     }
                     if hasattr(attr, 'constraints') and attr.constraints:
