@@ -33,7 +33,7 @@ El pipeline E2E mostraba resultados engañosos. Decía "✅ PASSED" con 98.6% co
 | #49 | HIGH | Metrics | `71efdcda` |
 | #50 | HIGH | Testing | `39620119` |
 | #51 | CRITICAL | Code Repair | `8eacde21` |
-| #52 | HIGH | Code Repair | (pending commit) |
+| #52 | HIGH | Code Repair | `ae608219` |
 
 ---
 
@@ -293,7 +293,7 @@ elif "test_services" in purpose_lower:
 **Severity**: CRITICAL
 **Category**: Code Repair
 **Status**: ✅ FIXED
-**Commit**: (pending)
+**Commit**: `8eacde21`
 
 ### Síntoma
 
@@ -349,7 +349,7 @@ if constraint_type == 'pattern':
 **Severity**: HIGH
 **Category**: Code Repair
 **Status**: ✅ FIXED
-**Commit**: (pending)
+**Commit**: `ae608219`
 
 ### Síntoma
 
