@@ -524,12 +524,17 @@ class CodeRepairAgent:
                 'read_only': ('read_only', True),
                 'snapshot_at_add_time': ('read_only', True),
                 'snapshot_at_order_time': ('read_only', True),
+                # Bug #55 Fix: Map min_value/max_value to Pydantic ge/le
+                'min_value': ('ge', None),  # None = use original constraint_value
+                'max_value': ('le', None),  # None = use original constraint_value
             }
             if constraint_type in semantic_mapping:
                 mapped = semantic_mapping[constraint_type]
-                logger.info(f"Bug #45: Mapping '{constraint_type}' → '{mapped[0]}={mapped[1]}'")
-                constraint_type = mapped[0]
-                constraint_value = mapped[1]
+                new_constraint_type = mapped[0]
+                new_constraint_value = mapped[1] if mapped[1] is not None else constraint_value
+                logger.info(f"Bug #45: Mapping '{constraint_type}' → '{new_constraint_type}={new_constraint_value}'")
+                constraint_type = new_constraint_type
+                constraint_value = new_constraint_value
 
             # Bug #45 Fix: Validate constraint_type against known_constraints (same as legacy mode)
             # Without this check, invalid constraints like "non" get applied and repeated
