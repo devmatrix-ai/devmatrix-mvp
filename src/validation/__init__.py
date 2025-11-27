@@ -18,6 +18,12 @@ from .task_validator import TaskValidator, TaskValidationResult
 from .milestone_validator import MilestoneValidator, MilestoneValidationResult
 from .masterplan_validator import MasterPlanValidator, MasterPlanValidationResult
 from .system_validator import SystemValidator, SystemValidationResult, SystemValidationIssue
+from .runtime_smoke_validator import (
+    RuntimeSmokeTestValidator,
+    SmokeTestResult,
+    EndpointTestResult,
+    run_smoke_test,
+)
 
 __all__ = [
     'AtomicValidator',
@@ -31,4 +37,9 @@ __all__ = [
     'SystemValidator',
     'SystemValidationResult',
     'SystemValidationIssue',
+    # Runtime smoke testing (Task 10)
+    'RuntimeSmokeTestValidator',
+    'SmokeTestResult',
+    'EndpointTestResult',
+    'run_smoke_test',
 ]

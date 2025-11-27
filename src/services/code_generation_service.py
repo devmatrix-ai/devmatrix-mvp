@@ -3280,6 +3280,7 @@ Spec-compliant endpoints with:
 """
 
 from typing import List
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -3314,7 +3315,7 @@ router = APIRouter(
             if relative_path.startswith(router_prefix):
                 relative_path = relative_path[len(router_prefix):]
             if not relative_path:
-                relative_path = "/"
+                relative_path = ""  # Bug #75 Fix: Empty path instead of "/" to avoid HTTP 307 redirects
 
             # Determine response model and status code
             method = ep.method.lower()
@@ -3328,8 +3329,8 @@ router = APIRouter(
                 status_code = None
                 response_model = f"{entity.name}Response"
             else:  # GET
-                # Check if it's a list endpoint
-                if relative_path == "/":
+                # Check if it's a list endpoint (root path)
+                if relative_path == "" or relative_path == "/":
                     response_model = f"List[{entity.name}Response]"
                 else:
                     response_model = f"{entity.name}Response"
@@ -3353,7 +3354,11 @@ router = APIRouter(
             # Build function signature
             params = []
             for param in path_params:
-                params.append(f'{param}: str')
+                # Bug #76 Fix: Use UUID type for ID parameters (e.g., product_id, id, customer_id)
+                if param.endswith('_id') or param == 'id':
+                    params.append(f'{param}: UUID')
+                else:
+                    params.append(f'{param}: str')
 
             # Add request body for POST/PUT - use correct schema type
             if method == 'post':
@@ -3417,6 +3422,41 @@ router = APIRouter(
         )
 
     return None
+'''
+            elif method == 'patch':
+                # Bug #73 Fix: Handle PATCH for custom operations like activate/deactivate
+                id_param = path_params[0] if path_params else 'id'
+
+                # Detect operation from path suffix (e.g., /activate, /deactivate)
+                operation = None
+                if '/activate' in relative_path:
+                    operation = 'activate'
+                elif '/deactivate' in relative_path:
+                    operation = 'deactivate'
+
+                if operation:
+                    # Custom operation: call service.{operation}(id)
+                    body += f'''    {entity_snake} = await service.{operation}({id_param})
+
+    if not {entity_snake}:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"{entity.name} with id {{{id_param}}} not found"
+        )
+
+    return {entity_snake}
+'''
+                else:
+                    # Generic PATCH: call service.update(id, data) - partial update
+                    body += f'''    {entity_snake} = await service.update({id_param}, {entity_snake}_data)
+
+    if not {entity_snake}:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"{entity.name} with id {{{id_param}}} not found"
+        )
+
+    return {entity_snake}
 '''
 
             # Assemble the endpoint function
