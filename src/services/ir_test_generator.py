@@ -306,7 +306,9 @@ class Test{self._to_class_name(flow.name)}Flow:
 
     def _generate_invariant_test(self, invariant: Invariant) -> str:
         """Generate test that verifies invariant is maintained."""
-        test_name = f"test_{invariant.entity.lower()}_invariant_{self._to_snake_case(invariant.description[:30])}"
+        # Bug #54 Fix: Sanitize entity name (may contain ":" and spaces like "F8: Create Cart")
+        entity_safe = self._to_snake_case(invariant.entity)
+        test_name = f"test_{entity_safe}_invariant_{self._to_snake_case(invariant.description[:30])}"
 
         return f'''
     @pytest.mark.asyncio

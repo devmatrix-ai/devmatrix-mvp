@@ -2,8 +2,8 @@
 
 **Analysis Date**: 2025-11-27
 **Test Run**: `ecommerce-api-spec-human_1764201312`
-**Status**: 🔄 **IN PROGRESS** - 9/11 bugs fixed
-**Last Updated**: 2025-11-27 (Bug #53 fixed)
+**Status**: 🔄 **IN PROGRESS** - 10/11 bugs fixed
+**Last Updated**: 2025-11-27 (Bug #54 fixed)
 
 ---
 
@@ -34,8 +34,8 @@ El pipeline E2E mostraba resultados engañosos. Decía "✅ PASSED" con 98.6% co
 | #50 | HIGH | Testing | `39620119` |
 | #51 | CRITICAL | Code Repair | `8eacde21` |
 | #52 | HIGH | Code Repair | `ae608219` |
-| #53 | HIGH | Endpoint Inference | (pending commit) |
-| #54 | MEDIUM | Test Execution | 🔴 NEW |
+| #53 | HIGH | Endpoint Inference | `7bae385e` |
+| #54 | MEDIUM | Test Execution | (pending commit) |
 | #55 | LOW | Constraint Mapping | 🔴 NEW |
 
 ---
@@ -432,35 +432,45 @@ if entity_lower in ITEM_ENTITIES:
 
 ---
 
-## Bug #54: Tests Directory Not Found (pytest exit code 4)
+## Bug #54: Invariant Test Name Not Sanitized (SyntaxError)
 
 **Severity**: MEDIUM
-**Category**: Test Execution
-**Status**: 🔴 NEW
+**Category**: Test Generation
+**Status**: ✅ FIXED
 
 ### Síntoma
 
 ```
-📋 Test files discovered: 3
-⚠️  Tests found (3 files) but none executed
-   pytest exit code: 4
-   Error: ERROR: file or directory not found: tests/e2e/generated_apps/ecommerce-api-spec-human_1764235499/tests
+SyntaxError: invalid syntax
+  File "test_integration_generated.py", line 600
+    async def test_f8: create cart_invariant_f8_create_cart_uses_customer(self, db_session):
+                     ^
 ```
 
-Test Pass Rate: 0.0%
+El nombre del test contiene `:` y espacios porque `invariant.entity` no estaba sanitizado.
 
 ### Root Cause
 
-El pipeline intenta ejecutar pytest en un subdirectorio `tests/` dentro de la app generada, pero ese directorio no existe o los tests se generan en otra ubicación.
+En `_generate_invariant_test()`, `invariant.entity.lower()` se usaba directamente sin sanitizar:
 
-### Proposed Fix
+```python
+# BEFORE (broken):
+test_name = f"test_{invariant.entity.lower()}_invariant_..."
+# Con entity="F8: Create Cart" genera: test_f8: create cart_invariant_...
+```
 
-Verificar dónde se generan realmente los test files y ajustar el path de pytest.
+### Fix
 
-### Files to Change
+```python
+# Bug #54 Fix: Sanitize entity name
+entity_safe = self._to_snake_case(invariant.entity)
+test_name = f"test_{entity_safe}_invariant_{self._to_snake_case(invariant.description[:30])}"
+# Con entity="F8: Create Cart" genera: test_f8_create_cart_invariant_...
+```
 
-- `tests/e2e/real_e2e_full_pipeline.py` (pytest invocation path)
-- O `src/services/code_generation_service.py` (test file generation location)
+### Files Changed
+
+- `src/services/ir_test_generator.py`
 
 ---
 
