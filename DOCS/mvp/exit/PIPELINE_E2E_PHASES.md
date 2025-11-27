@@ -10,6 +10,27 @@
 
 El E2E pipeline orquesta la generación completa de aplicaciones desde specs hasta código validado. Todas las fases corren desde un único archivo: `tests/e2e/real_e2e_full_pipeline.py`.
 
+### Quick Start
+
+```bash
+# Full E2E test with stratified architecture
+PYTHONPATH=/home/kwar/code/agentic-ai \
+EXECUTION_MODE=hybrid \
+QA_LEVEL=fast \
+QUALITY_GATE_ENV=dev \
+timeout 9000 python tests/e2e/real_e2e_full_pipeline.py tests/e2e/test_specs/ecommerce-api-spec-human.md | tee /tmp/e2e_test.log
+```
+
+**Usage**: `python tests/e2e/real_e2e_full_pipeline.py <spec_file_path>`
+
+**Environment Variables**:
+
+| Variable | Values | Default | Description |
+|----------|--------|---------|-------------|
+| `EXECUTION_MODE` | safe, hybrid, research | hybrid | Controls LLM usage |
+| `QA_LEVEL` | fast, heavy | fast | Validation depth |
+| `QUALITY_GATE_ENV` | dev, staging, production | dev | Policy strictness |
+
 ---
 
 ## Phase Architecture
@@ -261,11 +282,49 @@ Esto garantiza backward compatibility y robustez.
 
 ---
 
+## Stratified Architecture Integration
+
+El pipeline E2E integra la arquitectura estratificada (4 strata: TEMPLATE → AST → LLM → QA):
+
+### Components Initialized
+
+| Component | Purpose |
+|-----------|---------|
+| ExecutionModeManager | Controls SAFE/HYBRID/RESEARCH modes |
+| ManifestBuilder | Tracks what generated each file |
+| MetricsCollector | Time, errors, tokens by stratum |
+| QualityGate | Policy enforcement by environment |
+| GoldenAppRunner | Regression validation vs baselines |
+| SkeletonGenerator | Generates structure with LLM slots |
+| PatternPromoter | Formal criteria for stratum graduation |
+| BasicValidationPipeline | py_compile + regression patterns |
+
+### Output Artifacts
+
+After E2E run, the generated app contains:
+
+```text
+generated_app/
+├── src/
+├── tests/
+├── generation_manifest.json   ← File provenance tracking
+├── stratum_metrics.json       ← Performance by stratum
+├── quality_gate.json          ← Policy compliance result
+└── golden_app_comparison.json ← Baseline comparison
+```
+
+See [E2E_STRATIFIED_INTEGRATION_SUMMARY.md](E2E_STRATIFIED_INTEGRATION_SUMMARY.md) for full details.
+
+---
+
 ## Related Documentation
 
+- [E2E_STRATIFIED_INTEGRATION_SUMMARY.md](E2E_STRATIFIED_INTEGRATION_SUMMARY.md) - **Stratified architecture quick reference**
+- [STRATIFIED_ENHANCEMENTS_PLAN.md](STRATIFIED_ENHANCEMENTS_PLAN.md) - Full implementation details
 - [E2E_IR_CENTRIC_INTEGRATION.md](E2E_IR_CENTRIC_INTEGRATION.md) - IR architecture overview
 - [SEMANTIC_VALIDATION_ARCHITECTURE.md](SEMANTIC_VALIDATION_ARCHITECTURE.md) - Validation system
 - [PHASE_2_UNIFIED_CONSTRAINT_EXTRACTOR.md](PHASE_2_UNIFIED_CONSTRAINT_EXTRACTOR.md) - Constraint extraction
+- [phases.md](phases.md) - Phase execution order
 
 ---
 

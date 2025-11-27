@@ -6,6 +6,21 @@
 
 ---
 
+## Quick Start
+
+```bash
+# Full E2E test with stratified architecture + IR-centric generation
+PYTHONPATH=/home/kwar/code/agentic-ai \
+EXECUTION_MODE=hybrid \
+QA_LEVEL=fast \
+QUALITY_GATE_ENV=dev \
+timeout 9000 python tests/e2e/real_e2e_full_pipeline.py tests/e2e/test_specs/ecommerce-api-spec-human.md | tee /tmp/e2e_test.log
+```
+
+**Usage**: `python tests/e2e/real_e2e_full_pipeline.py <spec_file_path>`
+
+---
+
 ## Overview
 
 The E2E test has been updated to use the new **IR-centric architecture** alongside existing pipelines. This enables:
@@ -443,3 +458,13 @@ def _get_dag_nodes_from_ir(self):
 |-----------|----------------------|------------------|
 | **Phase 7 CodeRepair** | ❌ No (usa IR) | ✅ MIGRADO |
 | **Compliance detailed** | ✅ Sí (req IDs) | 🔜 Necesita IR enrichment |
+
+---
+
+## Related Documentation
+
+- [E2E_STRATIFIED_INTEGRATION_SUMMARY.md](E2E_STRATIFIED_INTEGRATION_SUMMARY.md) - **Stratified architecture quick reference**
+- [STRATIFIED_ENHANCEMENTS_PLAN.md](STRATIFIED_ENHANCEMENTS_PLAN.md) - Full stratified implementation details
+- [PIPELINE_E2E_PHASES.md](PIPELINE_E2E_PHASES.md) - Complete phase reference
+- [phases.md](phases.md) - Phase execution order
+- [SEMANTIC_VALIDATION_ARCHITECTURE.md](SEMANTIC_VALIDATION_ARCHITECTURE.md) - Validation system
