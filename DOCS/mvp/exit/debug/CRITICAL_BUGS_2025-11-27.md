@@ -36,7 +36,7 @@ El pipeline E2E mostraba resultados engañosos. Decía "✅ PASSED" con 98.6% co
 | #52 | HIGH | Code Repair | `ae608219` |
 | #53 | HIGH | Endpoint Inference | `7bae385e` |
 | #54 | MEDIUM | Test Execution | `50710ce3` |
-| #55 | LOW | Constraint Mapping | (pending commit) |
+| #55 | LOW | Constraint Mapping | `381be889` |
 
 ---
 
