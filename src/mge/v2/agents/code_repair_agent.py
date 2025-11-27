@@ -543,6 +543,27 @@ class CodeRepairAgent:
                 logger.info(f"Bug #45: Ignoring unrecognized constraint '{constraint_type}' from '{validation_str}'")
                 return True  # Treat as handled to avoid retry loop
 
+            # Bug #51 Fix: Skip constraints with invalid values
+            # Pydantic expects integers for min_length/max_length, not "none" strings
+            numeric_constraints = {'gt', 'ge', 'lt', 'le', 'min_length', 'max_length', 'min_items', 'max_items'}
+            if constraint_type in numeric_constraints:
+                # Skip if value is 'none', None, or empty
+                if constraint_value is None or str(constraint_value).lower() == 'none' or constraint_value == '':
+                    logger.info(f"Bug #51: Skipping {constraint_type}={constraint_value} (invalid numeric value)")
+                    return True  # Treat as handled
+                # Try to convert to number
+                try:
+                    constraint_value = float(constraint_value) if '.' in str(constraint_value) else int(constraint_value)
+                except (ValueError, TypeError):
+                    logger.info(f"Bug #51: Skipping {constraint_type}={constraint_value} (not a number)")
+                    return True
+
+            # Bug #51 Fix: Skip pattern constraints with 'none' value
+            if constraint_type == 'pattern':
+                if constraint_value is None or str(constraint_value).lower() == 'none' or constraint_value == '':
+                    logger.info(f"Bug #51: Skipping pattern={constraint_value} (invalid pattern)")
+                    return True
+
             # Apply constraint to schemas.py using existing AST patcher
             return self._add_field_constraint_to_schema(
                 entity_name=entity_name,
