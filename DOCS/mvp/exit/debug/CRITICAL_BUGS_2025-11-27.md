@@ -2,8 +2,8 @@
 
 **Analysis Date**: 2025-11-27
 **Test Run**: `ecommerce-api-spec-human_1764201312`
-**Status**: ✅ **COMPLETE** - 11/11 bugs fixed
-**Last Updated**: 2025-11-27 (Bug #55 fixed - ALL DONE)
+**Status**: ✅ **COMPLETE** - 12/12 bugs fixed
+**Last Updated**: 2025-11-27 (Bug #56 fixed - IR cache now invalidates when enricher changes)
 
 ---
 
@@ -37,6 +37,78 @@ El pipeline E2E mostraba resultados engañosos. Decía "✅ PASSED" con 98.6% co
 | #53 | HIGH | Endpoint Inference | `7bae385e` |
 | #54 | MEDIUM | Test Execution | `50710ce3` |
 | #55 | LOW | Constraint Mapping | `381be889` |
+| #56 | CRITICAL | IR Cache | ✅ FIXED |
+
+---
+
+## Bug #56: IR Cache No Se Invalida Cuando Cambia el Código
+
+**Severity**: CRITICAL
+**Category**: IR Cache
+**Status**: ✅ FIXED
+
+### Síntoma
+
+```
+CodeRepair (IR): 14 missing endpoints  ← debería ser 5
+Created new route file: cartitem.py
+Added endpoint POST /cartitems/{id}/checkout ← Bug #53 fix NO se aplicó!
+```
+
+Aunque Bug #53 fue commiteado, el pipeline sigue generando endpoints incorrectos para CartItem/OrderItem porque usa IR cacheado.
+
+### Root Cause
+
+El cache de IR en `.devmatrix/ir_cache/*.json` no incluye hash del código de `inferred_endpoint_enricher.py`. Cuando el código cambia, el cache debería invalidarse pero no lo hace.
+
+```bash
+# Archivos cacheados con endpoints incorrectos:
+.devmatrix/ir_cache/ecommerce-api-spec-human_25ea8d8a.json
+.devmatrix/ir_cache/ecommerce_25ea8d8a_fd400a98.json
+```
+
+### Workaround Inmediato
+
+```bash
+rm -rf .devmatrix/ir_cache/*.json
+redis-cli FLUSHALL
+```
+
+### Fix Propuesto
+
+Incluir hash del código de `inferred_endpoint_enricher.py` en la key del cache:
+
+```python
+# spec_to_application_ir.py
+def _get_cache_key(spec_hash: str) -> str:
+    enricher_hash = hashlib.md5(
+        Path("src/services/inferred_endpoint_enricher.py").read_bytes()
+    ).hexdigest()[:8]
+    return f"{spec_hash}_{enricher_hash}"
+```
+
+### Fix Aplicado
+
+Se agregó `inferred_endpoint_enricher.py` a `_get_code_version_hash()`:
+
+```python
+files_to_hash = [
+    ...
+    # Bug #56 Fix: Include enricher for cache invalidation when custom ops logic changes
+    "src/services/inferred_endpoint_enricher.py",
+]
+```
+
+### Files Changed
+
+- `src/specs/spec_to_application_ir.py` - Added enricher to code version hash
+
+### Future Improvement (Anotado)
+
+Migrar cache de archivos (`.devmatrix/ir_cache/`) a Redis con:
+- Signature strategy basada en code hash
+- Flush automático cuando cambie código IR-related
+- TTL configurado para auto-expiración
 
 ---
 

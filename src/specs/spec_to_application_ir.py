@@ -957,6 +957,8 @@ Output JSON only, no explanation:"""
             "src/services/business_logic_extractor.py",
             "src/validation/compliance_validator.py",
             "src/specs/spec_to_application_ir.py",
+            # Bug #56 Fix: Include enricher for cache invalidation when custom ops logic changes
+            "src/services/inferred_endpoint_enricher.py",
         ]
         combined = ""
         for f in files_to_hash:
