@@ -183,6 +183,9 @@ qdrant_rebuild.log
 neo4j_data/
 neo4j-data/
 
+# E2E test metrics (generated runtime data)
+tests/e2e/metrics/
+
 # Classification results
 classification_results/
 
