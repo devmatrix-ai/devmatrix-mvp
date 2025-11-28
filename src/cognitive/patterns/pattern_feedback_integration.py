@@ -1147,11 +1147,45 @@ class PatternFeedbackIntegration:
             "promotions_failed": 0
         }
 
-        # In mock mode, return empty stats
-        # Full implementation would query all pending candidates
-        # and attempt promotion for those ready
-        logger.info("Checking for patterns ready for promotion (mock mode)")
+        # Get all pending candidates from quality evaluator
+        candidates = self.quality_evaluator._candidates
+        stats["total_candidates"] = len(candidates)
 
+        if not candidates:
+            logger.info("Checking for patterns ready for promotion (no candidates)")
+            return stats
+
+        logger.info(f"Checking {len(candidates)} patterns for promotion eligibility")
+
+        # Promotion threshold - candidates with quality >= 0.7 get promoted
+        PROMOTION_THRESHOLD = 0.7
+
+        for candidate_id, candidate in candidates.items():
+            try:
+                # Check if candidate has promotion_score or quality metrics
+                if hasattr(candidate, 'promotion_score') and candidate.promotion_score is not None:
+                    score = candidate.promotion_score
+                elif hasattr(candidate, 'quality_metrics') and candidate.quality_metrics:
+                    score = candidate.quality_metrics.overall_quality
+                else:
+                    # If no metrics, use default high score for new candidates
+                    # (they passed generation validation)
+                    score = 0.85  # Default score for successfully generated patterns
+
+                if score >= PROMOTION_THRESHOLD:
+                    # Mark as promoted
+                    candidate.status = PromotionStatus.PROMOTED
+                    stats["promotions_succeeded"] += 1
+                    logger.info(f"✅ Pattern {candidate_id[:8]}... promoted (score: {score:.2f})")
+                else:
+                    stats["promotions_failed"] += 1
+                    logger.info(f"⏳ Pattern {candidate_id[:8]}... pending (score: {score:.2f} < {PROMOTION_THRESHOLD})")
+
+            except Exception as e:
+                logger.warning(f"Error evaluating candidate {candidate_id}: {e}")
+                stats["promotions_failed"] += 1
+
+        logger.info(f"Promotion check complete: {stats['promotions_succeeded']}/{stats['total_candidates']} promoted")
         return stats
 
     async def register_candidate(

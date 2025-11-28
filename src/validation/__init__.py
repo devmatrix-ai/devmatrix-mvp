@@ -25,6 +25,17 @@ from .runtime_smoke_validator import (
     run_smoke_test,
 )
 
+# Bug #107: LLM-Driven Smoke Test Generation
+from .smoke_test_models import (
+    TestScenario,
+    SeedDataEntity,
+    SmokeTestPlan,
+    ScenarioResult,
+    TestMetrics,
+    SmokeTestReport,
+)
+from .smoke_test_orchestrator import SmokeTestOrchestrator
+
 __all__ = [
     'AtomicValidator',
     'AtomicValidationResult',
@@ -42,4 +53,12 @@ __all__ = [
     'SmokeTestResult',
     'EndpointTestResult',
     'run_smoke_test',
+    # Bug #107: LLM-Driven Smoke Test Generation
+    'TestScenario',
+    'SeedDataEntity',
+    'SmokeTestPlan',
+    'ScenarioResult',
+    'TestMetrics',
+    'SmokeTestReport',
+    'SmokeTestOrchestrator',
 ]

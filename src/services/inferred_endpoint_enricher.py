@@ -320,6 +320,24 @@ class InferredEndpointEnricher:
             "pagar": ("POST", "/pay"),
         }
 
+        # Bug #72 Fix: Map operations to their VALID target entities
+        # Operations should only be placed on semantically appropriate resources
+        OPERATION_VALID_ENTITIES = {
+            # Checkout should only be on Cart, not on Product/Order
+            "checkout": {"cart", "carrito"},
+            # Pay should only be on Order, not on Product/Cart
+            "pay": {"order", "orden", "pedido"},
+            "pagar": {"order", "orden", "pedido"},
+            # Cancel should only be on Order, not on Product/Cart
+            "cancel": {"order", "orden", "pedido"},
+            "cancelar": {"order", "orden", "pedido"},
+            # Deactivate/activate can be on Product (inventory management)
+            "deactivate": {"product", "producto"},
+            "desactivar": {"product", "producto"},
+            "activate": {"product", "producto"},
+            "activar": {"product", "producto"},
+        }
+
         for flow in flows_data:
             flow_name = flow.get("name", "").lower()
             flow_desc = flow.get("description", "").lower()
@@ -328,6 +346,9 @@ class InferredEndpointEnricher:
             # Check if flow name contains custom operation
             for operation, (method, path_suffix) in CUSTOM_OPS.items():
                 if operation in flow_name or operation in flow_desc:
+                    # Bug #72 Fix: Get valid entities for this operation
+                    valid_entities = OPERATION_VALID_ENTITIES.get(operation)
+
                     # Infer resource from target entities
                     for entity in target_entities:
                         entity_lower = entity.lower()
@@ -337,6 +358,11 @@ class InferredEndpointEnricher:
                         ITEM_ENTITIES = {"cartitem", "orderitem", "lineitem", "item"}
                         if entity_lower in ITEM_ENTITIES:
                             logger.debug(f"  - Bug #53: Skipping {entity} for {operation} (sub-item entity)")
+                            continue
+
+                        # Bug #72 Fix: Skip entities that are NOT valid targets for this operation
+                        if valid_entities and entity_lower not in valid_entities:
+                            logger.debug(f"  - Bug #72: Skipping {entity} for {operation} (not a valid target: {valid_entities})")
                             continue
 
                         # Pluralize entity name
@@ -401,7 +427,8 @@ class InferredEndpointEnricher:
             for child_pattern, (parent_singular, parent_plural, item_name, item_id_field) in NESTED_PATTERNS.items():
                 if child_pattern in entity_lower:
                     # Infer: PUT /parents/{id}/items/{item_id}
-                    add_path = f"/{parent_plural}/{{id}}/{item_name}s/{{" + item_id_field + "}}"
+                    # Bug #80c Fix: Use proper f-string escaping - was double "}}" causing malformed paths
+                    add_path = f"/{parent_plural}/{{id}}/{item_name}s/{{{item_id_field}}}"
                     add_normalized = self._normalize_path(add_path)
 
                     if ("PUT", add_normalized) not in existing:
@@ -439,7 +466,8 @@ class InferredEndpointEnricher:
                         logger.debug(f"  + Inferred nested: PUT {add_path}")
 
                     # Infer: DELETE /parents/{id}/items/{item_id}
-                    delete_path = f"/{parent_plural}/{{id}}/{item_name}s/{{" + item_id_field + "}}"
+                    # Bug #80c Fix: Use proper f-string escaping - was double "}}" causing malformed paths
+                    delete_path = f"/{parent_plural}/{{id}}/{item_name}s/{{{item_id_field}}}"
                     delete_normalized = self._normalize_path(delete_path)
 
                     if ("DELETE", delete_normalized) not in existing:

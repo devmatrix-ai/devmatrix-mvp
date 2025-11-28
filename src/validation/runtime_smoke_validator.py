@@ -59,15 +59,19 @@ class RuntimeSmokeTestValidator:
     Feeds failures back to Code Repair for automated fixes.
 
     Phase 7.5 in the E2E pipeline.
+
+    Bug #85 Fix: Uses Docker with seed data for realistic testing.
+    Docker's db-init service creates tables + test data before app starts.
+    Falls back to uvicorn if docker-compose.yml is not available.
     """
 
     def __init__(
         self,
         app_dir: Path,
         host: str = "127.0.0.1",
-        port: int = 8099,  # Use high port to avoid conflicts
+        port: int = 8002,  # Bug #85: Docker exposes on 8002
         max_iterations: int = 3,
-        startup_timeout: float = 30.0,
+        startup_timeout: float = 90.0,  # Bug #85: Docker needs more time
         request_timeout: float = 10.0
     ):
         self.app_dir = Path(app_dir)
@@ -78,6 +82,8 @@ class RuntimeSmokeTestValidator:
         self.request_timeout = request_timeout
         self.server_process: Optional[subprocess.Popen] = None
         self.base_url = f"http://{host}:{port}"
+        # Bug #85: Track if using Docker for proper cleanup
+        self._using_docker = False
 
     async def validate(self, ir: ApplicationIR) -> SmokeTestResult:
         """
@@ -97,6 +103,9 @@ class RuntimeSmokeTestValidator:
             logger.info(f"✅ Server started in {server_startup_time:.0f}ms at {self.base_url}")
         except Exception as e:
             logger.error(f"❌ Failed to start server: {e}")
+            # Bug #91 Fix: Always cleanup Docker even when startup fails
+            # Docker may have started but _wait_for_server timed out
+            await self._stop_server()
             return SmokeTestResult(
                 passed=False,
                 endpoints_tested=0,
@@ -118,6 +127,9 @@ class RuntimeSmokeTestValidator:
             # 2. Get endpoints from IR
             endpoints = self._get_endpoints_from_ir(ir)
             logger.info(f"🔍 Testing {len(endpoints)} endpoints...")
+
+            # Bug #85: With Docker, seed data is created by db-init service
+            # No need to create resources manually - they exist in the database
 
             # 3. Test each endpoint
             for endpoint in endpoints:
@@ -164,19 +176,77 @@ class RuntimeSmokeTestValidator:
         return endpoints
 
     async def _start_server(self) -> None:
-        """Start uvicorn server for the generated app."""
+        """
+        Start the generated app using docker-compose.
+
+        Bug #85 Fix: Uses Docker instead of uvicorn for realistic testing.
+        Docker runs migrations + seed data before starting the app.
+        """
         # Ensure any previous server is stopped
         await self._stop_server()
 
-        # Prepare environment
+        docker_dir = self.app_dir / "docker"
+
+        # Check if docker-compose.yml exists
+        if not (docker_dir / "docker-compose.yml").exists():
+            logger.warning("⚠️ docker-compose.yml not found, falling back to uvicorn")
+            await self._start_uvicorn_server()
+            return
+
+        # Start docker compose
+        # Bug #85 Fix: Use relative path from app_dir since cwd=app_dir
+        # Bug #86 Fix: Use 'docker compose' (v2) instead of 'docker-compose' for WSL 2
+        cmd = [
+            'docker', 'compose',
+            '-f', 'docker/docker-compose.yml',
+            'up', '-d', '--build'
+        ]
+
+        logger.info(f"🐳 Starting Docker: {' '.join(cmd)}")
+
+        result = subprocess.run(
+            cmd,
+            cwd=str(self.app_dir),
+            capture_output=True,
+            text=True,
+            timeout=120  # 2 min timeout for build
+        )
+
+        # Bug #89 Fix: Don't treat stderr warnings as errors when Docker succeeds
+        # Docker compose v2 outputs "version is obsolete" warning on stderr even on success
+        # Also check combined output for success indicators regardless of returncode
+        stderr_lower = (result.stderr or '').lower()
+        stdout_combined = f"{result.stdout or ''}\n{result.stderr or ''}"
+
+        # Check if this is actually a success with warnings
+        success_indicators = ['built', 'started', 'running', 'created']
+        has_success = any(ind in stdout_combined.lower() for ind in success_indicators)
+
+        # Known harmless warnings to ignore
+        harmless_warnings = ['version is obsolete', 'pull access denied', 'network already exists']
+        is_harmless = any(warn in stderr_lower for warn in harmless_warnings)
+
+        # Only fail if returncode != 0 AND no success indicators AND error is not harmless
+        if result.returncode != 0 and not has_success and not is_harmless:
+            error_msg = result.stderr or result.stdout or "Unknown error"
+            raise RuntimeError(f"Docker-compose failed: {error_msg[:500]}")
+
+        # Mark that we're using Docker (for cleanup)
+        self._using_docker = True
+        self.server_process = None  # No process to track with Docker
+
+        # Wait for server to be ready
+        await self._wait_for_server()
+
+    async def _start_uvicorn_server(self) -> None:
+        """Fallback: Start uvicorn directly (for apps without Docker)."""
         env = {
             **dict(__import__('os').environ),
             'PYTHONPATH': str(self.app_dir),
-            'DATABASE_URL': 'sqlite+aiosqlite:///./smoke_test.db',  # Use SQLite for smoke test
+            'DATABASE_URL': 'sqlite+aiosqlite:///:memory:?cache=shared',
             'TESTING': 'true',
         }
 
-        # Start uvicorn
         cmd = [
             sys.executable, '-m', 'uvicorn',
             'src.main:app',
@@ -185,7 +255,7 @@ class RuntimeSmokeTestValidator:
             '--log-level', 'warning',
         ]
 
-        logger.info(f"Starting server: {' '.join(cmd)}")
+        logger.info(f"Starting uvicorn: {' '.join(cmd)}")
 
         self.server_process = subprocess.Popen(
             cmd,
@@ -195,6 +265,7 @@ class RuntimeSmokeTestValidator:
             stderr=subprocess.PIPE,
             preexec_fn=__import__('os').setsid if hasattr(__import__('os'), 'setsid') else None
         )
+        self._using_docker = False
 
         # Wait for server to be ready
         await self._wait_for_server()
@@ -232,7 +303,26 @@ class RuntimeSmokeTestValidator:
         raise TimeoutError(f"Server did not become ready within {self.startup_timeout}s. Last error: {last_error}")
 
     async def _stop_server(self) -> None:
-        """Stop the uvicorn server."""
+        """Stop the server (Docker or uvicorn)."""
+        # Bug #85: Handle Docker shutdown
+        if self._using_docker:
+            try:
+                # Bug #85 Fix: Use relative path from app_dir since cwd=app_dir
+                # Bug #86 Fix: Use 'docker compose' (v2) for WSL 2
+                cmd = [
+                    'docker', 'compose',
+                    '-f', 'docker/docker-compose.yml',
+                    'down', '-v', '--remove-orphans'
+                ]
+                logger.info(f"🐳 Stopping Docker: {' '.join(cmd)}")
+                subprocess.run(cmd, cwd=str(self.app_dir), capture_output=True, timeout=30)
+            except Exception as e:
+                logger.warning(f"Error stopping Docker: {e}")
+            finally:
+                self._using_docker = False
+            return
+
+        # Handle uvicorn shutdown
         if self.server_process:
             try:
                 # Try graceful shutdown first
@@ -345,22 +435,50 @@ class RuntimeSmokeTestValidator:
 
     def _substitute_path_params(self, path: str) -> str:
         """Replace path parameters like {id} with test values."""
-        # Replace common path parameters
-        substitutions = {
-            r'\{id\}': 'test-id-123',
-            r'\{product_id\}': 'test-product-123',
-            r'\{customer_id\}': 'test-customer-123',
-            r'\{cart_id\}': 'test-cart-123',
-            r'\{order_id\}': 'test-order-123',
-            r'\{item_id\}': 'test-item-123',
-            r'\{user_id\}': 'test-user-123',
-            r'\{[a-z_]+_id\}': 'test-id-123',  # Generic *_id pattern
-            r'\{[a-z_]+\}': 'test-value',  # Any other parameter
-        }
+        # Bug #85: Use predictable UUIDs that match seed data
+        # Each resource type gets its own UUID
+        uuid_product = '00000000-0000-4000-8000-000000000001'
+        uuid_customer = '00000000-0000-4000-8000-000000000002'
+        uuid_cart = '00000000-0000-4000-8000-000000000003'
+        uuid_order = '00000000-0000-4000-8000-000000000005'  # Bug #107: Was 004, seed uses 005
+        uuid_item = '00000000-0000-4000-8000-000000000006'
+        uuid_generic = '00000000-0000-4000-8000-000000000099'
+
+        # Map path patterns to their specific UUIDs
+        # Order matters: specific patterns first, generic last
+        substitutions = [
+            (r'\{product_id\}', uuid_product),
+            (r'\{customer_id\}', uuid_customer),
+            (r'\{cart_id\}', uuid_cart),
+            (r'\{order_id\}', uuid_order),
+            (r'\{item_id\}', uuid_item),
+            (r'\{user_id\}', uuid_customer),  # user_id often maps to customer
+        ]
 
         result = path
-        for pattern, replacement in substitutions.items():
+
+        # Apply specific substitutions first
+        for pattern, replacement in substitutions:
             result = re.sub(pattern, replacement, result)
+
+        # Handle generic {id} based on path context
+        if '{id}' in result:
+            if '/products' in path:
+                result = result.replace('{id}', uuid_product)
+            elif '/customers' in path:
+                result = result.replace('{id}', uuid_customer)
+            elif '/carts' in path:
+                result = result.replace('{id}', uuid_cart)
+            elif '/orders' in path:
+                result = result.replace('{id}', uuid_order)
+            else:
+                result = result.replace('{id}', uuid_generic)
+
+        # Handle any remaining *_id patterns
+        result = re.sub(r'\{[a-z_]+_id\}', uuid_generic, result)
+
+        # Non-ID parameters can be strings
+        result = re.sub(r'\{[a-z_]+\}', 'test-value', result)
 
         return result
 
@@ -454,16 +572,19 @@ class RuntimeSmokeTestValidator:
                 'full_name': 'Test Customer'
             }
         elif entity == 'cart':
+            # Bug #85: Use UUID that matches seed data for customer
             return {
-                'customer_id': 'test-customer-123'
+                'customer_id': '00000000-0000-4000-8000-000000000002'  # Customer UUID
             }
         elif entity in ['order', 'order']:
+            # Bug #85: Use UUID that matches seed data for customer
             return {
-                'customer_id': 'test-customer-123'
+                'customer_id': '00000000-0000-4000-8000-000000000002'  # Customer UUID
             }
         elif 'item' in (entity or ''):
+            # Bug #85: Use UUIDs that match seed data
             return {
-                'product_id': 'test-product-123',
+                'product_id': '00000000-0000-4000-8000-000000000001',  # Product UUID
                 'quantity': 1
             }
 

@@ -15,6 +15,9 @@ Date: 2025-11-20
 from typing import Dict, List
 from dataclasses import dataclass
 
+# Bug #81 Fix: Import advanced service generator with custom operation methods
+from src.services.production_code_generators import generate_service_method
+
 
 @dataclass
 class EntitySpec:
@@ -67,10 +70,15 @@ class ModularArchitectureGenerator:
             files[repo_file] = self._generate_repository(entity)
 
         # 4. Services (business logic)
+        # Bug #109: Pass all_entities for dynamic relationship detection
         files["src/services/__init__.py"] = ""
         for entity in spec_requirements.entities:
             service_file = f"src/services/{entity.snake_name}_service.py"
-            files[service_file] = self._generate_service(entity)
+            files[service_file] = self._generate_service(
+                entity,
+                all_entities=spec_requirements.entities,
+                ir=getattr(spec_requirements, 'ir', None)
+            )
 
         # 5. API routes
         files["src/api/__init__.py"] = ""
@@ -216,9 +224,10 @@ async def get_db() -> AsyncSession:
             for field in entity.fields:
                 if field.name not in ['id', 'created_at', 'updated_at']:
                     field_type = self._map_field_type(field.type)
-                    # For enums in update schema
-                    if hasattr(field, 'enum_values') and field.enum_values:
-                        enum_str = ', '.join(f"'{v}'" for v in field.enum_values)
+                    # Bug #102 Fix: Look for enum_values in constraints, not field directly
+                    enum_values = self._get_enum_values(field)
+                    if enum_values:
+                        enum_str = ', '.join(f"'{v}'" for v in enum_values)
                         field_type = f"Literal[{enum_str}]"
                     code_parts.append(f'    {field.name}: Optional[{field_type}] = None')
             code_parts.append('')
@@ -234,28 +243,45 @@ async def get_db() -> AsyncSession:
 
         return '\n'.join(code_parts)
     
+    def _get_enum_values(self, field) -> list:
+        """Bug #102 Fix: Get enum values from field, checking constraints dict first."""
+        # Check constraints dict (IR standard location)
+        constraints = getattr(field, 'constraints', None) or {}
+        if isinstance(constraints, dict):
+            enum_values = constraints.get('enum_values', None)
+            if enum_values:
+                return enum_values
+        else:
+            enum_values = getattr(constraints, 'enum_values', None)
+            if enum_values:
+                return enum_values
+
+        # Fallback: check direct attribute (legacy support)
+        return getattr(field, 'enum_values', None) or getattr(field, 'allowed_values', None)
+
     def _generate_pydantic_field(self, field) -> str:
         """Generate Pydantic field with Field() and all validations"""
         field_type = self._map_field_type(field.type)
-        
-        # Handle enums
-        if hasattr(field, 'enum_values') and field.enum_values:
-            enum_str = ', '.join(f"'{v}'" for v in field.enum_values)
+
+        # Bug #102 Fix: Get enum_values properly
+        enum_values = self._get_enum_values(field)
+        if enum_values:
+            enum_str = ', '.join(f"'{v}'" for v in enum_values)
             field_type = f"Literal[{enum_str}]"
-        
+
         # Handle Optional
         if not field.required:
             field_type = f"Optional[{field_type}]"
-        
+
         # Build Field() arguments
         field_args = []
-        
+
         # Required or default
         if field.required:
             field_args.append("...")
         elif field.default:
             # For enums and booleans, use the value directly
-            if hasattr(field, 'enum_values') and field.enum_values:
+            if enum_values:
                 field_args.append(f"'{field.default}'")
             elif field.type.lower() == 'boolean':
                 field_args.append(str(field.default))
@@ -271,8 +297,11 @@ async def get_db() -> AsyncSession:
                 # Add email pattern
                 field_args.append("pattern=r'^[^@]+@[^@]+\\.[^@]+$'")
             elif constraint == 'uuid_format':
-                # UUID pattern
-                field_args.append("pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'")
+                # Bug #103 Fix: Do NOT add pattern= to UUID fields
+                # The UUID type in Pydantic already validates format correctly
+                # Adding pattern= forces string type validation, causing ValidationError
+                # when SQLAlchemy returns actual UUID objects from the database
+                pass  # UUID type validates format automatically
         
         # Add length constraints if present
         if hasattr(field, 'min_length') and field.min_length is not None:
@@ -280,9 +309,14 @@ async def get_db() -> AsyncSession:
         if hasattr(field, 'max_length') and field.max_length is not None:
             field_args.append(f"max_length={field.max_length}")
         
-        # Add pattern if present
+        # Add pattern if present (Bug #103: Skip for UUID fields)
         if hasattr(field, 'pattern') and field.pattern:
-            field_args.append(f"pattern=r'{field.pattern}'")
+            # Bug #103 Fix: Do NOT add pattern= to UUID fields
+            # The UUID type in Pydantic already validates format correctly
+            # Adding pattern= forces string type validation, causing ValidationError
+            # when SQLAlchemy returns actual UUID objects from the database
+            if field.type.lower() not in ['uuid', 'guid']:
+                field_args.append(f"pattern=r'{field.pattern}'")
         
         # Add description for metadata
         if field.description:
@@ -395,7 +429,7 @@ async def get_db() -> AsyncSession:
             # Simple defaults handling
             if field.type.lower() == 'boolean':
                 col_parts.append(f"default={field.default}")
-            elif hasattr(field, 'enum_values') and field.enum_values:
+            elif self._get_enum_values(field):  # Bug #102 Fix
                 col_parts.append(f"default='{field.default}'")
             else:
                 col_parts.append(f"default='{field.default}'")
@@ -569,64 +603,49 @@ class {entity_name}Repository:
         return True
 '''
 
-    def _generate_service(self, entity) -> str:
-        """Generate service for entity (Task 2.5)"""
-        entity_name = entity.name
-        entity_snake = entity.snake_name
+    def _generate_service(self, entity, all_entities=None, ir=None) -> str:
+        """
+        Generate service for entity (Task 2.5)
 
-        return f'''"""
-{entity_name} Service
-Business logic for {entity_snake} operations
-"""
+        Bug #81 Fix: Use generate_service_method() from production_code_generators
+        to include custom operation methods (pay, cancel, checkout, activate, deactivate)
+        based on entity field detection.
 
-from uuid import UUID
-from typing import Optional, List
-from src.repositories.{entity_snake}_repository import {entity_name}Repository
-from src.models.schemas import {entity_name}Create, {entity_name}Update, {entity_name}
-from src.models.entities import {entity_name}Entity
+        Bug #109: Pass IR and all_entities for dynamic field detection.
+        """
+        # Convert entity.fields to the format expected by generate_service_method
+        # which needs a list of dicts with 'name' key for field detection
+        attributes = []
+        if hasattr(entity, 'fields'):
+            for field in entity.fields:
+                if isinstance(field, dict):
+                    attributes.append(field)
+                elif hasattr(field, 'name'):
+                    # Bug #109: Include more field info for IR-based detection
+                    field_dict = {'name': field.name}
+                    if hasattr(field, 'data_type'):
+                        field_dict['data_type'] = field.data_type
+                    if hasattr(field, 'constraints'):
+                        field_dict['constraints'] = field.constraints
+                    if hasattr(field, 'default_value'):
+                        field_dict['default_value'] = field.default_value
+                    attributes.append(field_dict)
 
+        # Bug #109: Convert all_entities to list of dicts for relationship detection
+        entities_list = []
+        if all_entities:
+            for e in all_entities:
+                entity_dict = {'name': e.name if hasattr(e, 'name') else e.get('name', ''), 'fields': []}
+                if hasattr(e, 'fields'):
+                    for f in e.fields:
+                        if isinstance(f, dict):
+                            entity_dict['fields'].append(f)
+                        elif hasattr(f, 'name'):
+                            entity_dict['fields'].append({'name': f.name})
+                entities_list.append(entity_dict)
 
-class {entity_name}Service:
-    """Business logic for {entity_snake}"""
-
-    def __init__(self, repository: {entity_name}Repository):
-        self.repo = repository
-
-    async def create(self, data: {entity_name}Create) -> {entity_name}:
-        """Create new {entity_snake} with business validation"""
-        entity = await self.repo.create(data)
-        return {entity_name}.model_validate(entity)
-
-    async def get(self, id: UUID) -> Optional[{entity_name}]:
-        """Get {entity_snake} by ID"""
-        entity = await self.repo.get(id)
-        if not entity:
-            return None
-        return {entity_name}.model_validate(entity)
-
-    async def list(self, page: int = 1, size: int = 10) -> dict:
-        """List {entity_snake} with pagination"""
-        skip = (page - 1) * size
-        entities = await self.repo.list(skip=skip, limit=size)
-
-        return {{
-            "items": [{entity_name}.model_validate(e) for e in entities],
-            "total": len(entities),
-            "page": page,
-            "size": size
-        }}
-
-    async def update(self, id: UUID, data: {entity_name}Update) -> Optional[{entity_name}]:
-        """Update {entity_snake}"""
-        entity = await self.repo.update(id, data)
-        if not entity:
-            return None
-        return {entity_name}.model_validate(entity)
-
-    async def delete(self, id: UUID) -> bool:
-        """Delete {entity_snake}"""
-        return await self.repo.delete(id)
-'''
+        # Use the advanced service generator that includes custom operations
+        return generate_service_method(entity.name, attributes, ir=ir, all_entities=entities_list)
 
     def _generate_dependencies(self, spec_requirements) -> str:
         """Generate src/api/dependencies.py (Task 2.6)"""

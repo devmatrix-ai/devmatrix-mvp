@@ -36,6 +36,7 @@ timeout 9000 python tests/e2e/real_e2e_full_pipeline.py tests/e2e/test_specs/eco
 | 6.6 | IR Service Generation | `Phase 6.6 block` | ✅ **REQUIERE** | ServiceGeneratorFromIR (BehaviorModelIR → services) |
 | 7 | Code Repair | `_phase_code_repair()` | ✅ **MIGRADO** | Usa ApplicationIR (DomainModelIR, APIModelIR) con fallback legacy |
 | 8 | Test Execution | `_phase_test_execution()` | ❌ | pytest execution + coverage |
+| 8.5 | Runtime Smoke Test | `_phase_8_5_runtime_smoke_test()` | ✅ | Docker compose + seed_db + HTTP endpoint validation |
 | 9 | Validation | `_phase_9_validation()` | ✅ **REQUIERE** | Compliance check contra ApplicationIR |
 | 10 | Health Verification | `_phase_10_health_verification()` | ❌ | Verifica app está ready |
 | 11 | Learning | `_phase_11_learning()` | ❌ | Registra patrones exitosos |
@@ -83,6 +84,7 @@ Spec (Natural Language)
          ┌────────────────────────────────────┐
          │  Phase 7: Code Repair (usa IR) ✅  │
          │  Phase 8: Test Execution           │
+         │  Phase 8.5: Runtime Smoke Test ✅  │
          └────────────────────────────────────┘
                  │
                  ▼
@@ -120,12 +122,13 @@ Spec (Natural Language)
 | **Fase 6.5** | ✅ **REQUIERE** | ValidationModelIR → pytest tests |
 | **Fase 6.6** | ✅ **REQUIERE** | BehaviorModelIR → service methods |
 
-### Refinement (Fases 7-8) - Post-Generation
+### Refinement (Fases 7-8.5) - Post-Generation
 
 | Fase | IR Usage | Descripción |
 |------|----------|-------------|
 | **Fase 7** | ✅ **MIGRADO** | Usa ApplicationIR (DomainModelIR, APIModelIR) |
 | **Fase 8** | ❌ | Ejecuta tests (output) |
+| **Fase 8.5** | ✅ | Runtime smoke test con Docker + seed_db.py |
 
 ### Validation & Learning (Fases 9-11)
 
@@ -156,7 +159,34 @@ Spec (Natural Language)
 | `generate_from_application_ir()` | ApplicationIR | Generated code |
 | `TestGeneratorFromIR` | ValidationModelIR | pytest tests |
 | `ServiceGeneratorFromIR` | BehaviorModelIR | service methods |
+| `RuntimeSmokeValidator` | ApplicationIR | smoke test results |
 | `ComplianceValidator` | ApplicationIR + code | compliance report |
+
+---
+
+## Phase 8.5: Runtime Smoke Test
+
+**Purpose**: Validación en runtime de la aplicación generada con Docker
+
+**Components**:
+1. **Docker Compose**: Levanta PostgreSQL + API server
+2. **seed_db.py**: Genera datos de prueba desde DomainModelIR
+3. **Smoke Tests**: Prueba HTTP endpoints con UUIDs predecibles
+
+**IR Usage**:
+- Genera `seed_db.py` desde DomainModelIR (entities + constraints)
+- Lee `enum_values` desde `attr.constraints.enum_values`
+- Genera UUIDs predecibles para cada entity type
+
+**Key Files**:
+- `runtime_smoke_validator.py`: Orchestrates Docker + smoke tests
+- `code_generation_service.py`: Generates seed_db.py template
+- `real_e2e_full_pipeline.py:_phase_8_5_runtime_smoke_test()`
+
+**Bug History** (Nov 27, 2025):
+- Bug #97-102: seed_db.py generation fixes for IR attribute names
+- Bug #101: Pipeline now correctly reports FAILED when smoke test fails
+- Bug #102: Fixed enum_values lookup (constraints dict vs direct attr)
 
 ---
 

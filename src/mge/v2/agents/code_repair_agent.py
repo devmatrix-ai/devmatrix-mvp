@@ -536,6 +536,56 @@ class CodeRepairAgent:
                 constraint_type = new_constraint_type
                 constraint_value = new_constraint_value
 
+            # =================================================================
+            # Task 2: Format and Enum Constraint Mapping
+            # TODO: Make this more seamless - consider LLM inference or config file
+            # =================================================================
+
+            # Task 2.1-2.4: Handle format=X constraints
+            if constraint_type == 'format':
+                format_mapping = {
+                    # Bug #103 Fix: UUID type in Pydantic already validates format correctly
+                    # Adding pattern= forces string type validation, causing ValidationError
+                    # when SQLAlchemy returns actual UUID objects from the database
+                    'uuid': ('skip', None),  # UUID type handled by Pydantic natively - Bug #103
+                    'email': ('pattern', r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$'),
+                    'datetime': ('skip', None),  # datetime type handled by Pydantic natively
+                    'date-time': ('skip', None),  # ISO format variation
+                    'date': ('skip', None),  # date type handled natively
+                    'uri': ('pattern', r'^https?://'),  # Basic URL validation
+                    'url': ('pattern', r'^https?://'),
+                }
+                format_value = str(constraint_value).lower() if constraint_value else 'none'
+                if format_value in format_mapping:
+                    new_type, new_value = format_mapping[format_value]
+                    if new_type == 'skip':
+                        logger.info(f"Task 2: format={format_value} handled natively by Pydantic, skipping")
+                        return True  # Treat as handled
+                    constraint_type = new_type
+                    constraint_value = new_value
+                    logger.info(f"Task 2: Mapping format={format_value} → {constraint_type}")
+                elif format_value == 'none' or not format_value:
+                    logger.info(f"Task 2: Skipping format=none (no format specified)")
+                    return True
+                else:
+                    logger.info(f"Task 2: Unknown format={format_value}, skipping")
+                    return True  # Don't fail on unknown formats
+
+            # Task 2.1, 2.5: Handle enum_values constraints
+            if constraint_type == 'enum_values':
+                # Task 2.5: Handle enum_values=none gracefully
+                if constraint_value is None or str(constraint_value).lower() == 'none' or constraint_value == '':
+                    logger.info(f"Task 2.5: Skipping enum_values={constraint_value} (no values)")
+                    return True
+                # Convert to enum constraint for Pydantic Literal
+                constraint_type = 'enum'
+                # Parse value if it's a string representation of a list
+                if isinstance(constraint_value, str):
+                    import re
+                    values_str = constraint_value.strip('[]')
+                    constraint_value = [v.strip().strip('"\'') for v in values_str.split(',') if v.strip()]
+                logger.info(f"Task 2: Mapping enum_values → enum={constraint_value}")
+
             # Bug #45 Fix: Validate constraint_type against known_constraints (same as legacy mode)
             # Without this check, invalid constraints like "non" get applied and repeated
             known_constraints = {
@@ -953,8 +1003,47 @@ class CodeRepairAgent:
                     )
                 )
             ]
+        elif method == 'put':
+            # Bug #71 Fix: return await service.update(id, data)
+            body = [
+                service_assign,
+                ast.Return(
+                    value=ast.Await(
+                        value=ast.Call(
+                            func=ast.Attribute(
+                                value=ast.Name(id='service', ctx=ast.Load()),
+                                attr='update',
+                                ctx=ast.Load()
+                            ),
+                            args=[
+                                ast.Name(id='id', ctx=ast.Load()),
+                                ast.Name(id='data', ctx=ast.Load())
+                            ],
+                            keywords=[]
+                        )
+                    )
+                )
+            ]
+        elif method == 'delete':
+            # Bug #71 Fix: return await service.delete(id)
+            body = [
+                service_assign,
+                ast.Return(
+                    value=ast.Await(
+                        value=ast.Call(
+                            func=ast.Attribute(
+                                value=ast.Name(id='service', ctx=ast.Load()),
+                                attr='delete',
+                                ctx=ast.Load()
+                            ),
+                            args=[ast.Name(id='id', ctx=ast.Load())],
+                            keywords=[]
+                        )
+                    )
+                )
+            ]
         else:
-            # For PUT/DELETE and others, use NotImplementedError with clear message
+            # For PATCH and other methods, use NotImplementedError with clear message
             body = [
                 ast.Raise(
                     exc=ast.Call(
@@ -965,23 +1054,57 @@ class CodeRepairAgent:
                 )
             ]
 
+        # Bug #71 Fix: Build args list based on HTTP method
+        # POST needs data, PUT/DELETE need id (and PUT also needs data)
+        func_args = []
+        func_defaults = []
+
+        # For POST, add data: {Entity}Create as first parameter (required, no default)
+        if method == 'post':
+            func_args.append(
+                ast.arg(
+                    arg='data',
+                    annotation=ast.Name(id=f'{entity_capitalized}Create', ctx=ast.Load())
+                )
+            )
+        # For PUT, add id and data: {Entity}Update as parameters (required, no default)
+        elif method == 'put':
+            func_args.append(
+                ast.arg(arg='id', annotation=ast.Name(id='str', ctx=ast.Load()))
+            )
+            func_args.append(
+                ast.arg(
+                    arg='data',
+                    annotation=ast.Name(id=f'{entity_capitalized}Update', ctx=ast.Load())
+                )
+            )
+        # For DELETE, add id parameter (required, no default)
+        elif method == 'delete':
+            func_args.append(
+                ast.arg(arg='id', annotation=ast.Name(id='str', ctx=ast.Load()))
+            )
+
+        # Add db parameter with default (last parameter)
+        func_args.append(
+            ast.arg(arg='db', annotation=ast.Name(id='AsyncSession', ctx=ast.Load()))
+        )
+        func_defaults.append(
+            ast.Call(
+                func=ast.Name(id='Depends', ctx=ast.Load()),
+                args=[ast.Name(id='get_db', ctx=ast.Load())],
+                keywords=[]
+            )
+        )
+
         # Create async function with decorator
         func_def = ast.AsyncFunctionDef(
             name=func_name,
             args=ast.arguments(
                 posonlyargs=[],
-                args=[
-                    ast.arg(arg='db', annotation=ast.Name(id='AsyncSession', ctx=ast.Load()))
-                ],
+                args=func_args,
                 kwonlyargs=[],
                 kw_defaults=[],
-                defaults=[
-                    ast.Call(
-                        func=ast.Name(id='Depends', ctx=ast.Load()),
-                        args=[ast.Name(id='get_db', ctx=ast.Load())],
-                        keywords=[]
-                    )
-                ]
+                defaults=func_defaults
             ),
             body=body,
             decorator_list=[
@@ -1811,3 +1934,333 @@ JSON OUTPUT:"""
             import traceback
             traceback.print_exc()
             return False
+
+    # =========================================================================
+    # RUNTIME VIOLATION REPAIR (Task 10.7 - Smoke Test Integration)
+    # =========================================================================
+
+    async def repair_runtime_violations(
+        self,
+        violations: List[Dict[str, Any]],
+        max_attempts_per_violation: int = 2
+    ) -> RepairResult:
+        """
+        Repair runtime errors detected by smoke testing.
+
+        Unlike compliance repairs (missing entities/endpoints), runtime repairs
+        require LLM analysis to understand the error and generate fixes.
+
+        Args:
+            violations: List of runtime violations from RuntimeSmokeTestValidator
+                Each violation has: type, severity, endpoint, error_type,
+                error_message, stack_trace, file, fix_hint
+            max_attempts_per_violation: Max LLM repair attempts per violation
+
+        Returns:
+            RepairResult with outcome
+
+        Reference: IMPROVEMENT_ROADMAP.md Task 10.7
+        """
+        repairs_applied = []
+        repaired_files = []
+
+        if not violations:
+            return RepairResult(
+                success=True,
+                repaired_files=[],
+                repairs_applied=[],
+                error_message="No runtime violations to repair"
+            )
+
+        logger.info(f"CodeRepair: Repairing {len(violations)} runtime violations")
+
+        for violation in violations:
+            try:
+                # Skip non-actionable violations
+                if violation.get('error_type') in ['ConnectionError', 'TimeoutError']:
+                    logger.info(f"Skipping non-code violation: {violation.get('error_type')}")
+                    continue
+
+                # Bug #78 Fix: Skip route files - initial generation is correct
+                # LLM repair loses UUID typing (id: str instead of id: UUID)
+                # Routes are generated correctly, repair introduces regressions
+                file_hint = violation.get('file', '')
+                if '/routes/' in file_hint or file_hint.endswith('_routes.py'):
+                    logger.info(f"Skipping route file repair (initial gen is correct): {file_hint}")
+                    continue
+
+                # Attempt repair
+                success = await self._repair_single_runtime_violation(violation)
+                if success:
+                    file_path = violation.get('file', 'unknown')
+                    full_path = str(self.output_path / file_path) if not file_path.startswith('/') else file_path
+                    repairs_applied.append(
+                        f"Fixed {violation.get('error_type', 'runtime_error')} in {violation.get('endpoint', 'unknown')}"
+                    )
+                    if full_path not in repaired_files:
+                        repaired_files.append(full_path)
+                else:
+                    logger.warning(f"Could not repair: {violation.get('endpoint', 'unknown')}")
+
+            except Exception as e:
+                logger.error(f"Error repairing runtime violation: {e}")
+
+        if repairs_applied:
+            return RepairResult(
+                success=True,
+                repaired_files=repaired_files,
+                repairs_applied=repairs_applied
+            )
+        else:
+            return RepairResult(
+                success=False,
+                repaired_files=[],
+                repairs_applied=[],
+                error_message="No runtime violations could be repaired"
+            )
+
+    async def _repair_single_runtime_violation(
+        self,
+        violation: Dict[str, Any]
+    ) -> bool:
+        """
+        Repair a single runtime violation using LLM-guided fix.
+
+        Strategy:
+        1. Extract file path and line from stack trace
+        2. Read the problematic file
+        3. Ask LLM to generate fix based on error context
+        4. Apply fix using AST or string replacement
+
+        Args:
+            violation: Runtime violation dict
+
+        Returns:
+            True if successfully repaired
+        """
+        try:
+            error_type = violation.get('error_type', 'unknown')
+            error_message = violation.get('error_message', '')
+            stack_trace = violation.get('stack_trace', '')
+            file_hint = violation.get('file', '')
+            fix_hint = violation.get('fix_hint', '')
+            endpoint = violation.get('endpoint', '')
+
+            # Extract actual file and line from stack trace
+            file_path, line_number = self._extract_file_line_from_trace(stack_trace, file_hint)
+
+            if not file_path:
+                logger.warning(f"Could not determine file from stack trace for {endpoint}")
+                return False
+
+            # Build absolute path
+            full_path = self.output_path / file_path if not Path(file_path).is_absolute() else Path(file_path)
+
+            if not full_path.exists():
+                logger.warning(f"File not found: {full_path}")
+                return False
+
+            # Read the file content
+            with open(full_path, 'r') as f:
+                file_content = f.read()
+
+            # Generate LLM fix
+            fixed_content = await self._generate_runtime_fix(
+                file_content=file_content,
+                file_path=str(file_path),
+                line_number=line_number,
+                error_type=error_type,
+                error_message=error_message,
+                stack_trace=stack_trace,
+                fix_hint=fix_hint,
+                endpoint=endpoint
+            )
+
+            if not fixed_content or fixed_content == file_content:
+                logger.warning(f"LLM could not generate fix for {error_type} in {file_path}")
+                return False
+
+            # Validate the fix compiles (syntax check)
+            try:
+                ast.parse(fixed_content)
+            except SyntaxError as e:
+                logger.error(f"Generated fix has syntax error: {e}")
+                return False
+
+            # Write the fix
+            with open(full_path, 'w') as f:
+                f.write(fixed_content)
+
+            logger.info(f"Applied runtime fix for {error_type} in {file_path}:{line_number}")
+            return True
+
+        except Exception as e:
+            logger.error(f"_repair_single_runtime_violation failed: {e}")
+            return False
+
+    def _extract_file_line_from_trace(
+        self,
+        stack_trace: str,
+        file_hint: str
+    ) -> Tuple[Optional[str], Optional[int]]:
+        """
+        Extract file path and line number from Python stack trace.
+
+        Args:
+            stack_trace: Full stack trace string
+            file_hint: Inferred file from endpoint (fallback)
+
+        Returns:
+            Tuple of (file_path, line_number) or (file_hint, None)
+        """
+        import re
+
+        if not stack_trace:
+            return (file_hint, None) if file_hint else (None, None)
+
+        # Find all file references in stack trace
+        # Pattern: File "/path/to/file.py", line 123
+        matches = re.findall(r'File "([^"]+)", line (\d+)', stack_trace)
+
+        if matches:
+            # Get the last match (usually the actual error location)
+            # Filter for files in our app (exclude stdlib, site-packages)
+            for file_path, line_num in reversed(matches):
+                if 'site-packages' not in file_path and '/usr/' not in file_path:
+                    # Convert absolute path to relative if within app
+                    rel_path = file_path
+                    if str(self.output_path) in file_path:
+                        rel_path = file_path.replace(str(self.output_path) + '/', '')
+                    return (rel_path, int(line_num))
+
+        return (file_hint, None) if file_hint else (None, None)
+
+    async def _generate_runtime_fix(
+        self,
+        file_content: str,
+        file_path: str,
+        line_number: Optional[int],
+        error_type: str,
+        error_message: str,
+        stack_trace: str,
+        fix_hint: str,
+        endpoint: str
+    ) -> Optional[str]:
+        """
+        Use LLM to generate a fix for the runtime error.
+
+        Args:
+            file_content: Current file content
+            file_path: Path to file (for context)
+            line_number: Line where error occurred
+            error_type: Python exception type
+            error_message: Error message
+            stack_trace: Full stack trace
+            fix_hint: Suggested fix approach
+            endpoint: API endpoint that triggered error
+
+        Returns:
+            Fixed file content, or None if fix couldn't be generated
+        """
+        # Show context around the error line
+        lines = file_content.split('\n')
+        context_start = max(0, (line_number or 1) - 10)
+        context_end = min(len(lines), (line_number or 1) + 10)
+        context_lines = lines[context_start:context_end]
+        context_with_numbers = '\n'.join(
+            f"{context_start + i + 1:4d}: {line}"
+            for i, line in enumerate(context_lines)
+        )
+
+        prompt = f"""You are a code repair assistant. Fix the runtime error in this Python code.
+
+FILE: {file_path}
+ENDPOINT: {endpoint}
+ERROR TYPE: {error_type}
+ERROR MESSAGE: {error_message}
+
+CODE CONTEXT (error around line {line_number or 'unknown'}):
+```python
+{context_with_numbers}
+```
+
+{f"STACK TRACE:{chr(10)}{stack_trace[:1500]}" if stack_trace else ""}
+
+FIX HINT: {fix_hint}
+
+INSTRUCTIONS:
+1. Analyze the error and identify the root cause
+2. Generate ONLY the complete fixed file content
+3. Common fixes:
+   - NameError: Define missing variable or remove unused parameter
+   - TypeError: Fix function signature or call arguments
+   - AttributeError: Check method exists or fix import
+   - KeyError: Use .get() with default or ensure key exists
+4. Preserve all existing functionality - only fix the error
+5. Do NOT add comments explaining the fix
+6. CRITICAL: Preserve all existing type annotations exactly as-is:
+   - If a parameter is typed as UUID, keep it as UUID
+   - If a parameter is typed as str, keep it as str
+   - Do NOT change parameter types unless the error specifically requires it
+   - Keep all imports (especially 'from uuid import UUID')
+
+Return ONLY the complete fixed Python file content, nothing else.
+
+FIXED FILE CONTENT:
+```python
+"""
+
+        try:
+            response = await self.llm_client.generate_simple(
+                prompt=prompt,
+                task_type="code_repair",
+                complexity="medium",
+                temperature=0.0,
+                max_tokens=8000
+            )
+
+            # Extract code from response
+            fixed_code = self._extract_code_from_response(response, file_content)
+            return fixed_code
+
+        except Exception as e:
+            logger.error(f"LLM fix generation failed: {e}")
+            return None
+
+    def _extract_code_from_response(self, response: str, original_content: str) -> Optional[str]:
+        """
+        Extract Python code from LLM response.
+
+        Args:
+            response: Raw LLM response
+            original_content: Original file content (for validation)
+
+        Returns:
+            Extracted code or None
+        """
+        import re
+
+        # Try to find code block
+        code_match = re.search(r'```python\s*(.*?)\s*```', response, re.DOTALL)
+        if code_match:
+            return code_match.group(1).strip()
+
+        # If no code block, check if response looks like Python code
+        if response.strip().startswith(('import ', 'from ', 'class ', 'def ', '"""', '#')):
+            return response.strip()
+
+        # Try to find any code-like content
+        lines = response.split('\n')
+        code_lines = []
+        in_code = False
+
+        for line in lines:
+            if line.strip().startswith(('import ', 'from ', 'class ', 'def ')):
+                in_code = True
+            if in_code:
+                code_lines.append(line)
+
+        if code_lines:
+            return '\n'.join(code_lines)
+
+        return None

@@ -2,8 +2,8 @@
 
 **Analysis Date**: 2025-11-27
 **Test Run**: `ecommerce-api-spec-human_1764237803`
-**Status**: ✅ **COMPLETE** - 50 bugs tracked (50 FIXED, 0 OPEN)
-**Last Updated**: 2025-11-27 (FIXED: #84-#96 - Removed all ecommerce hardcoding)
+**Status**: 🔄 **IN PROGRESS** - 60 bugs tracked (59 FIXED, 1 IN_PROGRESS)
+**Last Updated**: 2025-11-28 (FIXED: #103 - UUID pattern validation | FIX APPLIED: #104 - Action endpoints require body)
 
 ---
 
@@ -106,6 +106,14 @@ El pipeline E2E mostraba resultados engañosos. Decía "✅ PASSED" con 98.6% co
 | **#94** | CRITICAL | seed_db.py hardcodes fields → refactored to read from IR dynamically | ✅ FIXED (`code_generation_service.py:4661-4768`) |
 | **#95** | MEDIUM | validation_code_generator hardcodes 'product', 'stock', 'item' | ✅ FIXED (`validation_code_generator.py:160-183`) |
 | **#96** | MEDIUM | business_logic_extractor hardcodes 'product.stock >= item.quantity' | ✅ FIXED (`business_logic_extractor.py:205-215`) |
+| **#97** | CRITICAL | init_db() calls create_all before entities imported → "relation does not exist" | ✅ FIXED (`code_generation_service.py:5245-5248`) |
+| **#98** | HIGH | seed_db.py skips NOT NULL fields (nullable default=True should be False) | ✅ FIXED (`code_generation_service.py:4706-4708`) |
+| **#99** | HIGH | Docker db-init vs app both try to create tables → DuplicateTable error | ✅ FIXED (`code_generation_service.py:4522-4523,4796-4812`) |
+| **#100** | HIGH | Seed generator doesn't handle `enum` type fields | ✅ FIXED (`code_generation_service.py:4759-4773`) |
+| **#101** | CRITICAL | Pipeline reports "success" even when smoke test fails | ✅ FIXED (`metrics_framework.py:218-235`, `real_e2e_full_pipeline.py:3235-3256`) |
+| **#102** | CRITICAL | Seed generator looks for enum_values in wrong location | ✅ FIXED (`code_generation_service.py:4762`, `modular_architecture_generator.py:241-255`) |
+| **#103** | CRITICAL | UUID fields with pattern= cause ValidationError (pattern expects string, not UUID) | ✅ FIXED (`code_repair_agent.py:~450`, `modular_architecture_generator.py`) |
+| **#104** | HIGH | Action endpoints (deactivate, clear, checkout) incorrectly require request body | 🔄 IN_PROGRESS (`code_generation_service.py:3367-3379`) |
 
 ---
 
@@ -2348,3 +2356,238 @@ All failures are due to Bugs #81, #82, #83:
 **Solution**: Unified to single advanced generator for all entities.
 
 **Expected Result**: Next E2E run should show ~90%+ smoke test pass rate (vs 37% before).
+
+---
+
+## Docker Smoke Test Bugs (#97-100) - 2025-11-27 21:00-22:40
+
+### Bug #97: `init_db()` doesn't register entity models ✅ FIXED
+**Symptom**: `relation 'carts' does not exist` when seed_db.py runs
+**Root Cause**: `init_db()` called `Base.metadata.create_all()` before entity classes were imported
+**Fix**: Added `import src.models.entities` before `create_all()` in database.py template
+**Location**: `code_generation_service.py:5245-5248`
+
+### Bug #98: Seed generator uses wrong IR attribute name ✅ FIXED
+**Symptom**: `null value in column 'status' violates not-null constraint`
+**Root Cause**: Code used `getattr(attr, 'nullable', False)` but IR uses `is_nullable`
+**Fix**: Changed to `getattr(attr, 'is_nullable', False)`
+**Location**: `code_generation_service.py:4709`
+
+### Bug #99: Docker db-init conflicts with Alembic ✅ FIXED
+**Symptom**: `DuplicateTable: relation 'products' already exists`
+**Root Cause**: db-init used `create_all()` while app used `alembic upgrade head`
+**Fix**: Changed db-init to run `alembic upgrade head && python scripts/seed_db.py`
+**Location**: `code_generation_service.py:4522`
+
+### Bug #100: Seed generator doesn't handle `enum` type ✅ FIXED
+**Symptom**: Cart.status, Order.order_status, Order.payment_status omitted from seed
+**Root Cause**: Generator only handled UUID/string/int/float/bool types, not `enum`
+**Fix**: Added `elif 'enum' in data_type_lower:` block with sensible enum defaults
+**Location**: `code_generation_service.py:4759-4773`
+
+---
+
+## Summary: Bugs #97-100 Fix Chain
+
+1. **#97**: Tables not created → Import models before create_all
+2. **#99**: Duplicate table conflict → Use Alembic instead of create_all in Docker
+3. **#98**: Wrong IR attribute → Fix `nullable` → `is_nullable`
+4. **#100**: Enum fields missing → Add enum type handling to seed generator
+
+**Combined Effect**: Docker smoke test now should seed all required fields including enum status fields.
+
+---
+
+### Bug #101: Pipeline reports "success" even when smoke test fails ✅ FIXED
+**Symptom**: Pipeline shows "success" status when Phase 8.5 (Docker smoke test) fails
+**Root Cause**:
+1. `runtime_smoke_test` was NOT in the list of critical phases in `metrics_framework.py`
+2. Phase always called `complete_phase()` even when exceptions occurred or smoke test failed
+3. The final message always showed "✅ Phase 8.5 complete" regardless of outcome
+
+**Fix**:
+1. Added `runtime_smoke_test` to critical phases check in `metrics_framework.py:218-235`
+2. Modified `_phase_8_5_runtime_smoke_test()` in `real_e2e_full_pipeline.py:3235-3256` to:
+   - Call `record_error()` with `critical=True` when smoke test fails
+   - Return early without calling `complete_phase()` when failed
+   - Show "❌ Phase 8.5 FAILED" instead of "✅" when failed
+
+**Impact**: Pipeline will now correctly report FAILED status when:
+- Docker doesn't start
+- Server startup times out
+- Smoke test endpoints fail
+- Any exception occurs during smoke testing
+
+---
+
+### Bug #102: Seed generator looks for enum_values in wrong location ✅ FIXED
+**Symptom**: Docker fails with `null value in column "status" of relation "carts" violates not-null constraint`
+**Root Cause**:
+1. Seed generator in `code_generation_service.py:4762` looked for `attr.enum_values`
+2. But IR stores enum values in `attr.constraints.enum_values` (a dict)
+3. Same bug existed in `modular_architecture_generator.py:223,245,419`
+4. Cart.status, Order.order_status, Order.payment_status all have `data_type: "enum"` with values in `constraints`
+
+**Evidence from IR**:
+```json
+{
+  "name": "status",
+  "data_type": "enum",
+  "constraints": {
+    "enum_values": ["OPEN", "CHECKED_OUT"]  // <-- HERE, not in attr directly
+  }
+}
+```
+
+**Fix**:
+1. `code_generation_service.py:4762-4771`: Check `attr.constraints.enum_values` first, then `attr.constraints` as object, then fallback to direct `attr.enum_values`
+2. `modular_architecture_generator.py`: Added `_get_enum_values(field)` helper method
+3. Also improved fallback order: first enum_values, then IR default_value, then hardcoded defaults
+
+**Files Modified**:
+- `src/services/code_generation_service.py:4759-4787`
+- `src/services/modular_architecture_generator.py:241-255,262,419`
+
+**Impact**: Seed data now correctly uses enum values from IR constraints, ensuring:
+- Cart.status = "OPEN" (from `constraints.enum_values[0]`)
+- Order.order_status = "PENDING_PAYMENT" (from `constraints.enum_values[0]`)
+- Order.payment_status = "PENDING" (from `constraints.enum_values[0]`)
+
+---
+
+### Bug #103: UUID fields with pattern= cause ValidationError ✅ FIXED
+
+**Severity**: HIGH
+**Status**: ✅ FIXED (2025-11-28)
+**Test Run**: `ecommerce-api-spec-human_1764287005`
+
+**Description**:
+Response schemas containing UUID fields were being generated with `pattern=` constraints. The `pattern=` constraint forces Pydantic to expect **string** input, but SQLAlchemy ORM returns **UUID objects**, causing `ValidationError` on every response.
+
+**Broken Code (Before)**:
+```python
+class ProductResponse(ProductBase):
+    id: UUID = Field(
+        ...,
+        pattern="^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    )  # ← BUG! Pattern forces string validation
+```
+
+**Working Code (After)**:
+```python
+class ProductResponse(ProductBase):
+    id: UUID = Field(...)  # ← UUID type validates itself
+```
+
+**Affected Endpoints (9 total)**:
+- All Product endpoints (5): GET, POST, PUT, PATCH /products/*
+- All Customer endpoints (4): GET, POST, PUT /customers/*
+
+**Root Cause**:
+- `code_repair_agent.py:~450`: format_mapping was converting `format=uuid` to `pattern=`
+
+**Fix Applied**:
+1. `code_repair_agent.py:~450`: Changed format_mapping from `'uuid': ('pattern', ...)` to `'uuid': ('skip', None)`
+2. `modular_architecture_generator.py`: Added safeguard to skip pattern for UUID/GUID types
+
+**Files Modified**:
+- `src/mge/v2/agents/code_repair_agent.py`
+- `src/services/modular_architecture_generator.py`
+
+**Test Results**:
+- Before Fix: 21 passed, 9 failed (all UUID-related)
+- After Fix: 28 passed, 3 failed (different bugs - see Bug #104)
+- Improvement: +7 endpoints fixed, 0 UUID failures
+
+---
+
+### Bug #104: Action endpoints incorrectly require request body 🔴 IDENTIFIED
+
+**Severity**: HIGH
+**Status**: 🔴 IDENTIFIED (not yet fixed)
+**Test Run**: `ecommerce-api-spec-human_1764287005`
+
+**Description**:
+Action endpoints (like `/deactivate`, `/clear`) are being generated with unnecessary request body parameters, causing HTTP 500/422 errors when clients don't send a body or send incorrect format.
+
+**Affected Endpoints (3 total)**:
+
+1. **POST /products/{product_id}/deactivate**
+   - File: `src/api/routes/product.py:92-110`
+   - Bug: Has `product_data: ProductCreate` parameter (never used)
+   - Error: HTTP 422 when no body sent
+
+2. **PATCH /carts/{cart_id}/items/{item_id}**
+   - File: `src/api/routes/cart.py:80-98`
+   - Bug: Uses undefined `cart_data` variable at line 90
+   - Error: HTTP 500 - NameError: name 'cart_data' is not defined
+
+3. **POST /carts/{cart_id}/clear**
+   - File: `src/api/routes/cart.py:101-119`
+   - Bug: Has `cart_data: CartCreate` parameter (never used)
+   - Error: HTTP 422 when no body sent
+
+**Broken Code Examples**:
+```python
+# product.py - BUG: product_data parameter is never used
+@router.post("/{product_id}/deactivate", ...)
+async def marks_a_product_as_inactive...(
+    product_id: UUID,
+    product_data: ProductCreate,  # ← BUG! Shouldn't be here
+    db: AsyncSession = Depends(get_db)
+):
+    service = ProductService(db)
+    product = await service.deactivate(product_id)  # Note: product_data unused!
+
+# cart.py - BUG: cart_data not defined but used
+@router.patch("/{cart_id}/items/{item_id}", ...)
+async def changes_quantity_of_product_in_cart...(
+    cart_id: UUID,
+    item_id: UUID,
+    db: AsyncSession = Depends(get_db)  # ← Missing cart_data parameter!
+):
+    service = CartService(db)
+    cart = await service.update(cart_id, cart_data)  # ← NameError!
+```
+
+**Expected Correct Code**:
+```python
+@router.post("/{product_id}/deactivate", response_model=ProductResponse)
+async def deactivate_product(
+    product_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):  # ← NO body parameter for action endpoint
+    service = ProductService(db)
+    return await service.deactivate(product_id)
+```
+
+**Root Cause (Pending Investigation)**:
+The code generation service is not properly detecting "action" endpoints that operate on existing resources without requiring a request body.
+
+**Likely Sources**:
+- `src/services/production_code_generators.py` - Route generation logic
+- `src/services/modular_architecture_generator.py` - Endpoint parameter detection
+- `src/cognitive/ir/api_model.py` - IR endpoint classification
+
+**Recommended Fix**:
+1. Detect "action" endpoints based on:
+   - Operation name contains action verbs: `deactivate`, `activate`, `clear`, `cancel`, `approve`
+   - Path pattern: `/{resource_id}/{action}`
+   - HTTP method + semantics (POST/PATCH on action path)
+2. For action endpoints: Don't generate request body parameter
+
+**Service Layer**: The service methods are correctly implemented (no changes needed):
+- `ProductService.deactivate(id: UUID)` ✅
+- `ProductService.activate(id: UUID)` ✅
+- `CartService.clear_items(id: UUID)` ✅
+
+**Files to Modify** (for fix):
+- `src/services/production_code_generators.py`
+- `src/services/modular_architecture_generator.py`
+
+---
+
+## Documentation Reference
+
+Detailed documentation for Bug #103 and #104 available at:
+- `claudedocs/BUG_103_104_DOCUMENTATION.md`

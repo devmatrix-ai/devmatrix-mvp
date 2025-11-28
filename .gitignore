@@ -186,3 +186,4 @@ migration_reports/
 # Pattern migration reports
 pattern_migration_report_*.txt
 backups/*.json
+Documentacion_IP/

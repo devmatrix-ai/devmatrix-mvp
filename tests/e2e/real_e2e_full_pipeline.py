@@ -93,6 +93,7 @@ try:
     from src.validation.runtime_smoke_validator import (
         RuntimeSmokeTestValidator,
         SmokeTestResult,
+        EndpointTestResult,  # Bug #109 fix: Missing import
         run_smoke_test,
     )
     RUNTIME_SMOKE_TEST_AVAILABLE = True
@@ -101,7 +102,19 @@ except ImportError as e:
     RUNTIME_SMOKE_TEST_AVAILABLE = False
     RuntimeSmokeTestValidator = None
     SmokeTestResult = None
+    EndpointTestResult = None
     run_smoke_test = None
+
+# Bug #107: LLM-Driven Smoke Test Orchestrator (comprehensive scenarios)
+try:
+    from src.validation.smoke_test_orchestrator import SmokeTestOrchestrator
+    from src.validation.smoke_test_models import SmokeTestReport
+    SMOKE_TEST_ORCHESTRATOR_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: SmokeTestOrchestrator not available: {e}")
+    SMOKE_TEST_ORCHESTRATOR_AVAILABLE = False
+    SmokeTestOrchestrator = None
+    SmokeTestReport = None
 
 # ApplicationIR Extraction (IR-centric architecture)
 from src.specs.spec_to_application_ir import SpecToApplicationIR
@@ -3128,6 +3141,11 @@ Once running, visit:
         Validates generated app by actually running it and calling endpoints.
         Catches HTTP 500, NameError, TypeError that static validation misses.
 
+        Bug #107 Enhancement: LLM-driven comprehensive test generation.
+        - Generates multiple scenarios per endpoint (happy_path, validation_error, etc.)
+        - Extracts business rules, flows, and invariants from IR
+        - Uses predefined test_cases from ValidationModel when available
+
         Evidence: Bugs #71-73 passed static validation but would crash at runtime.
         Reference: IMPROVEMENT_ROADMAP.md Task 10
         """
@@ -3154,8 +3172,21 @@ Once running, visit:
             self.metrics_collector.complete_phase("runtime_smoke_test")
             return
 
+        # Bug #107: Try LLM-driven orchestrator first for comprehensive scenarios
+        use_llm_orchestrator = SMOKE_TEST_ORCHESTRATOR_AVAILABLE and os.environ.get("USE_LLM_SMOKE_TEST", "1") == "1"
+
+        if use_llm_orchestrator:
+            print("  🧠 Using LLM-Driven Smoke Test (Bug #107)")
+            smoke_result = await self._run_llm_smoke_test()
+            if smoke_result is not None:
+                # LLM test completed, continue with result processing
+                self._process_smoke_result(smoke_result)
+                return
+            else:
+                print("  ⚠️ LLM smoke test failed, falling back to basic validator")
+
         try:
-            # Initialize smoke test validator
+            # Initialize smoke test validator (fallback)
             # Bug #87 Fix: Use port 8002 to match Docker's exposed port in docker-compose.yml
             # Bug #90 Fix: Increase startup_timeout to 180s for Docker build + migrations + seed
             smoke_validator = RuntimeSmokeTestValidator(
@@ -3232,16 +3263,31 @@ Once running, visit:
             if PROGRESS_TRACKING_AVAILABLE:
                 add_item("Runtime Smoke Test", "Endpoints", smoke_result.endpoints_passed, smoke_result.endpoints_tested)
 
+            # Bug #101 Fix: Track smoke test result for pipeline failure detection
+            # If smoke test failed (after repair attempts), mark phase as FAILED
+            if not smoke_result.passed:
+                self.metrics_collector.record_error("runtime_smoke_test", {
+                    "error": "Smoke test failed after repair attempts",
+                    "endpoints_failed": smoke_result.endpoints_failed,
+                    "violations": len(smoke_result.violations)
+                }, critical=True)
+                print(f"\n  ❌ Phase 8.5 FAILED - Smoke test did not pass")
+                return  # Don't call complete_phase - phase is marked FAILED
+
         except Exception as e:
+            # Bug #101 Fix: Exceptions in smoke test = critical failure
             print(f"\n  ❌ Smoke test error: {e}")
             import traceback
             traceback.print_exc()
-            self.metrics_collector.add_checkpoint("runtime_smoke_test", "CP-8.5.ERROR", {
-                "error": str(e)
-            })
+            self.metrics_collector.record_error("runtime_smoke_test", {
+                "error": str(e),
+                "error_type": type(e).__name__
+            }, critical=True)
+            print(f"\n  ❌ Phase 8.5 FAILED - Docker/smoke test error")
+            return  # Don't call complete_phase - phase is marked FAILED
 
         self.metrics_collector.complete_phase("runtime_smoke_test")
-        print(f"  ✅ Phase 8.5 complete")
+        print(f"  ✅ Phase 8.5 complete - All smoke tests passed")
 
     async def _attempt_runtime_repair(
         self,
@@ -3321,6 +3367,195 @@ Once running, visit:
 
         if current_violations:
             print(f"  ⚠️ {len(current_violations)} runtime violations remain after repair attempts")
+
+    async def _run_llm_smoke_test(self) -> Optional[SmokeTestResult]:
+        """
+        Bug #107: Run LLM-driven comprehensive smoke tests.
+
+        Uses SmokeTestOrchestrator to:
+        1. Generate test plan from IR (with business rules, flows, invariants)
+        2. Generate seed data script
+        3. Execute scenarios against running server
+        4. Analyze results and provide recommendations
+
+        Returns:
+            SmokeTestResult compatible object, or None if orchestrator fails
+        """
+        try:
+            from src.validation.smoke_test_orchestrator import SmokeTestOrchestrator
+            from src.validation.agents.executor_agent import ScenarioExecutorAgent
+            from src.validation.agents.planner_agent import SmokeTestPlannerAgent
+            from src.llm.enhanced_anthropic_client import EnhancedAnthropicClient
+            import json
+
+            print("    📝 Phase 1: Generating test plan from IR...")
+
+            # Initialize LLM client and planner
+            llm_client = EnhancedAnthropicClient()
+            planner = SmokeTestPlannerAgent(llm_client)
+
+            # Generate test plan with comprehensive IR data
+            spec_path = Path(self.spec_file_path) if hasattr(self, 'spec_file_path') else None
+            spec_content = spec_path.read_text() if spec_path and spec_path.exists() else ""
+
+            plan = await planner.generate_plan(self.application_ir, spec_content)
+
+            # Save plan for debugging
+            plan_path = self.output_path / "llm_smoke_test_plan.json"
+            plan_path.write_text(plan.to_json())
+            print(f"    💾 Test plan saved: {plan_path}")
+            print(f"    📊 Generated {len(plan.scenarios)} test scenarios, {len(plan.seed_data)} seed entities")
+
+            # Log scenario types
+            scenario_types = {}
+            for s in plan.scenarios:
+                scenario_types[s.name] = scenario_types.get(s.name, 0) + 1
+            print(f"    📋 Scenario breakdown: {dict(list(scenario_types.items())[:5])}")
+
+            # Execute scenarios against Docker (already running)
+            base_url = "http://127.0.0.1:8002"
+            print(f"    🔗 Testing against: {base_url}")
+            print(f"    🚀 Phase 2: Executing {len(plan.scenarios)} scenarios...")
+
+            executor = ScenarioExecutorAgent(base_url)
+            results = await executor.execute_all(plan)
+
+            # Calculate metrics
+            passed = sum(1 for r in results if r.status_matches)
+            failed = len(results) - passed
+            happy_passed = sum(1 for r in results if r.status_matches and r.scenario.name == "happy_path")
+            happy_total = sum(1 for r in results if r.scenario.name == "happy_path")
+
+            print(f"\n  📊 LLM Smoke Test Results:")
+            print(f"    - Total scenarios: {len(results)}")
+            print(f"    - Passed: {passed}")
+            print(f"    - Failed: {failed}")
+            print(f"    - Happy paths: {happy_passed}/{happy_total}")
+
+            # Convert to SmokeTestResult compatible format
+            violations = []
+            endpoint_results = []
+
+            for r in results:
+                if not r.status_matches:
+                    violations.append({
+                        "type": "smoke_test_failure",
+                        "severity": "high" if r.scenario.name == "happy_path" else "medium",
+                        "endpoint": r.scenario.endpoint,
+                        "scenario": r.scenario.name,
+                        "expected_status": r.scenario.expected_status,
+                        "actual_status": r.actual_status,
+                        "error_message": r.error or f"Expected {r.scenario.expected_status}, got {r.actual_status}",
+                        "reason": r.scenario.reason
+                    })
+
+                endpoint_results.append(EndpointTestResult(
+                    endpoint_path=r.scenario.endpoint.split()[-1] if ' ' in r.scenario.endpoint else r.scenario.endpoint,
+                    method=r.scenario.endpoint.split()[0] if ' ' in r.scenario.endpoint else "GET",
+                    success=r.status_matches,
+                    status_code=r.actual_status,
+                    error_type="StatusMismatch" if not r.status_matches else None,
+                    error_message=r.error if r.error else None,
+                    response_time_ms=r.response_time_ms
+                ))
+
+            # Save detailed results
+            results_path = self.output_path / "llm_smoke_test_results.json"
+            results_data = {
+                "passed": failed == 0,
+                "total_scenarios": len(results),
+                "passed_count": passed,
+                "failed_count": failed,
+                "happy_path_passed": happy_passed,
+                "happy_path_total": happy_total,
+                "violations": violations,
+                "scenario_breakdown": scenario_types
+            }
+            with open(results_path, 'w') as f:
+                json.dump(results_data, f, indent=2)
+            print(f"    💾 Detailed results saved: {results_path}")
+
+            return SmokeTestResult(
+                passed=failed == 0,
+                endpoints_tested=len(results),
+                endpoints_passed=passed,
+                endpoints_failed=failed,
+                violations=violations,
+                results=endpoint_results,
+                total_time_ms=sum(r.response_time_ms for r in results),
+                server_startup_time_ms=0.0  # Docker was already started
+            )
+
+        except Exception as e:
+            print(f"    ❌ LLM smoke test error: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def _process_smoke_result(self, smoke_result: SmokeTestResult) -> None:
+        """Process smoke test result and update metrics."""
+        # Report results
+        print(f"\n  📊 Smoke Test Results:")
+        print(f"    - Scenarios tested: {smoke_result.endpoints_tested}")
+        print(f"    - Passed: {smoke_result.endpoints_passed}")
+        print(f"    - Failed: {smoke_result.endpoints_failed}")
+        print(f"    - Total time: {smoke_result.total_time_ms:.0f}ms")
+
+        if smoke_result.passed:
+            print(f"  ✅ All smoke tests PASSED!")
+        else:
+            print(f"  ⚠️ {smoke_result.endpoints_failed} scenarios failed smoke test")
+
+            # Show failures
+            for violation in smoke_result.violations[:5]:
+                endpoint = violation.get('endpoint', 'N/A')
+                scenario = violation.get('scenario', 'unknown')
+                expected = violation.get('expected_status', '?')
+                actual = violation.get('actual_status', '?')
+                print(f"    ❌ {endpoint} [{scenario}]: expected {expected}, got {actual}")
+
+            if len(smoke_result.violations) > 5:
+                print(f"    ... and {len(smoke_result.violations) - 5} more")
+
+        # Save smoke test results
+        smoke_results_path = self.output_path / "smoke_test_results.json"
+        with open(smoke_results_path, 'w') as f:
+            import json
+            json.dump({
+                "passed": smoke_result.passed,
+                "endpoints_tested": smoke_result.endpoints_tested,
+                "endpoints_passed": smoke_result.endpoints_passed,
+                "endpoints_failed": smoke_result.endpoints_failed,
+                "violations": smoke_result.violations,
+                "total_time_ms": smoke_result.total_time_ms,
+                "server_startup_time_ms": smoke_result.server_startup_time_ms
+            }, f, indent=2)
+        print(f"  💾 Smoke test results saved: {smoke_results_path}")
+
+        self.metrics_collector.add_checkpoint("runtime_smoke_test", "CP-8.5.2: Smoke test complete", {
+            "passed": smoke_result.passed,
+            "endpoints_tested": smoke_result.endpoints_tested,
+            "endpoints_passed": smoke_result.endpoints_passed,
+            "endpoints_failed": smoke_result.endpoints_failed,
+            "violations_count": len(smoke_result.violations),
+            "total_time_ms": smoke_result.total_time_ms
+        })
+
+        # Track for progress display
+        if PROGRESS_TRACKING_AVAILABLE:
+            add_item("Runtime Smoke Test", "Scenarios", smoke_result.endpoints_passed, smoke_result.endpoints_tested)
+
+        # Bug #101 Fix: Track smoke test result for pipeline failure detection
+        if not smoke_result.passed:
+            self.metrics_collector.record_error("runtime_smoke_test", {
+                "error": "Smoke test failed",
+                "endpoints_failed": smoke_result.endpoints_failed,
+                "violations": len(smoke_result.violations)
+            }, critical=True)
+            print(f"\n  ❌ Phase 8.5 FAILED - Smoke test did not pass")
+        else:
+            self.metrics_collector.complete_phase("runtime_smoke_test")
+            print(f"  ✅ Phase 8.5 complete - All smoke tests passed")
 
     async def _execute_repair_loop(
         self,

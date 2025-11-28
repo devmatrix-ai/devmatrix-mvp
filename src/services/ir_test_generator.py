@@ -85,16 +85,16 @@ from pydantic import ValidationError
         2. Validation rules to ensure valid values (e.g., positive for range > 0)
         """
         # Build imports for schema and entity classes
-        # Bug #67 Fix: Re-add entity imports for behavioral tests (status transitions, uniqueness, etc.)
+        # Bug #74 Fix: Re-add entity imports for behavioral tests (status transitions, uniqueness, etc.)
         # Bug #60 was overly aggressive - some validation tests DO need entity classes
-        # Bug #67 Part 2: Entities have "Entity" suffix (ProductEntity, CartEntity, etc.)
+        # Bug #74: Entities have "Entity" suffix (ProductEntity, CartEntity, etc.)
         schema_imports = ", ".join([f"{e}Create" for e in entities])
         entity_imports = ", ".join([f"{e}Entity" for e in entities])
 
         header = f'''"""
 Auto-generated validation tests from ValidationModelIR.
 Bug #59 Fix: Now includes pytest fixtures for valid entity data.
-Bug #67 Fix: Re-added entity imports for behavioral validation tests.
+Bug #74 Fix: Re-added entity imports for behavioral validation tests.
 """
 import pytest
 import uuid
@@ -340,7 +340,7 @@ def valid_{entity_lower}_data():
 '''
 
     def _generate_uniqueness_test(self, entity: str, rule: ValidationRule, method_name: str) -> str:
-        # Bug #67 Part 3: Use {entity}Entity to match generated code naming convention
+        # Bug #74: Use {entity}Entity to match generated code naming convention
         return f'''    async def {method_name}(self, db_session, valid_{entity.lower()}_data):
         """{rule.attribute} must be unique for {entity}."""
         # Create first entity
@@ -361,7 +361,7 @@ def valid_{entity_lower}_data():
 '''
 
     def _generate_relationship_test(self, entity: str, rule: ValidationRule, method_name: str) -> str:
-        # Bug #67 Part 4: Use {entity}Entity to match generated code naming convention
+        # Bug #74: Use {entity}Entity to match generated code naming convention
         return f'''    async def {method_name}_valid_fk(self, db_session, valid_{entity.lower()}_data):
         """{rule.attribute} references valid foreign key."""
         # FK should exist before creating
@@ -383,7 +383,7 @@ def valid_{entity_lower}_data():
 '''
 
     def _generate_status_transition_test(self, entity: str, rule: ValidationRule, method_name: str) -> str:
-        # Bug #67 Part 5: Use {entity}Entity to match generated code naming convention
+        # Bug #74: Use {entity}Entity to match generated code naming convention
         return f'''    def {method_name}_valid_transition(self, valid_{entity.lower()}_data):
         """{entity} allows valid status transitions."""
         {entity.lower()} = {entity}Entity(**valid_{entity.lower()}_data)

@@ -65,5 +65,7 @@ class Endpoint(BaseModel):
 class APIModelIR(BaseModel):
     endpoints: List[Endpoint]
     schemas: List[APISchema] = Field(default_factory=list)
-    base_path: str = "/api/v1"
+    # Bug #65 Fix: Changed from "/api/v1" to "" to match generated code
+    # Generated routers don't use API prefix (e.g., router mounted directly without prefix)
+    base_path: str = ""
     version: str = "v1"

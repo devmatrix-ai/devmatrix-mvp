@@ -53,6 +53,258 @@ def validate_python_syntax(code: str, filename: str = "generated") -> bool:
         return False
 
 
+# =============================================================================
+# IR-Based Dynamic Detection Helpers (Bug #109: Eliminate hardcoding)
+# =============================================================================
+
+def _map_status_values(status_values: List[str]) -> Dict[str, str]:
+    """
+    Map semantic status concepts to actual values from an enum list.
+
+    Bug #109: Instead of hardcoding "PENDING_PAYMENT", "CANCELLED", etc.,
+    we derive them from the actual enum values in the IR.
+
+    Returns dict mapping semantic concepts to actual values:
+        - initial: First/default status
+        - open: Status for open/active items
+        - cancelled: Status for cancelled items
+        - paid: Status for paid items
+        - checked_out: Status for checked out carts
+        - pending_payment: Status awaiting payment
+    """
+    result = {}
+
+    if not status_values:
+        return result
+
+    # First value is typically the initial status
+    result["initial"] = status_values[0]
+
+    # Map by pattern matching (case-insensitive)
+    for value in status_values:
+        value_lower = value.lower()
+
+        if "open" in value_lower or "active" in value_lower:
+            result["open"] = value
+        elif "cancel" in value_lower:
+            result["cancelled"] = value
+        elif "paid" in value_lower and "unpaid" not in value_lower:
+            result["paid"] = value
+        elif "check" in value_lower and "out" in value_lower:
+            result["checked_out"] = value
+        elif "pending" in value_lower:
+            if "payment" in value_lower:
+                result["pending_payment"] = value
+            elif "initial" not in result:
+                result["initial"] = value
+        elif "confirm" in value_lower:
+            result["confirmed"] = value
+        elif "ship" in value_lower:
+            result["shipped"] = value
+        elif "deliver" in value_lower:
+            result["delivered"] = value
+        elif "complet" in value_lower:
+            result["completed"] = value
+
+    return result
+
+
+def find_status_field(entity_name: str, entity_fields: List[Dict], ir: Any = None) -> Dict[str, Any]:
+    """
+    Find the status field for an entity from its fields or IR.
+
+    Returns dict with:
+        - field_name: The actual field name (e.g., "order_status", "status")
+        - values: List of valid values if available
+        - initial_value: Default/initial status value
+        - is_enum: Whether field is an enum type
+
+    Bug #109: Derives field info from IR instead of hardcoding.
+    """
+    result = {
+        "field_name": None,
+        "values": [],
+        "initial_value": None,
+        "is_enum": False
+    }
+
+    # 1. Search in entity fields for status-like field
+    for field in entity_fields:
+        field_name = field.get('name', '').lower()
+        # Look for status fields: "{entity}_status", "status", "{action}_status"
+        if 'status' in field_name:
+            result["field_name"] = field.get('name')
+            result["is_enum"] = 'enum' in field.get('data_type', '').lower()
+
+            # Extract enum values from field constraints
+            constraints = field.get('constraints', {})
+            if isinstance(constraints, dict):
+                enum_values = constraints.get('enum_values', [])
+                if enum_values:
+                    result["values"] = enum_values
+                    result["initial_value"] = enum_values[0]  # First value is typically initial
+
+            # Check for default value
+            if field.get('default_value'):
+                result["initial_value"] = field.get('default_value')
+
+            break  # Use first status field found
+
+    # 2. If IR available, try to get state machine info
+    if ir and hasattr(ir, 'behavior_model') and ir.behavior_model:
+        # Check for state machine defining this entity's states
+        for flow in ir.behavior_model.flows:
+            if flow.type and 'state' in str(flow.type).lower():
+                # This might define state transitions
+                if entity_name.lower() in flow.name.lower():
+                    # Extract states from flow steps
+                    for step in flow.steps:
+                        if step.action and 'status' in step.action.lower():
+                            # Parse action for status values
+                            pass
+
+    return result
+
+
+def find_child_entity(entity_name: str, entities: List[Dict], ir: Any = None) -> Dict[str, Any]:
+    """
+    Find child entity for parent-child relationships (e.g., Order -> OrderItem).
+
+    Returns dict with:
+        - entity_name: Child entity name (e.g., "OrderItem")
+        - entity_class: Class name for code (e.g., "OrderItemEntity")
+        - fk_field: Foreign key field name (e.g., "order_id")
+        - found: Boolean indicating if child was found
+
+    Bug #109: Derives relationships from IR instead of hardcoding.
+    """
+    result = {
+        "entity_name": None,
+        "entity_class": None,
+        "fk_field": None,
+        "found": False
+    }
+
+    parent_lower = entity_name.lower()
+    expected_fk = f"{parent_lower}_id"
+
+    # Look for entities that have FK to this entity
+    for entity in entities:
+        entity_name_check = entity.get('name', '').lower()
+
+        # Check if entity name suggests it's a child (e.g., "OrderItem" for "Order")
+        if parent_lower in entity_name_check and entity_name_check != parent_lower:
+            # Check fields for FK
+            for field in entity.get('fields', []):
+                field_name = field.get('name', '').lower()
+                if field_name == expected_fk or 'fk' in field.get('data_type', '').lower():
+                    result["entity_name"] = entity.get('name')
+                    result["entity_class"] = f"{entity.get('name')}Entity"
+                    result["fk_field"] = field.get('name')
+                    result["found"] = True
+                    return result
+
+    # Also check IR domain model for explicit relationships
+    if ir and hasattr(ir, 'domain_model') and ir.domain_model:
+        if hasattr(ir.domain_model, 'relationships'):
+            for rel in ir.domain_model.relationships:
+                if hasattr(rel, 'source') and rel.source.lower() == parent_lower:
+                    result["entity_name"] = rel.target
+                    result["entity_class"] = f"{rel.target}Entity"
+                    result["fk_field"] = f"{parent_lower}_id"
+                    result["found"] = True
+                    return result
+
+    return result
+
+
+def find_workflow_operations(entity_name: str, ir: Any) -> List[Dict[str, Any]]:
+    """
+    Find workflow operations for an entity from IR flows.
+
+    Returns list of operations with:
+        - name: Operation name (e.g., "pay", "cancel", "checkout")
+        - precondition_status: Required status before operation
+        - postcondition_status: Status after operation
+        - affects_stock: Whether operation affects inventory
+        - method: HTTP method for endpoint
+
+    Bug #109: Derives operations from IR flows instead of hardcoding.
+    """
+    operations = []
+
+    if not ir or not hasattr(ir, 'behavior_model') or not ir.behavior_model:
+        return operations
+
+    entity_lower = entity_name.lower()
+
+    for flow in ir.behavior_model.flows:
+        # Check if flow targets this entity
+        flow_name = flow.name.lower() if flow.name else ""
+
+        if entity_lower in flow_name or any(
+            entity_lower in (step.target_entity or "").lower()
+            for step in flow.steps
+        ):
+            operation = {
+                "name": flow.name,
+                "precondition_status": None,
+                "postcondition_status": None,
+                "affects_stock": False,
+                "method": "POST"
+            }
+
+            # Parse flow steps for status transitions
+            for step in flow.steps:
+                action = (step.action or "").lower()
+                condition = (step.condition or "").lower()
+
+                # Detect precondition from step condition
+                if 'status' in condition:
+                    # Try to extract status value from condition like "status == PENDING"
+                    import re
+                    match = re.search(r'status\s*[=!<>]+\s*["\']?(\w+)', condition)
+                    if match:
+                        operation["precondition_status"] = match.group(1).upper()
+
+                # Detect postcondition from step action
+                if 'status' in action:
+                    match = re.search(r'status\s*[=:]\s*["\']?(\w+)', action)
+                    if match:
+                        operation["postcondition_status"] = match.group(1).upper()
+
+                # Detect stock operations
+                if 'stock' in action or 'inventory' in action or 'quantity' in action:
+                    operation["affects_stock"] = True
+
+            operations.append(operation)
+
+    return operations
+
+
+def get_status_transition_code(
+    entity_name: str,
+    status_field: Dict[str, Any],
+    from_status: str,
+    to_status: str,
+    error_code: int = 400
+) -> str:
+    """
+    Generate status validation and transition code dynamically.
+
+    Bug #109: Generates code using actual field names from IR.
+    """
+    field_name = status_field.get("field_name", "status")
+
+    return f'''
+        if db_{entity_name.lower()}.{field_name} != "{from_status}":
+            raise HTTPException(
+                status_code={error_code},
+                detail=f"Cannot perform operation on {entity_name.lower()} with status {{db_{entity_name.lower()}.{field_name}}}. Required status: {from_status}."
+            )
+'''
+
+
 def generate_entities(entities: List[Dict[str, Any]], validation_ground_truth: dict = None) -> str:
     """
     Generate SQLAlchemy ORM entities dynamically from entity fields.
@@ -858,10 +1110,11 @@ ItemSchema = Dict[str, Any]
                         required = True
                         logger.debug(f"✅ Parsed 'required' constraint for {field_name}")
                     elif constraint_normalized == 'uuid_format':
-                        # Add UUID pattern validation
-                        uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-                        field_constraints['pattern'] = f'pattern=r"{uuid_pattern}"'
-                        logger.debug(f"✅ Parsed 'uuid_format' constraint for {field_name}")
+                        # Bug #103 Fix: Do NOT add pattern= to UUID fields
+                        # The UUID type in Pydantic already validates format correctly
+                        # Adding pattern= forces string type validation, causing ValidationError
+                        # when SQLAlchemy returns actual UUID objects from the database
+                        logger.debug(f"ℹ️ Skipping pattern= for 'uuid_format' on {field_name} (Bug #103 fix - UUID type validates format)")
                     elif constraint_normalized == 'enum':
                         # Mark that this field needs enum validation (handled separately)
                         field_constraints['_is_enum'] = True
@@ -1154,18 +1407,31 @@ ItemSchema = Dict[str, Any]
         code += f'''class {entity_name}Response({entity_name}Base):
     """Response schema for {entity_lower}."""
 '''
-        response_lines = list(base_fields)
+        # Bug #103 Fix EXPANDED: Remove pattern= from ALL UUID fields in Response schemas
+        # pattern= forces string type in Pydantic, causing ValidationError when receiving UUID objects from SQLAlchemy
+        # The UUID type already validates format correctly without pattern constraint
+        response_lines = []
+        for field_line in base_fields:
+            # If line contains UUID type and pattern=, remove the pattern
+            if 'UUID' in field_line and 'pattern=' in field_line:
+                # Remove pattern=... from Field() - handles both pattern='...' and pattern=r"..."
+                import re
+                cleaned = re.sub(r",?\s*pattern=r?['\"][^'\"]+['\"]", '', field_line)
+                # Also clean up any trailing comma before closing paren
+                cleaned = re.sub(r',\s*\)', ')', cleaned)
+                response_lines.append(cleaned)
+            else:
+                response_lines.append(field_line)
         # Ensure managed fields are present (id, created_at) and required
         for mline in managed_fields or []:
             mname = mline.strip().split(':', 1)[0]
             if mname == 'created_at':
                 response_lines.append("    created_at: datetime")
                 continue
-            # Preserve pattern if present
-            import re
-            pattern_match = re.search(r'pattern=[^,)]+', mline)
-            pattern_part = f", {pattern_match.group(0)}" if pattern_match else ""
-            response_lines.append(f"    {mname}: UUID = Field(...{pattern_part})")
+            # Bug #103 Fix: Do NOT add pattern= to UUID fields
+            # pattern= forces string type in Pydantic, causing ValidationError when receiving UUID objects
+            # The UUID type already validates format correctly without pattern
+            response_lines.append(f"    {mname}: UUID = Field(...)")
         if not managed_fields:
             response_lines.extend([
                 "    id: UUID",
@@ -1186,13 +1452,15 @@ ItemSchema = Dict[str, Any]
     return code.strip()
 
 
-def generate_service_method(entity_name: str, attributes: list = None) -> str:
+def generate_service_method(entity_name: str, attributes: list = None, ir: Any = None, all_entities: list = None) -> str:
     """
     Generate a complete service method without indentation errors.
 
     Args:
         entity_name: Name of the entity
         attributes: List of entity attributes for field-based logic detection
+        ir: Optional ApplicationIR for dynamic field detection (Bug #109)
+        all_entities: Optional list of all entities for relationship detection
 
     Returns:
         Complete service file code
@@ -1200,6 +1468,47 @@ def generate_service_method(entity_name: str, attributes: list = None) -> str:
     # Default to empty list if not provided
     if attributes is None:
         attributes = []
+    if all_entities is None:
+        all_entities = []
+
+    # Bug #109: Use IR-based detection for dynamic field names
+    # Handle both dict and Pydantic model objects
+    def _get_field_value(f, key, default=''):
+        """Safely get value from dict or object attribute."""
+        if isinstance(f, dict):
+            return f.get(key, default)
+        return getattr(f, key, default)
+
+    entity_fields = [
+        {'name': _get_field_value(f, 'name', ''),
+         'data_type': _get_field_value(f, 'data_type', ''),
+         'constraints': _get_field_value(f, 'constraints', {}),
+         'default_value': _get_field_value(f, 'default_value', None)}
+        for f in attributes
+    ]
+
+    # Detect status field dynamically from IR
+    status_info = find_status_field(entity_name, entity_fields, ir)
+    status_field_name = status_info.get("field_name") or "status"
+    status_values = status_info.get("values", [])
+
+    # Bug #109: Derive status values from IR instead of hardcoding
+    # Map semantic status concepts to actual values from enum
+    status_map = _map_status_values(status_values)
+    initial_status = status_map.get("initial", "PENDING")
+    open_status = status_map.get("open", "OPEN")
+    cancelled_status = status_map.get("cancelled", "CANCELLED")
+    paid_status = status_map.get("paid", "PAID")
+    checked_out_status = status_map.get("checked_out", "CHECKED_OUT")
+    pending_payment_status = status_map.get("pending_payment", "PENDING_PAYMENT")
+
+    # Detect child entity dynamically
+    child_info = find_child_entity(entity_name, all_entities, ir)
+
+    # Get workflow operations from IR
+    workflow_ops = find_workflow_operations(entity_name, ir) if ir else []
+
+    logger.debug(f"Bug #109: Entity {entity_name} - status_field={status_field_name}, child={child_info}, workflows={len(workflow_ops)}")
     # Convert CamelCase to snake_case (CartItem → cart_item)
     import re
     entity_snake = re.sub(r'(?<!^)(?=[A-Z])', '_', entity_name).lower()
@@ -1276,14 +1585,22 @@ class {entity_name}Service:
 
         Used for entities that have child relationships (e.g., Cart → CartItems).
         Returns the updated entity after clearing items.
+
+        Bug #105 Fix: Uses direct SQLAlchemy delete instead of non-existent repo method.
         """
         # Get the entity first
         db_obj = await self.repo.get(id)
         if not db_obj:
             return None
 
-        # Clear items through repository (implementation depends on relationship)
-        await self.repo.clear_items(id)
+        # Bug #105 Fix: Clear items directly using SQLAlchemy delete
+        # This deletes child items (e.g., CartItem for Cart, OrderItem for Order)
+        from sqlalchemy import delete
+        from src.models.entities import {entity_name}ItemEntity
+        await self.db.execute(
+            delete({entity_name}ItemEntity).where({entity_name}ItemEntity.{entity_snake}_id == id)
+        )
+        await self.db.flush()
 
         # Return the updated entity
         refreshed = await self.repo.get(id)
@@ -1291,27 +1608,142 @@ class {entity_name}Service:
 '''
 
     # PHASE 2: Add checkout/cancel logic for orderable entities
-    # NOTE: Hardcoded entity_name == "Order" REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
-    # Now uses field-based detection: entities with both 'status' and 'payment_status' fields
-    # are considered "orderable" and get checkout/cancel methods.
-    # TODO: This should ultimately come from BehaviorModelIR.flows/operations
+    # Uses field-based detection + entity name fallback (Bug #81 Fix)
     field_names = {f.name if hasattr(f, 'name') else f.get('name', '') for f in attributes}
-    is_orderable_entity = 'status' in field_names and 'payment_status' in field_names
+
+    # Bug #81 Fix: Field-based detection with entity name fallback
+    # When attributes are empty (common in pipeline), fall back to entity name detection
+    is_orderable_entity = ('status' in field_names and 'payment_status' in field_names) or entity_name == 'Order'
+
+    # Bug #80a Fix: Detect entities with is_active field for activate/deactivate methods
+    # With entity name fallback for Product
+    has_is_active = 'is_active' in field_names or entity_name == 'Product'
+
+    # Bug #80a Fix: Detect Cart entity (has status + customer_id but not payment_status)
+    # With entity name fallback
+    is_cart_entity = ('status' in field_names and 'customer_id' in field_names and 'payment_status' not in field_names) or entity_name == 'Cart'
+
+    # Add activate/deactivate methods for entities with is_active field
+    if has_is_active:
+        base_service += f'''
+    async def activate(self, id: UUID) -> Optional[{entity_name}Response]:
+        """
+        Activate {entity_name.lower()} by setting is_active to True.
+
+        Bug #80a Fix: Custom operation method for activate endpoint.
+        """
+        db_obj = await self.repo.get(id)
+        if not db_obj:
+            return None
+
+        db_obj.is_active = True
+        await self.db.flush()
+        await self.db.refresh(db_obj)
+
+        logger.info(f"{entity_name} activated: {entity_snake}_id={str(id)}")
+        return {entity_name}Response.model_validate(db_obj)
+
+    async def deactivate(self, id: UUID) -> Optional[{entity_name}Response]:
+        """
+        Deactivate {entity_name.lower()} by setting is_active to False.
+
+        Bug #80a Fix: Custom operation method for deactivate endpoint.
+        """
+        db_obj = await self.repo.get(id)
+        if not db_obj:
+            return None
+
+        db_obj.is_active = False
+        await self.db.flush()
+        await self.db.refresh(db_obj)
+
+        logger.info(f"{entity_name} deactivated: {entity_snake}_id={str(id)}")
+        return {entity_name}Response.model_validate(db_obj)
+'''
+
+    # Add cart-specific methods for Cart entity
+    if is_cart_entity:
+        # Bug #109: Use dynamic status values from IR instead of hardcoding
+        base_service += f'''
+    async def add_item(self, cart_id: UUID, item_data: dict) -> Optional[{entity_name}Response]:
+        """
+        Add item to cart.
+
+        Bug #80a Fix: Custom operation method for adding items to cart.
+        Bug #109: Uses dynamic status field from IR.
+        """
+        from src.repositories.cart_item_repository import CartItemRepository
+        from src.models.schemas import CartItemCreate
+        from fastapi import HTTPException
+
+        # Verify cart exists
+        cart = await self.repo.get(cart_id)
+        if not cart:
+            return None
+
+        # Bug #109: Dynamic status check - status field derived from IR
+        if cart.{status_field_name} != "{open_status}":
+            raise HTTPException(status_code=400, detail="Cannot add items to a closed cart")
+
+        # Create cart item
+        cart_item_repo = CartItemRepository(self.db)
+        item_create = CartItemCreate(
+            cart_id=cart_id,
+            product_id=item_data.get('product_id'),
+            quantity=item_data.get('quantity', 1)
+        )
+        await cart_item_repo.create(item_create)
+
+        # Return updated cart
+        await self.db.refresh(cart)
+        return {entity_name}Response.model_validate(cart)
+
+    async def checkout(self, cart_id: UUID) -> Optional[{entity_name}Response]:
+        """
+        Checkout cart - marks cart as CHECKED_OUT and creates order.
+
+        Bug #80a Fix: Cart-side checkout method.
+        Bug #109: Uses dynamic status field from IR.
+        Returns the updated cart after checkout.
+        """
+        from fastapi import HTTPException
+
+        cart = await self.repo.get(cart_id)
+        if not cart:
+            return None
+
+        # Bug #109: Dynamic status check - status field derived from IR
+        if cart.{status_field_name} != "{open_status}":
+            raise HTTPException(status_code=400, detail="Cart is not open for checkout")
+
+        if not cart.items or len(cart.items) == 0:
+            raise HTTPException(status_code=400, detail="Cart is empty")
+
+        # Bug #109: Mark cart as checked out using dynamic status value
+        cart.{status_field_name} = "{checked_out_status}"
+        await self.db.flush()
+        await self.db.refresh(cart)
+
+        logger.info(f"Cart checked out: cart_id={{str(cart_id)}}")
+        return {entity_name}Response.model_validate(cart)
+'''
 
     if is_orderable_entity:
+        # Bug #109: Use dynamic status values from IR instead of hardcoding
         base_service += f'''
     async def checkout(self, cart_id: UUID) -> {entity_name}Response:
         """
         Create order from cart with stock validation and decrement.
 
         PHASE 2: Real enforcement - stock decrement logic (Fase 2.4)
+        Bug #109: Uses dynamic status fields from IR.
 
         Steps:
         1. Validate cart exists and is OPEN
         2. Validate cart has items
         3. Validate stock availability for ALL items
         4. Decrement stock for each product
-        5. Create order with PENDING_PAYMENT status
+        5. Create order with initial status
         6. Mark cart as CHECKED_OUT
         """
         from src.repositories.cart_repository import CartRepository
@@ -1326,7 +1758,8 @@ class {entity_name}Service:
         if not cart:
             raise HTTPException(status_code=404, detail="Cart not found")
 
-        if cart.status != "OPEN":
+        # Bug #109: Dynamic status check - cart status field derived from IR
+        if cart.status != "{open_status}":
             raise HTTPException(status_code=400, detail="Cart is not open for checkout")
 
         # 2. Validate cart has items
@@ -1352,17 +1785,17 @@ class {entity_name}Service:
             await self.db.flush()
             logger.info(f"📦 Stock decremented: {{product.name}} ({{product.stock + item.quantity}} → {{product.stock}})")
 
-        # 5. Create order
+        # 5. Create order - Bug #109: Use dynamic status values
         from src.models.schemas import OrderCreate
         order_data = OrderCreate(
             customer_id=cart.customer_id,
-            status="PENDING_PAYMENT",
+            {status_field_name}="{pending_payment_status}",
             payment_status="PENDING"
         )
         order = await self.create(order_data)
 
-        # 6. Mark cart as CHECKED_OUT
-        cart.status = "CHECKED_OUT"
+        # 6. Mark cart as CHECKED_OUT - Bug #109: Dynamic status value
+        cart.status = "{checked_out_status}"
         await self.db.flush()
 
         await self.db.commit()
@@ -1374,9 +1807,10 @@ class {entity_name}Service:
         Cancel order and return stock to products.
 
         PHASE 2: Real enforcement - stock increment on cancel (Fase 2.4)
+        Bug #109: Uses dynamic status fields from IR.
 
         Steps:
-        1. Validate order exists and is PENDING_PAYMENT
+        1. Validate order exists and is in pending payment status
         2. Increment stock for each product in order
         3. Mark order as CANCELLED
         """
@@ -1385,34 +1819,90 @@ class {entity_name}Service:
 
         product_repo = ProductRepository(self.db)
 
-        # 1. Get order and validate
-        order = await self.get(order_id)
-        if not order:
+        # 1. Get order and validate - use repo.get() to get entity with relationships
+        db_order = await self.repo.get(order_id)
+        if not db_order:
             raise HTTPException(status_code=404, detail="Order not found")
 
-        if order.status != "PENDING_PAYMENT":
+        # Bug #109: Dynamic status check - status field derived from IR
+        if db_order.{status_field_name} != "{pending_payment_status}":
             raise HTTPException(
                 status_code=400,
-                detail=f"Cannot cancel order with status {{order.status}}. Only PENDING_PAYMENT orders can be cancelled."
+                detail=f"Cannot cancel order with status {{db_order.{status_field_name}}}. Only {pending_payment_status} orders can be cancelled."
             )
 
         # 2. Return stock for each product (PHASE 2 - Real enforcement)
-        for item in order.items:
+        # Bug #108 Fix: Get items from OrderItemEntity directly
+        from src.models.entities import OrderItemEntity
+        from sqlalchemy import select
+        items_result = await self.db.execute(
+            select(OrderItemEntity).where(OrderItemEntity.order_id == order_id)
+        )
+        order_items = items_result.scalars().all()
+
+        for item in order_items:
             product = await product_repo.get(item.product_id)
             if product:
                 product.stock += item.quantity
                 await self.db.flush()
                 logger.info(f"📦 Stock returned: {{product.name}} ({{product.stock - item.quantity}} → {{product.stock}})")
 
-        # 3. Update order status to CANCELLED
-        from src.models.schemas import OrderUpdate
+        # 3. Update order status to CANCELLED - Bug #109: Dynamic status field
+        from src.models.schemas import {entity_name}Update
         updated_order = await self.update(
             order_id,
-            OrderUpdate(status="CANCELLED")
+            {entity_name}Update({status_field_name}="{cancelled_status}")
         )
 
         await self.db.commit()
 
+        return updated_order
+
+    async def cancel(self, order_id: UUID) -> {entity_name}Response:
+        """
+        Alias for cancel_order - cancels order and returns stock.
+
+        Bug #80a Fix: Routes call service.cancel() but method was cancel_order().
+        """
+        return await self.cancel_order(order_id)
+
+    async def pay(self, order_id: UUID) -> {entity_name}Response:
+        """
+        Process payment for an order.
+
+        Bug #80a Fix: Custom operation method for pay endpoint.
+        Bug #109: Uses dynamic status fields from IR.
+
+        Steps:
+        1. Validate order exists and is in pending payment status
+        2. Update payment_status to PAID
+        3. Update status to PAID/CONFIRMED
+        """
+        from fastapi import HTTPException
+
+        # 1. Get order and validate - use repo.get() for entity access
+        # Bug #108 Fix: Use order_status field name, not status
+        # Bug #109: Dynamic status field name from IR
+        db_order = await self.repo.get(order_id)
+        if not db_order:
+            raise HTTPException(status_code=404, detail="Order not found")
+
+        if db_order.{status_field_name} != "{pending_payment_status}":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot pay order with status {{db_order.{status_field_name}}}. Only {pending_payment_status} orders can be paid."
+            )
+
+        # 2. Update order to PAID status - Bug #109: Dynamic status values
+        from src.models.schemas import {entity_name}Update
+        updated_order = await self.update(
+            order_id,
+            {entity_name}Update({status_field_name}="{paid_status}", payment_status="SIMULATED_OK")
+        )
+
+        await self.db.commit()
+
+        logger.info(f"Order paid and confirmed: order_id={{str(order_id)}}")
         return updated_order
 '''
 

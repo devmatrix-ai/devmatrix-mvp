@@ -215,9 +215,23 @@ class PipelineMetrics:
             self.recovery_success_rate = self.recovered_errors / self.total_errors
 
         # Determine overall status
+        # Bug #101 Fix: Added runtime_smoke_test as critical phase
+        # If Docker doesn't start or smoke test fails, pipeline MUST fail
+        critical_phases = ["wave_execution", "deployment", "health_verification"]
+
+        # Only check runtime_smoke_test if it exists and was attempted
+        if "runtime_smoke_test" in self.phases:
+            smoke_phase = self.phases["runtime_smoke_test"]
+            # Skip check if phase was skipped (status will be COMPLETED with skip checkpoint)
+            # Only fail if phase was actually attempted and failed
+            if smoke_phase.status == PhaseStatus.FAILED:
+                # Smoke test failed - force pipeline failure
+                critical_phases.append("runtime_smoke_test")
+
         critical_phases_ok = all(
             self.phases[p].status == PhaseStatus.COMPLETED
-            for p in ["wave_execution", "deployment", "health_verification"]
+            for p in critical_phases
+            if p in self.phases  # Only check phases that exist
         )
 
         if critical_phases_ok and self.critical_errors == 0:
