@@ -177,6 +177,11 @@ validation_output*.txt
 
 # Qdrant storage (runtime data)
 qdrant_storage/
+qdrant_rebuild.log
+
+# Neo4j data (runtime data)
+neo4j_data/
+neo4j-data/
 
 # Classification results
 classification_results/
