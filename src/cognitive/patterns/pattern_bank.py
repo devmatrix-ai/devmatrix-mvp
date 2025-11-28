@@ -540,6 +540,9 @@ class PatternBank:
         patterns = []
         for hit in search_result:
             pattern = self._hit_to_stored_pattern(hit, similarity_score=hit.score)
+            if pattern is None:
+                # Skip patterns without code (incomplete data)
+                continue
             patterns.append(pattern)
 
             # Increment usage count
@@ -857,6 +860,9 @@ class PatternBank:
             final_score = 0.7 * vector_score + 0.3 * metadata_score
 
             pattern = self._hit_to_stored_pattern(hit, similarity_score=final_score)
+            if pattern is None:
+                # Skip patterns without code (incomplete data)
+                continue
             pattern.similarity_score = final_score  # Override with hybrid score
             patterns.append(pattern)
 
@@ -966,15 +972,21 @@ class PatternBank:
             domain=payload.get("domain", "general"),  # Fallback domain
         )
 
+        # Defensive access - some restored patterns may lack fields
+        code = payload.get("code", "")
+        if not code:
+            # Pattern without code is not usable for generation
+            return None
+
         return StoredPattern(
             pattern_id=payload["pattern_id"],
             signature=signature,
-            code=payload["code"],
-            success_rate=payload["success_rate"],
+            code=code,
+            success_rate=payload.get("success_rate", 0.0),
             similarity_score=similarity_score,
             usage_count=payload.get("usage_count", 0),
-            created_at=datetime.fromisoformat(payload["created_at"]),
-            domain=payload["domain"],
+            created_at=datetime.fromisoformat(payload.get("created_at", "2024-01-01T00:00:00")),
+            domain=payload.get("domain", "general"),
         )
 
     def get_pattern_by_id(self, pattern_id: str) -> Optional[StoredPattern]:
