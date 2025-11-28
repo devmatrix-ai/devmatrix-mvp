@@ -13,6 +13,7 @@ from src.cognitive.ir.api_model import APIModelIR
 from src.cognitive.ir.infrastructure_model import InfrastructureModelIR
 from src.cognitive.ir.behavior_model import BehaviorModelIR
 from src.cognitive.ir.validation_model import ValidationModelIR
+from src.cognitive.ir.tests_model import TestsModelIR
 
 class ApplicationIR(BaseModel):
     """
@@ -28,6 +29,7 @@ class ApplicationIR(BaseModel):
     infrastructure_model: InfrastructureModelIR
     behavior_model: BehaviorModelIR = Field(default_factory=BehaviorModelIR)
     validation_model: ValidationModelIR = Field(default_factory=ValidationModelIR)
+    tests_model: TestsModelIR = Field(default_factory=TestsModelIR)
     
     # Metadata
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -130,3 +132,21 @@ class ApplicationIR(BaseModel):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "source": "ApplicationIR"
         }
+
+    def get_test_scenarios(self) -> list:
+        """Get all test scenarios from TestsModelIR."""
+        if self.tests_model:
+            return self.tests_model.get_all_scenarios()
+        return []
+
+    def get_smoke_scenarios(self) -> list:
+        """Get smoke test scenarios for quick validation."""
+        if self.tests_model:
+            return self.tests_model.get_smoke_scenarios()
+        return []
+
+    def get_test_coverage_stats(self) -> dict:
+        """Get test coverage statistics."""
+        if self.tests_model:
+            return self.tests_model.get_coverage_stats()
+        return {"total_scenarios": 0, "endpoint_suites": 0}

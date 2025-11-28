@@ -8,6 +8,7 @@ import sys
 import json
 import time
 import shutil
+import subprocess
 import tempfile
 import logging
 import tracemalloc
@@ -49,23 +50,24 @@ from tests.e2e.precision_metrics import (
 )
 from tests.e2e.llm_usage_tracker import LLMUsageTracker
 
-# Progress tracking for live pipeline visualization
-try:
-    from tests.e2e.progress_tracker import (
-        get_tracker,
-        start_phase,
-        update_phase,
-        increment_step,
-        add_item,
-        complete_phase,
-        add_error,
-        update_metrics,
-        display_progress
-    )
-    PROGRESS_TRACKING_AVAILABLE = True
-except ImportError as e:
-    print(f"Warning: Progress tracking not available: {e}")
-    PROGRESS_TRACKING_AVAILABLE = False
+# Progress tracking - Simple logging (Rich dashboard disabled due to flickering)
+# The Rich Live display conflicts with regular print() statements from the pipeline
+PROGRESS_TRACKING_AVAILABLE = True
+RICH_PROGRESS = False
+
+def get_tracker(): return None
+def start_phase(name, substeps=1): print(f"▶️  Phase: {name}")
+def update_phase(name, step="", progress=None): pass
+def increment_step(name, count=1): pass
+def add_item(name, item_type, completed, total): pass
+def complete_phase(name, success=True):
+    icon = "✅" if success else "❌"
+    print(f"{icon} Phase Complete: {name}")
+def add_error(name, msg=""): print(f"⚠️  Error in {name}: {msg}")
+def update_metrics(**kwargs): pass
+def display_progress(clear=True): pass
+def start_tracking(title=""): print(f"\n{'='*60}\n🚀 {title}\n{'='*60}")
+def stop_tracking(): print(f"\n{'='*60}\n🏁 Pipeline finished\n{'='*60}")
 
 # Structured logging for eliminating duplicates while maintaining detail
 try:
@@ -115,6 +117,18 @@ except ImportError as e:
     SMOKE_TEST_ORCHESTRATOR_AVAILABLE = False
     SmokeTestOrchestrator = None
     SmokeTestReport = None
+
+# TestsIR: IR-Centric Smoke Tests (deterministic, no LLM)
+try:
+    from src.services.tests_ir_generator import TestsIRGenerator, generate_tests_ir
+    from src.validation.smoke_runner_v2 import SmokeRunnerV2, run_smoke_tests_v2, format_smoke_report
+    TESTS_IR_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: TestsIR system not available: {e}")
+    TESTS_IR_AVAILABLE = False
+    TestsIRGenerator = None
+    generate_tests_ir = None
+    SmokeRunnerV2 = None
 
 # ApplicationIR Extraction (IR-centric architecture)
 from src.specs.spec_to_application_ir import SpecToApplicationIR
@@ -368,6 +382,134 @@ def animated_progress_bar(message: str, duration: int = 120):
     thread.start()
 
     return stop_event, thread
+
+
+def check_docker_available() -> tuple[bool, str]:
+    """
+    Bug #112: Check if Docker daemon is available and running.
+
+    Returns:
+        Tuple of (is_available: bool, message: str)
+    """
+    import shutil
+
+    # Check if docker command exists
+    docker_path = shutil.which('docker')
+    if not docker_path:
+        return False, "Docker command not found. Please install Docker."
+
+    try:
+        # Check if Docker daemon is running
+        result = subprocess.run(
+            ['docker', 'info'],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+
+        if result.returncode != 0:
+            if 'Cannot connect to the Docker daemon' in result.stderr:
+                return False, "Docker daemon is not running. Please start Docker Desktop or run 'sudo systemctl start docker'"
+            return False, f"Docker error: {result.stderr[:200]}"
+
+        return True, "Docker is available and running"
+
+    except subprocess.TimeoutExpired:
+        return False, "Docker daemon not responding (timeout). Please restart Docker."
+    except Exception as e:
+        return False, f"Docker check failed: {e}"
+
+
+async def ensure_docker_running_for_smoke_test(app_dir: Path, timeout: float = 120.0) -> bool:
+    """
+    Bug #111: Ensure Docker containers are running before smoke tests.
+
+    Starts docker compose if not already running and waits for server.
+
+    Args:
+        app_dir: Path to generated app directory
+        timeout: Max time to wait for server to be ready
+
+    Returns:
+        True if server is ready, False otherwise
+    """
+    import httpx
+
+    docker_dir = app_dir / "docker"
+    compose_file = docker_dir / "docker-compose.yml"
+
+    if not compose_file.exists():
+        print(f"    ⚠️ No docker-compose.yml found at {compose_file}")
+        return False
+
+    base_url = "http://127.0.0.1:8002"
+
+    # First check if server is already running
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{base_url}/health")
+            if response.status_code == 200:
+                print("    ✅ Docker server already running")
+                return True
+    except Exception:
+        # Bug #111 fix: Catch all connection errors (httpx, httpcore, etc.)
+        pass  # Server not running, need to start it
+
+    print("    🐳 Starting Docker containers...")
+
+    # Start docker compose
+    cmd = ['docker', 'compose', '-f', 'docker/docker-compose.yml', 'up', '-d', '--build']
+
+    result = subprocess.run(
+        cmd,
+        cwd=str(app_dir),
+        capture_output=True,
+        text=True,
+        timeout=120
+    )
+
+    # Check for errors (allowing harmless warnings)
+    stderr_lower = (result.stderr or '').lower()
+    harmless_warnings = ['version is obsolete', 'pull access denied', 'network already exists']
+
+    if result.returncode != 0:
+        is_harmless = any(warn in stderr_lower for warn in harmless_warnings)
+        if not is_harmless:
+            print(f"    ❌ Docker compose failed: {result.stderr[:200]}")
+            return False
+
+    # Wait for server to be ready
+    print(f"    ⏳ Waiting for server at {base_url}...")
+
+    # Bug #113: Give Docker a moment to fully start the container
+    await asyncio.sleep(5.0)
+
+    # Bug #114: Try multiple health endpoints (app may use /health/health or /health)
+    health_endpoints = [
+        f"{base_url}/health/health",
+        f"{base_url}/health",
+        f"{base_url}/",
+    ]
+
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        for health_url in health_endpoints:
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    response = await client.get(health_url)
+                    # Bug #114: Accept any status < 500 (like runtime_smoke_validator)
+                    if response.status_code < 500:
+                        elapsed = time.time() - start_time
+                        print(f"    ✅ Server ready in {elapsed:.1f}s (via {health_url})")
+                        return True
+            except Exception:
+                # Bug #113: Catch ALL exceptions including httpcore.RemoteProtocolError
+                pass
+
+        await asyncio.sleep(1.0)
+
+    print(f"    ❌ Server did not become ready within {timeout}s")
+    return False
 
 
 @contextmanager
@@ -1022,11 +1164,24 @@ class RealE2ETest:
         # Bug #22 Fix: Reset global LLM metrics at start of each test
         EnhancedAnthropicClient.reset_global_metrics()
 
-        # Initialize progress tracker if available
+        # Bug #112 Fix: Check Docker availability early to fail fast
+        docker_available, docker_msg = check_docker_available()
+        if not docker_available:
+            print(f"\n❌ PREREQUISITE FAILED: {docker_msg}")
+            print("   Docker is required for runtime smoke tests (Phase 8.5)")
+            print("   Please start Docker and try again.")
+            print("="*70 + "\n")
+            raise RuntimeError(f"Docker not available: {docker_msg}")
+        print(f"🐳 Docker check: OK\n")
+
+        # Initialize progress tracker if available (Rich animated UI)
         tracker = None
         if PROGRESS_TRACKING_AVAILABLE:
+            spec_name = Path(self.spec_file).stem
+            start_tracking(f"E2E Pipeline: {spec_name}")
             tracker = get_tracker()
-            print("\n📊 Progress tracking enabled\n")
+            if not RICH_PROGRESS:
+                print("\n📊 Progress tracking enabled (fallback mode)\n")
 
         try:
             # Initialize real services
@@ -1123,6 +1278,10 @@ class RealE2ETest:
                 add_error("Pipeline Execution")
 
         finally:
+            # Stop Rich progress tracking and show summary
+            if PROGRESS_TRACKING_AVAILABLE:
+                stop_tracking()
+
             # Finalize and report
             await self._finalize_and_report()
 
@@ -3172,14 +3331,25 @@ Once running, visit:
             self.metrics_collector.complete_phase("runtime_smoke_test")
             return
 
-        # Bug #107: Try LLM-driven orchestrator first for comprehensive scenarios
+        # TestsIR: Try IR-centric deterministic smoke test first (no LLM, 100% coverage)
+        use_ir_smoke = TESTS_IR_AVAILABLE and os.environ.get("USE_IR_SMOKE_TEST", "1") == "1"
+
+        if use_ir_smoke:
+            print("  🎯 Using IR-Centric Smoke Test (TestsIR - deterministic)")
+            smoke_result = await self._run_ir_smoke_test()
+            if smoke_result is not None:
+                self._process_smoke_result(smoke_result)
+                return
+            else:
+                print("  ⚠️ IR smoke test failed, falling back to LLM orchestrator")
+
+        # Bug #107: Try LLM-driven orchestrator as fallback
         use_llm_orchestrator = SMOKE_TEST_ORCHESTRATOR_AVAILABLE and os.environ.get("USE_LLM_SMOKE_TEST", "1") == "1"
 
         if use_llm_orchestrator:
             print("  🧠 Using LLM-Driven Smoke Test (Bug #107)")
             smoke_result = await self._run_llm_smoke_test()
             if smoke_result is not None:
-                # LLM test completed, continue with result processing
                 self._process_smoke_result(smoke_result)
                 return
             else:
@@ -3412,9 +3582,22 @@ Once running, visit:
                 scenario_types[s.name] = scenario_types.get(s.name, 0) + 1
             print(f"    📋 Scenario breakdown: {dict(list(scenario_types.items())[:5])}")
 
-            # Execute scenarios against Docker (already running)
+            # Bug #111 Fix: Ensure Docker is running before executing scenarios
             base_url = "http://127.0.0.1:8002"
             print(f"    🔗 Testing against: {base_url}")
+
+            # Check Docker availability first
+            docker_available, docker_msg = check_docker_available()
+            if not docker_available:
+                print(f"    ❌ Docker not available: {docker_msg}")
+                return None
+
+            # Ensure server is running (start if needed)
+            server_ready = await ensure_docker_running_for_smoke_test(self.output_path, timeout=120.0)
+            if not server_ready:
+                print("    ❌ Failed to start Docker server for LLM smoke test")
+                return None
+
             print(f"    🚀 Phase 2: Executing {len(plan.scenarios)} scenarios...")
 
             executor = ScenarioExecutorAgent(base_url)
@@ -3449,15 +3632,17 @@ Once running, visit:
                         "reason": r.scenario.reason
                     })
 
-                endpoint_results.append(EndpointTestResult(
-                    endpoint_path=r.scenario.endpoint.split()[-1] if ' ' in r.scenario.endpoint else r.scenario.endpoint,
-                    method=r.scenario.endpoint.split()[0] if ' ' in r.scenario.endpoint else "GET",
-                    success=r.status_matches,
-                    status_code=r.actual_status,
-                    error_type="StatusMismatch" if not r.status_matches else None,
-                    error_message=r.error if r.error else None,
-                    response_time_ms=r.response_time_ms
-                ))
+                # Bug #110 Fix: Create EndpointTestResult only if available
+                if EndpointTestResult is not None:
+                    endpoint_results.append(EndpointTestResult(
+                        endpoint_path=r.scenario.endpoint.split()[-1] if ' ' in r.scenario.endpoint else r.scenario.endpoint,
+                        method=r.scenario.endpoint.split()[0] if ' ' in r.scenario.endpoint else "GET",
+                        success=r.status_matches,
+                        status_code=r.actual_status,
+                        error_type="StatusMismatch" if not r.status_matches else None,
+                        error_message=r.error if r.error else None,
+                        response_time_ms=r.response_time_ms
+                    ))
 
             # Save detailed results
             results_path = self.output_path / "llm_smoke_test_results.json"
@@ -3488,6 +3673,131 @@ Once running, visit:
 
         except Exception as e:
             print(f"    ❌ LLM smoke test error: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    async def _run_ir_smoke_test(self) -> Optional[SmokeTestResult]:
+        """
+        TestsIR: Run IR-centric deterministic smoke tests.
+
+        Uses TestsIRGenerator and SmokeRunnerV2 for:
+        1. Deterministic test generation from IR (no LLM)
+        2. 100% endpoint coverage guarantee
+        3. Unified metrics compatible with Code Repair
+
+        Returns:
+            SmokeTestResult compatible object, or None if fails
+        """
+        if not TESTS_IR_AVAILABLE:
+            print("    ⚠️ TestsIR system not available")
+            return None
+
+        try:
+            import json
+
+            print("    📝 Phase 1: Generating TestsModelIR from ApplicationIR...")
+
+            # Generate TestsModelIR deterministically
+            tests_model = generate_tests_ir(self.application_ir)
+
+            # Update ApplicationIR with tests model
+            self.application_ir.tests_model = tests_model
+
+            # Save TestsModelIR for debugging
+            tests_ir_path = self.output_path / "tests_model_ir.json"
+            tests_ir_path.write_text(tests_model.model_dump_json(indent=2))
+            print(f"    💾 TestsModelIR saved: {tests_ir_path}")
+
+            # Get coverage stats
+            stats = tests_model.get_coverage_stats()
+            print(f"    📊 Generated {stats['total_scenarios']} scenarios, {stats['endpoint_suites']} endpoint suites")
+            print(f"    📋 By type: {stats.get('by_type', {})}")
+
+            # Bug #111 Fix: Ensure Docker is running
+            base_url = "http://127.0.0.1:8002"
+            print(f"    🔗 Testing against: {base_url}")
+
+            docker_available, docker_msg = check_docker_available()
+            if not docker_available:
+                print(f"    ❌ Docker not available: {docker_msg}")
+                return None
+
+            server_ready = await ensure_docker_running_for_smoke_test(self.output_path, timeout=120.0)
+            if not server_ready:
+                print("    ❌ Failed to start Docker server for IR smoke test")
+                return None
+
+            print(f"    🚀 Phase 2: Executing {stats['total_scenarios']} scenarios...")
+
+            # Run smoke tests using SmokeRunnerV2
+            runner = SmokeRunnerV2(tests_model, base_url)
+            report = await runner.run()
+
+            print(f"\n  📊 IR Smoke Test Results:")
+            print(f"    - Total scenarios: {report.total_scenarios}")
+            print(f"    - Passed: {report.passed}")
+            print(f"    - Failed: {report.failed}")
+            print(f"    - Pass rate: {report.pass_rate:.1f}%")
+            print(f"    - Endpoint coverage: {report.endpoint_coverage:.1f}%")
+
+            # Convert to SmokeTestResult compatible format
+            violations = []
+            endpoint_results = []
+
+            for result in report.results:
+                if result.status.value != "passed":
+                    violations.append({
+                        "type": "smoke_test_failure",
+                        "severity": "high" if "happy_path" in result.scenario_name else "medium",
+                        "endpoint": f"{result.http_method} {result.endpoint_path}",
+                        "scenario": result.scenario_name,
+                        "expected_status": result.expected_status_code,
+                        "actual_status": result.actual_status_code,
+                        "error_message": result.error_message or f"Expected {result.expected_status_code}, got {result.actual_status_code}"
+                    })
+
+                if EndpointTestResult is not None:
+                    endpoint_results.append(EndpointTestResult(
+                        endpoint_path=result.endpoint_path,
+                        method=result.http_method,
+                        success=result.status.value == "passed",
+                        status_code=result.actual_status_code,
+                        error_type=result.status.value if result.status.value != "passed" else None,
+                        error_message=result.error_message,
+                        response_time_ms=result.response_time_ms
+                    ))
+
+            # Save detailed results
+            results_path = self.output_path / "ir_smoke_test_results.json"
+            results_data = {
+                "passed": report.failed == 0,
+                "total_scenarios": report.total_scenarios,
+                "passed_count": report.passed,
+                "failed_count": report.failed,
+                "pass_rate": report.pass_rate,
+                "endpoint_coverage": report.endpoint_coverage,
+                "violations": violations,
+                "by_priority": report.scenarios_by_priority,
+                "failed_endpoints": report.failed_endpoints
+            }
+            with open(results_path, 'w') as f:
+                json.dump(results_data, f, indent=2)
+            print(f"    💾 Detailed results saved: {results_path}")
+
+            return SmokeTestResult(
+                passed=report.failed == 0,
+                endpoints_tested=report.total_scenarios,
+                endpoints_passed=report.passed,
+                endpoints_failed=report.failed,
+                violations=violations,
+                results=endpoint_results,
+                total_time_ms=report.total_duration_ms,
+                server_startup_time_ms=0.0
+            )
+
+        except Exception as e:
+            print(f"    ❌ IR smoke test error: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -4983,15 +5293,18 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
             print("\n")
             display_progress()
             tracker = get_tracker()
-            summary = tracker.get_summary()
 
-            # Bug #61 fix: Sync Neo4j/Qdrant counters from progress tracker to final metrics
-            if tracker.live_metrics:
-                final_metrics.neo4j_queries = tracker.live_metrics.neo4j_queries
-                final_metrics.qdrant_queries = tracker.live_metrics.qdrant_queries
-                # Bug #65 fix: Sync memory from progress tracker (psutil RSS) to final metrics
-                # This gives accurate total process memory (~2879MB) vs tracemalloc Python-only (~87MB)
-                final_metrics.peak_memory_mb = tracker.live_metrics.memory_mb
+            # Only access tracker methods if we have a real tracker object
+            if tracker is not None:
+                summary = tracker.get_summary()
+
+                # Bug #61 fix: Sync Neo4j/Qdrant counters from progress tracker to final metrics
+                if tracker.live_metrics:
+                    final_metrics.neo4j_queries = tracker.live_metrics.neo4j_queries
+                    final_metrics.qdrant_queries = tracker.live_metrics.qdrant_queries
+                    # Bug #65 fix: Sync memory from progress tracker (psutil RSS) to final metrics
+                    # This gives accurate total process memory (~2879MB) vs tracemalloc Python-only (~87MB)
+                    final_metrics.peak_memory_mb = tracker.live_metrics.memory_mb
 
         # Bug #62 fix: Sync PatternBank metrics from pipeline to final metrics
         if hasattr(self, 'patterns_matched') and self.patterns_matched:
@@ -5256,18 +5569,264 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         print(f"\n{sep}\n")
 
 
-async def main():
-    """Run real E2E test"""
+def clear_all_caches():
+    """Clear all caches before E2E test to ensure fresh generation.
+
+    Bug #130: Stale IR cache can contain incorrect routes like /health/health
+    that were generated before bug fixes. Clearing caches ensures fresh IR.
+    """
+    import shutil
+    cache_dirs = [
+        Path(project_root) / ".devmatrix" / "ir_cache",
+        Path(project_root) / ".devmatrix" / "pattern_cache",
+        Path(project_root) / ".cache",
+    ]
+
+    cleared = []
+    for cache_dir in cache_dirs:
+        if cache_dir.exists():
+            try:
+                shutil.rmtree(cache_dir)
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cleared.append(str(cache_dir))
+            except Exception as e:
+                print(f"⚠️  Could not clear {cache_dir}: {e}")
+
+    if cleared:
+        print(f"🧹 Cleared caches: {', '.join(cleared)}")
+    else:
+        print("ℹ️  No caches to clear")
+
+
+def get_next_log_number() -> int:
+    """Get next sequential log number from logs/runs directory."""
+    logs_dir = Path(project_root) / "logs" / "runs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    # Find existing log files with pattern test_devmatrix_NNN_NNN.log
+    import re
+    pattern = re.compile(r'test_devmatrix_(\d{3})_(\d{3})\.log')
+
+    max_major = 0
+    max_minor = 0
+
+    for log_file in logs_dir.glob("test_devmatrix_*.log"):
+        match = pattern.match(log_file.name)
+        if match:
+            major, minor = int(match.group(1)), int(match.group(2))
+            if major > max_major or (major == max_major and minor > max_minor):
+                max_major, max_minor = major, minor
+
+    # Increment minor, rollover at 999
+    if max_minor >= 999:
+        return (max_major + 1) * 1000
+    return max_major * 1000 + max_minor + 1
+
+
+def setup_file_logging(log_path: Path) -> None:
+    """Setup logging to both console and file.
+
+    TeeWriter supports Rich by exposing isatty() and fileno() from the underlying stream.
+    """
     import sys
 
-    # Get spec file from command line argument or use default
-    if len(sys.argv) > 1:
-        spec_file = sys.argv[1]
-    else:
-        spec_file = "tests/e2e/test_specs/simple_task_api.md"
-        print(f"⚠️  No spec file provided, using default: {spec_file}")
-        print(f"   Usage: python {sys.argv[0]} <spec_file_path>")
+    # Create a tee-like class that writes to both console and file
+    # Rich-compatible: exposes isatty() and fileno() for terminal detection
+    class TeeWriter:
+        def __init__(self, file_path: Path, stream):
+            self.file = open(file_path, 'w', buffering=1)  # Line buffered
+            self.stream = stream
+            self.encoding = getattr(stream, 'encoding', 'utf-8')
+
+        def write(self, data):
+            self.stream.write(data)
+            self.file.write(data)
+            self.file.flush()
+
+        def flush(self):
+            self.stream.flush()
+            self.file.flush()
+
+        def close(self):
+            self.file.close()
+
+        # Rich compatibility: expose terminal methods from underlying stream
+        def isatty(self):
+            return self.stream.isatty() if hasattr(self.stream, 'isatty') else False
+
+        def fileno(self):
+            return self.stream.fileno() if hasattr(self.stream, 'fileno') else -1
+
+    # Replace stdout and stderr
+    sys.stdout = TeeWriter(log_path, sys.__stdout__)
+    sys.stderr = TeeWriter(log_path.with_suffix('.err.log'), sys.__stderr__)
+
+    print(f"📝 Logging to: {log_path}")
+
+
+async def main():
+    """Run real E2E test with CLI interface."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="DevMatrix E2E Pipeline - Generate working APIs from specs",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Run with auto-generated log name (test_devmatrix_000_001.log)
+  python %(prog)s ecommerce
+
+  # Run with custom log name
+  python %(prog)s ecommerce --log my_test
+
+  # Run with full spec path
+  python %(prog)s tests/e2e/test_specs/ecommerce-api-spec-human.md
+
+  # Run with LLM smoke tests enabled
+  python %(prog)s ecommerce --llm-smoke
+
+Environment variables (auto-set by default):
+  PRODUCTION_MODE=true      Use production LLM settings
+  USE_LLM_SMOKE_TEST=1      Enable LLM-driven smoke tests (use --llm-smoke)
+  QUALITY_GATE_ENV=dev      Quality gate environment
+        """
+    )
+
+    parser.add_argument(
+        'spec',
+        nargs='?',
+        default='ecommerce',
+        help='Spec file path or shorthand (ecommerce, simple_task). Default: ecommerce'
+    )
+
+    parser.add_argument(
+        '--log', '-l',
+        dest='log_name',
+        help='Log file name (without .log extension). Auto-generates if not provided.'
+    )
+
+    parser.add_argument(
+        '--no-log',
+        action='store_true',
+        help='Disable file logging (console only)'
+    )
+
+    parser.add_argument(
+        '--llm-smoke',
+        action='store_true',
+        help='Enable LLM-driven smoke tests (comprehensive scenarios)'
+    )
+
+    parser.add_argument(
+        '--timeout', '-t',
+        type=int,
+        default=9000,
+        help='Timeout in seconds (default: 9000 = 2.5 hours)'
+    )
+
+    parser.add_argument(
+        '--no-cache-clear',
+        action='store_true',
+        help='Skip cache clearing (use existing IR cache)'
+    )
+
+    parser.add_argument(
+        '--list', '-L',
+        action='store_true',
+        help='List available spec files and exit'
+    )
+
+    args = parser.parse_args()
+
+    # Spec shorthands mapping
+    spec_shorthands = {
+        'ecommerce': 'tests/e2e/test_specs/ecommerce-api-spec-human.md',
+        'simple': 'tests/e2e/test_specs/simple_task_api.md',
+        'simple_task': 'tests/e2e/test_specs/simple_task_api.md',
+    }
+
+    # List specs and exit
+    if args.list:
+        print("📋 Available Spec Files:")
         print()
+        print("  Shorthands:")
+        for name, path in spec_shorthands.items():
+            exists = "✅" if Path(path).exists() else "❌"
+            print(f"    {exists} {name:15} → {path}")
+        print()
+        print("  All specs in test_specs/:")
+        test_specs_dir = Path(project_root) / "tests" / "e2e" / "test_specs"
+        if test_specs_dir.exists():
+            for spec_file in sorted(test_specs_dir.glob("*.md")):
+                print(f"    📄 {spec_file.name}")
+        print()
+        print("  Usage:")
+        print("    python %(prog)s ecommerce          # by shorthand" % {"prog": sys.argv[0]})
+        print("    python %(prog)s my-spec.md        # auto-finds in test_specs/" % {"prog": sys.argv[0]})
+        print("    python %(prog)s /full/path/to/spec.md" % {"prog": sys.argv[0]})
+        sys.exit(0)
+
+    # Set default environment variables
+    os.environ.setdefault('PRODUCTION_MODE', 'true')
+    os.environ.setdefault('QUALITY_GATE_ENV', 'dev')
+    os.environ.setdefault('PYTHONUNBUFFERED', '1')
+
+    if args.llm_smoke:
+        os.environ['USE_LLM_SMOKE_TEST'] = '1'
+
+    # Resolve spec file
+    spec_file = spec_shorthands.get(args.spec, args.spec)
+
+    # If spec doesn't exist as path, try to find it
+    if not Path(spec_file).exists():
+        # Try in test_specs directory
+        test_spec = Path(project_root) / "tests" / "e2e" / "test_specs" / f"{args.spec}.md"
+        if test_spec.exists():
+            spec_file = str(test_spec)
+        else:
+            test_spec = Path(project_root) / "tests" / "e2e" / "test_specs" / f"{args.spec}-api-spec-human.md"
+            if test_spec.exists():
+                spec_file = str(test_spec)
+
+    # Setup logging
+    if not args.no_log:
+        logs_dir = Path(project_root) / "logs" / "runs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+
+        if args.log_name:
+            log_file = logs_dir / f"{args.log_name}.log"
+        else:
+            # Auto-generate sequential log name
+            log_num = get_next_log_number()
+            major, minor = divmod(log_num, 1000)
+            log_file = logs_dir / f"test_devmatrix_{major:03d}_{minor:03d}.log"
+
+        setup_file_logging(log_file)
+
+    # Print banner
+    print("=" * 70)
+    print("🚀 DevMatrix E2E Pipeline")
+    print("=" * 70)
+    print(f"📄 Spec: {spec_file}")
+    print(f"🔧 PRODUCTION_MODE: {os.environ.get('PRODUCTION_MODE', 'false')}")
+    print(f"🧪 LLM Smoke Tests: {'enabled' if args.llm_smoke else 'disabled'}")
+    print(f"⏱️  Timeout: {args.timeout}s")
+    print("=" * 70)
+    print()
+
+    # Bug #130: Clear all caches before starting to ensure fresh IR generation
+    if not args.no_cache_clear:
+        clear_all_caches()
+    else:
+        print("⚠️  Skipping cache clear (--no-cache-clear)")
+
+    # Validate spec file exists
+    if not Path(spec_file).exists():
+        print(f"❌ Spec file not found: {spec_file}")
+        print(f"   Available specs:")
+        for name, path in spec_shorthands.items():
+            print(f"     - {name}: {path}")
+        sys.exit(1)
 
     test = RealE2ETest(spec_file)
     await test.run()
