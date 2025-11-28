@@ -800,6 +800,14 @@ class CodeRepairAgent:
                 logger.warning(f"Cannot determine route file for path: {endpoint_req.path}")
                 return None
 
+            # Bug #120 Fix: Skip infrastructure endpoints - they should NOT have CRUD routes
+            # Health, metrics, and similar endpoints are infrastructure, not business entities
+            INFRASTRUCTURE_PATHS = {'health', 'metrics', 'ready', 'docs', 'openapi', 'redoc'}
+            first_path = path_parts[0].lower()
+            if first_path in INFRASTRUCTURE_PATHS:
+                logger.debug(f"Skipping infrastructure endpoint: {endpoint_req.path}")
+                return None
+
             # Get entity name from path (singular form)
             entity_plural = path_parts[0]
             entity_name = entity_plural.rstrip('s')  # Simple pluralization: products → product

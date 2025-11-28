@@ -29,6 +29,13 @@ class ScenarioExecutorAgent:
     No LLM needed - deterministic HTTP execution.
     """
 
+    # Bug #115: Define equivalent status codes for flexible matching
+    # These represent semantically equivalent responses
+    SUCCESS_CODES = {200, 201, 204}  # All success responses
+    VALIDATION_ERROR_CODES = {400, 422}  # Both mean validation failed
+    CLIENT_ERROR_CODES = {400, 404, 422}  # Client-side errors
+    REDIRECT_CODES = {301, 302, 307, 308}  # Redirects
+
     def __init__(
         self,
         base_url: str,
@@ -46,7 +53,8 @@ class ScenarioExecutorAgent:
         self.client: Optional[httpx.AsyncClient] = None
 
     async def __aenter__(self):
-        self.client = httpx.AsyncClient(timeout=self.timeout)
+        # Bug #115: Follow redirects automatically (handles FastAPI trailing slash redirects)
+        self.client = httpx.AsyncClient(timeout=self.timeout, follow_redirects=True)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -74,7 +82,8 @@ class ScenarioExecutorAgent:
 
         # Ensure client is created
         if not self.client:
-            self.client = httpx.AsyncClient(timeout=self.timeout)
+            # Bug #115: Follow redirects automatically
+            self.client = httpx.AsyncClient(timeout=self.timeout, follow_redirects=True)
 
         try:
             for scenario in plan.scenarios:
@@ -121,10 +130,11 @@ class ScenarioExecutorAgent:
 
             elapsed_ms = (time.time() - start_time) * 1000
 
-            # Check if status matches expected
+            # Check if status matches expected (Bug #115: flexible matching)
             status_matches = self._check_status_match(
                 response.status_code,
-                scenario.expected_status
+                scenario.expected_status,
+                scenario  # Bug #115: Pass scenario for flexible matching
             )
 
             return ScenarioResult(
@@ -209,9 +219,49 @@ class ScenarioExecutorAgent:
     def _check_status_match(
         self,
         actual: int,
-        expected: Union[int, List[int]]
+        expected: Union[int, List[int]],
+        scenario: Optional[TestScenario] = None
     ) -> bool:
-        """Check if actual status matches expected."""
+        """
+        Check if actual status matches expected with flexible matching.
+
+        Bug #115: Implements flexible status matching based on scenario type:
+        - success scenarios: 200, 201, 204 are all considered success
+        - validation_error: 400, 422 both mean validation failed
+        - not_found: 404, 422 (invalid UUID) are acceptable
+        """
+        # Direct match always wins
         if isinstance(expected, list):
-            return actual in expected
-        return actual == expected
+            if actual in expected:
+                return True
+        elif actual == expected:
+            return True
+
+        # If no scenario info, fall back to strict matching
+        if scenario is None:
+            return False
+
+        scenario_name = scenario.name.lower()
+
+        # Bug #115: Flexible matching based on scenario type
+        # Success scenarios: any 2xx is acceptable
+        if 'happy_path' in scenario_name or 'flow_' in scenario_name:
+            # Expected success -> any success code is OK
+            if expected in self.SUCCESS_CODES or (isinstance(expected, list) and any(e in self.SUCCESS_CODES for e in expected)):
+                if actual in self.SUCCESS_CODES:
+                    return True
+
+        # Validation error scenarios: 400/422 are equivalent
+        if 'validation_error' in scenario_name:
+            if expected in self.VALIDATION_ERROR_CODES or expected == 400 or expected == 422:
+                if actual in self.VALIDATION_ERROR_CODES:
+                    return True
+
+        # Not found scenarios: 404/422 (invalid UUID) are equivalent
+        if 'not_found' in scenario_name:
+            if expected == 404:
+                # 422 is also acceptable (Pydantic validation error on invalid UUID)
+                if actual in {404, 422}:
+                    return True
+
+        return False

@@ -40,7 +40,9 @@ CRITICAL RULES:
 
 ### For POST/PUT/PATCH endpoints:
 3. **validation_error**: Each validation_rule should generate a test (missing required, invalid format, etc.)
-   - For max_length tests, use short placeholder like "TOO_LONG_STRING" instead of actual long strings
+   - Bug #121 Fix: For max_length tests, generate ACTUAL long strings that EXCEED the limit
+   - Example: If max_length=255, use a string with 256+ characters like "AAAA..." (repeated)
+   - NEVER use placeholder text like "TOO_LONG_STRING" - that's only 15 characters!
 
 ### From predefined_test_cases (USE THESE!):
 4. **predefined_[name]**: If the IR contains test_cases, convert them directly into scenarios
@@ -103,12 +105,18 @@ Generate a JSON object with this exact structure:
   ]
 }}
 
-IMPORTANT:
+IMPORTANT - Bug #122 Fix - SEED DATA COMPLETENESS:
 1. EVERY endpoint needs at least a happy_path scenario
 2. Endpoints with {{id}} params need a not_found scenario
 3. POST/PUT/PATCH with request_schema need at least one validation_error scenario
 4. Use the actual entity field names from the IR
-5. For FK relationships, ensure parent entities are seeded before children"""
+5. For FK relationships, ensure parent entities are seeded before children
+6. **CRITICAL**: EVERY UUID used in path_params MUST have a corresponding seed_data entry!
+7. For state-dependent tests (e.g., "cancel paid order"), seed an entity IN THAT STATE
+   - If testing deactivate on inactive product → seed a Product with is_active=false
+   - If testing cancel paid order → seed an Order with order_status='PAID'
+   - If testing checkout on closed cart → seed a Cart with status='CHECKED_OUT'
+8. Use DIFFERENT UUIDs for different states (e.g., ...0001=active product, ...0011=inactive product)"""
 
 
 class SmokeTestPlannerAgent:
@@ -136,7 +144,8 @@ class SmokeTestPlannerAgent:
             complexity="high"
         )
 
-        logger.info(f"   Using streaming with model: {model}")
+        # Bug #119: Changed to debug to reduce noise in smoke test output
+        logger.debug(f"   Using streaming with model: {model}")
 
         # Run streaming in thread pool to avoid blocking async event loop
         def stream_sync():
@@ -170,7 +179,8 @@ class SmokeTestPlannerAgent:
         Returns:
             SmokeTestPlan with seed_data and scenarios
         """
-        logger.info("🎯 Planner Agent: Generating smoke test plan from IR")
+        # Bug #119: Changed to debug to reduce noise in smoke test output
+        logger.debug("🎯 Planner Agent: Generating smoke test plan from IR")
 
         # Format IR data for prompt
         entities_json = self._format_entities(ir)
@@ -186,7 +196,8 @@ class SmokeTestPlannerAgent:
 
         full_prompt = f"{PLANNER_SYSTEM_PROMPT}\n\n{user_prompt}"
 
-        logger.info(f"   Analyzing {len(ir.get_endpoints())} endpoints, {len(ir.get_entities())} entities")
+        # Bug #119: Changed to debug to reduce noise in smoke test output
+        logger.debug(f"   Analyzing {len(ir.get_endpoints())} endpoints, {len(ir.get_entities())} entities")
 
         # Generate with LLM using streaming (temperature=0 for determinism)
         # Bug #107: Using streaming with max tokens to avoid timeout and truncation
@@ -518,3 +529,53 @@ class SmokeTestPlannerAgent:
 
         if missing_happy_path:
             logger.warning(f"⚠️ Missing happy_path scenarios for: {missing_happy_path}")
+
+        # Bug #122 Fix: Validate seed data completeness
+        self._validate_seed_data_completeness(plan)
+
+    def _validate_seed_data_completeness(self, plan: SmokeTestPlan) -> None:
+        """
+        Bug #122 Fix: Validate that all UUIDs referenced in scenarios have seed_data.
+
+        Logs warnings for missing seed data but doesn't fail the plan generation.
+        """
+        import re
+
+        # Collect all UUIDs from seed_data
+        seeded_uuids = {entity.uuid for entity in plan.seed_data}
+
+        # UUID pattern
+        uuid_pattern = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+        not_found_pattern = r'99999999-9999-4000-8000-999999999999'  # Not-found UUID is intentional
+
+        # Collect all UUIDs referenced in scenarios
+        referenced_uuids = set()
+        for scenario in plan.scenarios:
+            # Check path_params
+            if scenario.path_params:
+                for param_name, param_value in scenario.path_params.items():
+                    if isinstance(param_value, str) and re.match(uuid_pattern, param_value, re.IGNORECASE):
+                        if not re.match(not_found_pattern, param_value, re.IGNORECASE):
+                            referenced_uuids.add((param_value, scenario.endpoint, scenario.name))
+
+            # Check payload for FK references
+            if scenario.payload and isinstance(scenario.payload, dict):
+                for field_name, field_value in scenario.payload.items():
+                    if isinstance(field_value, str) and re.match(uuid_pattern, field_value, re.IGNORECASE):
+                        if not re.match(not_found_pattern, field_value, re.IGNORECASE):
+                            referenced_uuids.add((field_value, scenario.endpoint, f"{scenario.name}.payload.{field_name}"))
+
+        # Find orphan UUIDs (referenced but not seeded)
+        orphan_uuids = []
+        for uuid_val, endpoint, context in referenced_uuids:
+            if uuid_val not in seeded_uuids:
+                orphan_uuids.append((uuid_val, endpoint, context))
+
+        if orphan_uuids:
+            logger.warning(f"⚠️ Bug #122: Found {len(orphan_uuids)} orphan UUIDs (referenced but not seeded):")
+            for uuid_val, endpoint, context in orphan_uuids[:5]:  # Show first 5
+                logger.warning(f"   - {uuid_val} in {endpoint} ({context})")
+            if len(orphan_uuids) > 5:
+                logger.warning(f"   ... and {len(orphan_uuids) - 5} more")
+        else:
+            logger.info("   ✅ Bug #122: All referenced UUIDs have seed data")

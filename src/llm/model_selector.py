@@ -120,7 +120,8 @@ class ModelSelector:
         self.use_opus = use_opus
         self.cost_optimization = cost_optimization
 
-        logger.info(
+        # Bug #119: Changed to debug to reduce noise in smoke test output
+        logger.debug(
             f"ModelSelector initialized: "
             f"use_opus={use_opus}, "
             f"cost_optimization={cost_optimization}"

@@ -4018,9 +4018,9 @@ async def root():
         "version": settings.app_version,
         "status": "running",
         "docs": "/docs",
-        "health": "/health/health",
+        "health": "/health",
         "ready": "/health/ready",
-        "metrics": "/metrics/metrics"
+        "metrics": "/metrics"
     }}
 '''
 
@@ -4513,8 +4513,9 @@ USER appuser
 EXPOSE 8000
 
 # Health check endpoint (Bug #84: Use urllib instead of requests - requests not installed)
+# Bug #130 Fix: Use correct health endpoint path (/health, not /health/health)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \\
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/health', timeout=2)"
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"
 
 # Run migrations and start application
 CMD alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port 8000
@@ -4576,7 +4577,8 @@ services:
       - app-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/health', timeout=2)"]
+      # Bug #130 Fix: Use correct health endpoint path (/health, not /health/health)
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
       interval: 30s
       timeout: 3s
       retries: 3
@@ -5108,7 +5110,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         SQLAlchemy deprecation warning.
 
         Provides two endpoints:
-        - /health/health: Basic liveness check
+        - /health: Basic liveness check (Bug #130 fix: was /health/health)
         - /health/ready: Readiness check with database verification
         """
         return '''"""
@@ -5126,10 +5128,11 @@ router = APIRouter(prefix="/health", tags=["health"])
 logger = structlog.get_logger(__name__)
 
 
-@router.get("/health")
+@router.get("")
 async def health_check():
     """
     Basic health check - always returns OK.
+    Bug #129 Fix: Changed from /health to "" (prefix already adds /health)
 
     Returns:
         dict: Service status

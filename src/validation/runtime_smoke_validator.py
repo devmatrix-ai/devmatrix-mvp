@@ -272,9 +272,10 @@ class RuntimeSmokeTestValidator:
 
     async def _wait_for_server(self) -> None:
         """Wait for server to be ready to accept connections."""
+        # Bug #130 Fix: Use correct health endpoint path
         health_endpoints = [
-            f"{self.base_url}/health/health",
             f"{self.base_url}/health",
+            f"{self.base_url}/health/ready",
             f"{self.base_url}/",
         ]
 

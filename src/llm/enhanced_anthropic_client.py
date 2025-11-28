@@ -348,7 +348,8 @@ class EnhancedAnthropicClient:
 
         if self.enable_v2_caching:
             self.llm_cache = LLMPromptCache(redis_url=redis_url)
-            logger.info("MGE V2 LLM response caching enabled")
+            # Bug #119: Changed to debug to reduce noise
+            logger.debug("MGE V2 LLM response caching enabled")
         else:
             self.llm_cache = None
 
@@ -362,7 +363,8 @@ class EnhancedAnthropicClient:
         else:
             self.request_batcher = None
 
-        logger.info(
+        # Bug #119: Changed to debug to reduce noise in smoke test output
+        logger.debug(
             f"EnhancedAnthropicClient initialized: "
             f"use_opus={use_opus}, cost_optimization={cost_optimization}, "
             f"v2_caching={enable_v2_caching}, v2_batching={enable_v2_batching}"

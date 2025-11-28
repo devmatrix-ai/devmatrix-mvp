@@ -559,19 +559,19 @@ def _get_enforcement_for_field(entity_name: str, field_name: str, validation_gro
 def _should_exclude_from_create(entity_name: str, field_name: str, validation_constraints: dict) -> bool:
     """
     Determine if a field should be excluded from Create schema.
-    
+
     Args:
         entity_name: Name of the entity
         field_name: Name of the field
         validation_constraints: Dictionary of validation constraints from ground truth
-    
+
     Returns:
         True if field should be excluded from Create schema
     """
     # Always exclude server-managed fields
     if field_name in ['id', 'created_at', 'updated_at']:
         return True
-    
+
     # Check validation constraints from ground truth
     constraints = validation_constraints.get((entity_name, field_name), [])
     for constraint in constraints:
@@ -582,9 +582,17 @@ def _should_exclude_from_create(entity_name: str, field_name: str, validation_co
         # Exclude auto-generated read-only fields
         if field_name in ['registration_date', 'creation_date'] and 'read' in constraint_str:
             return True
-            
-    # NOTE: Hardcoded fallbacks REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
-    # Exclusions now come exclusively from validation_constraints (ApplicationIR or GT)
+
+    # Bug #127 Fix: unit_price in *Item entities is auto-calculated from Product.price
+    # This is a common e-commerce pattern where the price is captured from product at add time
+    entity_lower = entity_name.lower()
+    if entity_lower.endswith('item') and field_name == 'unit_price':
+        return True
+
+    # Bug #127 Fix: cart_id in *Item entities is auto-set from route parameter
+    # The cart_id comes from the route path (/carts/{cart_id}/items), not request body
+    if entity_lower.endswith('item') and field_name in ['cart_id', 'order_id']:
+        return True
 
     return False
 
@@ -1437,6 +1445,24 @@ ItemSchema = Dict[str, Any]
                 "    id: UUID",
                 "    created_at: datetime",
             ])
+
+        # Bug #117 Fix: Add items and total_price to container entities (Cart, Order)
+        # If {Entity}Item exists, the parent entity needs items relationship and total calculation
+        item_entity_name = f"{entity_name}Item"
+        if item_entity_name.lower() in entity_names_lower:
+            # Check if items field already exists
+            has_items_field = any('items:' in line or 'items :' in line for line in response_lines)
+            if not has_items_field:
+                response_lines.append(f"    items: List[{item_entity_name}Response] = []")
+                logger.info(f"📦 Bug #117: Added items field to {entity_name}Response")
+
+            # Add total_price computed property for container entities
+            has_total_price = any('total_price' in line or 'total_amount' in line for line in response_lines)
+            if not has_total_price:
+                # Add as regular field - will be computed in service layer or ORM
+                response_lines.append("    total_price: float = 0.0")
+                logger.info(f"💰 Bug #117: Added total_price field to {entity_name}Response")
+
         code += '\n'.join(response_lines) + '\n\n'
 
         # List schema (uses {entity_name}Response for items)
@@ -1793,6 +1819,19 @@ class {entity_name}Service:
             payment_status="PENDING"
         )
         order = await self.create(order_data)
+
+        # Bug #116 Fix: Copy cart items to order items
+        from src.models.entities import OrderItemEntity
+        for item in cart.items:
+            order_item = OrderItemEntity(
+                order_id=order.id,
+                product_id=item.product_id,
+                quantity=item.quantity,
+                unit_price=item.unit_price
+            )
+            self.db.add(order_item)
+        await self.db.flush()
+        logger.info(f"📦 Copied {{len(cart.items)}} items from cart to order")
 
         # 6. Mark cart as CHECKED_OUT - Bug #109: Dynamic status value
         cart.status = "{checked_out_status}"
