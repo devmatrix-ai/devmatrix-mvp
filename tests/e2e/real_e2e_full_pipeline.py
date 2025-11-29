@@ -133,6 +133,17 @@ except ImportError as e:
 # ApplicationIR Extraction (IR-centric architecture)
 from src.specs.spec_to_application_ir import SpecToApplicationIR
 
+# Sprint 7: Neo4j IR Persistence
+try:
+    from src.cognitive.services.ir_persistence_service import IRPersistenceService
+    NEO4J_PERSISTENCE_AVAILABLE = True
+except ImportError:
+    NEO4J_PERSISTENCE_AVAILABLE = False
+    IRPersistenceService = None
+
+# Feature flag for Neo4j caching in pipeline
+USE_NEO4J_CACHE = os.environ.get('USE_NEO4J_CACHE', 'false').lower() == 'true'
+
 # Bug #22 Fix: Import LLM client for global metrics access
 from src.llm import EnhancedAnthropicClient
 
@@ -726,6 +737,18 @@ class RealE2ETest:
         self.skeleton_llm_integration = None
         # Phase 7: Pattern Promotion
         self.pattern_promoter = None
+
+        # Sprint 7: Neo4j IR Persistence
+        self.neo4j_persistence = None
+        self.use_neo4j_cache = USE_NEO4J_CACHE
+        if self.use_neo4j_cache and NEO4J_PERSISTENCE_AVAILABLE:
+            try:
+                self.neo4j_persistence = IRPersistenceService()
+                print("🗄️ Neo4j IR persistence enabled")
+            except Exception as e:
+                print(f"⚠️ Neo4j persistence unavailable: {e}")
+                self.neo4j_persistence = None
+
         self._init_stratified_architecture()
 
     def _init_stratified_architecture(self):
@@ -1280,6 +1303,13 @@ class RealE2ETest:
             if PROGRESS_TRACKING_AVAILABLE:
                 stop_tracking()
 
+            # Sprint 7: Close Neo4j IR Persistence connection
+            if self.neo4j_persistence:
+                try:
+                    self.neo4j_persistence.close()
+                except Exception:
+                    pass  # Non-critical cleanup error
+
             # Finalize and report
             await self._finalize_and_report()
 
@@ -1469,9 +1499,15 @@ class RealE2ETest:
         force_refresh = FORCE_IR_REFRESH
         if force_refresh:
             print("    - ⚠️  FORCE_IR_REFRESH=true: Regenerating ApplicationIR (ignoring cache)")
-        print("    - Extracting ApplicationIR (domain, API, behavior models)...")
+
+        # Sprint 7: Neo4j persistence integration
+        neo4j_enabled = self.use_neo4j_cache and self.neo4j_persistence is not None
+        cache_source = "Neo4j+Redis" if neo4j_enabled else "Redis"
+        print(f"    - Extracting ApplicationIR (cache: {cache_source})...")
+
         try:
-            ir_converter = SpecToApplicationIR()
+            # Pass use_neo4j flag to enable automatic Neo4j persistence
+            ir_converter = SpecToApplicationIR(use_neo4j=neo4j_enabled)
             self.application_ir = await ir_converter.get_application_ir(
                 self.spec_content,
                 spec_path.name,
@@ -1482,6 +1518,10 @@ class RealE2ETest:
             ir_flows = len(self.application_ir.behavior_model.flows)
             ir_validations = len(self.application_ir.validation_model.rules)
             print(f"    - ApplicationIR: {ir_entities} entities, {ir_endpoints} endpoints, {ir_flows} flows, {ir_validations} validations")
+
+            # Sprint 7: Log Neo4j persistence status
+            if neo4j_enabled:
+                print(f"    - 🗄️ ApplicationIR persisted to Neo4j graph")
         except Exception as e:
             print(f"    ⚠️  ApplicationIR extraction failed (non-blocking): {e}")
             self.application_ir = None
@@ -5465,6 +5505,17 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         print(f"  Qdrant Queries:      {metrics.qdrant_queries}")
         if metrics.qdrant_avg_query_ms > 0:
             print(f"  Qdrant Avg Time:     {metrics.qdrant_avg_query_ms:.1f}ms")
+
+        # Sprint 7: Neo4j IR Persistence Stats
+        if self.neo4j_persistence:
+            try:
+                neo4j_stats = self.neo4j_persistence.get_stats()
+                print(f"  Neo4j IR Persistence:")
+                print(f"    ├─ Apps Stored:    {neo4j_stats.get('app_count', 0)}")
+                print(f"    ├─ Cache Hits:     {neo4j_stats.get('cache_hits', 0)}")
+                print(f"    └─ Cache Misses:   {neo4j_stats.get('cache_misses', 0)}")
+            except Exception:
+                print(f"  Neo4j IR Persistence: ⚠️ Stats unavailable")
 
         # ⏱️  PHASE EXECUTION TIMES
         print(f"\n⏱️  PHASE EXECUTION TIMES")
