@@ -24,12 +24,12 @@
 | 2.5.1 | TARGETS_ENTITY inference engine | ✅ DONE | 2025-11-29 | 84.3% coverage |
 | 2.5.2 | APISchema.source field migration | ✅ DONE | 2025-11-29 | 2 schemas updated |
 | 2.5.3 | Coverage QA dashboard queries | ✅ DONE | 2025-11-29 | Dashboard implementado |
+| IA.7 | Graph Shape Contract implementation | ✅ DONE | 2025-11-29 | Validation script + 12 pytest tests |
 
 ### ⏳ Tareas Pendientes
 
 | ID | Tarea | Estimado | Prioridad |
 |----|-------|----------|-----------|
-| **IA.7** | Graph Shape Contract implementation | 1 day | 🔴 CRITICAL |
 | IA.4b | Document DUAL_WRITE retirement policy | 30 min | 🟢 LOW |
 
 ---
@@ -290,7 +290,13 @@ def test_dual_write_coherence():
 - `002_execute_register_past_migrations.py` - Execution script
 - `006_add_temporal_metadata.cypher` - Temporal metadata
 - `006_execute_add_temporal_metadata.py` - Execution script
+- `007_infer_targets_entity.py` - TARGETS_ENTITY inference (Sprint 2.5)
+- `008_validate_graph_shape_contract.py` - Graph Shape Contract validation (IA.7)
 - `validate_graph_integrity.py` - Graph validation (IA.6)
+
+### Tests de Integración
+- `tests/integration/test_ir_repositories_roundtrip.py` - IR roundtrip tests (IA.4)
+- `tests/integration/test_graph_shape_contract.py` - Contract validation tests (IA.7)
 
 ### Código Fuente
 - `src/cognitive/infrastructure/neo4j_client.py` - Neo4j client
