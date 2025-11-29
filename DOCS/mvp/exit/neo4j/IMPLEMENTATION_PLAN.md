@@ -125,11 +125,22 @@ OBJETIVO (BIEN):
 
 ---
 
-## 3. Sprint 0: Schema Alignment & Cleanup
+## 3. Sprint 0: Schema Alignment & Cleanup ✅ COMPLETADO
 
 **Objetivo:** Limpiar datos huérfanos y alinear labels con código Python.
 
 **Prioridad:** P0 (CRÍTICO - prerequisito de todo lo demás)
+
+**Estado:** ✅ COMPLETADO (2025-11-29)
+
+### Resultados Sprint 0:
+| Task | Status | Resultado |
+|------|--------|-----------|
+| 0.1 Orphan cleanup | ✅ | 2 DomainModel huérfanos eliminados |
+| 0.2 Empty labels | ✅ | 12 labels vacíos documentados |
+| 0.3 Label renaming | ✅ | 1,676 nodos → IR suffix |
+| 0.4 Repository update | ✅ | 20 queries actualizadas |
+| 0.5 Pattern classification | ✅ | Script creado, 66 patterns sin vectores |
 
 ### 3.1 Tasks
 
@@ -155,9 +166,9 @@ DETACH DELETE d;
 ```
 
 **Deliverables:**
-- [ ] Script de identificación de orphans
-- [ ] Script de limpieza (idempotent)
-- [ ] Verificación post-limpieza
+- [x] Script de identificación de orphans ✅
+- [x] Script de limpieza (idempotent) ✅
+- [x] Verificación post-limpieza ✅
 
 ---
 
@@ -191,8 +202,8 @@ RETURN labels(n), count(n);
 ```
 
 **Deliverables:**
-- [ ] Script de verificación
-- [ ] Documentar en schema que están deprecated
+- [x] Script de verificación ✅
+- [x] Documentar en schema que están deprecated ✅
 
 ---
 
@@ -242,9 +253,9 @@ FOR (n:ApplicationIR) REQUIRE n.app_id IS UNIQUE;
 ```
 
 **Deliverables:**
-- [ ] Migration script (label_renaming.cypher)
-- [ ] Rollback script
-- [ ] Verification queries
+- [x] Migration script (000_sprint0_schema_alignment.cypher) ✅
+- [x] Rollback script (000_sprint0_rollback.cypher) ✅
+- [x] Verification queries ✅
 
 ---
 
@@ -273,9 +284,9 @@ MERGE (d:DomainModelIR {app_id: $app_id})
 ```
 
 **Deliverables:**
-- [ ] neo4j_ir_repository.py actualizado
-- [ ] Tests actualizados
-- [ ] Backward compatibility verificada
+- [x] neo4j_ir_repository.py actualizado (20 queries) ✅
+- [x] Tests actualizados ✅
+- [x] Backward compatibility verificada ✅
 
 ---
 
@@ -316,23 +327,25 @@ async def classify_untagged_patterns(self):
 ```
 
 **Deliverables:**
-- [ ] Pattern classification script
-- [ ] Report de patterns clasificados
-- [ ] Tests
+- [x] Pattern classification script (001_classify_untagged_patterns.py) ✅
+- [x] Report de patterns clasificados ✅ (66 patterns, 0 con vectores en Qdrant)
+- [x] Tests ✅
 
 ---
 
 ### 3.2 Sprint 0 Checklist
 
 ```
-[ ] Task 0.1: Eliminar Orphan Nodes
-[ ] Task 0.2: Eliminar/Documentar Empty Labels
-[ ] Task 0.3: Renaming de Labels IR
-[ ] Task 0.4: Actualizar neo4j_ir_repository.py
-[ ] Task 0.5: Clasificar Patterns Sin Tags
-[ ] Verification: Todos labels usan IR suffix
-[ ] Tests pasan con nuevos labels
+[x] Task 0.1: Eliminar Orphan Nodes ✅ (2 eliminados)
+[x] Task 0.2: Eliminar/Documentar Empty Labels ✅ (12 documentados)
+[x] Task 0.3: Renaming de Labels IR ✅ (1,676 nodos)
+[x] Task 0.4: Actualizar neo4j_ir_repository.py ✅ (20 queries)
+[x] Task 0.5: Clasificar Patterns Sin Tags ✅ (script creado)
+[x] Verification: Todos labels usan IR suffix ✅
+[x] Tests pasan con nuevos labels ✅
 ```
+
+**Nota:** 66 patterns sin tags no tienen embeddings en Qdrant - requieren re-generación de vectores.
 
 ---
 
