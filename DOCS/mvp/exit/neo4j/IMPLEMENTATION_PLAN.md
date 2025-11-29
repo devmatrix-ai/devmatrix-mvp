@@ -419,9 +419,9 @@ CREATE INDEX attribute_type IF NOT EXISTS FOR (a:Attribute) ON (a.data_type);
 ```
 
 **Deliverables:**
-- [ ] Schema creation script
-- [ ] Migration script
-- [ ] Verification queries
+- [x] Schema creation script (002_domain_model_schema.cypher) ✅
+- [x] Rollback script (002_domain_model_schema_rollback.cypher) ✅
+- [x] Verification queries ✅
 
 ---
 
@@ -529,9 +529,9 @@ class DomainModelGraphRepository:
 ```
 
 **Deliverables:**
-- [ ] DomainModelGraphRepository class
-- [ ] Unit tests
-- [ ] Integration tests
+- [x] DomainModelGraphRepository class (545 líneas) ✅
+- [x] Unit tests (pendiente ejecución) ⏳
+- [x] Integration tests (pendiente ejecución) ⏳
 
 ---
 
@@ -579,10 +579,12 @@ async def migrate_domain_models_to_graph():
 ```
 
 **Deliverables:**
-- [ ] Migration script
-- [ ] Rollback script
-- [ ] Progress logging
-- [ ] Verification queries
+- [x] Migration script (003_domain_model_expansion.py) ✅
+- [x] Rollback script (003_domain_model_expansion_rollback.py) ✅
+- [x] Cleanup script (003_cleanup_json.py) ✅
+- [x] README documentation (README_003.md) ✅
+- [x] Progress logging ✅
+- [x] Verification queries ✅
 
 ---
 
@@ -611,24 +613,32 @@ async def save_domain_model(self, app_id: str, domain_model: DomainModelIR):
 ```
 
 **Deliverables:**
-- [ ] Updated neo4j_ir_repository.py
-- [ ] Backward compatibility layer
-- [ ] Tests updated
+- [x] Updated neo4j_ir_repository.py (feature flag USE_GRAPH_DOMAIN_MODEL) ✅
+- [x] Backward compatibility layer (DUAL_WRITE mode) ✅
+- [x] Tests updated ⏳
 
 ---
 
 ### 4.3 Sprint 1 Checklist
 
 ```
-[ ] Task 1.1: Create Entity Nodes Schema
-[ ] Task 1.2: Domain Model Repository (Graph Version)
-[ ] Task 1.3: Migration Script - JSON to Graph
-[ ] Task 1.4: Update neo4j_ir_repository.py
+[x] Task 1.1: Create Entity Nodes Schema ✅
+[x] Task 1.2: Domain Model Repository (Graph Version) ✅
+[x] Task 1.3: Migration Script - JSON to Graph ✅
+[x] Task 1.4: Update neo4j_ir_repository.py ✅
+[ ] Ejecutar schema creation (002_domain_model_schema.cypher)
+[ ] Ejecutar migración (003_domain_model_expansion.py)
 [ ] Verification: 0 JSON domain_model_data properties
 [ ] Verification: ~1,400 Entity nodes created
 [ ] Verification: ~7,000 Attribute nodes created
 [ ] All tests pass
 ```
+
+**Próximos pasos:**
+1. Ejecutar schema Cypher script en Neo4j
+2. Ejecutar migration script (dry-run primero)
+3. Verificar counts de nodos
+4. Tests de roundtrip
 
 ---
 
