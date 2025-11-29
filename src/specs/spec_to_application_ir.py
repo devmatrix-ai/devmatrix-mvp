@@ -14,6 +14,7 @@ This is the GROUND TRUTH for validation:
 import json
 import logging
 import hashlib
+import os
 from pathlib import Path
 from typing import Optional, Any
 from datetime import datetime
@@ -61,6 +62,16 @@ from src.cognitive.ir.validation_model import (
 )
 from src.utils.constraint_helpers import normalize_constraints
 from src.state.redis_manager import RedisManager
+
+# Neo4j persistence (Sprint 7)
+try:
+    from src.cognitive.services.ir_persistence_service import IRPersistenceService
+    NEO4J_AVAILABLE = True
+except ImportError:
+    NEO4J_AVAILABLE = False
+
+# Feature flag for Neo4j persistence
+USE_NEO4J_CACHE = os.getenv("USE_NEO4J_CACHE", "false").lower() == "true"
 
 logger = logging.getLogger(__name__)
 
@@ -167,8 +178,13 @@ class SpecToApplicationIR:
     CACHE_DIR = Path(".devmatrix/ir_cache")  # Filesystem fallback
     LLM_MODEL = "claude-sonnet-4-5-20250929"  # Sonnet 4.5 - balanced speed/quality for spec extraction
 
-    def __init__(self, cache_dir: Optional[Path] = None):
-        """Initialize the converter with Redis as primary cache."""
+    def __init__(self, cache_dir: Optional[Path] = None, use_neo4j: Optional[bool] = None):
+        """Initialize the converter with Redis as primary cache.
+
+        Args:
+            cache_dir: Optional custom cache directory
+            use_neo4j: Enable Neo4j persistence (default: from USE_NEO4J_CACHE env var)
+        """
         if ANTHROPIC_AVAILABLE:
             self.client = AsyncAnthropic()
         else:
@@ -181,6 +197,17 @@ class SpecToApplicationIR:
 
         # Redis as primary cache (fast, TTL auto-expire)
         self.redis = RedisManager(enable_fallback=True)
+
+        # Neo4j persistence (Sprint 7)
+        self.use_neo4j = use_neo4j if use_neo4j is not None else USE_NEO4J_CACHE
+        self._neo4j_service = None
+        if self.use_neo4j and NEO4J_AVAILABLE:
+            try:
+                self._neo4j_service = IRPersistenceService()
+                logger.info("🗄️ Neo4j persistence enabled")
+            except Exception as e:
+                logger.warning(f"Neo4j persistence unavailable: {e}")
+                self._neo4j_service = None
 
     async def get_application_ir(
         self,
@@ -237,11 +264,56 @@ class SpecToApplicationIR:
         logger.info(f"🤖 Generating ApplicationIR with LLM for {spec_path}")
         application_ir = await self._generate_with_llm(spec_markdown, spec_path)
 
-        # Save to both caches
+        # Save to all caches
         self._save_to_cache(application_ir, cache_path, spec_hash, spec_path)
         self._cache_to_redis(application_ir, cache_key, spec_hash, spec_path)
 
+        # TIER 4: Neo4j persistence (Sprint 7)
+        if self._neo4j_service:
+            try:
+                self._persist_to_neo4j(application_ir, cache_key)
+            except Exception as e:
+                logger.warning(f"Neo4j persistence failed (non-blocking): {e}")
+
         return application_ir
+
+    def _persist_to_neo4j(self, application_ir: ApplicationIR, app_id: str) -> str:
+        """
+        Persist ApplicationIR to Neo4j graph database.
+
+        Sprint 7: Integration with Neo4j for graph-native storage.
+
+        Args:
+            application_ir: ApplicationIR to persist
+            app_id: Application identifier (cache key)
+
+        Returns:
+            str: The app_id used for persistence
+        """
+        if not self._neo4j_service:
+            raise RuntimeError("Neo4j service not initialized")
+
+        saved_id = self._neo4j_service.save_application_ir(application_ir, app_id=app_id)
+        logger.info(f"🗄️ Persisted ApplicationIR to Neo4j: {saved_id}")
+        return saved_id
+
+    def load_from_neo4j(self, app_id: str) -> Optional[ApplicationIR]:
+        """
+        Load ApplicationIR from Neo4j graph database.
+
+        Sprint 7: Load from Neo4j for cross-session access.
+
+        Args:
+            app_id: Application identifier
+
+        Returns:
+            ApplicationIR if found, None otherwise
+        """
+        if not self._neo4j_service:
+            logger.warning("Neo4j service not available")
+            return None
+
+        return self._neo4j_service.load_application_ir(app_id)
 
     def _cache_to_redis(
         self,

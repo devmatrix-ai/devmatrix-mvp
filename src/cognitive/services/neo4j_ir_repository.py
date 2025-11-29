@@ -1,13 +1,32 @@
 """
 Neo4j IR Repository
 -------------------
+.. deprecated:: Sprint 7
+    This module is deprecated. Use :class:`IRPersistenceService` from
+    ``src.cognitive.services.ir_persistence_service`` instead.
+
+    Migration guide:
+    - Replace Neo4jIRRepository with IRPersistenceService
+    - Use save_application_ir() instead of persist_ir()
+    - Use load_application_ir() instead of load_application_ir()
+
 Provides a thin persistence layer for the ApplicationIR (including BehaviorIR and ValidationIR).
 It creates/updates nodes and relationships in the Neo4j graph database using the
 settings defined in `src.cognitive.config.settings.CognitiveSettings`.
 
 Sprint 1 Update: Added support for DomainModelGraphRepository for graph-native storage.
 Sprint 2 Update: Added support for APIModelGraphRepository for graph-native storage.
+
+DEPRECATED: Use src.cognitive.services.ir_persistence_service.IRPersistenceService instead.
 """
+import warnings
+
+warnings.warn(
+    "Neo4jIRRepository is deprecated. Use IRPersistenceService from "
+    "src.cognitive.services.ir_persistence_service instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 from typing import Dict, Any, Optional
 import uuid
