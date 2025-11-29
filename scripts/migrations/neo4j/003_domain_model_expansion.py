@@ -141,6 +141,7 @@ async def create_attribute_node(
             a.app_id = $app_id
         MERGE (e)-[:HAS_ATTRIBUTE]->(a)
     """,
+        app_id=app_id,
         entity_id=entity_id,
         attr_id=attr_id,
         name=attribute.name,
@@ -212,6 +213,16 @@ async def migrate_domain_model(
     try:
         # Parse JSON to DomainModelIR
         entities_data = json.loads(entities_json)
+
+        # Normalize data_type values to match enum case
+        for entity_dict in entities_data:
+            if 'attributes' in entity_dict:
+                for attr_dict in entity_dict['attributes']:
+                    if 'data_type' in attr_dict:
+                        # Normalize to uppercase for UUID
+                        if attr_dict['data_type'].lower() == 'uuid':
+                            attr_dict['data_type'] = 'UUID'
+
         domain_model = DomainModelIR(entities=entities_data)
 
         if dry_run:
