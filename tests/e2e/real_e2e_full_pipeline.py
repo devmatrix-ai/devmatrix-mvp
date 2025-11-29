@@ -118,6 +118,64 @@ except ImportError as e:
     SmokeTestOrchestrator = None
     SmokeTestReport = None
 
+# Smoke-Driven Repair Orchestrator (smoke → repair → retest cycle)
+try:
+    from src.validation.smoke_repair_orchestrator import (
+        SmokeRepairOrchestrator,
+        SmokeRepairConfig,
+        SmokeRepairResult
+    )
+    SMOKE_REPAIR_ORCHESTRATOR_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: SmokeRepairOrchestrator not available: {e}")
+    SMOKE_REPAIR_ORCHESTRATOR_AVAILABLE = False
+    SmokeRepairOrchestrator = None
+    SmokeRepairConfig = None
+    SmokeRepairResult = None
+
+# Phase 2: Delta IR Validator (scoped validation for 70% speedup)
+try:
+    from src.validation.delta_ir_validator import (
+        DeltaIRValidator,
+        DeltaValidationIntegration,
+        compute_repair_scope,
+        should_run_full_validation
+    )
+    DELTA_VALIDATOR_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: DeltaIRValidator not available: {e}")
+    DELTA_VALIDATOR_AVAILABLE = False
+    DeltaIRValidator = None
+    DeltaValidationIntegration = None
+
+# Phase 2: Repair Confidence Model (probabilistic repair ranking)
+try:
+    from src.validation.repair_confidence_model import (
+        RepairConfidenceModel,
+        LightweightCausalAttributor,
+        ConfidenceModelResult
+    )
+    REPAIR_CONFIDENCE_MODEL_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: RepairConfidenceModel not available: {e}")
+    REPAIR_CONFIDENCE_MODEL_AVAILABLE = False
+    RepairConfidenceModel = None
+    LightweightCausalAttributor = None
+
+# Phase 2: Fix Pattern Learner (cross-session learning)
+try:
+    from src.validation.smoke_test_pattern_adapter import (
+        FixPatternLearner,
+        get_fix_pattern_learner,
+        FixPattern
+    )
+    FIX_PATTERN_LEARNER_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: FixPatternLearner not available: {e}")
+    FIX_PATTERN_LEARNER_AVAILABLE = False
+    FixPatternLearner = None
+    get_fix_pattern_learner = None
+
 # TestsIR: IR-Centric Smoke Tests (deterministic, no LLM)
 try:
     from src.services.tests_ir_generator import TestsIRGenerator, generate_tests_ir
@@ -133,6 +191,18 @@ except ImportError as e:
 # ApplicationIR Extraction (IR-centric architecture)
 from src.specs.spec_to_application_ir import SpecToApplicationIR
 
+# SpecTranslator: Pre-pipeline translation to English
+# IMPORTANT: Translates specs to English BEFORE pipeline ingestion
+# ONLY translates descriptive text, NEVER modifies structure/identifiers
+try:
+    from src.services.spec_translator import translate_spec_if_needed
+    SPEC_TRANSLATOR_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: SpecTranslator not available: {e}")
+    SPEC_TRANSLATOR_AVAILABLE = False
+    def translate_spec_if_needed(content, path=None):
+        return (content, False)  # Fallback: no translation
+
 # Sprint 7: Neo4j IR Persistence
 try:
     from src.cognitive.services.ir_persistence_service import IRPersistenceService
@@ -140,6 +210,43 @@ try:
 except ImportError:
     NEO4J_PERSISTENCE_AVAILABLE = False
     IRPersistenceService = None
+
+# Learning Gaps Integration (Sprint 8)
+try:
+    from src.services.spec_complexity_analyzer import SpecComplexityAnalyzer
+    from src.validation.constraint_learning_service import ConstraintLearningService
+    from src.cognitive.services.pattern_mining_service import PatternMiningService
+    from src.cognitive.services.ir_code_correlator import IRCodeCorrelator
+    from src.validation.smoke_test_pattern_adapter import (
+        SmokeTestPatternAdapter,
+        process_smoke_results_to_patterns,
+        LearningEventType
+    )
+    LEARNING_GAPS_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Learning Gaps services not available: {e}")
+    LEARNING_GAPS_AVAILABLE = False
+    SpecComplexityAnalyzer = None
+    ConstraintLearningService = None
+    PatternMiningService = None
+    IRCodeCorrelator = None
+    SmokeTestPatternAdapter = None
+    process_smoke_results_to_patterns = None
+
+# Generation Feedback Loop - Anti-Pattern Prevention (NEW)
+try:
+    from src.learning.feedback_collector import (
+        get_feedback_collector,
+        process_smoke_feedback_sync,
+        FeedbackProcessingResult
+    )
+    GENERATION_FEEDBACK_LOOP_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Generation Feedback Loop not available: {e}")
+    GENERATION_FEEDBACK_LOOP_AVAILABLE = False
+    get_feedback_collector = None
+    process_smoke_feedback_sync = None
+    FeedbackProcessingResult = None
 
 # Feature flag for Neo4j caching in pipeline
 USE_NEO4J_CACHE = os.environ.get('USE_NEO4J_CACHE', 'false').lower() == 'true'
@@ -1485,7 +1592,18 @@ class RealE2ETest:
         # Read spec file
         spec_path = Path(self.spec_file)
         with open(spec_path, 'r') as f:
-            self.spec_content = f.read()
+            raw_spec_content = f.read()
+
+        # PRE-PIPELINE TRANSLATION: Translate spec to English if needed
+        # CRITICAL: This ONLY translates text, NEVER modifies structure
+        if SPEC_TRANSLATOR_AVAILABLE:
+            self.spec_content, was_translated = translate_spec_if_needed(
+                raw_spec_content, str(spec_path)
+            )
+            if was_translated:
+                print("    - 📝 Spec translated to English (structure preserved)")
+        else:
+            self.spec_content = raw_spec_content
 
         self.metrics_collector.add_checkpoint("spec_ingestion", "CP-1.1: Spec loaded from file", {})
 
@@ -1568,6 +1686,20 @@ class RealE2ETest:
         entity_complexity = min(entity_count / 10, 0.3)  # More entities = more complexity
         endpoint_complexity = min(endpoint_count / 20, 0.3)  # More endpoints = more complexity
         complexity = min(base_complexity + entity_complexity + endpoint_complexity, 1.0)
+
+        # Learning Gaps Integration: SpecComplexityAnalyzer for learning insights
+        self.spec_complexity_data = None
+        if LEARNING_GAPS_AVAILABLE and SpecComplexityAnalyzer:
+            try:
+                complexity_analyzer = SpecComplexityAnalyzer()
+                self.spec_complexity_data = complexity_analyzer.analyze_spec(str(spec_path))
+                if self.spec_complexity_data:
+                    print(f"    - 🎓 Spec complexity: {self.spec_complexity_data.complexity_score:.2f} "
+                          f"(est. {self.spec_complexity_data.estimated_processing_ms}ms)")
+                    # Use analyzer's complexity score if available
+                    complexity = self.spec_complexity_data.complexity_score
+            except Exception as e:
+                print(f"    - ⚠️ Complexity analysis skipped: {e}")
 
         self.metrics_collector.add_checkpoint("spec_ingestion", "CP-1.3: Context loaded", {})
 
@@ -2707,9 +2839,19 @@ class RealE2ETest:
                     tests_output_dir
                 )
                 if generated_test_files:
-                    print(f"    ✅ Generated {len(generated_test_files)} test files:")
+                    # Count actual test methods in generated files
+                    total_tests = 0
+                    test_counts = {}
                     for test_type, path in generated_test_files.items():
-                        print(f"       - {test_type}: {path.name}")
+                        if path.exists():
+                            content = path.read_text()
+                            count = content.count("def test_")
+                            test_counts[test_type] = count
+                            total_tests += count
+                    print(f"    ✅ Generated {total_tests} tests across {len(generated_test_files)} files:")
+                    for test_type, path in generated_test_files.items():
+                        count = test_counts.get(test_type, 0)
+                        print(f"       - {test_type}: {path.name} ({count} tests)")
                 else:
                     print("    ⚠️  No tests generated (empty IR models)")
             except Exception as e:
@@ -3440,8 +3582,12 @@ Once running, visit:
                 if len(smoke_result.violations) > 5:
                     print(f"    ... and {len(smoke_result.violations) - 5} more")
 
-                # Task 10.7: Attempt to repair runtime violations
-                await self._attempt_runtime_repair(smoke_result.violations, smoke_validator)
+                # Task 10.7: Attempt to repair runtime violations with Smoke-Driven Repair
+                await self._attempt_runtime_repair(
+                    smoke_result.violations,
+                    smoke_validator,
+                    smoke_result=smoke_result  # Pass full result for server logs
+                )
 
             # Save smoke test results
             smoke_results_path = self.output_path / "smoke_test_results.json"
@@ -3500,20 +3646,102 @@ Once running, visit:
     async def _attempt_runtime_repair(
         self,
         violations: List[Dict],
-        smoke_validator
+        smoke_validator,
+        smoke_result: Optional[SmokeTestResult] = None
     ) -> None:
         """
-        Task 10.7: Attempt to repair runtime violations using CodeRepairAgent.
+        Task 10.7: Attempt to repair runtime violations using Smoke-Driven Repair.
 
-        Iteratively repairs violations and re-runs smoke tests until:
-        - All violations fixed
-        - Max iterations reached
-        - No progress made
+        Uses SmokeRepairOrchestrator for intelligent smoke → repair → retest cycle:
+        - Captures server logs and stack traces for root cause analysis
+        - Groups violations by error type for targeted fixes
+        - Detects convergence and regression
+        - Rolls back if pass rate decreases
 
         Args:
             violations: List of runtime violations from smoke test
             smoke_validator: RuntimeSmokeTestValidator instance for re-testing
+            smoke_result: Optional SmokeTestResult with server logs
         """
+        # Use new SmokeRepairOrchestrator if available
+        if SMOKE_REPAIR_ORCHESTRATOR_AVAILABLE and SmokeRepairOrchestrator:
+            print(f"\n  🔧 Using Smoke-Driven Repair Orchestrator")
+
+            # Log Phase 2 component availability
+            if DELTA_VALIDATOR_AVAILABLE:
+                print(f"    ✅ Delta IR Validator enabled (70% speedup)")
+            if REPAIR_CONFIDENCE_MODEL_AVAILABLE:
+                print(f"    ✅ Repair Confidence Model enabled (probabilistic ranking)")
+            if FIX_PATTERN_LEARNER_AVAILABLE:
+                print(f"    ✅ Fix Pattern Learner enabled (cross-session learning)")
+
+            config = SmokeRepairConfig(
+                max_iterations=3,
+                target_pass_rate=0.80,
+                convergence_epsilon=0.01,
+                enable_server_log_capture=True,
+                enable_learning=True
+            )
+
+            orchestrator = SmokeRepairOrchestrator(
+                smoke_validator=smoke_validator,
+                config=config
+            )
+
+            repair_result = await orchestrator.run_smoke_repair_cycle(
+                app_path=self.output_path,
+                application_ir=self.application_ir,
+                capture_logs=True
+            )
+
+            # Report results
+            iterations_count = len(repair_result.iterations)
+            fixes_count = len(repair_result.fixes_applied)
+
+            print(f"\n  📊 Smoke-Driven Repair Results:")
+            print(f"    - Iterations: {iterations_count}")
+            print(f"    - Initial pass rate: {repair_result.initial_pass_rate:.1%}")
+            print(f"    - Final pass rate: {repair_result.final_pass_rate:.1%}")
+            print(f"    - Target reached: {'✅' if repair_result.target_reached else '❌'}")
+            print(f"    - Converged: {repair_result.convergence_detected}")
+            print(f"    - Regressed: {repair_result.regression_detected}")
+            print(f"    - Total repairs: {repair_result.total_repairs}")
+            print(f"    - Duration: {repair_result.duration_ms:.0f}ms")
+
+            if repair_result.fixes_applied:
+                print(f"\n    Applied fixes:")
+                for fix in repair_result.fixes_applied[:5]:
+                    print(f"      - [{fix.fix_type}] {fix.description}")
+                if fixes_count > 5:
+                    print(f"      ... and {fixes_count - 5} more")
+
+            self.metrics_collector.add_checkpoint("runtime_smoke_test", "CP-8.5.SMOKE_REPAIR", {
+                "iterations": iterations_count,
+                "initial_pass_rate": repair_result.initial_pass_rate,
+                "final_pass_rate": repair_result.final_pass_rate,
+                "target_reached": repair_result.target_reached,
+                "converged": repair_result.convergence_detected,
+                "regressed": repair_result.regression_detected,
+                "repairs_count": repair_result.total_repairs,
+                "duration_ms": repair_result.duration_ms,
+                "phase2_delta_validator": DELTA_VALIDATOR_AVAILABLE,
+                "phase2_confidence_model": REPAIR_CONFIDENCE_MODEL_AVAILABLE,
+                "phase2_pattern_learner": FIX_PATTERN_LEARNER_AVAILABLE
+            })
+
+            if repair_result.target_reached:
+                print(f"\n  ✅ Target pass rate reached!")
+            elif repair_result.convergence_detected:
+                print(f"\n  ⚠️ Converged at {repair_result.final_pass_rate:.1%} (no further improvement)")
+            elif repair_result.regression_detected:
+                print(f"\n  ⚠️ Regression detected - rolled back")
+            else:
+                print(f"\n  ⚠️ Max iterations reached at {repair_result.final_pass_rate:.1%}")
+
+            return
+
+        # Fallback: Legacy repair loop (if orchestrator not available)
+        print(f"\n  🔧 Using legacy repair loop (SmokeRepairOrchestrator not available)")
         from src.mge.v2.agents.code_repair_agent import CodeRepairAgent
 
         max_repair_iterations = 2
@@ -3533,8 +3761,16 @@ Once running, visit:
                 application_ir=self.application_ir
             )
 
-            # Attempt repairs
-            repair_result = await repair_agent.repair_runtime_violations(current_violations)
+            # Use repair_from_smoke if server logs available
+            if smoke_result and hasattr(smoke_result, 'server_logs') and smoke_result.server_logs:
+                repair_result = await repair_agent.repair_from_smoke(
+                    violations=current_violations,
+                    server_logs=smoke_result.server_logs,
+                    app_path=self.output_path,
+                    stack_traces=getattr(smoke_result, 'stack_traces', None)
+                )
+            else:
+                repair_result = await repair_agent.repair_runtime_violations(current_violations)
 
             if repair_result.success and repair_result.repairs_applied:
                 print(f"    ✅ Applied {len(repair_result.repairs_applied)} repairs:")
@@ -3560,6 +3796,7 @@ Once running, visit:
                     if fixed_count > 0:
                         print(f"    📈 Progress: Fixed {fixed_count} violations, {len(new_result.violations)} remaining")
                         current_violations = new_result.violations
+                        smoke_result = new_result  # Update for next iteration
                     else:
                         print(f"    ⚠️ No progress made, stopping repair loop")
                         break
@@ -3879,6 +4116,112 @@ Once running, visit:
                 "server_startup_time_ms": smoke_result.server_startup_time_ms
             }, f, indent=2)
         print(f"  💾 Smoke test results saved: {smoke_results_path}")
+
+        # Learning Gaps Integration: Update pattern scores from smoke results
+        if LEARNING_GAPS_AVAILABLE and process_smoke_results_to_patterns:
+            try:
+                # Convert SmokeTestResult to dict format expected by adapter
+                smoke_dict = {
+                    "passed_scenarios": [
+                        {"endpoint": endpoint, "method": "GET", "status_code": 200}
+                        for endpoint in getattr(smoke_result, 'passed_endpoints', [])
+                    ] if hasattr(smoke_result, 'passed_endpoints') else [],
+                    "violations": smoke_result.violations
+                }
+
+                # Get manifest if available
+                manifest_dict = {}
+                if self.manifest_builder:
+                    try:
+                        manifest = self.manifest_builder.build()
+                        manifest_dict = manifest.to_dict() if hasattr(manifest, 'to_dict') else {}
+                    except Exception:
+                        pass
+
+                # Process smoke results to pattern scores
+                score_summary = process_smoke_results_to_patterns(
+                    smoke_result=smoke_dict,
+                    generation_manifest=manifest_dict,
+                    app_id=f"{self.spec_name}_{self.timestamp}"
+                )
+
+                # Log shows: "Updated pattern scores: X patterns (avg score Y, promoted: Z)"
+                print(f"  🎓 Pattern learning: {score_summary.total_patterns_updated} patterns updated")
+
+            except Exception as e:
+                print(f"  ⚠️ Pattern learning skipped: {e}")
+
+        # Learning Gaps Integration: IR-Code Correlation Analysis
+        if LEARNING_GAPS_AVAILABLE and IRCodeCorrelator and self.application_ir:
+            try:
+                correlator = IRCodeCorrelator()
+
+                # Extract entities and endpoints from ApplicationIR
+                # Convert to dicts for IRCodeCorrelator (expects .get() interface)
+                entities = []
+                if self.application_ir.domain_model:
+                    for e in self.application_ir.domain_model.entities:
+                        entities.append({
+                            "name": e.name,
+                            "attributes": [{"name": a.name, "data_type": a.data_type.value if hasattr(a.data_type, 'value') else str(a.data_type)} for a in e.attributes] if hasattr(e, 'attributes') else [],
+                            "relationships": [{"name": r.name} for r in e.relationships] if hasattr(e, 'relationships') else []
+                        })
+
+                endpoints = []
+                if self.application_ir.api_model:
+                    for ep in self.application_ir.api_model.endpoints:
+                        endpoints.append({
+                            "path": ep.path,
+                            "method": ep.method.value if hasattr(ep.method, 'value') else str(ep.method),
+                            "parameters": [{"name": p.name, "in": p.location.value if hasattr(p.location, 'value') else "query"} for p in ep.parameters] if hasattr(ep, 'parameters') else [],
+                            "request_body": ep.request_body if hasattr(ep, 'request_body') else None
+                        })
+
+                # Run correlation analysis
+                correlation_report = correlator.analyze_generation(
+                    entities=entities,
+                    endpoints=endpoints,
+                    smoke_results=smoke_result.violations if hasattr(smoke_result, 'violations') else []
+                )
+
+                if correlation_report.high_risk_patterns:
+                    print(f"  🎓 IR-Code correlation: {len(correlation_report.high_risk_patterns)} high-risk patterns")
+                    for pattern in correlation_report.high_risk_patterns[:2]:
+                        print(f"    ⚠️ {pattern.pattern_type}: {pattern.description[:60]}...")
+                else:
+                    print(f"  🎓 IR-Code correlation: No high-risk patterns detected")
+
+            except Exception as e:
+                print(f"  ⚠️ IR-Code correlation skipped: {e}")
+
+        # Generation Feedback Loop: Store anti-patterns for future code generation
+        # This closes the learning gap by feeding smoke failures back to CodeGeneration
+        if GENERATION_FEEDBACK_LOOP_AVAILABLE and process_smoke_feedback_sync and self.application_ir:
+            try:
+                feedback_result = process_smoke_feedback_sync(
+                    smoke_result=smoke_result,
+                    application_ir=self.application_ir,
+                    generation_manifest={}  # Optional manifest
+                )
+
+                if feedback_result.total_processed > 0:
+                    print(f"  🎓 Generation Feedback Loop: {feedback_result.patterns_created} new, "
+                          f"{feedback_result.patterns_updated} updated anti-patterns")
+                    print(f"     (Classification rate: {feedback_result.classification_rate:.0%})")
+
+                    # Log metrics for tracking
+                    self.metrics_collector.add_checkpoint("runtime_smoke_test", "CP-8.5.GFL", {
+                        "patterns_created": feedback_result.patterns_created,
+                        "patterns_updated": feedback_result.patterns_updated,
+                        "classification_rate": feedback_result.classification_rate,
+                        "unclassifiable": len(feedback_result.unclassifiable_errors)
+                    })
+                else:
+                    if smoke_result.violations:
+                        print(f"  ⚠️ Generation Feedback Loop: No patterns created from {len(smoke_result.violations)} violations")
+
+            except Exception as e:
+                print(f"  ⚠️ Generation Feedback Loop skipped: {e}")
 
         self.metrics_collector.add_checkpoint("runtime_smoke_test", "CP-8.5.2: Smoke test complete", {
             "passed": smoke_result.passed,
@@ -4550,6 +4893,37 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
 
         # ===== EXISTING: Continue with other validation checks =====
         self.metrics_collector.add_checkpoint("validation", "CP-7.4: Business logic validation", {})
+
+        # Learning Gaps Integration: Record constraint violations for learning
+        if LEARNING_GAPS_AVAILABLE and ConstraintLearningService and missing_requirements:
+            try:
+                constraint_learner = ConstraintLearningService()
+                for missing in missing_requirements[:20]:  # Limit to first 20
+                    # Parse missing requirement to extract constraint details
+                    if isinstance(missing, dict):
+                        constraint_learner.record_violation(
+                            constraint_type=missing.get('type', 'missing'),
+                            constraint_name=missing.get('name', 'requirement'),
+                            entity_name=missing.get('entity', 'unknown'),
+                            field_name=missing.get('field'),
+                            expected=missing.get('expected'),
+                            actual=missing.get('actual')
+                        )
+                    else:
+                        constraint_learner.record_violation(
+                            constraint_type="missing_requirement",
+                            constraint_name=str(missing)[:100],
+                            entity_name="spec",
+                            field_name=None,
+                            expected="implemented",
+                            actual="missing"
+                        )
+
+                patterns = constraint_learner.identify_patterns()
+                if patterns:
+                    print(f"    - 🎓 Constraint learning: {len(patterns)} violation patterns identified")
+            except Exception as e:
+                print(f"    - ⚠️ Constraint learning skipped: {e}")
 
         # ===== IR-based Compliance Check (STRICT + RELAXED modes) =====
         ir_compliance_reports_strict = {}
@@ -5317,6 +5691,34 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
                 },
                 "comparison": self.ir_compliance_metrics.get_comparison()
             }
+
+        # Learning Gaps Integration: Generate learning insights report
+        if LEARNING_GAPS_AVAILABLE and PatternMiningService:
+            try:
+                pattern_miner = PatternMiningService()
+                learning_report = pattern_miner.generate_learning_report()
+                pattern_miner.close()
+
+                # Add learning insights to final metrics
+                final_metrics_dict["learning_insights"] = {
+                    "failure_patterns": len(learning_report.failure_patterns),
+                    "success_patterns": len(learning_report.success_patterns),
+                    "entity_error_profiles": len(learning_report.entity_error_profiles),
+                    "insights": learning_report.insights[:5],  # Top 5 insights
+                    "recommendations": learning_report.recommendations[:3]  # Top 3 recommendations
+                }
+
+                if learning_report.insights:
+                    print(f"\n🎓 Learning Insights:")
+                    for insight in learning_report.insights[:3]:
+                        print(f"    💡 {insight}")
+                if learning_report.recommendations:
+                    print(f"\n📋 Recommendations:")
+                    for rec in learning_report.recommendations[:2]:
+                        print(f"    → {rec}")
+
+            except Exception as e:
+                print(f"  ⚠️ Learning report generation skipped: {e}")
 
         # Save metrics
         metrics_file = f"tests/e2e/metrics/real_e2e_{self.spec_name}_{self.timestamp}.json"

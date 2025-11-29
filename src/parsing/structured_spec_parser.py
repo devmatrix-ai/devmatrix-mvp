@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Union
 
 from src.parsing.spec_parser import SpecRequirements, Entity, Field, Endpoint
+from src.utils.yaml_helpers import safe_yaml_load
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +37,11 @@ class StructuredSpecParser:
                 content = spec_input
                 spec_name = "inline_spec"
 
-            # Parse YAML
-            spec_data = yaml.safe_load(content)
+            # Parse YAML with robust error handling
+            spec_data = safe_yaml_load(content, default=None)
+            if spec_data is None:
+                logger.warning(f"YAML parsing failed for {spec_name}, returning empty spec")
+                return SpecRequirements()
 
             logger.info(f"Parsing structured specification: {spec_name}")
 

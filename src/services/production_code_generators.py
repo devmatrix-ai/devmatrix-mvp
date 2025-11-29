@@ -1680,8 +1680,8 @@ class {entity_name}Service:
 
     async def create(self, data: {entity_name}Create) -> {entity_name}Response:
         """Create a new {entity_name.lower()}."""
-        # Bug #131 Fix: Convert Pydantic model to dict for repository
-        db_obj = await self.repo.create(data.model_dump())
+        # Bug #142 Fix: Pass Pydantic model directly - repository handles model_dump()
+        db_obj = await self.repo.create(data)
         return {entity_name}Response.model_validate(db_obj)
 
     async def get(self, id: UUID) -> Optional[{entity_name}Response]:
@@ -1711,8 +1711,8 @@ class {entity_name}Service:
 
     async def update(self, id: UUID, data: {entity_name}Update) -> Optional[{entity_name}Response]:
         """Update {entity_name.lower()}."""
-        # Bug #131 Fix: Convert Pydantic model to dict for repository
-        db_obj = await self.repo.update(id, data.model_dump(exclude_unset=True))
+        # Bug #142 Fix: Pass Pydantic model directly - repository handles model_dump()
+        db_obj = await self.repo.update(id, data)
         if db_obj:
             return {entity_name}Response.model_validate(db_obj)
         return None

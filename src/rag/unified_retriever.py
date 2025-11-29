@@ -119,7 +119,7 @@ class UnifiedRAGRetriever:
         try:
             n_uri = neo4j_uri or getattr(self.settings, 'neo4j_uri', 'bolt://localhost:7687')
             n_user = neo4j_user or getattr(self.settings, 'neo4j_user', 'neo4j')
-            n_pass = neo4j_password or getattr(self.settings, 'neo4j_password', 'devmatrix')
+            n_pass = neo4j_password or getattr(self.settings, 'neo4j_password', 'devmatrix123')
 
             self.neo4j_driver = GraphDatabase.driver(n_uri, auth=(n_user, n_pass))
             # Verify connection

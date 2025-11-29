@@ -71,6 +71,9 @@ class SmokeTestResult:
     results: List[EndpointTestResult] = field(default_factory=list)
     total_time_ms: float = 0.0
     server_startup_time_ms: float = 0.0
+    # NEW: Server logs for smoke-driven repair
+    server_logs: str = ""
+    stack_traces: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class RuntimeSmokeTestValidator:
@@ -151,6 +154,9 @@ class RuntimeSmokeTestValidator:
                 server_startup_time_ms=server_startup_time
             )
 
+        server_logs = ""
+        stack_traces = []
+
         try:
             # 2. Get endpoints from IR
             endpoints = self._get_endpoints_from_ir(ir)
@@ -174,8 +180,14 @@ class RuntimeSmokeTestValidator:
                 else:
                     logger.info(f"  ✅ {result.method} {result.endpoint_path}: {result.status_code}")
 
+            # 4. Capture server logs BEFORE stopping (for smoke-driven repair)
+            if violations:  # Only capture if there are failures
+                server_logs = await self._capture_server_logs()
+                stack_traces = self._extract_stack_traces(server_logs)
+                logger.info(f"📝 Captured {len(stack_traces)} stack traces from server logs")
+
         finally:
-            # 4. Stop server (always)
+            # 5. Stop server (always)
             await self._stop_server()
 
         total_time = (time.time() - start_time) * 1000
@@ -190,7 +202,9 @@ class RuntimeSmokeTestValidator:
             violations=violations,
             results=results,
             total_time_ms=total_time,
-            server_startup_time_ms=server_startup_time
+            server_startup_time_ms=server_startup_time,
+            server_logs=server_logs,
+            stack_traces=stack_traces
         )
 
     def _get_endpoints_from_ir(self, ir: ApplicationIR) -> List[Endpoint]:
@@ -369,6 +383,60 @@ class RuntimeSmokeTestValidator:
             await asyncio.sleep(0.5)
 
         raise TimeoutError(f"Server did not become ready within {self.startup_timeout}s. Last error: {last_error}")
+
+    async def _capture_server_logs(self) -> str:
+        """
+        Capture server logs for smoke-driven repair.
+
+        Returns logs from Docker container or uvicorn process.
+        These logs contain stack traces needed to identify root causes.
+        """
+        if self._using_docker:
+            try:
+                # Get logs from the app container
+                cmd = [
+                    'docker', 'compose',
+                    '-f', 'docker/docker-compose.yml',
+                    'logs', 'app', '--no-color', '--tail', '500'
+                ]
+                result = subprocess.run(
+                    cmd,
+                    cwd=str(self.app_dir),
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                logs = result.stdout + result.stderr
+                logger.debug(f"📝 Captured {len(logs)} bytes of server logs")
+                return logs
+            except Exception as e:
+                logger.warning(f"Failed to capture Docker logs: {e}")
+                return ""
+
+        # For uvicorn, logs would be in process stdout/stderr (not implemented)
+        return ""
+
+    def _extract_stack_traces(self, logs: str) -> List[Dict[str, Any]]:
+        """Extract stack traces from server logs."""
+        traces = []
+        # Regex for Python tracebacks
+        traceback_pattern = re.compile(
+            r'Traceback \(most recent call last\):.*?(?=\n\n|\Z)',
+            re.DOTALL
+        )
+
+        for match in traceback_pattern.finditer(logs):
+            trace_text = match.group()
+            trace_info = self._parse_error_response(trace_text)
+            traces.append({
+                'full_trace': trace_text,
+                'error_type': trace_info.get('type', 'Unknown'),
+                'error_message': trace_info.get('message', ''),
+                'file': trace_info.get('file', ''),
+                'line': trace_info.get('line', 0)
+            })
+
+        return traces
 
     async def _stop_server(self) -> None:
         """Stop the server (Docker or uvicorn)."""
@@ -666,15 +734,30 @@ class RuntimeSmokeTestValidator:
             'message': response_text[:500] if response_text else 'Unknown error'
         }
 
-        # Try to extract specific Python error types
+        # Try to extract specific Python error types (ordered by specificity)
         error_patterns = [
-            (r'NameError:\s*(.+)', 'NameError'),
-            (r'TypeError:\s*(.+)', 'TypeError'),
-            (r'AttributeError:\s*(.+)', 'AttributeError'),
-            (r'KeyError:\s*(.+)', 'KeyError'),
-            (r'ValueError:\s*(.+)', 'ValueError'),
-            (r'ImportError:\s*(.+)', 'ImportError'),
-            (r'ModuleNotFoundError:\s*(.+)', 'ModuleNotFoundError'),
+            # Database errors (high priority - common in generated code)
+            (r'IntegrityError[:\s]+(.+)', 'IntegrityError'),
+            (r'OperationalError[:\s]+(.+)', 'OperationalError'),
+            (r'ProgrammingError[:\s]+(.+)', 'ProgrammingError'),
+            # Validation errors
+            (r'ValidationError[:\s]+(.+)', 'ValidationError'),
+            (r'RequestValidationError[:\s]+(.+)', 'RequestValidationError'),
+            (r'pydantic.*ValidationError[:\s]+(.+)', 'ValidationError'),
+            # Standard Python errors
+            (r'NameError[:\s]+(.+)', 'NameError'),
+            (r'TypeError[:\s]+(.+)', 'TypeError'),
+            (r'AttributeError[:\s]+(.+)', 'AttributeError'),
+            (r'KeyError[:\s]+(.+)', 'KeyError'),
+            (r'ValueError[:\s]+(.+)', 'ValueError'),
+            (r'ImportError[:\s]+(.+)', 'ImportError'),
+            (r'ModuleNotFoundError[:\s]+(.+)', 'ModuleNotFoundError'),
+            (r'RuntimeError[:\s]+(.+)', 'RuntimeError'),
+            (r'SyntaxError[:\s]+(.+)', 'SyntaxError'),
+            (r'IndentationError[:\s]+(.+)', 'IndentationError'),
+            # HTTP-specific errors in response
+            (r'HTTPException[:\s]+(.+)', 'HTTPException'),
+            (r'detail["\']:\s*["\'](.+?)["\']', 'HTTPDetail'),
         ]
 
         for pattern, error_type in error_patterns:

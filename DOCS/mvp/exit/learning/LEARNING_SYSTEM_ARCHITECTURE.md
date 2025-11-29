@@ -2,7 +2,36 @@
 
 **Autor:** Análisis Ultrathink del Pipeline E2E
 **Fecha:** 2025-11-28
-**Versión:** 1.0 - Análisis Completo del Sistema Cognitivo de Aprendizaje
+**Versión:** 1.1 - Actualizado con Learning Gaps Sprint 8
+**Última actualización:** 2025-11-29
+
+---
+
+## 🆕 Nuevos Componentes (Sprint 8 - Learning Gaps)
+
+```
+src/cognitive/services/
+├─ error_knowledge_repository.py   ← Gap 1: Active Learning
+├─ pattern_mining_service.py       ← Gap 3: Pattern Mining from Neo4j
+└─ ir_code_correlator.py          ← Gap 5: IR-to-Code Correlation
+
+src/classification/
+└─ requirements_classifier_trainer.py  ← Gap 2: Classifier Learning
+
+src/services/
+├─ error_pattern_store.py          ← Gap 4: FixPattern methods
+└─ spec_complexity_analyzer.py     ← Gap 6: Spec Complexity Learning
+
+src/validation/
+├─ constraint_learning_service.py  ← Gap 7: Constraint Violations
+└─ smoke_test_pattern_adapter.py   ← SmokeTest→Pattern feedback
+
+scripts/migrations/neo4j/
+├─ 011_error_knowledge_schema.cypher
+└─ 012_fix_pattern_schema.cypher
+```
+
+**Ver:** [LEARNING_GAPS_IMPLEMENTATION_PLAN.md](./LEARNING_GAPS_IMPLEMENTATION_PLAN.md) para detalles.
 
 ---
 

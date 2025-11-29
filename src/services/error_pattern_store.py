@@ -68,6 +68,32 @@ class SimilarError:
     how_it_was_fixed: Optional[str] = None
 
 
+@dataclass
+class FixPattern:
+    """
+    Successful fix pattern for code generation errors.
+
+    Gap 4 Implementation: Stores successful repairs to avoid re-computing
+    fixes for similar errors. The fix can be looked up by error_signature
+    before invoking LLM-based repair.
+
+    Reference: LEARNING_GAPS_IMPLEMENTATION_PLAN.md Gap 4
+    """
+    fix_id: str
+    error_signature: str  # Hash of error context for lookup
+    error_type: str  # "syntax_error", "runtime_error", "validation_error"
+    error_message: str  # Original error message
+    fix_strategy: str  # "add_import", "fix_type", "add_validation", "ast_patch", etc.
+    fix_code: str  # The actual fix (code diff or full replacement)
+    context: Dict[str, Any] = field(default_factory=dict)  # Entity, endpoint, file, etc.
+    success_count: int = 1  # Times this fix worked
+    failure_count: int = 0  # Times it was tried but failed
+    confidence: float = 0.5  # Success rate derived score
+    created_at: datetime = field(default_factory=datetime.now)
+    last_used: datetime = field(default_factory=datetime.now)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
 class ErrorPatternStore:
     """
     Store and retrieve error patterns for code generation learning.
@@ -521,6 +547,354 @@ Error: {error_message}
 
         except Exception as e:
             self.logger.error(f"Failed to get error statistics: {e}")
+            return {}
+
+    # =========================================================================
+    # GAP 4: Fix Pattern Learning Methods
+    # =========================================================================
+
+    def _compute_error_signature(
+        self,
+        error_type: str,
+        error_message: str,
+        context: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Compute a stable signature for an error to enable fix lookup.
+
+        The signature is based on:
+        - Error type (e.g., "NameError", "ValidationError")
+        - Normalized error message (without line numbers, file paths)
+        - Optional context (entity type, endpoint pattern)
+
+        Args:
+            error_type: Python exception type or error category
+            error_message: Full error message
+            context: Optional context dict with entity_type, endpoint_pattern, etc.
+
+        Returns:
+            SHA256 hash of normalized error components
+        """
+        import hashlib
+        import re
+
+        # Normalize error message:
+        # - Remove line numbers
+        # - Remove file paths
+        # - Remove UUIDs
+        # - Lowercase
+        normalized_msg = error_message.lower()
+        normalized_msg = re.sub(r'line \d+', 'line N', normalized_msg)
+        normalized_msg = re.sub(r'/[^\s]+\.py', 'FILE.py', normalized_msg)
+        normalized_msg = re.sub(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', 'UUID', normalized_msg)
+
+        # Build signature components
+        components = [
+            error_type.lower(),
+            normalized_msg[:200],  # First 200 chars of normalized message
+        ]
+
+        # Add context if provided
+        if context:
+            if 'entity_type' in context:
+                components.append(f"entity:{context['entity_type'].lower()}")
+            if 'endpoint_pattern' in context:
+                # Normalize endpoint pattern: /products/{id} -> /{entity}/{param}
+                ep = re.sub(r'/\w+/', '/{entity}/', context['endpoint_pattern'])
+                ep = re.sub(r'\{[^}]+\}', '{param}', ep)
+                components.append(f"endpoint:{ep}")
+
+        signature_input = '|'.join(components)
+        return hashlib.sha256(signature_input.encode()).hexdigest()[:32]
+
+    async def store_fix(self, fix: FixPattern) -> bool:
+        """
+        Store a successful fix pattern for future reuse.
+
+        Gap 4 Implementation: Stores the fix in both Neo4j (for queries by signature)
+        and Qdrant (for semantic similarity search).
+
+        If a fix with the same signature already exists, increments success_count
+        and updates last_used timestamp.
+
+        Args:
+            fix: FixPattern to store
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Sanitize metadata
+            sanitized_metadata = self._sanitize_metadata(fix.metadata)
+            sanitized_context = self._sanitize_metadata(fix.context)
+
+            # Check if fix already exists (by signature)
+            with self.neo4j_driver.session() as session:
+                existing = session.run("""
+                    MATCH (f:FixPattern {error_signature: $signature})
+                    RETURN f.fix_id as fix_id, f.success_count as success_count
+                """, signature=fix.error_signature).single()
+
+                if existing:
+                    # Update existing fix
+                    session.run("""
+                        MATCH (f:FixPattern {error_signature: $signature})
+                        SET f.success_count = f.success_count + 1,
+                            f.last_used = datetime(),
+                            f.confidence = toFloat(f.success_count + 1) / toFloat(f.success_count + f.failure_count + 1)
+                        RETURN f
+                    """, signature=fix.error_signature)
+                    self.logger.info(f"Updated existing fix pattern: {existing['fix_id']} (success_count: {existing['success_count'] + 1})")
+                    return True
+
+                # Create new fix pattern in Neo4j
+                session.run("""
+                    CREATE (f:FixPattern {
+                        fix_id: $fix_id,
+                        error_signature: $signature,
+                        error_type: $error_type,
+                        error_message: $error_message,
+                        fix_strategy: $fix_strategy,
+                        fix_code: $fix_code,
+                        context: $context,
+                        success_count: $success_count,
+                        failure_count: $failure_count,
+                        confidence: $confidence,
+                        created_at: datetime(),
+                        last_used: datetime()
+                    })
+                """, {
+                    "fix_id": fix.fix_id,
+                    "signature": fix.error_signature,
+                    "error_type": fix.error_type,
+                    "error_message": fix.error_message[:500],  # Truncate
+                    "fix_strategy": fix.fix_strategy,
+                    "fix_code": fix.fix_code[:2000],  # Truncate
+                    "context": str(sanitized_context),
+                    "success_count": fix.success_count,
+                    "failure_count": fix.failure_count,
+                    "confidence": fix.confidence
+                })
+
+            # Create embedding for semantic search
+            fix_context = f"""
+Error Type: {fix.error_type}
+Error Message: {fix.error_message}
+Fix Strategy: {fix.fix_strategy}
+Fix Code:
+{fix.fix_code[:500]}
+""".strip()
+
+            embedding = self.embedding_model.encode(fix_context).tolist()
+
+            # Store in Qdrant
+            payload = {
+                "fix_id": fix.fix_id,
+                "error_signature": fix.error_signature,
+                "error_type": fix.error_type,
+                "error_message": fix.error_message[:500],
+                "fix_strategy": fix.fix_strategy,
+                "fix_code": fix.fix_code[:1000],
+                "success_count": fix.success_count,
+                "confidence": fix.confidence,
+                "type": "fix"
+            }
+            if sanitized_context:
+                payload["context"] = sanitized_context
+
+            point = PointStruct(
+                id=str(uuid.uuid4()),
+                vector=embedding,
+                payload=payload
+            )
+
+            self.qdrant.upsert(
+                collection_name=self.COLLECTION_NAME,
+                points=[point]
+            )
+
+            self.logger.info(f"Stored new fix pattern: {fix.fix_id} (strategy: {fix.fix_strategy})")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to store fix pattern: {e}")
+            return False
+
+    async def get_fix_for_error(
+        self,
+        error_type: str,
+        error_message: str,
+        context: Optional[Dict[str, Any]] = None,
+        min_confidence: float = 0.6
+    ) -> Optional[FixPattern]:
+        """
+        Look up a known fix for an error by signature.
+
+        Gap 4 Implementation: First tries exact signature match (fast),
+        then falls back to semantic similarity search if no exact match.
+
+        Args:
+            error_type: Error type (e.g., "NameError", "ValidationError")
+            error_message: Full error message
+            context: Optional context (entity_type, endpoint_pattern)
+            min_confidence: Minimum confidence threshold (default 0.6)
+
+        Returns:
+            FixPattern if found with sufficient confidence, None otherwise
+        """
+        try:
+            # Compute signature for exact lookup
+            signature = self._compute_error_signature(error_type, error_message, context)
+
+            # Try exact match first (fast)
+            with self.neo4j_driver.session() as session:
+                result = session.run("""
+                    MATCH (f:FixPattern {error_signature: $signature})
+                    WHERE f.confidence >= $min_confidence
+                    RETURN f
+                """, signature=signature, min_confidence=min_confidence)
+
+                record = result.single()
+                if record:
+                    f = record["f"]
+                    self.logger.info(f"Found exact fix match: {f['fix_id']} (confidence: {f['confidence']:.2f})")
+                    return FixPattern(
+                        fix_id=f["fix_id"],
+                        error_signature=f["error_signature"],
+                        error_type=f["error_type"],
+                        error_message=f["error_message"],
+                        fix_strategy=f["fix_strategy"],
+                        fix_code=f["fix_code"],
+                        success_count=f["success_count"],
+                        failure_count=f["failure_count"],
+                        confidence=f["confidence"]
+                    )
+
+            # Fall back to semantic similarity search
+            query_context = f"""
+Error Type: {error_type}
+Error Message: {error_message}
+""".strip()
+
+            query_embedding = self.embedding_model.encode(query_context).tolist()
+
+            results = self.qdrant.search(
+                collection_name=self.COLLECTION_NAME,
+                query_vector=query_embedding,
+                query_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="type",
+                            match=MatchValue(value="fix")
+                        )
+                    ]
+                ),
+                limit=3
+            )
+
+            # Find best match above threshold
+            for result in results:
+                payload = result.payload
+                if payload.get("confidence", 0) >= min_confidence and result.score >= 0.75:
+                    self.logger.info(
+                        f"Found semantic fix match: {payload['fix_id']} "
+                        f"(similarity: {result.score:.2f}, confidence: {payload['confidence']:.2f})"
+                    )
+                    return FixPattern(
+                        fix_id=payload["fix_id"],
+                        error_signature=payload["error_signature"],
+                        error_type=payload["error_type"],
+                        error_message=payload["error_message"],
+                        fix_strategy=payload["fix_strategy"],
+                        fix_code=payload["fix_code"],
+                        success_count=payload.get("success_count", 1),
+                        failure_count=payload.get("failure_count", 0),
+                        confidence=payload.get("confidence", 0.5)
+                    )
+
+            self.logger.debug(f"No fix found for error signature: {signature[:16]}...")
+            return None
+
+        except Exception as e:
+            self.logger.error(f"Failed to get fix for error: {e}")
+            return None
+
+    async def mark_fix_failed(self, error_signature: str) -> bool:
+        """
+        Mark a fix as failed (increment failure_count, recalculate confidence).
+
+        Called when a fix was applied but didn't resolve the issue.
+
+        Args:
+            error_signature: Signature of the fix that failed
+
+        Returns:
+            True if updated, False otherwise
+        """
+        try:
+            with self.neo4j_driver.session() as session:
+                result = session.run("""
+                    MATCH (f:FixPattern {error_signature: $signature})
+                    SET f.failure_count = f.failure_count + 1,
+                        f.confidence = toFloat(f.success_count) / toFloat(f.success_count + f.failure_count + 1)
+                    RETURN f.confidence as new_confidence
+                """, signature=error_signature)
+
+                record = result.single()
+                if record:
+                    self.logger.info(f"Marked fix as failed, new confidence: {record['new_confidence']:.2f}")
+                    return True
+                return False
+
+        except Exception as e:
+            self.logger.error(f"Failed to mark fix as failed: {e}")
+            return False
+
+    async def get_fix_statistics(self) -> Dict[str, Any]:
+        """
+        Get statistics about stored fix patterns.
+
+        Returns:
+            Dictionary with fix statistics
+        """
+        try:
+            with self.neo4j_driver.session() as session:
+                # Total fixes
+                result = session.run("MATCH (f:FixPattern) RETURN count(f) AS total")
+                total_fixes = result.single()["total"]
+
+                # Fixes by strategy
+                result = session.run("""
+                    MATCH (f:FixPattern)
+                    RETURN f.fix_strategy AS strategy, count(f) AS count
+                    ORDER BY count DESC
+                """)
+                fixes_by_strategy = {record["strategy"]: record["count"] for record in result}
+
+                # High confidence fixes
+                result = session.run("""
+                    MATCH (f:FixPattern)
+                    WHERE f.confidence >= 0.8
+                    RETURN count(f) AS high_confidence_count
+                """)
+                high_confidence = result.single()["high_confidence_count"]
+
+                # Average success rate
+                result = session.run("""
+                    MATCH (f:FixPattern)
+                    RETURN avg(f.confidence) AS avg_confidence
+                """)
+                avg_confidence = result.single()["avg_confidence"] or 0
+
+                return {
+                    "total_fixes": total_fixes,
+                    "fixes_by_strategy": fixes_by_strategy,
+                    "high_confidence_fixes": high_confidence,
+                    "average_confidence": round(avg_confidence, 3)
+                }
+
+        except Exception as e:
+            self.logger.error(f"Failed to get fix statistics: {e}")
             return {}
 
 

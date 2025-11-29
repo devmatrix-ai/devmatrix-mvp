@@ -73,6 +73,14 @@ try:
 except ImportError:
     ACTIVE_LEARNING_AVAILABLE = False
 
+# Generation Feedback Loop - Anti-Pattern Prevention (NEW)
+try:
+    from src.learning.prompt_enhancer import get_prompt_enhancer, GenerationPromptEnhancer
+    from src.learning.negative_pattern_store import get_negative_pattern_store
+    GENERATION_FEEDBACK_AVAILABLE = True
+except ImportError:
+    GENERATION_FEEDBACK_AVAILABLE = False
+
 
 # DAG Synchronizer - Execution Metrics (Milestone 3)
 try:
@@ -290,72 +298,130 @@ class CodeGenerationService:
         """
         Query learned errors and build avoidance context for code generation.
 
-        This method queries the ErrorKnowledgeRepository for errors relevant to
-        the endpoints and entities in the ApplicationIR, then builds a context
-        string that can be injected into code generation prompts.
+        This method combines TWO sources of learned errors:
+        1. ErrorKnowledgeRepository (original Active Learning)
+        2. NegativePatternStore (Generation Feedback Loop - NEW)
+
+        The Generation Feedback Loop closes the gap between smoke test failures
+        and code generation, preventing the same errors from recurring.
 
         Args:
             app_ir: ApplicationIR object with domain_model and api_model
 
         Returns:
-            Avoidance context string or None if Active Learning is disabled
+            Avoidance context string or None if no learned errors available
         """
-        if not self.enable_active_learning or not self.error_knowledge_repo:
-            return None
+        avoidance_parts = []
 
-        try:
-            all_errors = []
+        # SOURCE 1: ErrorKnowledgeRepository (original Active Learning)
+        if self.enable_active_learning and self.error_knowledge_repo:
+            try:
+                all_errors = []
 
-            # Query errors for each endpoint pattern
-            if app_ir.api_model and app_ir.api_model.endpoints:
-                for endpoint in app_ir.api_model.endpoints:
-                    # Extract entity type from path (e.g., /products/{id} -> product)
-                    entity_type = self._extract_entity_from_endpoint(endpoint)
+                # Query errors for each endpoint pattern
+                if app_ir.api_model and app_ir.api_model.endpoints:
+                    for endpoint in app_ir.api_model.endpoints:
+                        entity_type = self._extract_entity_from_endpoint(endpoint)
+                        path_pattern = self._normalize_endpoint_pattern(endpoint.path)
+                        pattern_category = self._infer_pattern_category(endpoint)
 
-                    # Build endpoint pattern (e.g., "POST /{entity}")
-                    path_pattern = self._normalize_endpoint_pattern(endpoint.path)
-                    pattern_category = self._infer_pattern_category(endpoint)
+                        errors = self.error_knowledge_repo.get_relevant_errors(
+                            endpoint_pattern=f"{endpoint.method.value} {path_pattern}",
+                            entity_type=entity_type,
+                            pattern_category=pattern_category,
+                            min_confidence=0.6
+                        )
+                        all_errors.extend(errors)
 
-                    # Query errors relevant to this endpoint
-                    errors = self.error_knowledge_repo.get_relevant_errors(
-                        endpoint_pattern=f"{endpoint.method.value} {path_pattern}",
-                        entity_type=entity_type,
-                        pattern_category=pattern_category,
-                        min_confidence=0.6  # Only use errors with reasonable confidence
+                # Deduplicate errors by signature
+                seen_signatures = set()
+                unique_errors = []
+                for error in all_errors:
+                    if error.error_signature not in seen_signatures:
+                        seen_signatures.add(error.error_signature)
+                        unique_errors.append(error)
+
+                if unique_errors:
+                    avoidance_context = self.error_knowledge_repo.build_avoidance_context(
+                        unique_errors,
+                        max_errors=10
                     )
-                    all_errors.extend(errors)
+                    avoidance_parts.append(avoidance_context)
 
-            # Deduplicate errors by signature
-            seen_signatures = set()
-            unique_errors = []
-            for error in all_errors:
-                if error.error_signature not in seen_signatures:
-                    seen_signatures.add(error.error_signature)
-                    unique_errors.append(error)
+                    logger.info(
+                        "Built avoidance context from ErrorKnowledgeRepo",
+                        extra={"unique_errors_count": len(unique_errors)}
+                    )
 
-            if not unique_errors:
-                logger.debug("No relevant learned errors found for avoidance context")
-                return None
+            except Exception as e:
+                logger.warning(f"ErrorKnowledgeRepo avoidance failed (non-blocking): {e}")
 
-            # Build avoidance context string
-            avoidance_context = self.error_knowledge_repo.build_avoidance_context(
-                unique_errors,
-                max_errors=10  # Limit to top 10 most relevant errors
-            )
+        # SOURCE 2: NegativePatternStore (Generation Feedback Loop - NEW)
+        if GENERATION_FEEDBACK_AVAILABLE:
+            try:
+                prompt_enhancer = get_prompt_enhancer()
+                pattern_store = get_negative_pattern_store()
 
-            logger.info(
-                "Built avoidance context from learned errors",
-                extra={
-                    "unique_errors_count": len(unique_errors),
-                    "context_length": len(avoidance_context),
-                }
-            )
+                # Get statistics first
+                stats = pattern_store.get_statistics()
+                if stats.get("total_patterns", 0) > 0:
+                    # Build anti-pattern warnings for each entity
+                    entity_warnings = []
 
-            return avoidance_context
+                    if app_ir.domain_model and app_ir.domain_model.entities:
+                        for entity in app_ir.domain_model.entities:
+                            entity_name = entity.name if hasattr(entity, 'name') else str(entity)
+                            patterns = pattern_store.get_patterns_for_entity(
+                                entity_name=entity_name,
+                                min_occurrences=2  # Only patterns seen 2+ times
+                            )
+                            for p in patterns[:3]:  # Top 3 per entity
+                                warning = p.to_prompt_warning()
+                                if warning not in entity_warnings:
+                                    entity_warnings.append(warning)
 
-        except Exception as e:
-            logger.warning(f"Failed to build avoidance context (non-blocking): {e}")
+                    # Also get generic patterns (import errors, type errors)
+                    for error_type in ["import", "attribute", "type"]:
+                        patterns = pattern_store.get_patterns_by_error_type(
+                            error_type=error_type,
+                            min_occurrences=2
+                        )
+                        for p in patterns[:2]:  # Top 2 per error type
+                            warning = p.to_prompt_warning()
+                            if warning not in entity_warnings:
+                                entity_warnings.append(warning)
+
+                    if entity_warnings:
+                        # Format as anti-pattern warnings
+                        anti_pattern_context = "\n\nGENERATION ANTI-PATTERNS (from smoke test failures):"
+                        for i, warning in enumerate(entity_warnings[:10], 1):
+                            anti_pattern_context += f"\n{i}. {warning}"
+
+                        avoidance_parts.append(anti_pattern_context)
+
+                        logger.info(
+                            "Built avoidance context from NegativePatternStore",
+                            extra={
+                                "anti_patterns_count": len(entity_warnings),
+                                "total_stored": stats.get("total_patterns", 0)
+                            }
+                        )
+
+            except Exception as e:
+                logger.warning(f"NegativePatternStore avoidance failed (non-blocking): {e}")
+
+        # Combine all avoidance contexts
+        if not avoidance_parts:
+            logger.debug("No avoidance context available from any source")
             return None
+
+        combined_context = "\n".join(avoidance_parts)
+        logger.info(
+            "Combined avoidance context ready",
+            extra={"total_length": len(combined_context)}
+        )
+
+        return combined_context
 
     def _extract_entity_from_endpoint(self, endpoint) -> Optional[str]:
         """Extract entity type from endpoint path."""

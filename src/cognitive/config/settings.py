@@ -27,7 +27,7 @@ class CognitiveSettings(BaseSettings):
         description="Neo4j username"
     )
     neo4j_password: str = Field(
-        default="devmatrix",
+        default="devmatrix123",
         description="Neo4j password"
     )
     neo4j_database: str = Field(

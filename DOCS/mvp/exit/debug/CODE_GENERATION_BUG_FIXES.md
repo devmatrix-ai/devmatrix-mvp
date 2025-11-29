@@ -3133,3 +3133,117 @@ def validate_import_exists(import_name, available_entities, ir) -> bool:
 - Pre-validate template assumptions against available IR data
 
 
+
+---
+
+## Bug #142: Double model_dump() Call Causing AttributeError
+
+**Status**: IDENTIFIED (2025-11-29)
+
+**Root Cause**: Generated service code passes `data.model_dump()` (already a dict) to repository methods, but repository methods try to call `.model_dump()` again on that dict.
+
+**Symptom**: 
+```
+AttributeError: 'dict' object has no attribute 'model_dump'
+```
+
+All CRUD operations fail at runtime with this error.
+
+**Evidence** (from smoke test run #35):
+```
+File "src/services/product_service.py", line 33
+    entity_data = data.model_dump()  # data is already a dict!
+    
+File "src/repositories/product_repository.py", line 103
+    entity_data = data.model_dump()  # Tries to call model_dump() on dict → FAILS
+```
+
+**Flow Analysis**:
+```
+1. Controller receives Pydantic model (ProductCreate)
+2. Controller passes to Service
+3. Service calls: repo.create(data.model_dump())  ← Converts to dict HERE
+4. Repository receives dict, tries: data.model_dump()  ← FAILS: dict has no model_dump()
+```
+
+**Before** (broken):
+```python
+# SERVICE (product_service.py:33)
+async def create(self, data: ProductCreate) -> ProductResponse:
+    entity_data = data.model_dump()  # ← Converts Pydantic to dict
+    entity = await self.repository.create(entity_data)  # ← Passes dict to repo
+    ...
+
+# REPOSITORY (product_repository.py:103)  
+async def create(self, data: ProductCreate) -> ProductEntity:
+    entity_data = data.model_dump()  # ← CRASH! dict has no model_dump()
+    ...
+```
+
+**After** (two possible fixes):
+
+**Option A - Fix Service** (DON'T convert in service):
+```python
+# SERVICE
+async def create(self, data: ProductCreate) -> ProductResponse:
+    # Pass Pydantic model directly, let repo handle conversion
+    entity = await self.repository.create(data)  
+    ...
+```
+
+**Option B - Fix Repository** (Handle both dict and Pydantic):
+```python
+# REPOSITORY
+async def create(self, data: Union[Dict, ProductCreate]) -> ProductEntity:
+    # Handle both dict and Pydantic model
+    if hasattr(data, 'model_dump'):
+        entity_data = data.model_dump()
+    else:
+        entity_data = data  # Already a dict
+    ...
+```
+
+**Recommended Fix**: Option A - Remove model_dump() from service, let repository handle it consistently.
+
+**Impact**: 
+- 33 out of 75 smoke tests failing (56% pass rate)
+- All CRUD operations broken
+- Affects: create, update operations on all entities
+
+**Template Location to Fix**:
+- `src/services/production_code_generators.py` - service template
+- `src/services/ir_service_generator.py` - service generation
+
+**Root Cause Analysis**: The service template and repository template were developed independently. Both assumed they needed to convert Pydantic to dict. The duplicate conversion went undetected until smoke tests ran actual requests.
+
+**Learning for Code Generation**:
+- Templates should have clear "contract" on what data format each layer expects
+- Service→Repository contract: Pass Pydantic model OR dict, not convert twice
+- Need integration tests between generated service and repository code
+
+---
+
+**UPDATE 2025-11-29**: Bug #142 FIXED
+
+**Fix Applied**:
+```python
+# production_code_generators.py (lines 1681-1684 and 1712-1715)
+
+# BEFORE (broken):
+async def create(self, data: {entity_name}Create):
+    # Bug #131 Fix: Convert Pydantic model to dict for repository
+    db_obj = await self.repo.create(data.model_dump())  # ← Service converts
+    # Then repository ALSO calls data.model_dump() → CRASH
+
+# AFTER (fixed):
+async def create(self, data: {entity_name}Create):
+    # Bug #142 Fix: Pass Pydantic model directly - repository handles model_dump()
+    db_obj = await self.repo.create(data)  # ← Pass Pydantic model
+    # Repository handles conversion correctly
+```
+
+**Contract Clarified**:
+- Service → Repository: Pass Pydantic model
+- Repository: Handles model_dump() conversion
+
+---

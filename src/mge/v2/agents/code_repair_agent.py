@@ -28,6 +28,20 @@ import logging
 from src.llm.enhanced_anthropic_client import EnhancedAnthropicClient
 from src.services.production_code_generators import normalize_field_name
 
+# Gap 4: Fix Pattern Learning imports (lazy to avoid circular imports)
+_error_pattern_store = None
+
+def _get_error_pattern_store():
+    """Lazy load ErrorPatternStore to avoid circular imports."""
+    global _error_pattern_store
+    if _error_pattern_store is None:
+        try:
+            from src.services.error_pattern_store import get_error_pattern_store
+            _error_pattern_store = get_error_pattern_store()
+        except Exception as e:
+            logger.warning(f"Could not load ErrorPatternStore: {e}")
+    return _error_pattern_store
+
 # IR-centric imports (optional - for migration)
 try:
     from src.cognitive.ir.application_ir import ApplicationIR
@@ -2032,13 +2046,18 @@ JSON OUTPUT:"""
         violation: Dict[str, Any]
     ) -> bool:
         """
-        Repair a single runtime violation using LLM-guided fix.
+        Repair a single runtime violation using known fix patterns or LLM-guided fix.
+
+        Gap 4 Enhancement: Now checks for known fixes first before invoking LLM.
+        Stores successful fixes for future reuse.
 
         Strategy:
         1. Extract file path and line from stack trace
         2. Read the problematic file
-        3. Ask LLM to generate fix based on error context
-        4. Apply fix using AST or string replacement
+        3. [NEW] Check for known fix in ErrorPatternStore
+        4. If no known fix, ask LLM to generate fix
+        5. Apply fix using AST or string replacement
+        6. [NEW] Store successful fix for future reuse
 
         Args:
             violation: Runtime violation dict
@@ -2072,20 +2091,69 @@ JSON OUTPUT:"""
             with open(full_path, 'r') as f:
                 file_content = f.read()
 
-            # Generate LLM fix
-            fixed_content = await self._generate_runtime_fix(
-                file_content=file_content,
-                file_path=str(file_path),
-                line_number=line_number,
-                error_type=error_type,
-                error_message=error_message,
-                stack_trace=stack_trace,
-                fix_hint=fix_hint,
-                endpoint=endpoint
-            )
+            # =========================================================
+            # Gap 4: Check for known fix first
+            # =========================================================
+            fixed_content = None
+            fix_strategy = "llm_repair"
+            known_fix = None
+            error_signature = None
+
+            pattern_store = _get_error_pattern_store()
+            if pattern_store:
+                try:
+                    # Build context for fix lookup
+                    fix_context = {
+                        "endpoint_pattern": endpoint,
+                        "file": str(file_path)
+                    }
+                    # Try to extract entity from endpoint
+                    if endpoint:
+                        parts = endpoint.split()
+                        if len(parts) >= 2:
+                            path_parts = parts[1].strip('/').split('/')
+                            if path_parts:
+                                fix_context["entity_type"] = path_parts[0].rstrip('s')
+
+                    # Look up known fix
+                    known_fix = await pattern_store.get_fix_for_error(
+                        error_type=error_type,
+                        error_message=error_message,
+                        context=fix_context,
+                        min_confidence=0.6
+                    )
+
+                    if known_fix:
+                        logger.info(f"Gap 4: Found known fix for {error_type} (strategy: {known_fix.fix_strategy}, confidence: {known_fix.confidence:.2f})")
+                        # Apply the known fix
+                        fixed_content = self._apply_known_fix(file_content, known_fix)
+                        fix_strategy = f"known_fix:{known_fix.fix_strategy}"
+                        error_signature = known_fix.error_signature
+                except Exception as e:
+                    logger.warning(f"Gap 4: Error looking up fix: {e}")
+
+            # =========================================================
+            # If no known fix, use LLM
+            # =========================================================
+            if not fixed_content or fixed_content == file_content:
+                logger.info(f"Gap 4: No known fix found, using LLM for {error_type}")
+                fixed_content = await self._generate_runtime_fix(
+                    file_content=file_content,
+                    file_path=str(file_path),
+                    line_number=line_number,
+                    error_type=error_type,
+                    error_message=error_message,
+                    stack_trace=stack_trace,
+                    fix_hint=fix_hint,
+                    endpoint=endpoint
+                )
+                fix_strategy = "llm_repair"
 
             if not fixed_content or fixed_content == file_content:
-                logger.warning(f"LLM could not generate fix for {error_type} in {file_path}")
+                logger.warning(f"Could not generate fix for {error_type} in {file_path}")
+                # Mark known fix as failed if we tried one
+                if known_fix and pattern_store and error_signature:
+                    await pattern_store.mark_fix_failed(error_signature)
                 return False
 
             # Validate the fix compiles (syntax check)
@@ -2093,18 +2161,208 @@ JSON OUTPUT:"""
                 ast.parse(fixed_content)
             except SyntaxError as e:
                 logger.error(f"Generated fix has syntax error: {e}")
+                # Mark known fix as failed
+                if known_fix and pattern_store and error_signature:
+                    await pattern_store.mark_fix_failed(error_signature)
                 return False
 
             # Write the fix
             with open(full_path, 'w') as f:
                 f.write(fixed_content)
 
-            logger.info(f"Applied runtime fix for {error_type} in {file_path}:{line_number}")
+            logger.info(f"Applied runtime fix for {error_type} in {file_path}:{line_number} (strategy: {fix_strategy})")
+
+            # =========================================================
+            # Gap 4: Store successful fix for future reuse
+            # =========================================================
+            if pattern_store and fix_strategy.startswith("llm_repair"):
+                try:
+                    await self._store_successful_fix(
+                        pattern_store=pattern_store,
+                        error_type=error_type,
+                        error_message=error_message,
+                        fix_code=fixed_content,
+                        original_code=file_content,
+                        endpoint=endpoint,
+                        file_path=str(file_path)
+                    )
+                except Exception as e:
+                    logger.warning(f"Gap 4: Error storing fix: {e}")
+
             return True
 
         except Exception as e:
             logger.error(f"_repair_single_runtime_violation failed: {e}")
             return False
+
+    def _apply_known_fix(self, file_content: str, known_fix) -> Optional[str]:
+        """
+        Apply a known fix pattern to file content.
+
+        Gap 4 Implementation: Attempts to apply the stored fix code.
+        Handles different fix strategies:
+        - full_replacement: Replace entire file
+        - patch: Apply diff-like changes
+        - add_import: Add missing import statement
+
+        Args:
+            file_content: Current file content
+            known_fix: FixPattern with fix_code and fix_strategy
+
+        Returns:
+            Fixed content or None if fix couldn't be applied
+        """
+        try:
+            strategy = known_fix.fix_strategy
+            fix_code = known_fix.fix_code
+
+            if strategy == "full_replacement" or strategy == "llm_repair":
+                # The fix_code is the complete fixed file
+                return fix_code
+
+            elif strategy == "add_import":
+                # fix_code contains the import statement to add
+                if fix_code in file_content:
+                    return file_content  # Already has the import
+                # Add import after other imports
+                lines = file_content.split('\n')
+                last_import_idx = 0
+                for i, line in enumerate(lines):
+                    if line.startswith('import ') or line.startswith('from '):
+                        last_import_idx = i
+                lines.insert(last_import_idx + 1, fix_code)
+                return '\n'.join(lines)
+
+            elif strategy == "ast_patch":
+                # fix_code contains AST patch instructions (JSON)
+                # For now, treat as full replacement
+                return fix_code
+
+            else:
+                # Default: treat as full replacement
+                logger.info(f"Unknown fix strategy '{strategy}', treating as full replacement")
+                return fix_code
+
+        except Exception as e:
+            logger.error(f"Error applying known fix: {e}")
+            return None
+
+    async def _store_successful_fix(
+        self,
+        pattern_store,
+        error_type: str,
+        error_message: str,
+        fix_code: str,
+        original_code: str,
+        endpoint: str,
+        file_path: str
+    ) -> bool:
+        """
+        Store a successful LLM-generated fix for future reuse.
+
+        Gap 4 Implementation: Extracts fix strategy from the diff and
+        stores in ErrorPatternStore.
+
+        Args:
+            pattern_store: ErrorPatternStore instance
+            error_type: Error type that was fixed
+            error_message: Original error message
+            fix_code: The fixed file content
+            original_code: Original file content before fix
+            endpoint: Endpoint where error occurred
+            file_path: Path to fixed file
+
+        Returns:
+            True if stored successfully
+        """
+        import uuid as uuid_module
+        from src.services.error_pattern_store import FixPattern
+
+        try:
+            # Determine fix strategy from changes
+            fix_strategy = self._infer_fix_strategy(original_code, fix_code)
+
+            # Build context
+            context = {
+                "file": file_path,
+                "endpoint_pattern": endpoint
+            }
+            # Extract entity from endpoint
+            if endpoint:
+                parts = endpoint.split()
+                if len(parts) >= 2:
+                    path_parts = parts[1].strip('/').split('/')
+                    if path_parts:
+                        context["entity_type"] = path_parts[0].rstrip('s')
+
+            # Compute signature
+            signature = pattern_store._compute_error_signature(
+                error_type, error_message, context
+            )
+
+            # Create FixPattern
+            fix = FixPattern(
+                fix_id=f"fix_{uuid_module.uuid4().hex[:8]}",
+                error_signature=signature,
+                error_type=error_type,
+                error_message=error_message,
+                fix_strategy=fix_strategy,
+                fix_code=fix_code,
+                context=context,
+                success_count=1,
+                confidence=0.7  # Initial confidence for LLM-generated fix
+            )
+
+            # Store it
+            success = await pattern_store.store_fix(fix)
+            if success:
+                logger.info(f"Gap 4: Stored successful fix (strategy: {fix_strategy}, signature: {signature[:16]}...)")
+            return success
+
+        except Exception as e:
+            logger.error(f"Error storing successful fix: {e}")
+            return False
+
+    def _infer_fix_strategy(self, original: str, fixed: str) -> str:
+        """
+        Infer the fix strategy from the diff between original and fixed code.
+
+        Args:
+            original: Original code
+            fixed: Fixed code
+
+        Returns:
+            Strategy name: "add_import", "fix_type", "add_method", "full_replacement"
+        """
+        try:
+            orig_lines = set(original.split('\n'))
+            fixed_lines = set(fixed.split('\n'))
+
+            added_lines = fixed_lines - orig_lines
+
+            # Check for added imports
+            import_added = any(
+                line.strip().startswith('import ') or line.strip().startswith('from ')
+                for line in added_lines
+            )
+            if import_added and len(added_lines) <= 3:
+                return "add_import"
+
+            # Check for type annotation changes
+            if 'UUID' in fixed and 'UUID' not in original:
+                return "fix_type_uuid"
+            if ': str' in fixed and ': str' not in original:
+                return "fix_type_str"
+
+            # Check for added method/function
+            if 'def ' in '\n'.join(added_lines):
+                return "add_method"
+
+            # Default to full replacement
+            return "llm_repair"
+
+        except Exception:
+            return "llm_repair"
 
     def _extract_file_line_from_trace(
         self,
@@ -2272,3 +2530,182 @@ FIXED FILE CONTENT:
             return '\n'.join(code_lines)
 
         return None
+
+    # =========================================================================
+    # SMOKE-DRIVEN REPAIR (New - addresses compliance/runtime disconnect)
+    # Reference: DOCS/mvp/exit/SMOKE_DRIVEN_REPAIR_ARCHITECTURE.md
+    # =========================================================================
+
+    async def repair_from_smoke(
+        self,
+        violations: List[Dict[str, Any]],
+        server_logs: str,
+        app_path: Path,
+        stack_traces: Optional[List[Dict[str, Any]]] = None
+    ) -> RepairResult:
+        """
+        Repair code based on smoke test failures.
+
+        This method addresses the critical disconnect where:
+        - Semantic compliance shows 100% → Code Repair skips
+        - Smoke test shows 56% pass rate → bugs exist in runtime
+
+        Strategy:
+        1. Parse violations to identify failing endpoints
+        2. Extract stack traces from server logs
+        3. Classify errors (database, validation, import, etc.)
+        4. Apply targeted fixes based on error type
+        5. Record successful fixes for learning
+
+        Args:
+            violations: List of smoke test violations
+            server_logs: Raw server logs containing stack traces
+            app_path: Path to generated app directory
+            stack_traces: Optional pre-parsed stack traces
+
+        Returns:
+            RepairResult with outcome
+
+        Reference: DOCS/mvp/exit/debug/SMOKE_REPAIR_DISCONNECT.md
+        """
+        repairs_applied = []
+        repaired_files = []
+
+        if not violations:
+            return RepairResult(
+                success=True,
+                repaired_files=[],
+                repairs_applied=[],
+                error_message="No smoke violations to repair"
+            )
+
+        logger.info(f"🔧 CodeRepair: Repairing {len(violations)} smoke violations")
+
+        # Group violations by error type
+        by_error_type = self._group_violations_by_error_type(violations)
+
+        for error_type, error_violations in by_error_type.items():
+            logger.info(f"  📋 {error_type}: {len(error_violations)} violations")
+
+            for violation in error_violations:
+                try:
+                    success = await self._repair_smoke_violation(
+                        violation,
+                        server_logs,
+                        stack_traces or [],
+                        app_path
+                    )
+                    if success:
+                        endpoint = violation.get('endpoint', 'unknown')
+                        repairs_applied.append(f"Fixed {error_type} in {endpoint}")
+                        file_path = violation.get('file', '')
+                        if file_path and file_path not in repaired_files:
+                            full_path = str(app_path / file_path) if not file_path.startswith('/') else file_path
+                            repaired_files.append(full_path)
+                except Exception as e:
+                    logger.error(f"Smoke violation repair failed: {e}")
+
+        if repairs_applied:
+            return RepairResult(
+                success=True,
+                repaired_files=repaired_files,
+                repairs_applied=repairs_applied
+            )
+        else:
+            return RepairResult(
+                success=False,
+                repaired_files=[],
+                repairs_applied=[],
+                error_message="No smoke violations could be repaired"
+            )
+
+    def _group_violations_by_error_type(
+        self,
+        violations: List[Dict[str, Any]]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Group violations by error type for targeted repair."""
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+
+        for violation in violations:
+            error_type = violation.get('error_type', 'HTTP_500')
+            status_code = violation.get('status_code', 500)
+
+            # Classify by status code first
+            if status_code == 404:
+                key = 'route_not_found'
+            elif status_code == 422:
+                key = 'validation_error'
+            elif status_code >= 500:
+                # Further classify 500 errors
+                key = self._classify_500_error(error_type, violation.get('error_message', ''))
+            else:
+                key = error_type or 'unknown'
+
+            if key not in grouped:
+                grouped[key] = []
+            grouped[key].append(violation)
+
+        return grouped
+
+    def _classify_500_error(self, error_type: str, error_message: str) -> str:
+        """Classify 500 error into specific category."""
+        type_lower = (error_type or '').lower()
+        msg_lower = (error_message or '').lower()
+
+        if any(x in type_lower for x in ['integrity', 'sqlalchemy', 'database']):
+            return 'database_error'
+        if any(x in type_lower for x in ['validation', 'pydantic']):
+            return 'validation_error'
+        if any(x in type_lower for x in ['import', 'module']):
+            return 'import_error'
+        if 'attribute' in type_lower:
+            return 'attribute_error'
+        if 'type' in type_lower:
+            return 'type_error'
+        if 'key' in type_lower:
+            return 'key_error'
+
+        # Check message for clues
+        if 'null' in msg_lower or 'not null' in msg_lower:
+            return 'database_error'
+        if 'no attribute' in msg_lower:
+            return 'attribute_error'
+
+        return 'generic_500'
+
+    async def _repair_smoke_violation(
+        self,
+        violation: Dict[str, Any],
+        server_logs: str,
+        stack_traces: List[Dict[str, Any]],
+        app_path: Path
+    ) -> bool:
+        """
+        Repair a single smoke violation.
+
+        Delegates to existing repair_single_runtime_violation for LLM-based fixes.
+        """
+        error_type = violation.get('error_type', 'HTTP_500')
+        status_code = violation.get('status_code', 500)
+
+        # Skip non-actionable errors
+        if error_type in ['ConnectionError', 'TimeoutError']:
+            logger.info(f"Skipping non-code violation: {error_type}")
+            return False
+
+        # For 500 errors, use existing runtime violation repair
+        if status_code >= 500:
+            return await self._repair_single_runtime_violation(violation)
+
+        # For 404 (route not found), could add route - but skip for now
+        # Routes should be generated correctly initially
+        if status_code == 404:
+            logger.info(f"Skipping 404 route repair (initial gen should be correct)")
+            return False
+
+        # For 422 (validation), could fix schema - but skip for now
+        if status_code == 422:
+            logger.info(f"Skipping 422 validation repair")
+            return False
+
+        return False
