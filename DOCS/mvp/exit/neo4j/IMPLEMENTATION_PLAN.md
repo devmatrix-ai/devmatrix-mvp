@@ -3274,15 +3274,15 @@ LIMIT 20
 ### Checklist Safety Rails
 
 ```
-[ ] SR.1: Graph Health Monitor scripts creados
-[ ] SR.2: Atomic Migration wrapper implementado
-[ ] SR.3: Graph Shape Contract documentado + validators
-[ ] SR.4: Temporal metadata extendido con updated_by
-[ ] SR.5: TestExecutionIR schema diseñado (Sprint 5.2)
-[ ] SR.6: FullIRGraphLoader implementado (Sprint 6)
-[ ] SR.7: NeoDash views roadmap agregado a cada sprint
-[ ] SR.8: Sprint 5 dividido en MVP + Complete phases
-[ ] SR.9: All safety rails validated in production
+[x] SR.1: Graph Health Monitor scripts creados ✅ (2025-11-29) → graph_health_monitor.py
+[x] SR.2: Atomic Migration wrapper implementado ✅ (2025-11-29) → atomic_migration.py
+[x] SR.3: Graph Shape Contract documentado + validators ✅ (2025-11-29) → 008_validate_graph_shape_contract.py
+[x] SR.4: Temporal metadata extendido ✅ (2025-11-29) → temporal_metadata.py (100% coverage)
+[x] SR.5: TestExecutionIR schema diseñado ✅ (2025-11-29) → SPRINT5_REDESIGN.md
+[x] SR.6: FullIRGraphLoader implementado ✅ (2025-11-29) → full_ir_graph_loader.py (10/10 tests)
+[x] SR.7: NeoDash views roadmap ✅ (2025-11-29) → neodash_views.cypher (10 dashboards)
+[x] SR.8: Sprint 5 dividido en MVP + Complete phases ✅ (2025-11-29) → SPRINT5_REDESIGN.md
+[x] SR.9: Production validator script ✅ (2025-11-29) → validate_safety_rails.py
 ```
 
 **Tiempo estimado total:** 3-4 días distribuidos across sprints

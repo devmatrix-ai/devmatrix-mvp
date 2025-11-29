@@ -1,0 +1,438 @@
+# DUAL_WRITE Retirement Policy
+# ============================
+# Document: IA.4b
+# Sprint: Pre-Sprint 3 (Tareas Inmediatas)
+# Created: 2025-11-29
+# Purpose: Define phased retirement of legacy JSON storage in favor of Neo4j graph
+
+version: "1.0.0"
+status: "APPROVED"
+effective_date: "2025-11-29"
+
+# =============================================================================
+# EXECUTIVE SUMMARY
+# =============================================================================
+
+summary:
+  current_state: "DUAL_WRITE enabled - both JSON and Neo4j graph are written"
+  target_state: "GRAPH_ONLY - Neo4j is the single source of truth"
+
+  rationale:
+    - "Eliminate data duplication and sync overhead"
+    - "Leverage graph relationships for advanced queries"
+    - "Reduce storage costs and complexity"
+    - "Enable real-time lineage tracking"
+
+  risks:
+    - "Data loss if graph corruption occurs without JSON backup"
+    - "Performance regression if graph queries are slower"
+    - "Integration issues with legacy systems expecting JSON"
+
+# =============================================================================
+# PHASE 1: DUAL_WRITE (Current State)
+# =============================================================================
+
+phase_1:
+  name: "DUAL_WRITE"
+  duration: "Ongoing until Phase 2"
+  legacy_percentage: 100
+  graph_percentage: 100
+
+  description: |
+    Both JSON files and Neo4j graph are written for every IR operation.
+    JSON remains the primary read source.
+    Graph is populated but not yet trusted for reads.
+
+  behavior:
+    write_operations:
+      - target: "JSON files"
+        status: "PRIMARY"
+        rollback: "Native file restore"
+      - target: "Neo4j graph"
+        status: "SECONDARY"
+        rollback: "Graph delete + re-import from JSON"
+
+    read_operations:
+      - source: "JSON files"
+        status: "PRIMARY"
+      - source: "Neo4j graph"
+        status: "VALIDATION_ONLY"
+
+  exit_criteria:
+    - criterion: "Graph roundtrip tests pass"
+      status: "DONE"
+      evidence: "test_ir_repositories_roundtrip.py - 4 tests passing"
+
+    - criterion: "Graph shape contract validation passes"
+      status: "DONE"
+      evidence: "test_graph_shape_contract.py - 9 tests passing"
+
+    - criterion: "TARGETS_ENTITY coverage >= 80%"
+      status: "DONE"
+      evidence: "84.3% coverage achieved"
+
+    - criterion: "Temporal metadata on all IR nodes"
+      status: "DONE"
+      evidence: "10,982 nodes with created_at/updated_at"
+
+  rollback_plan:
+    trigger: "Graph corruption or data loss"
+    actions:
+      - "Stop graph writes"
+      - "Restore from JSON backup"
+      - "Re-run graph population scripts"
+    recovery_time: "< 1 hour"
+
+# =============================================================================
+# PHASE 2: GRAPH_PRIMARY
+# =============================================================================
+
+phase_2:
+  name: "GRAPH_PRIMARY"
+  duration: "2-4 weeks"
+  legacy_percentage: 100  # Still written but not read
+  graph_percentage: 100
+
+  description: |
+    Neo4j graph becomes the primary read source.
+    JSON continues to be written as backup.
+    All new features use graph queries.
+
+  behavior:
+    write_operations:
+      - target: "Neo4j graph"
+        status: "PRIMARY"
+      - target: "JSON files"
+        status: "BACKUP"
+
+    read_operations:
+      - source: "Neo4j graph"
+        status: "PRIMARY"
+      - source: "JSON files"
+        status: "FALLBACK_ONLY"
+
+  feature_flags:
+    GRAPH_READ_ENABLED: true
+    JSON_WRITE_ENABLED: true
+    JSON_READ_FALLBACK: true
+
+  exit_criteria:
+    - criterion: "Graph read latency < JSON read latency"
+      metric: "p95 < 100ms"
+      measurement: "APM monitoring"
+
+    - criterion: "Zero data discrepancies in 7 days"
+      metric: "discrepancy_count = 0"
+      measurement: "Daily comparison job"
+
+    - criterion: "All pipeline stages use graph reads"
+      metric: "100% coverage"
+      measurement: "Code audit"
+
+    - criterion: "BehaviorModelIR migration complete"
+      metric: "Sprint 3 deliverable"
+      measurement: "Node count verification"
+
+  rollback_plan:
+    trigger: "Graph read failures > 1% or latency > 500ms"
+    actions:
+      - "Revert feature flag: GRAPH_READ_ENABLED = false"
+      - "Resume JSON reads immediately"
+      - "Investigate graph performance"
+    recovery_time: "< 5 minutes (feature flag)"
+
+# =============================================================================
+# PHASE 3: JSON_BACKUP_ONLY
+# =============================================================================
+
+phase_3:
+  name: "JSON_BACKUP_ONLY"
+  duration: "2-4 weeks"
+  legacy_percentage: 50  # Written at reduced frequency
+  graph_percentage: 100
+
+  description: |
+    JSON writes are reduced to periodic backups only.
+    Graph is the single operational source.
+    JSON serves as disaster recovery backup.
+
+  behavior:
+    write_operations:
+      - target: "Neo4j graph"
+        status: "PRIMARY"
+      - target: "JSON files"
+        status: "PERIODIC_BACKUP"
+        frequency: "hourly"
+
+    read_operations:
+      - source: "Neo4j graph"
+        status: "EXCLUSIVE"
+
+  feature_flags:
+    GRAPH_READ_ENABLED: true
+    JSON_WRITE_ENABLED: true
+    JSON_WRITE_FREQUENCY: "hourly"
+    JSON_READ_FALLBACK: false
+
+  exit_criteria:
+    - criterion: "Graph stability for 14 days"
+      metric: "uptime > 99.9%"
+      measurement: "Monitoring dashboard"
+
+    - criterion: "Backup restore tested successfully"
+      metric: "RTO < 1 hour"
+      measurement: "DR drill"
+
+    - criterion: "No JSON read dependencies in codebase"
+      metric: "0 references"
+      measurement: "grep -r 'load.*json' src/"
+
+    - criterion: "ValidationModelIR migration complete"
+      metric: "Sprint 4 deliverable"
+      measurement: "Node count verification"
+
+  rollback_plan:
+    trigger: "Graph unavailable > 15 minutes"
+    actions:
+      - "Enable JSON fallback reads"
+      - "Increase JSON backup frequency to real-time"
+      - "Investigate and restore graph"
+    recovery_time: "< 15 minutes"
+
+# =============================================================================
+# PHASE 4: JSON_DEPRECATED
+# =============================================================================
+
+phase_4:
+  name: "JSON_DEPRECATED"
+  duration: "2-4 weeks"
+  legacy_percentage: 10  # Daily backup only
+  graph_percentage: 100
+
+  description: |
+    JSON writes reduced to daily backup only.
+    JSON read code removed from codebase.
+    Preparing for full JSON retirement.
+
+  behavior:
+    write_operations:
+      - target: "Neo4j graph"
+        status: "EXCLUSIVE"
+      - target: "JSON files"
+        status: "DAILY_BACKUP"
+        frequency: "daily"
+
+    read_operations:
+      - source: "Neo4j graph"
+        status: "EXCLUSIVE"
+
+  feature_flags:
+    GRAPH_READ_ENABLED: true
+    JSON_WRITE_ENABLED: true
+    JSON_WRITE_FREQUENCY: "daily"
+    JSON_READ_FALLBACK: false
+    JSON_CODE_DEPRECATED: true
+
+  code_changes:
+    - action: "Remove JSON read functions"
+      files: ["*_repository.py"]
+      status: "PENDING"
+
+    - action: "Add deprecation warnings to JSON writers"
+      files: ["ir_persistence.py"]
+      status: "PENDING"
+
+    - action: "Update documentation"
+      files: ["README.md", "ARCHITECTURE.md"]
+      status: "PENDING"
+
+  exit_criteria:
+    - criterion: "JSON read code removed"
+      metric: "0 JSON read functions"
+      measurement: "Code review"
+
+    - criterion: "Graph-only operation for 30 days"
+      metric: "stability confirmed"
+      measurement: "Incident count = 0"
+
+    - criterion: "InfrastructureModelIR migration complete"
+      metric: "Sprint 6 deliverable"
+      measurement: "Node count verification"
+
+  rollback_plan:
+    trigger: "Critical data loss or corruption"
+    actions:
+      - "Restore JSON read functions from git"
+      - "Import last daily backup"
+      - "Enable dual-write mode"
+    recovery_time: "< 2 hours"
+
+# =============================================================================
+# PHASE 5: GRAPH_ONLY (Target State)
+# =============================================================================
+
+phase_5:
+  name: "GRAPH_ONLY"
+  duration: "Permanent"
+  legacy_percentage: 0
+  graph_percentage: 100
+
+  description: |
+    Neo4j graph is the single source of truth.
+    JSON storage completely retired.
+    Full graph capabilities enabled.
+
+  behavior:
+    write_operations:
+      - target: "Neo4j graph"
+        status: "EXCLUSIVE"
+
+    read_operations:
+      - source: "Neo4j graph"
+        status: "EXCLUSIVE"
+
+    backup_strategy:
+      method: "Neo4j native backup"
+      frequency: "hourly"
+      retention: "30 days"
+
+  feature_flags:
+    GRAPH_READ_ENABLED: true
+    JSON_WRITE_ENABLED: false
+    LEGACY_MODE_AVAILABLE: false
+
+  code_changes:
+    - action: "Remove all JSON persistence code"
+      files: ["*_json_*.py", "json_persistence.py"]
+      status: "PENDING"
+
+    - action: "Archive JSON backup scripts"
+      destination: "scripts/archived/"
+      status: "PENDING"
+
+    - action: "Update all import statements"
+      status: "PENDING"
+
+  benefits_realized:
+    - "Single source of truth"
+    - "Real-time lineage queries"
+    - "Reduced storage footprint"
+    - "Simplified codebase"
+    - "Advanced graph analytics"
+
+  maintenance:
+    - "Weekly graph health checks"
+    - "Monthly backup restore tests"
+    - "Quarterly schema reviews"
+
+# =============================================================================
+# ROLLBACK MATRIX
+# =============================================================================
+
+rollback_matrix:
+  phase_2_to_1:
+    complexity: "LOW"
+    duration: "< 5 minutes"
+    data_loss: "NONE"
+    method: "Feature flag toggle"
+
+  phase_3_to_2:
+    complexity: "LOW"
+    duration: "< 15 minutes"
+    data_loss: "NONE"
+    method: "Increase JSON write frequency"
+
+  phase_4_to_3:
+    complexity: "MEDIUM"
+    duration: "< 1 hour"
+    data_loss: "POSSIBLE (up to 24h)"
+    method: "Restore JSON writers + daily backup"
+
+  phase_5_to_4:
+    complexity: "HIGH"
+    duration: "< 2 hours"
+    data_loss: "POSSIBLE (depends on backup)"
+    method: "Restore JSON code from git + backup"
+
+# =============================================================================
+# MONITORING & ALERTS
+# =============================================================================
+
+monitoring:
+  metrics:
+    - name: "graph_read_latency_p95"
+      threshold: "< 100ms"
+      alert: "WARNING at 80ms, CRITICAL at 150ms"
+
+    - name: "graph_write_latency_p95"
+      threshold: "< 200ms"
+      alert: "WARNING at 150ms, CRITICAL at 300ms"
+
+    - name: "json_graph_discrepancy_count"
+      threshold: "= 0"
+      alert: "WARNING at 1, CRITICAL at 10"
+
+    - name: "graph_node_count_drift"
+      threshold: "< 1%"
+      alert: "WARNING at 0.5%, CRITICAL at 2%"
+
+  dashboards:
+    - name: "DUAL_WRITE Health"
+      panels:
+        - "Read latency comparison"
+        - "Write throughput"
+        - "Discrepancy count"
+        - "Phase status"
+
+  alerts:
+    - name: "Graph Read Degradation"
+      condition: "graph_read_latency_p95 > 150ms for 5m"
+      action: "Page on-call, consider rollback"
+
+    - name: "Data Discrepancy Detected"
+      condition: "json_graph_discrepancy_count > 0"
+      action: "Investigate immediately, halt phase transition"
+
+# =============================================================================
+# TIMELINE (ESTIMATED)
+# =============================================================================
+
+timeline:
+  phase_1_complete: "2025-11-29"  # Current - DONE
+  phase_2_start: "After Sprint 3 BehaviorModelIR"
+  phase_2_duration: "2-4 weeks"
+  phase_3_start: "After Sprint 4 ValidationModelIR"
+  phase_3_duration: "2-4 weeks"
+  phase_4_start: "After Sprint 6 InfrastructureModelIR"
+  phase_4_duration: "2-4 weeks"
+  phase_5_target: "Q1 2026"
+
+  dependencies:
+    - "Sprint 3: BehaviorModelIR expansion"
+    - "Sprint 4: ValidationModelIR expansion"
+    - "Sprint 5: TestsModelIR expansion"
+    - "Sprint 6: InfrastructureModelIR expansion"
+    - "Sprint 7-8: Lineage and advanced queries"
+
+# =============================================================================
+# APPROVAL & SIGN-OFF
+# =============================================================================
+
+approvals:
+  - role: "Technical Lead"
+    status: "PENDING"
+    date: null
+
+  - role: "Data Architecture"
+    status: "PENDING"
+    date: null
+
+  - role: "Operations"
+    status: "PENDING"
+    date: null
+
+revision_history:
+  - version: "1.0.0"
+    date: "2025-11-29"
+    author: "Claude (IA.4b)"
+    changes: "Initial document creation"
