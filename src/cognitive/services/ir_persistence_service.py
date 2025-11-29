@@ -194,7 +194,7 @@ class IRPersistenceService:
                 logger.debug("Saved InfrastructureModelIR")
 
             # 7. Save TestsModelIR (if present)
-            if app_ir.tests_model and (app_ir.tests_model.seed_entities or app_ir.tests_model.test_scenarios):
+            if app_ir.tests_model and (app_ir.tests_model.seed_entities or app_ir.tests_model.get_all_scenarios()):
                 self._save_tests_model(final_app_id, app_ir.tests_model)
                 logger.debug("Saved TestsModelIR")
 
@@ -545,8 +545,8 @@ class IRPersistenceService:
                     scenario=seed.scenario or "default",
                 )
 
-            # Save TestScenarios
-            for i, scenario in enumerate(tests_model.test_scenarios):
+            # Save TestScenarios (using get_all_scenarios() which aggregates all sources)
+            for i, scenario in enumerate(tests_model.get_all_scenarios()):
                 scenario_id = f"{app_id}_scenario_{i}"
                 session.run("""
                     MATCH (tm:TestsModelIR {app_id: $app_id})
