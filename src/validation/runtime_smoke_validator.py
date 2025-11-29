@@ -24,6 +24,14 @@ import httpx
 from src.cognitive.ir.application_ir import ApplicationIR
 from src.cognitive.ir.api_model import Endpoint, HttpMethod
 
+# Active Learning imports (optional - graceful degradation if Neo4j unavailable)
+try:
+    from src.cognitive.services.error_knowledge_repository import ErrorKnowledgeRepository
+    ACTIVE_LEARNING_AVAILABLE = True
+except ImportError:
+    ErrorKnowledgeRepository = None
+    ACTIVE_LEARNING_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -72,7 +80,8 @@ class RuntimeSmokeTestValidator:
         port: int = 8002,  # Bug #85: Docker exposes on 8002
         max_iterations: int = 3,
         startup_timeout: float = 90.0,  # Bug #85: Docker needs more time
-        request_timeout: float = 10.0
+        request_timeout: float = 10.0,
+        error_knowledge_repo: Optional["ErrorKnowledgeRepository"] = None,
     ):
         self.app_dir = Path(app_dir)
         self.host = host
@@ -84,6 +93,9 @@ class RuntimeSmokeTestValidator:
         self.base_url = f"http://{host}:{port}"
         # Bug #85: Track if using Docker for proper cleanup
         self._using_docker = False
+        # Active Learning: Repository for learning from failures
+        self._error_knowledge_repo = error_knowledge_repo
+        self._learning_enabled = error_knowledge_repo is not None and ACTIVE_LEARNING_AVAILABLE
 
     async def validate(self, ir: ApplicationIR) -> SmokeTestResult:
         """
@@ -140,6 +152,9 @@ class RuntimeSmokeTestValidator:
                     violation = self._create_violation(endpoint, result)
                     violations.append(violation)
                     logger.warning(f"  ❌ {result.method} {result.endpoint_path}: {result.error_type}")
+
+                    # Active Learning: Learn from this failure
+                    self._learn_from_error(endpoint, result, violation)
                 else:
                     logger.info(f"  ✅ {result.method} {result.endpoint_path}: {result.status_code}")
 
@@ -664,6 +679,65 @@ class RuntimeSmokeTestValidator:
                 result['line'] = int(file_line_match.group(2))
 
         return result
+
+    def _learn_from_error(
+        self,
+        endpoint: Endpoint,
+        result: EndpointTestResult,
+        violation: Dict[str, Any],
+    ) -> None:
+        """
+        Learn from a smoke test failure using Active Learning.
+
+        Stores the error in ErrorKnowledge for future generations to avoid.
+        Gracefully degrades if Neo4j is unavailable.
+
+        Args:
+            endpoint: The endpoint that was tested
+            result: Test result with error details
+            violation: The created violation dict
+        """
+        if not self._learning_enabled or not self._error_knowledge_repo:
+            return
+
+        try:
+            # Extract entity name from endpoint path
+            entity_name = self._extract_entity_from_path(endpoint.path)
+
+            # Construct endpoint path for learning
+            endpoint_path = f"{endpoint.method.value} {endpoint.path}"
+
+            # Get file path from violation if available
+            file_path = violation.get("file", "")
+
+            # Learn from this failure
+            signature = self._error_knowledge_repo.learn_from_failure(
+                pattern_id=None,  # No pattern tracking yet
+                error_type=result.error_type or "Unknown",
+                error_message=result.error_message or "",
+                endpoint_path=endpoint_path,
+                entity_name=entity_name,
+                failed_code=result.stack_trace,
+                file_path=file_path,
+            )
+
+            logger.debug(f"🧠 Active Learning: Stored error {signature[:8]}... for {endpoint_path}")
+
+        except Exception as e:
+            # Don't fail smoke testing if learning fails
+            logger.warning(f"⚠️ Active Learning failed (non-blocking): {e}")
+
+    def _extract_entity_from_path(self, path: str) -> Optional[str]:
+        """Extract entity name from endpoint path."""
+        # /products → product
+        # /carts/{id}/items → cart
+        # /api/v1/customers → customer
+        parts = [p for p in path.split('/') if p and not p.startswith('{')]
+        for part in parts:
+            if part not in ['api', 'v1', 'v2', 'health', 'metrics']:
+                # Remove trailing 's' for singular
+                return part.rstrip('s').lower()
+        return None
 
     def _create_violation(self, endpoint: Endpoint, result: EndpointTestResult) -> Dict[str, Any]:
         """
