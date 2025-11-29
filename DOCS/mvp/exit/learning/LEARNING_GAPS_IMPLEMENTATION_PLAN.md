@@ -706,9 +706,11 @@ Code Generation → CodeGenerationService.generate_from_application_ir()
 
 **Pendiente:**
 
-- [ ] Ejecutar migration 011 en Neo4j
+- [x] ~~Ejecutar migration 011 en Neo4j~~ ✅ (1 constraint, 7 indexes)
 - [x] ~~Integrar `get_relevant_errors()` en code generation prompts~~ ✅
 - [x] ~~Conectar con Pattern Feedback para scores~~ ✅
+
+**Estado: COMPLETO** ✅
 
 ---
 
