@@ -3008,3 +3008,128 @@ cmd = [
 
 **Trade-off**: The `--no-cache` option makes builds slower (~30-60 seconds longer), but ensures correctness. This is acceptable for E2E testing where correctness is more important than speed.
 
+
+---
+
+## Bug #140: clear_items() Generated for Entities Without Children
+
+**Status**: FIXED
+
+**Root Cause**: The `clear_items()` method was included in the base service template and generated for ALL entities, regardless of whether they have child relationships. The template assumed every entity `{entity_name}` has a corresponding `{entity_name}ItemEntity` child, which is incorrect.
+
+**Symptom**: HTTP 500 errors on service method calls due to `ImportError: cannot import name 'ProductItemEntity' from 'src.models.entities'`. Only `CartItemEntity` and `OrderItemEntity` actually exist.
+
+**Evidence**:
+```python
+# In generated product_service.py:
+from src.models.entities import ProductItemEntity  # DOES NOT EXIST!
+await self.db.execute(
+    delete(ProductItemEntity).where(ProductItemEntity.product_id == id)
+)
+```
+
+**Files Modified**:
+- `src/services/production_code_generators.py` (lines 1610-1643)
+
+**Before**:
+```python
+# clear_items() was in base template, generated for ALL entities
+base_service = f'''
+...
+    async def clear_items(self, id: UUID) -> Optional[{entity_name}Response]:
+        from src.models.entities import {entity_name}ItemEntity  # WRONG!
+        await self.db.execute(
+            delete({entity_name}ItemEntity).where({entity_name}ItemEntity.{entity_snake}_id == id)
+        )
+...
+'''
+```
+
+**After**:
+```python
+# Bug #140 Fix: Only add clear_items() for entities that have child relationships
+if child_info.get("found"):
+    child_entity_class = child_info.get("entity_class", f"{entity_name}ItemEntity")
+    child_fk_field = child_info.get("fk_field", f"{entity_snake}_id")
+    base_service += f'''
+    async def clear_items(self, id: UUID) -> Optional[{entity_name}Response]:
+        from src.models.entities import {child_entity_class}  # Uses actual child class
+        await self.db.execute(
+            delete({child_entity_class}).where({child_entity_class}.{child_fk_field} == id)
+        )
+...
+'''
+```
+
+**Impact**: Services for entities without children (Product, Customer) no longer have an invalid `clear_items()` method. Only Cart and Order services get this method since they have CartItem and OrderItem children respectively.
+
+**Root Cause Analysis**: The original Bug #105 fix added `clear_items()` to solve a different issue but placed it in the base template without checking for child relationships. The `child_info` variable was already being computed but not used to gate this method.
+
+
+
+---
+
+## Bug #141: Hardcoded Ecommerce Entity Names in Code Generation
+
+**Status**: FIXED (commit 5e611780)
+
+**Root Cause**: The code generation templates had hardcoded entity names like `"Cart"`, `"Order"`, `"Product"` as fallbacks in detection logic, and ~250 lines of ecommerce-specific business methods (checkout, pay, cancel_order, add_item) that would never work for non-ecommerce specs.
+
+**Symptom**: Code generation was tightly coupled to ecommerce domain. Any spec with different entities would either:
+1. Miss business logic that should apply (if entity had similar fields but different name)
+2. Get invalid business logic (if entity name matched but fields differed)
+
+**Evidence**:
+```python
+# BEFORE - Hardcoded entity names as fallbacks:
+is_orderable_entity = ... or entity_name == "Order"
+has_is_active = ... or entity_name == "Product"  
+is_cart_entity = ... or entity_name == "Cart"
+
+# BEFORE - Hardcoded imports:
+from src.repositories.cart_item_repository import CartItemRepository
+from src.repositories.product_repository import ProductRepository
+from src.models.entities import OrderItemEntity
+```
+
+**Files Modified**:
+- `src/services/production_code_generators.py` (141 additions, 279 deletions = -138 lines net)
+
+**Changes**:
+
+1. **Spec-agnostic field detection** (kept):
+```python
+# AFTER - Detection based purely on field presence from IR:
+field_names = {f.name if hasattr(f, "name") else f.get("name", "") for f in attributes}
+has_is_active = "is_active" in field_names  # Any entity with this field gets activate/deactivate
+```
+
+2. **Removed hardcoded business logic** (~250 lines deleted):
+- `is_cart_entity` block: `add_item()`, `checkout()` with CartItemRepository
+- `is_orderable_entity` block: `checkout()`, `cancel_order()`, `cancel()`, `pay()` with OrderItemEntity
+- Status variables: `open_status`, `cancelled_status`, `paid_status`, `checked_out_status`, `pending_payment_status`
+
+3. **Added validation pre-gen** (new functions):
+```python
+def validate_template_assumptions(entity_name, all_entities, child_info, ir) -> Dict:
+    """Validate template assumptions against IR reality BEFORE generating code."""
+    # Prevents generating imports for entities that don't exist
+    
+def validate_import_exists(import_name, available_entities, ir) -> bool:
+    """Check if an import target exists before generating the import."""
+```
+
+**Impact**: 
+- Code generation is now **domain-agnostic** - works for any API spec (healthcare, fintech, etc.)
+- No more invalid imports to non-existent entities
+- activate/deactivate generated for ANY entity with `is_active` field
+- clear_items only generated when child relationship is verified
+
+**Root Cause Analysis**: The original code was developed against the ecommerce spec and accumulated domain-specific logic over time. Each bug fix added more ecommerce-specific code as "fallbacks" without considering other domains.
+
+**Lesson Learned**: 
+- Templates should be spec-agnostic; business logic should come from IR/spec
+- Use field-based detection, never entity-name-based detection
+- Pre-validate template assumptions against available IR data
+
+
