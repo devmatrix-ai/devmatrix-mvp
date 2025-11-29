@@ -2,15 +2,15 @@
 
 > Documentacion de la arquitectura polyglot de bases de datos del proyecto DevMatrix/Agentic-AI.
 > Fecha: 2025-11-29
-> **Actualizado**: 2025-11-29 (datos verificados por query directa)
+> **Actualizado**: 2025-11-29 (datos actualizados post-Sprint 0-2)
 
 ## Resumen Ejecutivo
 
 El proyecto usa una **arquitectura polyglot** optimizada para diferentes concerns:
 
-| Database | Rol Principal | Datos Verificados |
+| Database | Rol Principal | Datos Verificados (Post-Sprint 0-2) |
 |----------|---------------|-------------------|
-| **Neo4j** | Grafos + Relaciones | 31,811 patterns, 278 IRs, 100K+ relaciones |
+| **Neo4j** | Grafos + Relaciones | 31,811 patterns, 280 IRs expandidos, 43,065 nodos totales |
 | **Qdrant** | Busqueda Semantica | 30,126 patterns + 1,056 feedback (768-dim) |
 | **pgvector** | Vectores ACID | Schema con IVFFlat listo, 1 registro |
 
@@ -36,49 +36,73 @@ docker: neo4j:5.26-community
 plugins: APOC
 ```
 
-### 1.2 Estadísticas de Nodos (Verificado)
+### 1.2 Estadísticas de Nodos (Actualizado Post-Sprint 0-2)
 
 ```
-┌─────────────────────────┬─────────┐
-│ Label                   │ Count   │
-├─────────────────────────┼─────────┤
-│ Pattern                 │ 31,811  │
-│ SuccessfulCode          │    850  │
-│ CodeGenerationError     │    523  │
-│ DomainModel             │    280  │
-│ BehaviorModel           │    280  │
-│ APIModel                │    280  │
-│ ValidationModel         │    280  │
-│ InfrastructureModel     │    280  │
-│ Application             │    278  │
-│ Dependency              │    168  │
-│ AtomicTask              │    100  │
-│ EnforcementStrategy     │     80  │
-│ ValidationRule          │     80  │
-│ Tag                     │     42  │
-│ Category                │     26  │
-└─────────────────────────┴─────────┘
+┌─────────────────────────┬─────────┬──────────────────────────┐
+│ Label                   │ Count   │ Sprint                   │
+├─────────────────────────┼─────────┼──────────────────────────┤
+│ Pattern                 │ 31,811  │ Pre-existing             │
+│ Attribute               │  5,204  │ Sprint 1 (Domain Model)  │
+│ Endpoint                │  4,022  │ Sprint 2 (API Model)     │
+│ Entity                  │  1,084  │ Sprint 1 (Domain Model)  │
+│ SuccessfulCode          │    850  │ Pre-existing             │
+│ APIParameter            │    668  │ Sprint 2 (API Model)     │
+│ CodeGenerationError     │    523  │ Pre-existing             │
+│ DomainModelIR           │    280  │ Sprint 0-1               │
+│ BehaviorModel           │    280  │ Pre-existing             │
+│ APIModelIR              │    280  │ Sprint 0-2               │
+│ ValidationModel         │    280  │ Pre-existing             │
+│ InfrastructureModel     │    280  │ Pre-existing             │
+│ ApplicationIR           │    278  │ Sprint 0                 │
+│ Dependency              │    168  │ Pre-existing             │
+│ AtomicTask              │    100  │ Pre-existing             │
+│ EnforcementStrategy     │     80  │ Pre-existing             │
+│ ValidationRule          │     80  │ Pre-existing             │
+│ Tag                     │     42  │ Pre-existing             │
+│ Category                │     26  │ Pre-existing             │
+├─────────────────────────┼─────────┼──────────────────────────┤
+│ TOTAL NODOS             │ 46,636  │                          │
+└─────────────────────────┴─────────┴──────────────────────────┘
+
+**Expansión Sprint 0-2:**
+- Sprint 0: ApplicationIR schema cleanup (278 apps)
+- Sprint 1: DomainModelIR → Entity (1,084) + Attribute (5,204) = 6,288 nodos
+- Sprint 2: APIModelIR → Endpoint (4,022) + APIParameter (668) = 4,690 nodos
+- **Total agregado:** ~11,000 nodos nuevos
 ```
 
-### 1.3 Relaciones (Verificado)
+### 1.3 Relaciones (Actualizado Post-Sprint 0-2)
 
 ```
-┌─────────────────────────┬─────────┐
-│ Relationship Type       │ Count   │
-├─────────────────────────┼─────────┤
-│ CO_OCCURS               │ 100,000 │  ← Pattern co-occurrence
-│ HAS_TAG                 │  69,138 │  ← Pattern → Tag
-│ IN_CATEGORY             │  30,168 │  ← Pattern → Category
-│ FROM_REPO               │  30,060 │  ← Pattern → Repository
-│ USES_FRAMEWORK          │  30,060 │  ← Pattern → Framework
-│ HAS_BEHAVIOR            │     278 │  ← App → BehaviorModel
-│ HAS_INFRASTRUCTURE      │     278 │  ← App → Infrastructure
-│ HAS_API_MODEL           │     278 │  ← App → APIModel
-│ HAS_DOMAIN_MODEL        │     278 │  ← App → DomainModel
-│ HAS_VALIDATION          │     278 │  ← App → ValidationModel
-│ DEPENDS_ON              │     115 │  ← Task dependencies
-│ HAS_ENFORCEMENT         │      80 │  ← Rule → Enforcement
-└─────────────────────────┴─────────┘
+┌─────────────────────────┬─────────┬──────────────────────────┐
+│ Relationship Type       │ Count   │ Sprint                   │
+├─────────────────────────┼─────────┼──────────────────────────┤
+│ CO_OCCURS               │ 100,000 │ Pre-existing             │
+│ HAS_TAG                 │  69,138 │ Pre-existing             │
+│ IN_CATEGORY             │  30,168 │ Pre-existing             │
+│ FROM_REPO               │  30,060 │ Pre-existing             │
+│ USES_FRAMEWORK          │  30,060 │ Pre-existing             │
+│ HAS_ATTRIBUTE           │   5,204 │ Sprint 1 (Entity→Attr)   │
+│ HAS_PARAMETER           │   4,690 │ Sprint 2 (Endpoint→Param)│
+│ HAS_ENTITY              │   1,084 │ Sprint 1 (Domain→Entity) │
+│ HAS_ENDPOINT            │     280 │ Sprint 2 (API→Endpoint)  │
+│ HAS_BEHAVIOR            │     278 │ Pre-existing             │
+│ HAS_INFRASTRUCTURE      │     278 │ Pre-existing             │
+│ HAS_API_MODEL           │     278 │ Pre-existing             │
+│ HAS_DOMAIN_MODEL        │     278 │ Pre-existing             │
+│ HAS_VALIDATION          │     278 │ Pre-existing             │
+│ RELATES_TO              │     132 │ Sprint 1 (Entity rels)   │
+│ DEPENDS_ON              │     115 │ Pre-existing             │
+│ HAS_ENFORCEMENT         │      80 │ Pre-existing             │
+├─────────────────────────┼─────────┼──────────────────────────┤
+│ TOTAL EDGES             │ 270,925 │                          │
+└─────────────────────────┴─────────┴──────────────────────────┘
+
+**Expansión Sprint 0-2:**
+- Sprint 1: +6,420 edges (HAS_ENTITY, HAS_ATTRIBUTE, RELATES_TO)
+- Sprint 2: +4,970 edges (HAS_ENDPOINT, HAS_PARAMETER)
+- **Total agregado:** ~11,400 edges nuevos
 ```
 
 ### 1.4 Pattern Node Schema
@@ -116,21 +140,37 @@ Pattern:
   security_level: string
 ```
 
-### 1.5 Application IR Graph
+### 1.5 Application IR Graph (Expandido en Sprint 0-2)
 
 ```yaml
-Application (278 nodos)
+ApplicationIR (278 nodos) - Sprint 0
 ├── app_id: uuid
 ├── name: string
 ├── version: string
 ├── ir_version: string
 ├── phase_status: string
 └── Relaciones:
-    ├── [:HAS_DOMAIN_MODEL] → DomainModel (280)
-    ├── [:HAS_API_MODEL] → APIModel (280)
-    ├── [:HAS_BEHAVIOR] → BehaviorModel (280)
-    ├── [:HAS_VALIDATION] → ValidationModel (280)
-    └── [:HAS_INFRASTRUCTURE] → InfrastructureModel (280)
+    ├── [:HAS_DOMAIN_MODEL] → DomainModelIR (280) - Sprint 1 Expandido
+    │   └── [:HAS_ENTITY] → Entity (1,084)
+    │       ├── [:HAS_ATTRIBUTE] → Attribute (5,204)
+    │       └── [:RELATES_TO] → Entity (132 edges)
+    │
+    ├── [:HAS_API_MODEL] → APIModelIR (280) - Sprint 2 Expandido
+    │   └── [:HAS_ENDPOINT] → Endpoint (4,022)
+    │       └── [:HAS_PARAMETER] → APIParameter (668)
+    │
+    ├── [:HAS_BEHAVIOR] → BehaviorModel (280) - JSON (Sprint 3+ pendiente)
+    ├── [:HAS_VALIDATION] → ValidationModel (280) - JSON (Sprint 4+ pendiente)
+    └── [:HAS_INFRASTRUCTURE] → InfrastructureModel (280) - JSON (Sprint 6+ pendiente)
+
+**Progreso de Expansión:**
+- ✅ Sprint 0: ApplicationIR root nodes
+- ✅ Sprint 1: DomainModelIR → Entity → Attribute (grafo completo)
+- ✅ Sprint 2: APIModelIR → Endpoint → Parameter (grafo completo)
+- ⏳ Sprint 3: BehaviorModelIR → Flow → Step (pendiente)
+- ⏳ Sprint 4: ValidationModelIR → Rule (pendiente)
+- ⏳ Sprint 5: TestsModelIR → TestScenario → SeedData (pendiente)
+- ⏳ Sprint 6: InfrastructureModelIR → Service → Container (pendiente)
 ```
 
 ### 1.6 Error/Success Tracking

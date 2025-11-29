@@ -21,9 +21,9 @@ from typing import Dict, Any, List, Optional
 import logging
 import json
 
-from neo4j import GraphDatabase, Transaction
+from neo4j import Transaction
 
-from src.cognitive.config.settings import settings
+from src.cognitive.services.graph_ir_repository import GraphIRRepository, GraphIRPersistenceError
 from src.cognitive.ir.api_model import (
     APIModelIR,
     Endpoint,
@@ -38,45 +38,27 @@ from src.cognitive.ir.api_model import (
 logger = logging.getLogger(__name__)
 
 
-class APIModelPersistenceError(RuntimeError):
+class APIModelPersistenceError(GraphIRPersistenceError):
     """Raised when persisting or loading APIModelIR fails."""
 
 
-class APIModelGraphRepository:
+class APIModelGraphRepository(GraphIRRepository):
     """
     Repository for APIModelIR graph operations.
 
-    Provides optimized methods for:
+    Inherits from GraphIRRepository for:
+    - Neo4j driver management and context manager pattern
+    - Temporal metadata tracking (created_at, updated_at)
+    - Batch operations (batch_create_nodes, batch_create_relationships)
+    - Subgraph replacement pattern for safe updates
+    - Transaction management and error handling
+
+    Provides API-specific methods for:
     - Saving complete API models with batch operations
     - Loading API models with schema reconstruction
     - Querying endpoints and schemas
     - Managing API lifecycle
     """
-
-    def __init__(self) -> None:
-        """Initialize repository with Neo4j driver from settings."""
-        self.driver = GraphDatabase.driver(
-            settings.neo4j_uri,
-            auth=(settings.neo4j_user, settings.neo4j_password),
-            database=settings.neo4j_database,
-        )
-        logger.info(
-            "APIModelGraphRepository initialized with URI %s", settings.neo4j_uri
-        )
-
-    def close(self) -> None:
-        """Close Neo4j driver connection."""
-        if self.driver:
-            self.driver.close()
-            logger.info("APIModelGraphRepository connection closed")
-
-    def __enter__(self):
-        """Context manager entry."""
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
-        self.close()
 
     def save_api_model(self, app_id: str, api_model: APIModelIR) -> None:
         """
@@ -98,7 +80,7 @@ class APIModelGraphRepository:
             APIModelPersistenceError: If persistence fails
         """
         try:
-            with self.driver.session() as session:
+            with self.driver.session(database=self.database) as session:
                 session.write_transaction(
                     self._tx_save_api_model, app_id, api_model
                 )
@@ -380,7 +362,7 @@ class APIModelGraphRepository:
             APIModelPersistenceError: If loading fails or model not found
         """
         try:
-            with self.driver.session() as session:
+            with self.driver.session(database=self.database) as session:
                 api_model = session.read_transaction(
                     self._tx_load_api_model, app_id
                 )

@@ -15,9 +15,9 @@ from typing import Dict, Any, List, Optional
 import logging
 import json
 
-from neo4j import GraphDatabase, Transaction
+from neo4j import Transaction
 
-from src.cognitive.config.settings import settings
+from src.cognitive.services.graph_ir_repository import GraphIRRepository, GraphIRPersistenceError
 from src.cognitive.ir.domain_model import (
     DomainModelIR,
     Entity,
@@ -30,45 +30,27 @@ from src.cognitive.ir.domain_model import (
 logger = logging.getLogger(__name__)
 
 
-class DomainModelPersistenceError(RuntimeError):
+class DomainModelPersistenceError(GraphIRPersistenceError):
     """Raised when persisting or loading DomainModelIR fails."""
 
 
-class DomainModelGraphRepository:
+class DomainModelGraphRepository(GraphIRRepository):
     """
     Repository for DomainModelIR graph operations.
 
-    Provides optimized methods for:
+    Inherits from GraphIRRepository for:
+    - Neo4j driver management and context manager pattern
+    - Temporal metadata tracking (created_at, updated_at)
+    - Batch operations (batch_create_nodes, batch_create_relationships)
+    - Subgraph replacement pattern for safe updates
+    - Transaction management and error handling
+
+    Provides domain-specific methods for:
     - Saving complete domain models with batch operations
     - Loading domain models with relationship reconstruction
     - Querying entities and relationships
     - Managing entity lifecycle
     """
-
-    def __init__(self) -> None:
-        """Initialize repository with Neo4j driver from settings."""
-        self.driver = GraphDatabase.driver(
-            settings.neo4j_uri,
-            auth=(settings.neo4j_user, settings.neo4j_password),
-            database=settings.neo4j_database,
-        )
-        logger.info(
-            "DomainModelGraphRepository initialized with URI %s", settings.neo4j_uri
-        )
-
-    def close(self) -> None:
-        """Close Neo4j driver connection."""
-        if self.driver:
-            self.driver.close()
-            logger.info("DomainModelGraphRepository connection closed")
-
-    def __enter__(self):
-        """Context manager entry."""
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
-        self.close()
 
     def save_domain_model(self, app_id: str, domain_model: DomainModelIR) -> None:
         """
@@ -88,7 +70,7 @@ class DomainModelGraphRepository:
             DomainModelPersistenceError: If persistence fails
         """
         try:
-            with self.driver.session() as session:
+            with self.driver.session(database=self.database) as session:
                 session.write_transaction(
                     self._tx_save_domain_model, app_id, domain_model
                 )

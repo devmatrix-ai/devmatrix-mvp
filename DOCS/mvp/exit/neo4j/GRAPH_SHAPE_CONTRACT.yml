@@ -1,0 +1,885 @@
+# Graph Shape Contract - Neo4j Schema Integrity Validation
+
+version: "1.0.0"
+updated: "2025-11-29"
+purpose: "Define and enforce structural integrity rules for Neo4j graph schema"
+
+# ==============================================================================
+# CONVENTIONS
+# ==============================================================================
+
+conventions:
+  ids:
+    format: "{parent_id}|{component_type}|{identifier}"
+    deterministic: true
+    human_readable: true
+
+  temporal_metadata:
+    required_fields:
+      - created_at: datetime    # ISO 8601 format
+      - updated_at: datetime    # ISO 8601 format
+      - schema_version: integer # Current: 1
+
+  naming:
+    labels: PascalCase          # ApplicationIR, DomainModelIR
+    properties: snake_case      # app_id, entity_name
+    relationships: UPPER_SNAKE  # HAS_ENTITY, TARGETS_ENTITY
+
+# ==============================================================================
+# INFRASTRUCTURE NODES
+# ==============================================================================
+
+GraphSchemaVersion:
+  label: "GraphSchemaVersion"
+  cardinality: [1, 1]           # Singleton
+
+  required_properties:
+    - singleton: boolean        # Must be true
+    - current_version: integer
+    - last_migration: string
+    - sprints_completed: list[string]
+    - created_at: datetime
+    - updated_at: datetime
+
+  relationships:
+    incoming:
+      RESULTED_IN_VERSION:
+        from: MigrationRun
+        cardinality: [0, null]  # Multiple migrations can result in this version
+
+  validation_rules:
+    - "Must have singleton=true"
+    - "current_version must match last MigrationRun.schema_version_after"
+    - "Only 1 GraphSchemaVersion node can exist"
+
+MigrationRun:
+  label: "MigrationRun"
+  cardinality: [0, null]        # One per migration executed
+
+  required_properties:
+    - migration_id: string      # "001_sprint0_cleanup_orphans"
+    - schema_version_before: integer
+    - schema_version_after: integer
+    - status: string            # "success" | "failed" | "rolled_back"
+    - objects_created: integer
+    - objects_updated: integer
+    - objects_deleted: integer
+    - duration_seconds: float
+    - started_at: datetime
+    - completed_at: datetime
+
+  relationships:
+    outgoing:
+      RESULTED_IN_VERSION:
+        to: GraphSchemaVersion
+        cardinality: [1, 1]     # Each migration results in exactly 1 version
+
+  validation_rules:
+    - "schema_version_after = schema_version_before + 1"
+    - "status must be one of: success, failed, rolled_back"
+    - "duration_seconds > 0"
+
+# ==============================================================================
+# APPLICATION IR HIERARCHY
+# ==============================================================================
+
+ApplicationIR:
+  label: "ApplicationIR"
+  cardinality: [0, null]        # Multiple applications
+
+  required_properties:
+    - app_id: string            # UUID
+    - name: string
+    - version: string           # Semantic version
+    - ir_version: string
+    - created_at: datetime
+    - updated_at: datetime
+    - schema_version: integer
+
+  relationships:
+    outgoing:
+      HAS_DOMAIN_MODEL:
+        to: DomainModelIR
+        cardinality: [1, 1]     # Exactly 1
+
+      HAS_API_MODEL:
+        to: APIModelIR
+        cardinality: [1, 1]     # Exactly 1
+
+      HAS_BEHAVIOR:
+        to: BehaviorModel
+        cardinality: [1, 1]     # Exactly 1
+
+      HAS_VALIDATION:
+        to: ValidationModel
+        cardinality: [1, 1]     # Exactly 1
+
+      HAS_INFRASTRUCTURE:
+        to: InfrastructureModel
+        cardinality: [1, 1]     # Exactly 1
+
+  validation_rules:
+    - "MUST have exactly 1 DomainModelIR"
+    - "MUST have exactly 1 APIModelIR"
+    - "MUST have exactly 1 BehaviorModel"
+    - "MUST have exactly 1 ValidationModel"
+    - "MUST have exactly 1 InfrastructureModel"
+    - "app_id must be unique"
+
+# ==============================================================================
+# DOMAIN MODEL IR
+# ==============================================================================
+
+DomainModelIR:
+  label: "DomainModelIR"
+  cardinality: [0, null]
+
+  required_properties:
+    - domain_model_id: string   # "{app_id}|domain_model"
+    - app_id: string            # Foreign key to ApplicationIR
+    - created_at: datetime
+    - updated_at: datetime
+    - schema_version: integer
+
+  relationships:
+    incoming:
+      HAS_DOMAIN_MODEL:
+        from: ApplicationIR
+        cardinality: [1, 1]     # Belongs to exactly 1 ApplicationIR
+
+    outgoing:
+      HAS_ENTITY:
+        to: Entity
+        cardinality: [1, null]  # At least 1 entity
+
+  validation_rules:
+    - "MUST have at least 1 Entity"
+    - "domain_model_id format: {app_id}|domain_model"
+
+Entity:
+  label: "Entity"
+  cardinality: [0, null]
+
+  required_properties:
+    - entity_id: string         # "{app_id}|entity|{entity_name}"
+    - name: string              # "Product", "Order"
+    - table_name: string        # "products", "orders"
+    - created_at: datetime
+    - updated_at: datetime
+    - schema_version: integer
+
+  relationships:
+    incoming:
+      HAS_ENTITY:
+        from: DomainModelIR
+        cardinality: [1, 1]
+
+      RELATES_TO:
+        from: Entity
+        cardinality: [0, null]  # Other entities can relate to this
+        properties:
+          - relationship_type: string    # "one_to_many", "many_to_many"
+          - field_name: string
+          - back_populates: string
+
+      TARGETS_ENTITY:
+        from: Endpoint
+        cardinality: [0, null]  # Multiple endpoints can target same entity
+
+    outgoing:
+      HAS_ATTRIBUTE:
+        to: Attribute
+        cardinality: [1, null]  # At least 1 attribute
+
+      RELATES_TO:
+        to: Entity
+        cardinality: [0, null]
+        properties:
+          - relationship_type: string
+          - field_name: string
+          - back_populates: string
+
+  validation_rules:
+    - "MUST have at least 1 Attribute"
+    - "entity_id format: {app_id}|entity|{entity_name}"
+    - "name must be unique within DomainModelIR"
+
+Attribute:
+  label: "Attribute"
+  cardinality: [0, null]
+
+  required_properties:
+    - attribute_id: string      # "{entity_id}|attr|{attr_name}"
+    - name: string              # "id", "name", "price"
+    - type: string              # "UUID", "STRING", "INTEGER", "FLOAT"
+    - nullable: boolean
+    - unique: boolean
+    - primary_key: boolean
+    - created_at: datetime
+    - updated_at: datetime
+    - schema_version: integer
+
+  optional_properties:
+    - default_value: string
+    - max_length: integer       # For STRING types
+    - precision: integer        # For DECIMAL types
+    - scale: integer            # For DECIMAL types
+
+  relationships:
+    incoming:
+      HAS_ATTRIBUTE:
+        from: Entity
+        cardinality: [1, 1]
+
+      VALIDATES_FIELD:
+        from: ValidationRule
+        cardinality: [0, null]
+
+      CHECKS_ATTRIBUTE:
+        from: Invariant
+        cardinality: [0, null]
+
+  validation_rules:
+    - "attribute_id format: {entity_id}|attr|{attr_name}"
+    - "type must be valid SQL type"
+    - "If primary_key=true, then nullable=false and unique=true"
+
+# ==============================================================================
+# API MODEL IR
+# ==============================================================================
+
+APIModelIR:
+  label: "APIModelIR"
+  cardinality: [0, null]
+
+  required_properties:
+    - api_model_id: string      # "{app_id}|api_model"
+    - app_id: string
+    - created_at: datetime
+    - updated_at: datetime
+    - schema_version: integer
+
+  relationships:
+    incoming:
+      HAS_API_MODEL:
+        from: ApplicationIR
+        cardinality: [1, 1]
+
+    outgoing:
+      HAS_ENDPOINT:
+        to: Endpoint
+        cardinality: [1, null]  # At least 1 endpoint
+
+  validation_rules:
+    - "MUST have at least 1 Endpoint"
+    - "api_model_id format: {app_id}|api_model"
+
+Endpoint:
+  label: "Endpoint"
+  cardinality: [0, null]
+
+  required_properties:
+    - endpoint_id: string       # "{app_id}|endpoint|{method}|{path}"
+    - path: string              # "/products", "/orders/{id}"
+    - method: string            # "GET", "POST", "PUT", "DELETE"
+    - operation_id: string      # "create_product", "get_order"
+    - created_at: datetime
+    - updated_at: datetime
+    - schema_version: integer
+
+  optional_properties:
+    - summary: string
+    - description: string
+    - tags: list[string]
+    - deprecated: boolean
+    - request_body_schema: string
+    - response_schema: string
+    - status_code: integer      # Default success status
+
+  relationships:
+    incoming:
+      HAS_ENDPOINT:
+        from: APIModelIR
+        cardinality: [1, 1]
+
+      CALLS_ENDPOINT:
+        from: Step
+        cardinality: [0, null]
+
+    outgoing:
+      HAS_PARAMETER:
+        to: APIParameter
+        cardinality: [0, null]  # Can have 0 parameters
+
+      TARGETS_ENTITY:
+        to: Entity
+        cardinality: [0, 1]     # Most endpoints target 1 entity
+        properties:
+          - confidence: float   # Inference confidence
+          - inference_method: string  # "path_analysis" | "schema_matching"
+          - validated: boolean
+
+  validation_rules:
+    - "endpoint_id format: {app_id}|endpoint|{method}|{path}"
+    - "method must be one of: GET, POST, PUT, PATCH, DELETE"
+    - "path must start with /"
+    - "(method, path) must be unique within APIModelIR"
+
+APIParameter:
+  label: "APIParameter"
+  cardinality: [0, null]
+
+  required_properties:
+    - parameter_id: string      # "{endpoint_id}|param|{name}"
+    - name: string              # "id", "page", "limit"
+    - location: string          # "path", "query", "header", "body"
+    - type: string              # "string", "integer", "boolean"
+    - required: boolean
+    - created_at: datetime
+    - updated_at: datetime
+    - schema_version: integer
+
+  optional_properties:
+    - default_value: string
+    - description: string
+    - example: string
+    - enum: list[string]
+    - minimum: integer
+    - maximum: integer
+
+  relationships:
+    incoming:
+      HAS_PARAMETER:
+        from: Endpoint
+        cardinality: [1, 1]
+
+  validation_rules:
+    - "parameter_id format: {endpoint_id}|param|{name}"
+    - "location must be one of: path, query, header, body"
+    - "If location=path, then required=true"
+
+APISchema:
+  label: "APISchema"
+  cardinality: [0, null]
+
+  required_properties:
+    - schema_id: string         # "{app_id}|schema|{schema_name}"
+    - name: string              # "ProductCreate", "OrderResponse"
+    - version: string           # "v1.0"
+    - source: string            # "spec" | "inferred" | "validated"
+    - created_at: datetime
+    - updated_at: datetime
+    - schema_version: integer
+
+  optional_properties:
+    - description: string
+    - example: string
+
+  relationships:
+    incoming:
+      USES_SCHEMA:
+        from: Endpoint
+        cardinality: [0, null]
+
+    outgoing:
+      MAPS_TO:
+        to: Entity
+        cardinality: [0, 1]     # Schema may map to domain entity
+
+  validation_rules:
+    - "source must be one of: spec, inferred, validated"
+    - "version must be semantic version format"
+
+# ==============================================================================
+# BEHAVIOR MODEL IR
+# ==============================================================================
+
+BehaviorModel:
+  label: "BehaviorModel"
+  cardinality: [0, null]
+
+  required_properties:
+    - behavior_model_id: string # "{app_id}|behavior_model"
+    - app_id: string
+    - created_at: datetime
+    - updated_at: datetime
+    - schema_version: integer
+
+  relationships:
+    incoming:
+      HAS_BEHAVIOR:
+        from: ApplicationIR
+        cardinality: [1, 1]
+
+    outgoing:
+      HAS_FLOW:
+        to: Flow
+        cardinality: [0, null]
+
+      HAS_INVARIANT:
+        to: Invariant
+        cardinality: [0, null]
+
+Flow:
+  label: "Flow"
+  cardinality: [0, null]
+
+  required_properties:
+    - flow_id: string           # "{app_id}|flow|{flow_name}"
+    - name: string              # "Create Order", "Process Payment"
+    - description: string
+    - created_at: datetime
+    - updated_at: datetime
+    - schema_version: integer
+
+  relationships:
+    incoming:
+      HAS_FLOW:
+        from: BehaviorModel
+        cardinality: [1, 1]
+
+    outgoing:
+      HAS_STEP:
+        to: Step
+        cardinality: [1, null]  # At least 1 step
+
+  validation_rules:
+    - "MUST have at least 1 Step"
+
+Step:
+  label: "Step"
+  cardinality: [0, null]
+
+  required_properties:
+    - step_id: string           # "{flow_id}|step|{step_number}"
+    - step_number: integer      # Sequence in flow
+    - action: string            # "create_product", "validate_cart"
+    - description: string
+    - created_at: datetime
+    - updated_at: datetime
+    - schema_version: integer
+
+  relationships:
+    incoming:
+      HAS_STEP:
+        from: Flow
+        cardinality: [1, 1]
+
+    outgoing:
+      TARGETS_ENTITY:
+        to: Entity
+        cardinality: [0, 1]     # Most steps target 1 entity
+        properties:
+          - operation: string   # "create", "update", "delete", "read"
+          - role: string        # "primary", "secondary"
+
+      CALLS_ENDPOINT:
+        to: Endpoint
+        cardinality: [0, 1]     # Most steps call 1 endpoint
+        properties:
+          - sequence: integer
+          - conditional: boolean
+
+  validation_rules:
+    - "step_number must be > 0"
+    - "step_number must be unique within Flow"
+
+Invariant:
+  label: "Invariant"
+  cardinality: [0, null]
+
+  required_properties:
+    - invariant_id: string      # "{app_id}|invariant|{name}"
+    - name: string              # "cart_total_positive"
+    - rule: string              # "cart.total > 0"
+    - scope: string             # "pre-condition" | "post-condition" | "global"
+    - created_at: datetime
+    - updated_at: datetime
+    - schema_version: integer
+
+  relationships:
+    incoming:
+      HAS_INVARIANT:
+        from: BehaviorModel
+        cardinality: [1, 1]
+
+    outgoing:
+      APPLIES_TO:
+        to: Entity
+        cardinality: [1, 1]     # Each invariant applies to 1 entity
+        properties:
+          - scope: string
+
+      CHECKS_ATTRIBUTE:
+        to: Attribute
+        cardinality: [1, null]  # Invariant can check multiple attributes
+        properties:
+          - expression: string
+          - operator: string    # ">", "==", "IN", "REGEX"
+
+  validation_rules:
+    - "scope must be one of: pre-condition, post-condition, global"
+    - "MUST have at least 1 CHECKS_ATTRIBUTE relationship"
+
+# ==============================================================================
+# VALIDATION MODEL IR
+# ==============================================================================
+
+ValidationModel:
+  label: "ValidationModel"
+  cardinality: [0, null]
+
+  required_properties:
+    - validation_model_id: string # "{app_id}|validation_model"
+    - app_id: string
+    - created_at: datetime
+    - updated_at: datetime
+    - schema_version: integer
+
+  relationships:
+    incoming:
+      HAS_VALIDATION:
+        from: ApplicationIR
+        cardinality: [1, 1]
+
+    outgoing:
+      HAS_RULE:
+        to: ValidationRule
+        cardinality: [0, null]
+
+ValidationRule:
+  label: "ValidationRule"
+  cardinality: [0, null]
+
+  required_properties:
+    - rule_id: string           # "{app_id}|rule|{rule_name}"
+    - name: string              # "price_positive"
+    - expression: string        # "price > 0"
+    - severity: string          # "error" | "warning" | "info"
+    - created_at: datetime
+    - updated_at: datetime
+    - schema_version: integer
+
+  optional_properties:
+    - message: string
+    - error_code: string
+
+  relationships:
+    incoming:
+      HAS_RULE:
+        from: ValidationModel
+        cardinality: [1, 1]
+
+    outgoing:
+      VALIDATES_FIELD:
+        to: Attribute
+        cardinality: [1, 1]     # Each rule validates 1 field
+        properties:
+          - operator: string    # ">", "==", "IN", "REGEX"
+          - expected_value: string
+
+  validation_rules:
+    - "severity must be one of: error, warning, info"
+    - "MUST have exactly 1 VALIDATES_FIELD relationship"
+
+# ==============================================================================
+# INFRASTRUCTURE MODEL IR
+# ==============================================================================
+
+InfrastructureModel:
+  label: "InfrastructureModel"
+  cardinality: [0, null]
+
+  required_properties:
+    - infra_model_id: string    # "{app_id}|infrastructure_model"
+    - app_id: string
+    - created_at: datetime
+    - updated_at: datetime
+    - schema_version: integer
+
+  relationships:
+    incoming:
+      HAS_INFRASTRUCTURE:
+        from: ApplicationIR
+        cardinality: [1, 1]
+
+    outgoing:
+      HAS_DATABASE_CONFIG:
+        to: DatabaseConfig
+        cardinality: [0, 1]
+
+      HAS_CONTAINER:
+        to: ContainerService
+        cardinality: [0, null]
+
+DatabaseConfig:
+  label: "DatabaseConfig"
+  cardinality: [0, null]
+
+  required_properties:
+    - config_id: string         # "{app_id}|db_config"
+    - engine: string            # "postgresql", "mysql"
+    - version: string
+    - created_at: datetime
+    - updated_at: datetime
+    - schema_version: integer
+
+  optional_properties:
+    - port: integer
+    - max_connections: integer
+    - pool_size: integer
+
+ContainerService:
+  label: "ContainerService"
+  cardinality: [0, null]
+
+  required_properties:
+    - service_id: string        # "{app_id}|service|{service_name}"
+    - name: string              # "api", "worker", "scheduler"
+    - image: string
+    - created_at: datetime
+    - updated_at: datetime
+    - schema_version: integer
+
+  optional_properties:
+    - port: integer
+    - replicas: integer
+    - environment: dict
+
+# ==============================================================================
+# TESTS MODEL IR
+# ==============================================================================
+
+TestsModelIR:
+  label: "TestsModelIR"
+  cardinality: [0, null]
+
+  required_properties:
+    - tests_model_id: string    # "{app_id}|tests_model"
+    - app_id: string
+    - created_at: datetime
+    - updated_at: datetime
+    - schema_version: integer
+
+  relationships:
+    incoming:
+      HAS_TESTS:
+        from: ApplicationIR
+        cardinality: [1, 1]
+
+    outgoing:
+      HAS_TEST_SUITE:
+        to: TestSuite
+        cardinality: [0, null]
+
+TestSuite:
+  label: "TestSuite"
+  cardinality: [0, null]
+
+  required_properties:
+    - suite_id: string          # "{app_id}|suite|{suite_name}"
+    - name: string              # "endpoint_tests", "flow_tests"
+    - suite_type: string        # "endpoint" | "flow" | "integration"
+    - created_at: datetime
+    - updated_at: datetime
+    - schema_version: integer
+
+  relationships:
+    outgoing:
+      HAS_SCENARIO:
+        to: TestScenarioIR
+        cardinality: [0, null]
+
+TestScenarioIR:
+  label: "TestScenarioIR"
+  cardinality: [0, null]
+
+  required_properties:
+    - scenario_id: string       # "{suite_id}|scenario|{name}"
+    - scenario_name: string
+    - description: string
+    - created_at: datetime
+    - updated_at: datetime
+    - schema_version: integer
+
+  relationships:
+    outgoing:
+      VALIDATES_ENDPOINT:
+        to: Endpoint
+        cardinality: [0, 1]
+
+      VALIDATES_RULE:
+        to: ValidationRule
+        cardinality: [0, null]
+
+      HAS_EXECUTION:
+        to: TestExecutionIR
+        cardinality: [0, null]  # Multiple executions over time
+
+TestExecutionIR:
+  label: "TestExecutionIR"
+  cardinality: [0, null]
+
+  required_properties:
+    - execution_id: string      # "{scenario_id}|exec|{timestamp}"
+    - scenario_id: string
+    - status: string            # "pass" | "fail" | "error" | "skipped"
+    - duration_ms: integer
+    - environment: string       # "dev" | "staging" | "prod"
+    - code_branch: string
+    - code_commit: string
+    - started_at: datetime
+    - completed_at: datetime
+    - created_at: datetime
+    - updated_at: datetime
+    - schema_version: integer
+
+  optional_properties:
+    - stdout: string
+    - stderr: string
+    - error_message: string
+    - stack_trace: string
+
+  relationships:
+    incoming:
+      HAS_EXECUTION:
+        from: TestScenarioIR
+        cardinality: [1, 1]
+
+    outgoing:
+      FOUND_BUG:
+        to: CodeGenerationError
+        cardinality: [0, 1]     # If test failed
+
+      VALIDATED_ENDPOINT:
+        to: Endpoint
+        cardinality: [0, 1]     # If test passed
+
+  validation_rules:
+    - "status must be one of: pass, fail, error, skipped"
+    - "duration_ms must be > 0"
+    - "If status=fail, MUST have FOUND_BUG relationship"
+
+# ==============================================================================
+# VALIDATION QUERIES
+# ==============================================================================
+
+validation_queries:
+
+  orphan_nodes:
+    description: "Find nodes without any relationships"
+    query: |
+      MATCH (n)
+      WHERE NOT (n)--()
+      AND NOT n:GraphSchemaVersion
+      AND NOT n:MigrationRun
+      RETURN labels(n) as node_type, count(n) as count
+      ORDER BY count DESC;
+    expected: "count = 0 for all node types"
+
+  missing_temporal_metadata:
+    description: "Find nodes missing created_at or updated_at"
+    query: |
+      MATCH (n)
+      WHERE NOT EXISTS(n.created_at) OR NOT EXISTS(n.updated_at)
+      AND NOT n:GraphSchemaVersion
+      AND NOT n:MigrationRun
+      RETURN labels(n) as node_type, count(n) as count;
+    expected: "count = 0"
+
+  application_ir_integrity:
+    description: "Validate ApplicationIR has all required sub-IRs"
+    query: |
+      MATCH (app:ApplicationIR)
+      OPTIONAL MATCH (app)-[:HAS_DOMAIN_MODEL]->(dm)
+      OPTIONAL MATCH (app)-[:HAS_API_MODEL]->(am)
+      OPTIONAL MATCH (app)-[:HAS_BEHAVIOR]->(bm)
+      OPTIONAL MATCH (app)-[:HAS_VALIDATION]->(vm)
+      OPTIONAL MATCH (app)-[:HAS_INFRASTRUCTURE]->(im)
+      WHERE dm IS NULL OR am IS NULL OR bm IS NULL OR vm IS NULL OR im IS NULL
+      RETURN
+        app.app_id,
+        dm IS NOT NULL as has_domain,
+        am IS NOT NULL as has_api,
+        bm IS NOT NULL as has_behavior,
+        vm IS NOT NULL as has_validation,
+        im IS NOT NULL as has_infra;
+    expected: "All columns = true"
+
+  domain_model_integrity:
+    description: "Validate DomainModelIR has entities and entities have attributes"
+    query: |
+      MATCH (dm:DomainModelIR)
+      OPTIONAL MATCH (dm)-[:HAS_ENTITY]->(e:Entity)
+      OPTIONAL MATCH (e)-[:HAS_ATTRIBUTE]->(a:Attribute)
+      WITH dm, count(DISTINCT e) as entity_count, count(DISTINCT a) as attr_count
+      WHERE entity_count = 0 OR attr_count = 0
+      RETURN dm.domain_model_id, entity_count, attr_count;
+    expected: "entity_count > 0 AND attr_count > 0"
+
+  api_model_coverage:
+    description: "Calculate API-to-Domain coverage"
+    query: |
+      MATCH (api:APIModelIR)-[:HAS_ENDPOINT]->(e:Endpoint)
+      OPTIONAL MATCH (e)-[:TARGETS_ENTITY]->(entity:Entity)
+      WITH api, count(e) as total_endpoints, count(entity) as linked_endpoints
+      RETURN
+        api.app_id,
+        total_endpoints,
+        linked_endpoints,
+        (100.0 * linked_endpoints / total_endpoints) as coverage_percent
+      ORDER BY coverage_percent ASC;
+    expected: "coverage_percent >= 80%"
+
+  schema_version_coherence:
+    description: "Validate GraphSchemaVersion matches last MigrationRun"
+    query: |
+      MATCH (v:GraphSchemaVersion {singleton: true})
+      MATCH (m:MigrationRun {migration_id: v.last_migration})
+      RETURN v.current_version = m.schema_version_after as coherent;
+    expected: "coherent = true"
+
+# ==============================================================================
+# MIGRATION STRATEGY
+# ==============================================================================
+
+migration_strategy:
+  atomic_execution:
+    - "Use batch checkpoints every 100 nodes"
+    - "Store checkpoint state in MigrationCheckpoint node"
+    - "Automatic rollback on failure to last checkpoint"
+
+  idempotency:
+    - "All migrations must be idempotent"
+    - "Use MERGE instead of CREATE where applicable"
+    - "Check for existence before deletion"
+
+  versioning:
+    - "Increment schema_version after each migration"
+    - "Update GraphSchemaVersion.current_version"
+    - "Create MigrationRun record for each execution"
+
+  rollback:
+    - "Each migration must have corresponding rollback script"
+    - "Rollback script must restore previous state exactly"
+    - "Test rollback in dev environment before production"
+
+# ==============================================================================
+# HEALTH CHECK SCHEDULE
+# ==============================================================================
+
+health_checks:
+  post_migration:
+    - "Run all validation_queries"
+    - "Verify node counts match expected"
+    - "Check relationship counts"
+    - "Validate temporal metadata presence"
+
+  daily:
+    - "orphan_nodes check"
+    - "schema_version_coherence check"
+
+  weekly:
+    - "Full contract validation"
+    - "API coverage report"
+    - "Domain model integrity"

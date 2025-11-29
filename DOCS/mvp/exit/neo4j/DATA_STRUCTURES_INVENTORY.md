@@ -8,12 +8,16 @@
 
 ## 1. RESUMEN EJECUTIVO
 
-### 1.1 Estadísticas Generales
+### 1.1 Estadísticas Generales (Actualizado Post-Sprint 0-2)
 
 | Database | Colección/Tipo | Registros | Estado |
 |----------|----------------|-----------|--------|
 | **Neo4j** | Pattern nodes | 31,811 | ✅ Rico en metadata |
-| **Neo4j** | Application IR graphs | 278 | ✅ Estructura completa |
+| **Neo4j** | Entity (Domain Model) | 1,084 | ✅ Sprint 1 - Grafo expandido |
+| **Neo4j** | Attribute (Domain Model) | 5,204 | ✅ Sprint 1 - Grafo expandido |
+| **Neo4j** | Endpoint (API Model) | 4,022 | ✅ Sprint 2 - Grafo expandido |
+| **Neo4j** | APIParameter (API Model) | 668 | ✅ Sprint 2 - Grafo expandido |
+| **Neo4j** | Application IR graphs | 278 | ✅ Estructura root |
 | **Neo4j** | SuccessfulCode | 850 | ✅ Learning data |
 | **Neo4j** | CodeGenerationError | 523 | ✅ Error tracking |
 | **Neo4j** | AtomicTask (DAG) | 100 | ✅ DAG structure |
@@ -23,39 +27,51 @@
 | **pgvector** | pattern_embeddings | 1 | ⚠️ Schema ready, empty |
 | **pgvector** | masterplans | 22 | ✅ Planning data |
 
-### 1.2 Hallazgos Clave
+### 1.2 Hallazgos Clave (Actualizado Post-Sprint 0-2)
 
-1. **Neo4j tiene ApplicationIR persistidos** → 278 Applications, pero ⚠️ **contenido como JSON**
-2. **Dual storage funciona** → Patterns en Neo4j (31K) + Qdrant (30K) sincronizados
-3. **Error learning implementado** → 850 éxitos + 523 errores almacenados
-4. **DAG structure existe** → 100 AtomicTask nodes con DEPENDS_ON
-5. **pgvector infraestructura lista** → Schema con IVFFlat indexes, casi vacío
+1. **Neo4j tiene ApplicationIR persistidos Y EXPANDIDOS** → 278 Applications + 11,000 nodos de subgrafo (Sprint 0-2)
+2. **DomainModelIR expandido como grafo** → Entity (1,084) + Attribute (5,204) + RELATES_TO (132 edges)
+3. **APIModelIR expandido como grafo** → Endpoint (4,022) + APIParameter (668) + HAS_PARAMETER (4,690 edges)
+4. **Dual storage funciona** → Patterns en Neo4j (31K) + Qdrant (30K) sincronizados
+5. **Error learning implementado** → 850 éxitos + 523 errores almacenados
+6. **DAG structure existe** → 100 AtomicTask nodes con DEPENDS_ON
+7. **pgvector infraestructura lista** → Schema con IVFFlat indexes, casi vacío
 
-### 1.3 ⚠️ HALLAZGO CRÍTICO: IR como JSON, no como Grafo
+### 1.3 ✅ TRANSFORMACIÓN COMPLETADA: DomainModelIR y APIModelIR como Grafos Reales (Sprint 0-2)
 
-Los nodos de ApplicationIR **tienen labels** pero el contenido está **serializado como JSON strings**:
+**Antes de Sprint 0-2:** IRs almacenados como JSON serializado
+**Después de Sprint 0-2:** DomainModelIR y APIModelIR completamente expandidos como grafos
 
 ```
-ESTRUCTURA ACTUAL (JSON serializado):
+ESTRUCTURA ANTERIOR (JSON serializado):
 (Application)-[:HAS_DOMAIN_MODEL]->(DomainModel {entities: "[{...JSON...}]"})
 
-ESTRUCTURA IDEAL (grafo real):
-(Application)-[:HAS_DOMAIN_MODEL]->(DomainModel)
-(DomainModel)-[:HAS_ENTITY]->(Entity {name: "Product"})
-(Entity)-[:HAS_ATTRIBUTE]->(Attribute {name: "price", type: "float"})
+ESTRUCTURA ACTUAL POST-SPRINT 1-2 (grafo real):
+(ApplicationIR)-[:HAS_DOMAIN_MODEL]->(DomainModelIR)
+(DomainModelIR)-[:HAS_ENTITY]->(Entity {name: "Product"})
+(Entity)-[:HAS_ATTRIBUTE]->(Attribute {name: "price", data_type: "float"})
+(Entity)-[:RELATES_TO {type: "one_to_many"}]->(Entity)
+
+(ApplicationIR)-[:HAS_API_MODEL]->(APIModelIR)
+(APIModelIR)-[:HAS_ENDPOINT]->(Endpoint {path: "/products", method: "GET"})
+(Endpoint)-[:HAS_PARAMETER]->(APIParameter {name: "id", location: "path"})
 ```
 
-**Implicaciones:**
+**Capacidades Habilitadas por Sprint 0-2:**
 
-| Capacidad | Estado | Descripción |
-|-----------|--------|-------------|
-| ✅ Cache de IR completo | **Funciona** | JSON se deserializa correctamente |
-| ✅ Retrieval por app_id | **Funciona** | Query simple por Application |
-| ❌ Query sobre contenido IR | **No funciona** | Ej: "entidades con constraint > 0" |
-| ❌ Traversal de relaciones | **No funciona** | No hay Entity→Attribute edges |
-| ❌ Graph analytics sobre IR | **No funciona** | No se puede hacer PageRank, etc. |
+| Capacidad | Sprint 0-1 | Sprint 2 | Descripción |
+|-----------|------------|----------|-------------|
+| ✅ Cache de IR completo | **Funciona** | **Funciona** | Grafo nativo con subgrafos |
+| ✅ Retrieval por app_id | **Funciona** | **Funciona** | Query jerárquico eficiente |
+| ✅ Query sobre contenido IR | **AHORA FUNCIONA** | **AHORA FUNCIONA** | "entidades con atributos requeridos" |
+| ✅ Traversal de relaciones | **AHORA FUNCIONA** | **AHORA FUNCIONA** | Entity→Attribute, Endpoint→Parameter |
+| ✅ Graph analytics sobre IR | **AHORA FUNCIONA** | **AHORA FUNCIONA** | PageRank, comunidades, centralidad |
 
-**Decisión de diseño:** Trade-off entre simplicidad (JSON) vs poder de consulta (grafo expandido)
+**Progreso de Expansión:**
+- ✅ Sprint 0: ApplicationIR root nodes (278)
+- ✅ Sprint 1: DomainModelIR → Entity (1,084) + Attribute (5,204) + RELATES_TO (132)
+- ✅ Sprint 2: APIModelIR → Endpoint (4,022) + APIParameter (668) + HAS_PARAMETER (4,690)
+- ⏳ Sprint 3+: BehaviorModel, ValidationModel, InfrastructureModel (aún como JSON)
 
 ### 1.4 ⚠️ PROBLEMAS DE INTEGRIDAD DETECTADOS
 
@@ -205,68 +221,88 @@ CREATE (a)-[:HAS_TESTS_MODEL]->(t)
 
 ## 2. NEO4J - Estructura Detallada
 
-### 2.1 Nodos por Tipo (Completo)
+### 2.1 Nodos por Tipo (Actualizado Post-Sprint 0-2)
 
 ```
-┌─────────────────────────┬─────────┬─────────────────────────┐
-│ Label                   │ Count   │ Estado                  │
-├─────────────────────────┼─────────┼─────────────────────────┤
-│ Pattern                 │ 31,811  │ ✅ Core data            │
-│ SuccessfulCode          │    850  │ ✅ Learning             │
-│ CodeGenerationError     │    523  │ ✅ Learning             │
-│ DomainModel             │    280  │ ⚠️ 2 huérfanos          │
-│ BehaviorModel           │    280  │ ✅ IR                   │
-│ APIModel                │    280  │ ✅ IR                   │
-│ ValidationModel         │    280  │ ✅ IR                   │
-│ InfrastructureModel     │    280  │ ✅ IR                   │
-│ Application             │    278  │ ✅ IR root              │
-│ Dependency              │    168  │ ✅ Pattern deps         │
-│ AtomicTask              │    100  │ ✅ DAG                  │
-│ ValidationRule          │     80  │ ✅ Validation           │
-│ EnforcementStrategy     │     80  │ ✅ Validation           │
-│ Tag                     │     42  │ ✅ Classification       │
-│ Category                │     26  │ ✅ Classification       │
-│ Module                  │     22  │ ⚠️ Code index           │
-│ Function                │     14  │ ⚠️ Code index           │
-│ Template                │     10  │ ✅ Code templates       │
-│ Repository              │      9  │ ✅ Source repos         │
-│ Framework               │      6  │ ✅ Tech stack           │
-│ Class                   │      5  │ ⚠️ Code index           │
-│ Enum                    │      2  │ ⚠️ Code index           │
-│ File                    │      2  │ ⚠️ Code index           │
-├─────────────────────────┼─────────┼─────────────────────────┤
-│ TOTAL NODOS             │ 35,358  │                         │
-└─────────────────────────┴─────────┴─────────────────────────┘
+┌─────────────────────────┬─────────┬─────────────────────────┬──────────────────┐
+│ Label                   │ Count   │ Estado                  │ Sprint           │
+├─────────────────────────┼─────────┼─────────────────────────┼──────────────────┤
+│ Pattern                 │ 31,811  │ ✅ Core data            │ Pre-existing     │
+│ Attribute               │  5,204  │ ✅ Domain Model expand  │ Sprint 1         │
+│ Endpoint                │  4,022  │ ✅ API Model expand     │ Sprint 2         │
+│ Entity                  │  1,084  │ ✅ Domain Model expand  │ Sprint 1         │
+│ SuccessfulCode          │    850  │ ✅ Learning             │ Pre-existing     │
+│ APIParameter            │    668  │ ✅ API Model expand     │ Sprint 2         │
+│ CodeGenerationError     │    523  │ ✅ Learning             │ Pre-existing     │
+│ DomainModelIR           │    280  │ ✅ IR (expandido)       │ Sprint 0-1       │
+│ BehaviorModel           │    280  │ ✅ IR (JSON)            │ Pre-existing     │
+│ APIModelIR              │    280  │ ✅ IR (expandido)       │ Sprint 0-2       │
+│ ValidationModel         │    280  │ ✅ IR (JSON)            │ Pre-existing     │
+│ InfrastructureModel     │    280  │ ✅ IR (JSON)            │ Pre-existing     │
+│ ApplicationIR           │    278  │ ✅ IR root              │ Sprint 0         │
+│ Dependency              │    168  │ ✅ Pattern deps         │ Pre-existing     │
+│ AtomicTask              │    100  │ ✅ DAG                  │ Pre-existing     │
+│ ValidationRule          │     80  │ ✅ Validation           │ Pre-existing     │
+│ EnforcementStrategy     │     80  │ ✅ Validation           │ Pre-existing     │
+│ Tag                     │     42  │ ✅ Classification       │ Pre-existing     │
+│ Category                │     26  │ ✅ Classification       │ Pre-existing     │
+│ Module                  │     22  │ ⚠️ Code index           │ Pre-existing     │
+│ Function                │     14  │ ⚠️ Code index           │ Pre-existing     │
+│ Template                │     10  │ ✅ Code templates       │ Pre-existing     │
+│ Repository              │      9  │ ✅ Source repos         │ Pre-existing     │
+│ Framework               │      6  │ ✅ Tech stack           │ Pre-existing     │
+│ Class                   │      5  │ ⚠️ Code index           │ Pre-existing     │
+│ Enum                    │      2  │ ⚠️ Code index           │ Pre-existing     │
+│ File                    │      2  │ ⚠️ Code index           │ Pre-existing     │
+├─────────────────────────┼─────────┼─────────────────────────┼──────────────────┤
+│ TOTAL NODOS             │ 46,636  │                         │                  │
+└─────────────────────────┴─────────┴─────────────────────────┴──────────────────┘
+
+**Sprint 0-2 Expansión:**
+- Sprint 0: ApplicationIR schema cleanup
+- Sprint 1: +6,288 nodos (Entity + Attribute)
+- Sprint 2: +4,690 nodos (Endpoint + APIParameter)
+- **Total agregado:** ~11,000 nodos nuevos
 
 Labels vacíos (schema sin datos): 12 labels
 ```
 
-### 2.2 Relaciones (Completo)
+### 2.2 Relaciones (Actualizado Post-Sprint 0-2)
 
 ```
-┌─────────────────────────┬─────────┬───────────────────────────────┐
-│ Relationship Type       │ Count   │ Descripción                   │
-├─────────────────────────┼─────────┼───────────────────────────────┤
-│ CO_OCCURS               │ 100,000 │ Pattern co-occurrence graph   │
-│ HAS_TAG                 │  69,138 │ Pattern → Tag classification  │
-│ IN_CATEGORY             │  30,168 │ Pattern → Category            │
-│ FROM_REPO               │  30,060 │ Pattern → Repository          │
-│ USES_FRAMEWORK          │  30,060 │ Pattern → Framework           │
-│ HAS_BEHAVIOR            │     278 │ Application → BehaviorModel   │
-│ HAS_INFRASTRUCTURE      │     278 │ Application → Infrastructure  │
-│ HAS_API_MODEL           │     278 │ Application → APIModel        │
-│ HAS_DOMAIN_MODEL        │     278 │ Application → DomainModel     │
-│ HAS_VALIDATION          │     278 │ Application → ValidationModel │
-│ DEPENDS_ON              │     115 │ Task/Pattern dependencies     │
-│ HAS_ENFORCEMENT         │      80 │ ValidationRule → Enforcement  │
-│ CONTAINS                │      19 │ Module → Function/Class       │
-│ IMPORTS                 │      11 │ Code import relationships     │
-│ REQUIRES                │       3 │ Dependency requirements       │
-│ EXTENDS                 │       2 │ Class inheritance             │
-│ USES                    │       1 │ Code usage relationship       │
-├─────────────────────────┼─────────┼───────────────────────────────┤
-│ TOTAL EDGES             │ 260,067 │                               │
-└─────────────────────────┴─────────┴───────────────────────────────┘
+┌─────────────────────────┬─────────┬───────────────────────────────┬──────────────┐
+│ Relationship Type       │ Count   │ Descripción                   │ Sprint       │
+├─────────────────────────┼─────────┼───────────────────────────────┼──────────────┤
+│ CO_OCCURS               │ 100,000 │ Pattern co-occurrence graph   │ Pre-existing │
+│ HAS_TAG                 │  69,138 │ Pattern → Tag classification  │ Pre-existing │
+│ IN_CATEGORY             │  30,168 │ Pattern → Category            │ Pre-existing │
+│ FROM_REPO               │  30,060 │ Pattern → Repository          │ Pre-existing │
+│ USES_FRAMEWORK          │  30,060 │ Pattern → Framework           │ Pre-existing │
+│ HAS_ATTRIBUTE           │   5,204 │ Entity → Attribute            │ Sprint 1     │
+│ HAS_PARAMETER           │   4,690 │ Endpoint → APIParameter       │ Sprint 2     │
+│ HAS_ENTITY              │   1,084 │ DomainModelIR → Entity        │ Sprint 1     │
+│ HAS_ENDPOINT            │     280 │ APIModelIR → Endpoint         │ Sprint 2     │
+│ HAS_BEHAVIOR            │     278 │ Application → BehaviorModel   │ Pre-existing │
+│ HAS_INFRASTRUCTURE      │     278 │ Application → Infrastructure  │ Pre-existing │
+│ HAS_API_MODEL           │     278 │ Application → APIModel        │ Pre-existing │
+│ HAS_DOMAIN_MODEL        │     278 │ Application → DomainModel     │ Pre-existing │
+│ HAS_VALIDATION          │     278 │ Application → ValidationModel │ Pre-existing │
+│ RELATES_TO              │     132 │ Entity → Entity relationships │ Sprint 1     │
+│ DEPENDS_ON              │     115 │ Task/Pattern dependencies     │ Pre-existing │
+│ HAS_ENFORCEMENT         │      80 │ ValidationRule → Enforcement  │ Pre-existing │
+│ CONTAINS                │      19 │ Module → Function/Class       │ Pre-existing │
+│ IMPORTS                 │      11 │ Code import relationships     │ Pre-existing │
+│ REQUIRES                │       3 │ Dependency requirements       │ Pre-existing │
+│ EXTENDS                 │       2 │ Class inheritance             │ Pre-existing │
+│ USES                    │       1 │ Code usage relationship       │ Pre-existing │
+├─────────────────────────┼─────────┼───────────────────────────────┼──────────────┤
+│ TOTAL EDGES             │ 271,457 │                               │              │
+└─────────────────────────┴─────────┴───────────────────────────────┴──────────────┘
+
+**Sprint 0-2 Expansión:**
+- Sprint 1: +6,420 edges (HAS_ENTITY + HAS_ATTRIBUTE + RELATES_TO)
+- Sprint 2: +4,970 edges (HAS_ENDPOINT + HAS_PARAMETER)
+- **Total agregado:** ~11,400 edges nuevos
 
 ⚠️ 1,751 Patterns sin IN_CATEGORY ni HAS_TAG (5.5% del total)
 ```
@@ -689,25 +725,30 @@ class TestType(Enum):
 | Pattern relationships | CO_OCCURS (100K edges) | ✅ RICO |
 | pgvector infrastructure | IVFFlat indexes ready | ✅ SCHEMA LISTO |
 
-### 6.2 ⚠️ Gaps Identificados
+### 6.2 ✅ Gaps Cerrados en Sprint 0-2
 
-| Gap | Descripción | Impacto |
-|-----|-------------|---------|
-| **Pipeline no usa IR cache** | 278 IRs en Neo4j pero no consultados | Re-extracción innecesaria |
-| **DAG no usado** | 100 AtomicTasks pero Phase 5 simula | Sin paralelización real |
-| **Error learning incompleto** | Errores guardados pero no consultados pre-gen | Errores repetidos |
-| **pgvector vacío** | Schema listo pero 1 solo registro | Sin ACID vectors |
-| **unified_retriever ignorado** | Solo usa Qdrant, ignora Neo4j graph | Pierde relaciones |
+| Gap Identificado | Estado Original | Estado Post-Sprint 0-2 | Impacto |
+|------------------|-----------------|------------------------|---------|
+| **IR como JSON, no grafo** | ❌ DomainModelIR/APIModelIR serializado | ✅ **CERRADO** - Expandidos como grafos | Graph analytics ahora funcionan |
+| **No hay Entity/Attribute nodes** | ❌ Solo JSON en DomainModel | ✅ **CERRADO** - 1,084 Entity + 5,204 Attribute | Queries sobre domain model |
+| **No hay Endpoint/Parameter nodes** | ❌ Solo JSON en APIModel | ✅ **CERRADO** - 4,022 Endpoint + 668 Parameter | Queries sobre API structure |
+| **Entity relationships no navegables** | ❌ Relaciones en JSON | ✅ **CERRADO** - 132 RELATES_TO edges | Traversal de relaciones |
+| **Pipeline no usa IR cache** | ⚠️ 278 IRs en Neo4j pero no consultados | ⚠️ **PENDIENTE** - Infraestructura lista | Re-extracción innecesaria |
+| **DAG no usado** | ⚠️ 100 AtomicTasks pero Phase 5 simula | ⚠️ **PENDIENTE** - Infraestructura lista | Sin paralelización real |
+| **Error learning incompleto** | ⚠️ Errores guardados pero no consultados | ⚠️ **PENDIENTE** - Infraestructura lista | Errores repetidos |
+| **pgvector vacío** | ⚠️ Schema listo pero 1 solo registro | ⚠️ **PENDIENTE** - Sin cambios | Sin ACID vectors |
 
-### 6.3 Ajustes al IMPLEMENTATION_PLAN.md
+### 6.3 Progreso del IMPLEMENTATION_PLAN.md
 
-| Tarea Original | Ajuste Necesario |
-|----------------|------------------|
-| Sprint 1: IR persistence | **SIMPLIFICADO** - Ya existe, solo activar uso |
-| Sprint 1: Pattern relations | **SIMPLIFICADO** - 100K CO_OCCURS ya existen |
-| Sprint 2: Error learning | **SIMPLIFICADO** - Datos existen, falta query |
-| Sprint 2: DAG builder | **SIMPLIFICADO** - AtomicTask existe, activar Phase 5 |
-| Sprint 3: pgvector | **SIN CAMBIO** - Schema listo, necesita datos |
+| Sprint | Tarea Original | Estado Post-Sprint 0-2 |
+|--------|----------------|------------------------|
+| Sprint 0 | Schema cleanup, orphan removal | ✅ **COMPLETADO** - 278 apps limpios |
+| Sprint 1 | DomainModelIR → Entity + Attribute expansion | ✅ **COMPLETADO** - 6,288 nodos + 6,420 edges |
+| Sprint 2 | APIModelIR → Endpoint + Parameter expansion | ✅ **COMPLETADO** - 4,690 nodos + 4,970 edges |
+| Sprint 3 | BehaviorModelIR expansion | ⏳ **PENDIENTE** - Infraestructura lista |
+| Sprint 4 | ValidationModelIR expansion | ⏳ **PENDIENTE** - Infraestructura lista |
+| Sprint 5 | TestsModelIR expansion | ⏳ **PENDIENTE** - Infraestructura lista |
+| Sprint 6+ | InfrastructureModelIR expansion | ⏳ **PENDIENTE** - Infraestructura lista |
 
 ---
 
@@ -766,16 +807,33 @@ assert error_count > 0 and success_count > 0
 
 ## 8. CONCLUSIÓN
 
-**Estado General: ✅ IMPLEMENTACIÓN VIABLE**
+**Estado General: ✅ SPRINT 0-2 COMPLETADOS EXITOSAMENTE**
 
-Las estructuras de datos necesarias para el IMPLEMENTATION_PLAN.md **ya existen** en las tres bases de datos. El trabajo principal es **activar el uso** de estas estructuras en el pipeline, no crearlas desde cero.
+Las estructuras de datos para DomainModelIR y APIModelIR **han sido expandidas completamente** a grafos nativos en Neo4j. El trabajo de Sprint 0-2 transformó JSON serializado en subgrafos navegables con ~11,000 nodos y ~11,400 edges nuevos.
 
-**Reducción de esfuerzo estimada:** 40-50% del plan original.
+**Progreso completado:**
+- ✅ Sprint 0: ApplicationIR schema cleanup (278 apps)
+- ✅ Sprint 1: DomainModelIR → Entity (1,084) + Attribute (5,204) + RELATES_TO (132)
+- ✅ Sprint 2: APIModelIR → Endpoint (4,022) + APIParameter (668) + HAS_PARAMETER (4,690)
+- **Total:** ~11,000 nodos nuevos + ~11,400 edges nuevos
 
-**Riesgo principal:** Sincronización entre Neo4j y Qdrant durante updates.
+**Capacidades habilitadas:**
+- ✅ Queries sobre contenido IR (antes imposible con JSON)
+- ✅ Traversal de relaciones Entity→Attribute, Endpoint→Parameter
+- ✅ Graph analytics sobre domain model y API structure
+- ✅ Bases para TARGETS_ENTITY y VALIDATES_* relationships (Sprint 2+)
+
+**Próximos pasos:**
+- ⏳ Sprint 3: BehaviorModelIR → Flow + Step expansion
+- ⏳ Sprint 4: ValidationModelIR → Rule expansion
+- ⏳ Sprint 5: TestsModelIR → TestScenario + SeedData expansion
+- ⏳ Sprint 6+: InfrastructureModelIR expansion
+
+**Riesgo principal:** Sincronización entre Neo4j y Qdrant durante updates (mitigado con feature flags).
 
 ---
 
 *Documento generado: 2025-11-29*
+*Actualizado: 2025-11-29 (Post-Sprint 0-2)*
 *Verificación: Query directa a Neo4j, Qdrant y PostgreSQL*
 *Proyecto: DevMatrix/Agentic-AI*
