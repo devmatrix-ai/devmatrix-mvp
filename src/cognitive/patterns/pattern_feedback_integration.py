@@ -960,6 +960,106 @@ class PatternFeedbackIntegration:
 
         return candidate_id
 
+    async def register_generation_failure(
+        self,
+        candidate_id: Optional[str],
+        error_type: str,
+        error_message: str,
+        endpoint_pattern: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        pattern_category: Optional[str] = None,
+        failed_code: Optional[str] = None,
+        file_path: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Register failed code generation for Active Learning.
+
+        This method integrates with ErrorKnowledgeRepository to store learned
+        errors and penalizes the pattern candidate score.
+
+        LEARNING_GAPS Phase 1: Active Learning Integration
+
+        Args:
+            candidate_id: Optional pattern candidate ID (for score penalty)
+            error_type: Type of error (e.g., "500", "422", "syntax_error")
+            error_message: Detailed error message
+            endpoint_pattern: API endpoint pattern (e.g., "POST /products")
+            entity_type: Entity type involved (e.g., "product", "order")
+            pattern_category: Pattern category (e.g., "service", "repository")
+            failed_code: Code that caused the error
+            file_path: File path where error occurred
+
+        Returns:
+            Error signature if recorded, None otherwise
+        """
+        error_signature = None
+
+        # Step 1: Learn from error using ErrorKnowledgeRepository
+        try:
+            from src.cognitive.services.error_knowledge_repository import ErrorKnowledgeRepository
+            error_repo = ErrorKnowledgeRepository()
+
+            error_signature = error_repo.learn_from_failure(
+                pattern_id=candidate_id or "unknown",
+                error_type=error_type,
+                error_message=error_message,
+                endpoint_path=endpoint_pattern or "",
+                entity_name=entity_type or "",
+                failed_code=failed_code or "",
+                file_path=file_path or "",
+            )
+
+            logger.info(
+                "Active Learning: Recorded error",
+                extra={
+                    "error_signature": error_signature,
+                    "error_type": error_type,
+                    "pattern_category": pattern_category,
+                }
+            )
+
+            error_repo.close()
+
+        except ImportError:
+            logger.debug("ErrorKnowledgeRepository not available, skipping error learning")
+        except Exception as e:
+            logger.warning(f"Failed to record error for Active Learning: {e}")
+
+        # Step 2: Penalize pattern candidate score (if candidate exists)
+        if candidate_id:
+            candidate = self.quality_evaluator.get_candidate(candidate_id)
+            if candidate:
+                # Reduce promotion score based on error severity
+                severity_penalty = self._calculate_error_penalty(error_type)
+                candidate.promotion_score = max(0.0, candidate.promotion_score - severity_penalty)
+                candidate.status = PromotionStatus.REJECTED
+
+                logger.info(
+                    "Active Learning: Penalized pattern candidate",
+                    extra={
+                        "candidate_id": candidate_id,
+                        "penalty": severity_penalty,
+                        "new_score": candidate.promotion_score,
+                    }
+                )
+
+        return error_signature
+
+    def _calculate_error_penalty(self, error_type: str) -> float:
+        """Calculate score penalty based on error type severity."""
+        # Higher penalties for server errors, lower for validation errors
+        severity_map = {
+            "500": 0.3,  # Internal server error - serious
+            "503": 0.25,  # Service unavailable
+            "422": 0.1,  # Validation error - less severe
+            "400": 0.1,  # Bad request
+            "404": 0.05,  # Not found - might be expected
+            "syntax_error": 0.4,  # Syntax error - very serious
+            "import_error": 0.35,  # Import error - serious
+            "type_error": 0.2,  # Type error
+        }
+        return severity_map.get(error_type.lower(), 0.15)
+
     async def _attempt_auto_promotion(
         self,
         candidate: PatternCandidate,

@@ -66,6 +66,13 @@ from src.services.production_code_generators import (
 from src.cognitive.signatures.semantic_signature import SemanticTaskSignature
 from src.services.behavior_code_generator import BehaviorCodeGenerator
 
+# Active Learning - Error Knowledge Repository
+try:
+    from src.cognitive.services.error_knowledge_repository import ErrorKnowledgeRepository
+    ACTIVE_LEARNING_AVAILABLE = True
+except ImportError:
+    ACTIVE_LEARNING_AVAILABLE = False
+
 
 # DAG Synchronizer - Execution Metrics (Milestone 3)
 try:
@@ -98,6 +105,7 @@ class CodeGenerationService:
         enable_feedback_loop: bool = True,
         enable_pattern_promotion: bool = True,
         enable_dag_sync: bool = True,
+        enable_active_learning: bool = True,
     ):
         """
         Initialize code generation service.
@@ -109,6 +117,7 @@ class CodeGenerationService:
             enable_feedback_loop: Enable cognitive feedback loop for learning (legacy)
             enable_pattern_promotion: Enable pattern promotion pipeline (Milestone 4)
             enable_dag_sync: Enable DAG synchronization for execution metrics (Milestone 3)
+            enable_active_learning: Enable Active Learning for error avoidance (LEARNING_GAPS Phase 1)
         """
         self.db = db
         self.llm_client = llm_client or EnhancedAnthropicClient()
@@ -149,6 +158,19 @@ class CodeGenerationService:
         else:
             self.enable_dag_sync = False
 
+        # Initialize Active Learning for error avoidance (LEARNING_GAPS Phase 1)
+        self.enable_active_learning = enable_active_learning
+        self.error_knowledge_repo: Optional["ErrorKnowledgeRepository"] = None
+        if enable_active_learning and ACTIVE_LEARNING_AVAILABLE:
+            try:
+                self.error_knowledge_repo = ErrorKnowledgeRepository()
+                logger.info("Active Learning enabled (LEARNING_GAPS Phase 1)")
+            except Exception as e:
+                logger.warning(f"Could not initialize Active Learning: {e}")
+                self.enable_active_learning = False
+        else:
+            self.enable_active_learning = False
+
         # Initialize modular architecture generator
         self.modular_generator = ModularArchitectureGenerator()
 
@@ -182,6 +204,7 @@ class CodeGenerationService:
                 "feedback_loop": self.enable_feedback_loop,
                 "pattern_promotion": self.enable_pattern_promotion,
                 "dag_sync": self.enable_dag_sync,
+                "active_learning": self.enable_active_learning,
                 "pattern_bank_enabled": self.pattern_bank is not None,
                 "rag_enabled": self.rag_retriever is not None,
             },
@@ -258,6 +281,122 @@ class CodeGenerationService:
             "auth_required": ir_endpoint.auth_required,
             "tags": ir_endpoint.tags,
         }
+
+    # ============================================================================
+    # Active Learning - Error Avoidance (LEARNING_GAPS Phase 1)
+    # ============================================================================
+
+    def _get_avoidance_context(self, app_ir) -> Optional[str]:
+        """
+        Query learned errors and build avoidance context for code generation.
+
+        This method queries the ErrorKnowledgeRepository for errors relevant to
+        the endpoints and entities in the ApplicationIR, then builds a context
+        string that can be injected into code generation prompts.
+
+        Args:
+            app_ir: ApplicationIR object with domain_model and api_model
+
+        Returns:
+            Avoidance context string or None if Active Learning is disabled
+        """
+        if not self.enable_active_learning or not self.error_knowledge_repo:
+            return None
+
+        try:
+            all_errors = []
+
+            # Query errors for each endpoint pattern
+            if app_ir.api_model and app_ir.api_model.endpoints:
+                for endpoint in app_ir.api_model.endpoints:
+                    # Extract entity type from path (e.g., /products/{id} -> product)
+                    entity_type = self._extract_entity_from_endpoint(endpoint)
+
+                    # Build endpoint pattern (e.g., "POST /{entity}")
+                    path_pattern = self._normalize_endpoint_pattern(endpoint.path)
+                    pattern_category = self._infer_pattern_category(endpoint)
+
+                    # Query errors relevant to this endpoint
+                    errors = self.error_knowledge_repo.get_relevant_errors(
+                        endpoint_pattern=f"{endpoint.method.value} {path_pattern}",
+                        entity_type=entity_type,
+                        pattern_category=pattern_category,
+                        min_confidence=0.6  # Only use errors with reasonable confidence
+                    )
+                    all_errors.extend(errors)
+
+            # Deduplicate errors by signature
+            seen_signatures = set()
+            unique_errors = []
+            for error in all_errors:
+                if error.error_signature not in seen_signatures:
+                    seen_signatures.add(error.error_signature)
+                    unique_errors.append(error)
+
+            if not unique_errors:
+                logger.debug("No relevant learned errors found for avoidance context")
+                return None
+
+            # Build avoidance context string
+            avoidance_context = self.error_knowledge_repo.build_avoidance_context(
+                unique_errors,
+                max_errors=10  # Limit to top 10 most relevant errors
+            )
+
+            logger.info(
+                "Built avoidance context from learned errors",
+                extra={
+                    "unique_errors_count": len(unique_errors),
+                    "context_length": len(avoidance_context),
+                }
+            )
+
+            return avoidance_context
+
+        except Exception as e:
+            logger.warning(f"Failed to build avoidance context (non-blocking): {e}")
+            return None
+
+    def _extract_entity_from_endpoint(self, endpoint) -> Optional[str]:
+        """Extract entity type from endpoint path."""
+        path = endpoint.path.lower()
+        # Remove path parameters and extract resource name
+        # e.g., /products/{id} -> products -> product
+        parts = [p for p in path.split('/') if p and not p.startswith('{')]
+        if parts:
+            # Singularize (simple heuristic)
+            resource = parts[0]
+            if resource.endswith('s') and not resource.endswith('ss'):
+                return resource[:-1]  # products -> product
+            return resource
+        return None
+
+    def _normalize_endpoint_pattern(self, path: str) -> str:
+        """Normalize endpoint path to pattern (replace specific IDs with {id})."""
+        import re
+        # Replace {param_name} with {id} for generic pattern matching
+        return re.sub(r'\{[^}]+\}', '{id}', path)
+
+    def _infer_pattern_category(self, endpoint) -> str:
+        """Infer pattern category from endpoint characteristics."""
+        method = endpoint.method.value.upper()
+        path = endpoint.path.lower()
+
+        # Infer based on HTTP method and path patterns
+        if method == "POST" and "/{id}/" in path:
+            return "nested_create"
+        elif method == "POST":
+            return "service"  # Create operations typically in service layer
+        elif method == "GET" and "{id}" in path:
+            return "repository"  # Single item fetch
+        elif method == "GET":
+            return "repository"  # List operations
+        elif method in ("PUT", "PATCH"):
+            return "service"  # Update operations
+        elif method == "DELETE":
+            return "repository"  # Delete operations
+        else:
+            return "service"  # Default to service layer
 
     async def generate_modular_app(self, spec_requirements) -> Dict[str, str]:
         """
@@ -585,6 +724,22 @@ class CodeGenerationService:
                 "phase": "pre_generation"
             }
         )
+
+        # ACTIVE LEARNING: Query learned errors for avoidance context (LEARNING_GAPS Phase 1)
+        avoidance_context = self._get_avoidance_context(app_ir)
+        if avoidance_context:
+            logger.info(
+                "Active Learning: Avoidance context prepared",
+                extra={
+                    "avoidance_context_length": len(avoidance_context),
+                    "phase": "pre_generation"
+                }
+            )
+            # Merge avoidance context with repair_context if provided
+            if repair_context:
+                repair_context = f"{repair_context}\n\n{avoidance_context}"
+            else:
+                repair_context = avoidance_context
 
         # Persist ApplicationIR to Neo4j
         repo = Neo4jIRRepository()

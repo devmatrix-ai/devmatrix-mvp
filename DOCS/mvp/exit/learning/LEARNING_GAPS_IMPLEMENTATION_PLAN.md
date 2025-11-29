@@ -670,7 +670,7 @@ class LearningInsight:
 ### ✅ Active Learning (Section 7 of LEARNING_SYSTEM_REDESIGN.md)
 
 **Fecha:** 2025-11-29
-**Commit:** `2f18290d`
+**Commit:** `2f18290d`, `pending`
 
 | Componente | Estado | Archivo |
 |------------|--------|---------|
@@ -678,6 +678,9 @@ class LearningInsight:
 | ErrorKnowledgeRepository | ✅ Done | `src/cognitive/services/error_knowledge_repository.py` |
 | Neo4j Migration 011 | ✅ Done | `scripts/migrations/neo4j/011_error_knowledge_schema.cypher` |
 | RuntimeSmokeValidator integration | ✅ Done | `src/validation/runtime_smoke_validator.py` |
+| CodeGenerationService avoidance | ✅ Done | `src/services/code_generation_service.py` |
+| PatternFeedback error registration | ✅ Done | `src/cognitive/patterns/pattern_feedback_integration.py` |
+| SmokeValidator → PatternFeedback | ✅ Done | `src/validation/runtime_smoke_validator.py` |
 
 **Métodos implementados:**
 
@@ -685,12 +688,27 @@ class LearningInsight:
 - `learn_from_fix()` - Guarda código corregido
 - `get_relevant_errors()` - Query errores por entity/endpoint
 - `build_avoidance_context()` - Genera contexto para generación
+- `_get_avoidance_context()` - Query errores antes de generar código (CodeGenerationService)
+- `register_generation_failure()` - Registra errores y penaliza scores (PatternFeedback)
+- `_learn_from_error()` - Integración completa con ErrorKnowledge + PatternFeedback
+
+**Ciclo de Aprendizaje Completo:**
+
+```text
+Smoke Test Failure → RuntimeSmokeValidator._learn_from_error()
+                     ├─→ ErrorKnowledgeRepository.learn_from_failure() [Neo4j]
+                     └─→ PatternFeedback.register_generation_failure() [Score penalty]
+
+Code Generation → CodeGenerationService.generate_from_application_ir()
+                  └─→ _get_avoidance_context() → ErrorKnowledgeRepository.get_relevant_errors()
+                      └─→ build_avoidance_context() → Inject into repair_context
+```
 
 **Pendiente:**
 
 - [ ] Ejecutar migration 011 en Neo4j
-- [ ] Integrar `get_relevant_errors()` en code generation prompts
-- [ ] Conectar con Pattern Feedback para scores
+- [x] ~~Integrar `get_relevant_errors()` en code generation prompts~~ ✅
+- [x] ~~Conectar con Pattern Feedback para scores~~ ✅
 
 ---
 

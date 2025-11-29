@@ -32,6 +32,18 @@ except ImportError:
     ErrorKnowledgeRepository = None
     ACTIVE_LEARNING_AVAILABLE = False
 
+# Pattern Feedback Integration (optional - for score adjustments)
+try:
+    from src.cognitive.patterns.pattern_feedback_integration import (
+        PatternFeedbackIntegration,
+        get_pattern_feedback_integration,
+    )
+    PATTERN_FEEDBACK_AVAILABLE = True
+except ImportError:
+    PatternFeedbackIntegration = None
+    get_pattern_feedback_integration = None
+    PATTERN_FEEDBACK_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -82,6 +94,7 @@ class RuntimeSmokeTestValidator:
         startup_timeout: float = 90.0,  # Bug #85: Docker needs more time
         request_timeout: float = 10.0,
         error_knowledge_repo: Optional["ErrorKnowledgeRepository"] = None,
+        pattern_feedback: Optional["PatternFeedbackIntegration"] = None,
     ):
         self.app_dir = Path(app_dir)
         self.host = host
@@ -96,6 +109,9 @@ class RuntimeSmokeTestValidator:
         # Active Learning: Repository for learning from failures
         self._error_knowledge_repo = error_knowledge_repo
         self._learning_enabled = error_knowledge_repo is not None and ACTIVE_LEARNING_AVAILABLE
+        # Pattern Feedback: For score adjustments on failures
+        self._pattern_feedback = pattern_feedback
+        self._pattern_feedback_enabled = pattern_feedback is not None and PATTERN_FEEDBACK_AVAILABLE
 
     async def validate(self, ir: ApplicationIR) -> SmokeTestResult:
         """
@@ -690,42 +706,95 @@ class RuntimeSmokeTestValidator:
         Learn from a smoke test failure using Active Learning.
 
         Stores the error in ErrorKnowledge for future generations to avoid.
-        Gracefully degrades if Neo4j is unavailable.
+        Also notifies PatternFeedback to penalize pattern scores.
+        Gracefully degrades if Neo4j or PatternFeedback is unavailable.
 
         Args:
             endpoint: The endpoint that was tested
             result: Test result with error details
             violation: The created violation dict
         """
-        if not self._learning_enabled or not self._error_knowledge_repo:
-            return
+        # Extract common data for both learning paths
+        entity_name = self._extract_entity_from_path(endpoint.path)
+        endpoint_path = f"{endpoint.method.value} {endpoint.path}"
+        file_path = violation.get("file", "")
+        error_type = result.error_type or "Unknown"
+        error_message = result.error_message or ""
 
-        try:
-            # Extract entity name from endpoint path
-            entity_name = self._extract_entity_from_path(endpoint.path)
+        # Path 1: Store in ErrorKnowledge repository
+        if self._learning_enabled and self._error_knowledge_repo:
+            try:
+                signature = self._error_knowledge_repo.learn_from_failure(
+                    pattern_id=None,  # No pattern tracking yet
+                    error_type=error_type,
+                    error_message=error_message,
+                    endpoint_path=endpoint_path,
+                    entity_name=entity_name,
+                    failed_code=result.stack_trace,
+                    file_path=file_path,
+                )
+                logger.debug(f"🧠 Active Learning: Stored error {signature[:8]}... for {endpoint_path}")
+            except Exception as e:
+                logger.warning(f"⚠️ Active Learning (ErrorKnowledge) failed (non-blocking): {e}")
 
-            # Construct endpoint path for learning
-            endpoint_path = f"{endpoint.method.value} {endpoint.path}"
+        # Path 2: Notify PatternFeedback to penalize scores
+        if self._pattern_feedback_enabled and self._pattern_feedback:
+            try:
+                # Determine pattern category based on error location
+                pattern_category = self._infer_pattern_category_from_file(file_path)
 
-            # Get file path from violation if available
-            file_path = violation.get("file", "")
+                # Use asyncio to run the async method
+                import asyncio
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # Already in async context, create task
+                    asyncio.create_task(
+                        self._pattern_feedback.register_generation_failure(
+                            candidate_id=None,  # No specific candidate yet
+                            error_type=error_type,
+                            error_message=error_message,
+                            endpoint_pattern=endpoint_path,
+                            entity_type=entity_name,
+                            pattern_category=pattern_category,
+                            failed_code=result.stack_trace,
+                            file_path=file_path,
+                        )
+                    )
+                else:
+                    # Not in async context, run synchronously
+                    loop.run_until_complete(
+                        self._pattern_feedback.register_generation_failure(
+                            candidate_id=None,
+                            error_type=error_type,
+                            error_message=error_message,
+                            endpoint_pattern=endpoint_path,
+                            entity_type=entity_name,
+                            pattern_category=pattern_category,
+                            failed_code=result.stack_trace,
+                            file_path=file_path,
+                        )
+                    )
+                logger.debug(f"🧠 Active Learning: Notified PatternFeedback for {endpoint_path}")
+            except Exception as e:
+                logger.warning(f"⚠️ Active Learning (PatternFeedback) failed (non-blocking): {e}")
 
-            # Learn from this failure
-            signature = self._error_knowledge_repo.learn_from_failure(
-                pattern_id=None,  # No pattern tracking yet
-                error_type=result.error_type or "Unknown",
-                error_message=result.error_message or "",
-                endpoint_path=endpoint_path,
-                entity_name=entity_name,
-                failed_code=result.stack_trace,
-                file_path=file_path,
-            )
-
-            logger.debug(f"🧠 Active Learning: Stored error {signature[:8]}... for {endpoint_path}")
-
-        except Exception as e:
-            # Don't fail smoke testing if learning fails
-            logger.warning(f"⚠️ Active Learning failed (non-blocking): {e}")
+    def _infer_pattern_category_from_file(self, file_path: str) -> str:
+        """Infer pattern category from file path."""
+        if not file_path:
+            return "service"
+        fp = file_path.lower()
+        if "repository" in fp or "repositories" in fp:
+            return "repository"
+        elif "service" in fp or "services" in fp:
+            return "service"
+        elif "route" in fp or "routes" in fp or "api" in fp:
+            return "route"
+        elif "model" in fp or "entities" in fp:
+            return "model"
+        elif "schema" in fp:
+            return "schema"
+        else:
+            return "service"
 
     def _extract_entity_from_path(self, path: str) -> Optional[str]:
         """Extract entity name from endpoint path."""
