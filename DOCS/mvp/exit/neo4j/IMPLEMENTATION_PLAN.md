@@ -349,11 +349,22 @@ async def classify_untagged_patterns(self):
 
 ---
 
-## 4. Sprint 1: Graph Expansion - DomainModelIR
+## 4. Sprint 1: Graph Expansion - DomainModelIR 🔄 EN PROGRESO
 
 **Objetivo:** Expandir DomainModelIR de JSON a nodos Entity, Attribute, Relationship.
 
 **Prioridad:** P0
+
+**Estado:** 🔄 EN PROGRESO (2025-11-29)
+
+### Resultados Sprint 1 (parciales):
+| Task | Status | Resultado |
+|------|--------|-----------|
+| 1.1 Schema | ✅ | 002_domain_model_schema.cypher + rollback |
+| 1.2 Graph Repository | ✅ | domain_model_graph_repository.py (545 líneas) |
+| 1.3 Migration Script | ✅ | 003_domain_model_expansion.py + rollback + cleanup |
+| 1.4 Repository Update | ✅ | neo4j_ir_repository.py con feature flag |
+| Ejecutar migración | ⏳ | Pendiente verificación |
 
 ### 4.1 Target Schema
 

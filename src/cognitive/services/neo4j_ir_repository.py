@@ -4,11 +4,14 @@ Neo4j IR Repository
 Provides a thin persistence layer for the ApplicationIR (including BehaviorIR and ValidationIR).
 It creates/updates nodes and relationships in the Neo4j graph database using the
 settings defined in `src.cognitive.config.settings.CognitiveSettings`.
+
+Sprint 1 Update: Added support for DomainModelGraphRepository for graph-native storage.
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import uuid
 import logging
+import os
 
 from neo4j import GraphDatabase, Transaction
 
@@ -24,6 +27,9 @@ import json
 
 logger = logging.getLogger(__name__)
 
+# Feature flag for graph-native domain model storage (Sprint 1)
+USE_GRAPH_DOMAIN_MODEL = os.getenv("USE_GRAPH_DOMAIN_MODEL", "false").lower() == "true"
+
 class IRPersistenceError(RuntimeError):
     """Raised when persisting the IR to Neo4j fails."""
 
@@ -32,15 +38,33 @@ class Neo4jIRRepository:
 
     The repository uses a single transaction to write the whole IR atomically.
     Nodes are merged (``MERGE``) to avoid duplicates.  Relationships are also merged.
+
+    Sprint 1: Supports graph-native DomainModel storage via USE_GRAPH_DOMAIN_MODEL flag.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, use_graph_domain_model: Optional[bool] = None) -> None:
         self.driver = GraphDatabase.driver(
             settings.neo4j_uri,
             auth=(settings.neo4j_user, settings.neo4j_password),
             database=settings.neo4j_database,
         )
-        logger.info("Neo4jIRRepository initialized with URI %s", settings.neo4j_uri)
+
+        # Determine if we should use graph storage for DomainModel
+        self.use_graph_domain_model = use_graph_domain_model if use_graph_domain_model is not None else USE_GRAPH_DOMAIN_MODEL
+
+        # Lazy-load graph repository only when needed
+        self._domain_graph_repo = None
+
+        logger.info("Neo4jIRRepository initialized with URI %s (graph_domain_model=%s)",
+                    settings.neo4j_uri, self.use_graph_domain_model)
+
+    @property
+    def domain_graph_repo(self):
+        """Lazy-load DomainModelGraphRepository when first accessed."""
+        if self._domain_graph_repo is None:
+            from src.cognitive.services.domain_model_graph_repository import DomainModelGraphRepository
+            self._domain_graph_repo = DomainModelGraphRepository()
+        return self._domain_graph_repo
 
     def close(self) -> None:
         self.driver.close()
@@ -56,10 +80,25 @@ class Neo4jIRRepository:
         try:
             with self.driver.session() as session:
                 session.write_transaction(self._tx_save_application_ir, app_ir, app_id)
-            logger.info("ApplicationIR %s persisted successfully", app_ir.app_id)
+            logger.info("ApplicationIR %s persisted successfully (JSON)", app_ir.app_id)
+
+            # Sprint 1: Also save DomainModel as graph if enabled
+            if self.use_graph_domain_model:
+                self._save_domain_model_as_graph(str(app_ir.app_id), app_ir.domain_model)
+
         except Exception as exc:
             logger.exception("Failed to persist ApplicationIR %s", app_ir.app_id)
             raise IRPersistenceError(str(exc)) from exc
+
+    def _save_domain_model_as_graph(self, app_id: str, domain_model: DomainModelIR) -> None:
+        """Save DomainModel as proper graph nodes (Sprint 1 feature)."""
+        try:
+            import asyncio
+            # Run async graph repository method
+            asyncio.run(self.domain_graph_repo.save_domain_model(app_id, domain_model))
+            logger.info("DomainModel %s saved as graph nodes", app_id)
+        except Exception as exc:
+            logger.warning("Failed to save DomainModel %s as graph (falling back to JSON): %s", app_id, exc)
 
     @staticmethod
     def _tx_save_application_ir(tx: Transaction, app_ir: ApplicationIR, app_id_override: str = None) -> None:
@@ -90,6 +129,8 @@ class Neo4jIRRepository:
         )
 
         # ---------- Domain Model ----------
+        # Note: Graph storage handled separately after transaction if USE_GRAPH_DOMAIN_MODEL is enabled
+        # For backward compatibility, always save JSON version
         tx.run(
             """
             MERGE (d:DomainModelIR {app_id: $app_id})
@@ -229,11 +270,33 @@ class Neo4jIRRepository:
         try:
             with self.driver.session() as session:
                 app_ir = session.read_transaction(self._tx_load_application_ir, app_id)
-            logger.info("ApplicationIR %s loaded successfully", app_id)
+
+            # Sprint 1: Try to load DomainModel from graph if available
+            if self.use_graph_domain_model:
+                graph_domain_model = self._load_domain_model_from_graph(str(app_id))
+                if graph_domain_model:
+                    app_ir.domain_model = graph_domain_model
+                    logger.info("ApplicationIR %s loaded with graph-based DomainModel", app_id)
+                else:
+                    logger.info("ApplicationIR %s loaded (JSON fallback for DomainModel)", app_id)
+            else:
+                logger.info("ApplicationIR %s loaded successfully", app_id)
+
             return app_ir
         except Exception as exc:
             logger.exception("Failed to load ApplicationIR %s", app_id)
             raise IRPersistenceError(str(exc)) from exc
+
+    def _load_domain_model_from_graph(self, app_id: str) -> Optional[DomainModelIR]:
+        """Load DomainModel from graph nodes if they exist (Sprint 1 feature)."""
+        try:
+            import asyncio
+            domain_model = asyncio.run(self.domain_graph_repo.load_domain_model(app_id))
+            if domain_model and domain_model.entities:
+                return domain_model
+        except Exception as exc:
+            logger.debug("Graph DomainModel not available for %s: %s", app_id, exc)
+        return None
 
     @staticmethod
     def _tx_load_application_ir(tx: Transaction, app_id: uuid.UUID) -> ApplicationIR:
