@@ -6,6 +6,7 @@ It creates/updates nodes and relationships in the Neo4j graph database using the
 settings defined in `src.cognitive.config.settings.CognitiveSettings`.
 
 Sprint 1 Update: Added support for DomainModelGraphRepository for graph-native storage.
+Sprint 2 Update: Added support for APIModelGraphRepository for graph-native storage.
 """
 
 from typing import Dict, Any, Optional
@@ -27,8 +28,9 @@ import json
 
 logger = logging.getLogger(__name__)
 
-# Feature flag for graph-native domain model storage (Sprint 1)
+# Feature flags for graph-native storage
 USE_GRAPH_DOMAIN_MODEL = os.getenv("USE_GRAPH_DOMAIN_MODEL", "false").lower() == "true"
+USE_GRAPH_API_MODEL = os.getenv("USE_GRAPH_API_MODEL", "false").lower() == "true"
 
 class IRPersistenceError(RuntimeError):
     """Raised when persisting the IR to Neo4j fails."""
@@ -40,23 +42,34 @@ class Neo4jIRRepository:
     Nodes are merged (``MERGE``) to avoid duplicates.  Relationships are also merged.
 
     Sprint 1: Supports graph-native DomainModel storage via USE_GRAPH_DOMAIN_MODEL flag.
+    Sprint 2: Supports graph-native APIModel storage via USE_GRAPH_API_MODEL flag.
     """
 
-    def __init__(self, use_graph_domain_model: Optional[bool] = None) -> None:
+    def __init__(
+        self,
+        use_graph_domain_model: Optional[bool] = None,
+        use_graph_api_model: Optional[bool] = None
+    ) -> None:
         self.driver = GraphDatabase.driver(
             settings.neo4j_uri,
             auth=(settings.neo4j_user, settings.neo4j_password),
             database=settings.neo4j_database,
         )
 
-        # Determine if we should use graph storage for DomainModel
+        # Determine if we should use graph storage
         self.use_graph_domain_model = use_graph_domain_model if use_graph_domain_model is not None else USE_GRAPH_DOMAIN_MODEL
+        self.use_graph_api_model = use_graph_api_model if use_graph_api_model is not None else USE_GRAPH_API_MODEL
 
-        # Lazy-load graph repository only when needed
+        # Lazy-load graph repositories only when needed
         self._domain_graph_repo = None
+        self._api_graph_repo = None
 
-        logger.info("Neo4jIRRepository initialized with URI %s (graph_domain_model=%s)",
-                    settings.neo4j_uri, self.use_graph_domain_model)
+        logger.info(
+            "Neo4jIRRepository initialized with URI %s (graph_domain_model=%s, graph_api_model=%s)",
+            settings.neo4j_uri,
+            self.use_graph_domain_model,
+            self.use_graph_api_model
+        )
 
     @property
     def domain_graph_repo(self):
@@ -65,6 +78,14 @@ class Neo4jIRRepository:
             from src.cognitive.services.domain_model_graph_repository import DomainModelGraphRepository
             self._domain_graph_repo = DomainModelGraphRepository()
         return self._domain_graph_repo
+
+    @property
+    def api_graph_repo(self):
+        """Lazy-load APIModelGraphRepository when first accessed."""
+        if self._api_graph_repo is None:
+            from src.cognitive.services.api_model_graph_repository import APIModelGraphRepository
+            self._api_graph_repo = APIModelGraphRepository()
+        return self._api_graph_repo
 
     def close(self) -> None:
         self.driver.close()
@@ -86,6 +107,10 @@ class Neo4jIRRepository:
             if self.use_graph_domain_model:
                 self._save_domain_model_as_graph(str(app_ir.app_id), app_ir.domain_model)
 
+            # Sprint 2: Also save APIModel as graph if enabled
+            if self.use_graph_api_model:
+                self._save_api_model_as_graph(str(app_ir.app_id), app_ir.api_model)
+
         except Exception as exc:
             logger.exception("Failed to persist ApplicationIR %s", app_ir.app_id)
             raise IRPersistenceError(str(exc)) from exc
@@ -99,6 +124,16 @@ class Neo4jIRRepository:
             logger.info("DomainModel %s saved as graph nodes", app_id)
         except Exception as exc:
             logger.warning("Failed to save DomainModel %s as graph (falling back to JSON): %s", app_id, exc)
+
+    def _save_api_model_as_graph(self, app_id: str, api_model: APIModelIR) -> None:
+        """Save APIModel as proper graph nodes (Sprint 2 feature)."""
+        try:
+            import asyncio
+            # Run async graph repository method
+            asyncio.run(self.api_graph_repo.save_api_model(app_id, api_model))
+            logger.info("APIModel %s saved as graph nodes", app_id)
+        except Exception as exc:
+            logger.warning("Failed to save APIModel %s as graph (falling back to JSON): %s", app_id, exc)
 
     @staticmethod
     def _tx_save_application_ir(tx: Transaction, app_ir: ApplicationIR, app_id_override: str = None) -> None:
@@ -279,7 +314,17 @@ class Neo4jIRRepository:
                     logger.info("ApplicationIR %s loaded with graph-based DomainModel", app_id)
                 else:
                     logger.info("ApplicationIR %s loaded (JSON fallback for DomainModel)", app_id)
-            else:
+
+            # Sprint 2: Try to load APIModel from graph if available
+            if self.use_graph_api_model:
+                graph_api_model = self._load_api_model_from_graph(str(app_id))
+                if graph_api_model:
+                    app_ir.api_model = graph_api_model
+                    logger.info("ApplicationIR %s loaded with graph-based APIModel", app_id)
+                else:
+                    logger.info("ApplicationIR %s loaded (JSON fallback for APIModel)", app_id)
+
+            if not self.use_graph_domain_model and not self.use_graph_api_model:
                 logger.info("ApplicationIR %s loaded successfully", app_id)
 
             return app_ir
@@ -296,6 +341,17 @@ class Neo4jIRRepository:
                 return domain_model
         except Exception as exc:
             logger.debug("Graph DomainModel not available for %s: %s", app_id, exc)
+        return None
+
+    def _load_api_model_from_graph(self, app_id: str) -> Optional[APIModelIR]:
+        """Load APIModel from graph nodes if they exist (Sprint 2 feature)."""
+        try:
+            import asyncio
+            api_model = asyncio.run(self.api_graph_repo.load_api_model(app_id))
+            if api_model and api_model.endpoints:
+                return api_model
+        except Exception as exc:
+            logger.debug("Graph APIModel not available for %s: %s", app_id, exc)
         return None
 
     @staticmethod
