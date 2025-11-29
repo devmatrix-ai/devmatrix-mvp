@@ -254,7 +254,7 @@ Si en paso 8 el cliente cancelara:
 - **Validación**: Usar Pydantic (schemas con tipos)
 - **Errores claros**: Responder con mensajes específicos (no genéricos)
 - **Documentación automática**: FastAPI genera OpenAPI/Swagger automáticamente
-- **Healthcheck**: /health/health debe responder {"message": "Ecommerce API", "status": "running"}
+- **Healthcheck**: /health debe responder {"message": "Ecommerce API", "status": "running"}
 
 ---
 

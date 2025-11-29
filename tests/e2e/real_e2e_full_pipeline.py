@@ -444,16 +444,14 @@ async def ensure_docker_running_for_smoke_test(app_dir: Path, timeout: float = 1
 
     base_url = "http://127.0.0.1:8002"
 
-    # First check if server is already running
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f"{base_url}/health")
-            if response.status_code == 200:
-                print("    ✅ Docker server already running")
-                return True
-    except Exception:
-        # Bug #111 fix: Catch all connection errors (httpx, httpcore, etc.)
-        pass  # Server not running, need to start it
+    # Bug #145 Fix: ALWAYS clean up existing volumes to ensure fresh DB state.
+    # Without this cleanup, the named volume 'postgres-data' persists across runs
+    # and contains stale data with random UUIDs instead of seed-compatible UUIDs.
+    # This causes smoke tests to fail with 404 errors when looking for seeded entities.
+    # CRITICAL: Must run BEFORE health check to avoid early return with stale data.
+    print("    🧹 Bug #145: Cleaning up previous containers/volumes for fresh DB state...")
+    cleanup_cmd = ['docker', 'compose', '-f', 'docker/docker-compose.yml', 'down', '-v', '--remove-orphans']
+    subprocess.run(cleanup_cmd, cwd=str(app_dir), capture_output=True, timeout=30)
 
     print("    🐳 Starting Docker containers...")
 

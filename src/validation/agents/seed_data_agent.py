@@ -54,12 +54,18 @@ async def init_database():
 
 
 async def seed_test_data():
-    """Seed minimal test data for smoke testing."""
-    from src.core.database import get_db
+    """Seed minimal test data for smoke testing.
+
+    Bug #143 Fix: Use direct session creation instead of get_db() generator.
+    The generator pattern causes issues when exiting with 'break' - the
+    generator cleanup code tries another commit which can trigger rollback.
+    """
+    from src.core.database import _get_session_maker
 
     logger.info("🌱 Seeding test data...")
 
-    async for session in get_db():
+    session_maker = _get_session_maker()
+    async with session_maker() as session:
         try:
 {seed_entries}
             await session.commit()
@@ -72,7 +78,6 @@ async def seed_test_data():
             else:
                 logger.error(f"❌ Failed to seed data: {{e}}")
                 raise
-        break  # Only need one session
 
 
 async def main():

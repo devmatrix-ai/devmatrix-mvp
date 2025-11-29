@@ -193,13 +193,49 @@ class RuntimeSmokeTestValidator:
             await self._start_uvicorn_server()
             return
 
+        # Bug #145 Fix: Clean up existing volumes BEFORE building to ensure fresh DB state.
+        # Without this cleanup, the named volume 'postgres-data' persists across runs
+        # and contains stale data with random UUIDs instead of seed-compatible UUIDs.
+        # This causes smoke tests to fail with 404 errors when looking for seeded entities.
+        cleanup_cmd = [
+            'docker', 'compose',
+            '-f', 'docker/docker-compose.yml',
+            'down', '-v', '--remove-orphans'
+        ]
+        logger.info(f"🧹 Cleaning up previous containers/volumes: {' '.join(cleanup_cmd)}")
+        subprocess.run(cleanup_cmd, cwd=str(self.app_dir), capture_output=True, timeout=30)
+
         # Start docker compose
         # Bug #85 Fix: Use relative path from app_dir since cwd=app_dir
         # Bug #86 Fix: Use 'docker compose' (v2) instead of 'docker-compose' for WSL 2
+        # Bug #132 Fix: Force rebuild with --no-cache to prevent using stale cached images
+        #   When code changes (like Bug #131 fix), docker may use cached layers from
+        #   previous builds, causing smoke tests to run against old code.
         cmd = [
             'docker', 'compose',
             '-f', 'docker/docker-compose.yml',
-            'up', '-d', '--build'
+            'build', '--no-cache'
+        ]
+
+        logger.info(f"🐳 Building Docker (no cache): {' '.join(cmd)}")
+
+        build_result = subprocess.run(
+            cmd,
+            cwd=str(self.app_dir),
+            capture_output=True,
+            text=True,
+            timeout=180  # 3 min timeout for build
+        )
+
+        if build_result.returncode != 0:
+            logger.error(f"Docker build failed: {build_result.stderr}")
+            raise RuntimeError(f"Docker build failed: {build_result.stderr[:500]}")
+
+        # Now start containers
+        cmd = [
+            'docker', 'compose',
+            '-f', 'docker/docker-compose.yml',
+            'up', '-d'
         ]
 
         logger.info(f"🐳 Starting Docker: {' '.join(cmd)}")

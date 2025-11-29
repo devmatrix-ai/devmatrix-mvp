@@ -189,11 +189,28 @@ class SmokeRunnerV2:
     ) -> ScenarioResult:
         """Execute a single test scenario."""
         # Build actual path with params
+        # Bug #136 Fix: Use predictable UUIDs that match seed_db.py
+        seed_uuids = {
+            'product': '00000000-0000-4000-8000-000000000001',
+            'customer': '00000000-0000-4000-8000-000000000002',
+            'cart': '00000000-0000-4000-8000-000000000003',
+            'order': '00000000-0000-4000-8000-000000000005',
+            'item': '00000000-0000-4000-8000-000000000006',
+            'user': '00000000-0000-4000-8000-000000000002',  # user often maps to customer
+        }
         path = scenario.endpoint_path
         for param_name, param_value in scenario.path_params.items():
-            # Handle placeholder values
+            # Handle placeholder values (e.g., {{seed_id}})
             if isinstance(param_value, str) and param_value.startswith("{{"):
-                param_value = "00000000-0000-0000-0000-000000000001"
+                # Bug #137 Fix: Derive entity type from param name OR path context
+                if param_name == 'id':
+                    # Generic {id} - derive from path (e.g., /products/{id} -> product)
+                    entity_type = self._derive_entity_from_path(scenario.endpoint_path)
+                else:
+                    # Specific param name (e.g., product_id -> product)
+                    entity_type = param_name.replace('_id', '').lower()
+                param_value = seed_uuids.get(entity_type, '00000000-0000-4000-8000-000000000099')
+            # Bug #137: Do NOT convert zero UUIDs - they're intentional for _not_found tests
             path = path.replace(f"{{{param_name}}}", str(param_value))
 
         # Build headers
@@ -313,6 +330,25 @@ class SmokeRunnerV2:
                 return ScenarioStatus.PASSED
 
         return ScenarioStatus.FAILED
+
+    def _derive_entity_from_path(self, path: str) -> str:
+        """Bug #138 Fix: Derive entity type from path for generic {id} params.
+
+        Examples:
+            /products/{id} -> product
+            /customers/{id} -> customer
+            /carts/{id}/items/{product_id} -> cart (first entity in path)
+        """
+        import re
+        # Extract first resource segment (e.g., /products/{id} -> products)
+        match = re.match(r'^/(\w+)', path)
+        if match:
+            resource = match.group(1)
+            # Remove trailing 's' to get singular entity name
+            if resource.endswith('s') and len(resource) > 1:
+                return resource[:-1]  # products -> product
+            return resource
+        return 'unknown'
 
     def _calculate_endpoint_coverage(self, report: SmokeTestReport) -> float:
         """Calculate endpoint coverage percentage."""

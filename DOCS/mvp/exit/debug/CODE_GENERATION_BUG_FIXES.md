@@ -2910,3 +2910,101 @@ def clear_all_caches():
 - E2E tests now automatically clear all caches before running
 - This ensures fresh IR generation without stale data
 - Eliminates need for manual cache clearing after code fixes
+
+---
+
+## Bug #131: Service Passes Pydantic Model to Repository Instead of Dict
+
+**Status**: FIXED
+
+**Root Cause**: The service template in `production_code_generators.py` was calling `self.repo.create(data)` and `self.repo.update(id, data)` where `data` is a Pydantic model. However, `BaseRepository.create()` and `BaseRepository.update()` expect a dict because they do `self.model(**data)`.
+
+**Symptom**: HTTP 500 errors on all POST/PUT operations (create/update) because unpacking a Pydantic model as kwargs fails silently or raises exceptions.
+
+**Files Modified**:
+- `src/services/production_code_generators.py` (lines 1569-1570, 1600-1601)
+
+**Before**:
+```python
+async def create(self, data: {entity_name}Create) -> {entity_name}Response:
+    """Create a new {entity_name.lower()}."""
+    db_obj = await self.repo.create(data)  # data is Pydantic model, not dict
+    return {entity_name}Response.model_validate(db_obj)
+
+async def update(self, id: UUID, data: {entity_name}Update) -> Optional[{entity_name}Response]:
+    """Update {entity_name.lower()}."""
+    db_obj = await self.repo.update(id, data)  # data is Pydantic model, not dict
+```
+
+**After**:
+```python
+async def create(self, data: {entity_name}Create) -> {entity_name}Response:
+    """Create a new {entity_name.lower()}."""
+    # Bug #131 Fix: Convert Pydantic model to dict for repository
+    db_obj = await self.repo.create(data.model_dump())return {entity_name}Response.model_validate(db_obj)
+
+async def update(self, id: UUID, data: {entity_name}Update) -> Optional[{entity_name}Response]:
+    """Update {entity_name.lower()}."""
+    # Bug #131 Fix: Convert Pydantic model to dict for repository
+    db_obj = await self.repo.update(id, data.model_dump(exclude_unset=True))
+```
+
+**Impact**: All CRUD create/update operations were failing with 500 errors. This fix enables proper data conversion between Pydantic schemas and SQLAlchemy entities.
+
+
+---
+
+## Bug #132: Docker Image Cache Causes Stale Code in Smoke Tests
+
+**Status**: FIXED
+
+**Root Cause**: The `runtime_smoke_validator.py` used `docker compose up -d --build` to start containers. While `--build` rebuilds images, Docker's layer caching means that if the base layers haven't changed, it reuses cached layers. When code fixes like Bug #131 are applied, the changed Python files may be in a cached layer, causing smoke tests to run against old code.
+
+**Symptom**: After fixing Bug #131 (service/repository type mismatch), smoke tests still failed with HTTP 500 because Docker was using a cached image with the old (unfixed) code.
+
+**Evidence**:
+```bash
+# Generated code has the fix:
+$ grep "model_dump" product_service.py
+28:        db_obj = await self.repo.create(data.model_dump())
+
+# But Docker container has old code:
+$ docker logs app_app
+TypeError: argument after ** must be a mapping, not ProductCreate
+# (indicating model_dump() was NOT called)
+```
+
+**Files Modified**:
+- `src/validation/runtime_smoke_validator.py` (lines 196-227)
+
+**Before**:
+```python
+cmd = [
+    'docker', 'compose',
+    '-f', 'docker/docker-compose.yml',
+    'up', '-d', '--build'
+]
+```
+
+**After**:
+```python
+# Bug #132 Fix: Force rebuild with --no-cache to prevent using stale cached images
+cmd = [
+    'docker', 'compose',
+    '-f', 'docker/docker-compose.yml',
+    'build', '--no-cache'
+]
+# ... run build first ...
+
+# Then start containers
+cmd = [
+    'docker', 'compose',
+    '-f', 'docker/docker-compose.yml',
+    'up', '-d'
+]
+```
+
+**Impact**: Smoke tests now always run against freshly built images with the latest code, ensuring code fixes are actually tested.
+
+**Trade-off**: The `--no-cache` option makes builds slower (~30-60 seconds longer), but ensures correctness. This is acceptable for E2E testing where correctness is more important than speed.
+

@@ -68,7 +68,7 @@ class Neo4jIRRepository:
         # ---------- Application node ----------
         tx.run(
             """
-            MERGE (a:Application {app_id: $app_id})
+            MERGE (a:ApplicationIR {app_id: $app_id})
             SET a.name = $name,
                 a.description = $description,
                 a.created_at = $created_at,
@@ -92,9 +92,9 @@ class Neo4jIRRepository:
         # ---------- Domain Model ----------
         tx.run(
             """
-            MERGE (d:DomainModel {app_id: $app_id})
+            MERGE (d:DomainModelIR {app_id: $app_id})
             SET d.entities = $entities
-            MERGE (a:Application {app_id: $app_id})
+            MERGE (a:ApplicationIR {app_id: $app_id})
             MERGE (a)-[:HAS_DOMAIN_MODEL]->(d)
             """,
             {
@@ -106,9 +106,9 @@ class Neo4jIRRepository:
         # ---------- API Model ----------
         tx.run(
             """
-            MERGE (api:APIModel {app_id: $app_id})
+            MERGE (api:APIModelIR {app_id: $app_id})
             SET api.endpoints = $endpoints
-            MERGE (a:Application {app_id: $app_id})
+            MERGE (a:ApplicationIR {app_id: $app_id})
             MERGE (a)-[:HAS_API_MODEL]->(api)
             """,
             {
@@ -120,13 +120,13 @@ class Neo4jIRRepository:
         # ---------- Infrastructure Model ----------
         tx.run(
             """
-            MERGE (infra:InfrastructureModel {app_id: $app_id})
+            MERGE (infra:InfrastructureModelIR {app_id: $app_id})
             SET infra.database = $database,
                 infra.vector_db = $vector_db,
                 infra.graph_db = $graph_db,
                 infra.observability = $observability,
                 infra.docker_compose_version = $docker_compose_version
-            MERGE (a:Application {app_id: $app_id})
+            MERGE (a:ApplicationIR {app_id: $app_id})
             MERGE (a)-[:HAS_INFRASTRUCTURE]->(infra)
             """,
             {
@@ -143,10 +143,10 @@ class Neo4jIRRepository:
         # Store flows and invariants as JSON strings for simplicity.
         tx.run(
             """
-            MERGE (beh:BehaviorModel {app_id: $app_id})
+            MERGE (beh:BehaviorModelIR {app_id: $app_id})
             SET beh.flows = $flows,
                 beh.invariants = $invariants
-            MERGE (a:Application {app_id: $app_id})
+            MERGE (a:ApplicationIR {app_id: $app_id})
             MERGE (a)-[:HAS_BEHAVIOR]->(beh)
             """,
             {
@@ -162,10 +162,10 @@ class Neo4jIRRepository:
 
         tx.run(
             """
-            MERGE (val:ValidationModel {app_id: $app_id})
+            MERGE (val:ValidationModelIR {app_id: $app_id})
             SET val.rules = $rules,
                 val.test_cases = $test_cases
-            MERGE (a:Application {app_id: $app_id})
+            MERGE (a:ApplicationIR {app_id: $app_id})
             MERGE (a)-[:HAS_VALIDATION]->(val)
             """,
             {
@@ -247,7 +247,7 @@ class Neo4jIRRepository:
         # ---------- 1. Load Application node ----------
         result = tx.run(
             """
-            MATCH (a:Application {app_id: $app_id})
+            MATCH (a:ApplicationIR {app_id: $app_id})
             RETURN a.name as name,
                    a.description as description,
                    a.created_at as created_at,
@@ -265,7 +265,7 @@ class Neo4jIRRepository:
         # ---------- 2. Load DomainModel ----------
         result = tx.run(
             """
-            MATCH (a:Application {app_id: $app_id})-[:HAS_DOMAIN_MODEL]->(d:DomainModel)
+            MATCH (a:ApplicationIR {app_id: $app_id})-[:HAS_DOMAIN_MODEL]->(d:DomainModelIR)
             RETURN d.entities as entities
             """,
             {"app_id": str(app_id)}
@@ -282,7 +282,7 @@ class Neo4jIRRepository:
         # ---------- 3. Load APIModel ----------
         result = tx.run(
             """
-            MATCH (a:Application {app_id: $app_id})-[:HAS_API_MODEL]->(api:APIModel)
+            MATCH (a:ApplicationIR {app_id: $app_id})-[:HAS_API_MODEL]->(api:APIModelIR)
             RETURN api.endpoints as endpoints
             """,
             {"app_id": str(app_id)}
@@ -299,7 +299,7 @@ class Neo4jIRRepository:
         # ---------- 4. Load InfrastructureModel ----------
         result = tx.run(
             """
-            MATCH (a:Application {app_id: $app_id})-[:HAS_INFRASTRUCTURE]->(infra:InfrastructureModel)
+            MATCH (a:ApplicationIR {app_id: $app_id})-[:HAS_INFRASTRUCTURE]->(infra:InfrastructureModelIR)
             RETURN infra.database as database,
                    infra.vector_db as vector_db,
                    infra.graph_db as graph_db,
@@ -335,7 +335,7 @@ class Neo4jIRRepository:
         # ---------- 5. Load BehaviorModel ----------
         result = tx.run(
             """
-            MATCH (a:Application {app_id: $app_id})-[:HAS_BEHAVIOR]->(beh:BehaviorModel)
+            MATCH (a:ApplicationIR {app_id: $app_id})-[:HAS_BEHAVIOR]->(beh:BehaviorModelIR)
             RETURN beh.flows as flows,
                    beh.invariants as invariants
             """,
@@ -358,7 +358,7 @@ class Neo4jIRRepository:
         # ---------- 6. Load ValidationModel (CRITICAL: Preserves enforcement with Neo4j nodes!) ----------
         result = tx.run(
             """
-            MATCH (a:Application {app_id: $app_id})-[:HAS_VALIDATION]->(val:ValidationModel)
+            MATCH (a:ApplicationIR {app_id: $app_id})-[:HAS_VALIDATION]->(val:ValidationModelIR)
             RETURN val.rules as rules,
                    val.test_cases as test_cases
             """,

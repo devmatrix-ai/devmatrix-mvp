@@ -43,13 +43,14 @@ class TestsIRGenerator:
     """
 
     # Default test values by data type
+    # Bug #144: UUIDs must use seed-compatible format (4000-8000 pattern)
     DEFAULT_VALUES = {
         DataType.STRING: "test_string",
         DataType.INTEGER: 1,
         DataType.FLOAT: 1.0,
         DataType.BOOLEAN: True,
         DataType.DATETIME: "2025-01-01T00:00:00Z",
-        DataType.UUID: "00000000-0000-0000-0000-000000000001",
+        DataType.UUID: "00000000-0000-4000-8000-000000000099",  # Seed-compatible fallback
         DataType.JSON: {},
         DataType.ENUM: None,  # Will use first enum value
     }
@@ -414,14 +415,19 @@ class TestsIRGenerator:
         return body
 
     def _get_field_value(self, field_type: str, field_name: str) -> Any:
-        """Get test value for a schema field."""
+        """Get test value for a schema field.
+
+        Bug #144 Fix: Use seed-compatible UUIDs that match seed_db.py data.
+        This ensures FK references point to existing entities during smoke tests.
+        """
         type_lower = field_type.lower()
+        field_lower = field_name.lower()
 
         # Map string types to values
         if type_lower in ['string', 'str']:
-            if 'email' in field_name.lower():
+            if 'email' in field_lower:
                 return "test@example.com"
-            if 'name' in field_name.lower():
+            if 'name' in field_lower:
                 return "Test Name"
             return "test_value"
         if type_lower in ['integer', 'int']:
@@ -431,7 +437,22 @@ class TestsIRGenerator:
         if type_lower in ['boolean', 'bool']:
             return True
         if type_lower == 'uuid':
-            return "00000000-0000-0000-0000-000000000001"
+            # Bug #144: Use seed-compatible UUIDs based on field name
+            # These must match the UUIDs in seed_db.py and smoke_runner_v2.py
+            seed_uuids = {
+                'product': '00000000-0000-4000-8000-000000000001',
+                'customer': '00000000-0000-4000-8000-000000000002',
+                'cart': '00000000-0000-4000-8000-000000000003',
+                'order': '00000000-0000-4000-8000-000000000005',
+                'item': '00000000-0000-4000-8000-000000000006',
+                'user': '00000000-0000-4000-8000-000000000002',
+            }
+            # Derive entity type from field name (e.g., customer_id -> customer)
+            for entity, uuid_val in seed_uuids.items():
+                if entity in field_lower:
+                    return uuid_val
+            # Fallback to a valid generic UUID for unknown FK fields
+            return "00000000-0000-4000-8000-000000000099"
 
         return "test"
 
