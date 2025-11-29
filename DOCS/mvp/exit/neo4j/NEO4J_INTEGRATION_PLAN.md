@@ -313,9 +313,10 @@ Week 2 (2025-12-09 → 2025-12-13)
 ## Criterios de Exit
 
 ### Sprint 7 ✓
-- [ ] IRPersistenceService funcional
-- [ ] Pipeline E2E usa Neo4j cache
-- [ ] Lineage tracking implementado
+
+- [x] IRPersistenceService funcional (Sprint 7.1 ✅)
+- [x] Pipeline E2E usa Neo4j cache (Sprint 7.2 ✅)
+- [ ] Lineage tracking implementado (Sprint 7.3 pendiente)
 - [ ] Tests E2E pasan con `USE_NEO4J_CACHE=true`
 
 ### Sprint 8 ✓
