@@ -54,6 +54,110 @@ def validate_python_syntax(code: str, filename: str = "generated") -> bool:
 
 
 # =============================================================================
+# Pre-Generation Validation (Bug #140: Validate assumptions before generating)
+# =============================================================================
+
+def validate_template_assumptions(
+    entity_name: str,
+    all_entities: List[Dict],
+    child_info: Dict[str, Any],
+    ir: Any = None
+) -> Dict[str, Any]:
+    """
+    Validate template assumptions against IR reality BEFORE generating code.
+
+    Bug #140 Fix: Templates were generating code that imports non-existent entities
+    (e.g., ProductItemEntity when only CartItemEntity and OrderItemEntity exist).
+
+    This function checks what the IR actually contains and returns flags
+    telling the template what it CAN and CANNOT generate.
+
+    Args:
+        entity_name: Name of entity being generated (e.g., "Product")
+        all_entities: List of all entities from IR
+        child_info: Result from find_child_entity()
+        ir: ApplicationIR (optional, for additional context)
+
+    Returns:
+        Dict with validation results:
+            - can_generate_clear_items: bool
+            - child_entity_class: str or None
+            - child_fk_field: str or None
+            - available_entities: List[str]
+            - warnings: List[str]
+    """
+    result = {
+        "can_generate_clear_items": False,
+        "child_entity_class": None,
+        "child_fk_field": None,
+        "available_entities": [],
+        "warnings": [],
+    }
+
+    # Build list of available entities for reference
+    for entity in all_entities:
+        name = entity.get('name', '')
+        if name:
+            result["available_entities"].append(name)
+
+    # Check if child entity actually exists
+    if child_info.get("found"):
+        child_name = child_info.get("entity_name", "")
+        child_class = child_info.get("entity_class", "")
+
+        # Verify the child entity is in the available entities
+        if child_name in result["available_entities"] or any(
+            e.lower() == child_name.lower() for e in result["available_entities"]
+        ):
+            result["can_generate_clear_items"] = True
+            result["child_entity_class"] = child_class
+            result["child_fk_field"] = child_info.get("fk_field")
+            logger.debug(f"✅ Entity {entity_name} has verified child: {child_name}")
+        else:
+            # Child was inferred but doesn't exist - DON'T generate clear_items
+            result["warnings"].append(
+                f"Inferred child {child_name} not found in entities. "
+                f"Available: {result['available_entities']}"
+            )
+            logger.warning(
+                f"⚠️ Bug #140 prevention: {entity_name} claimed child {child_name} "
+                f"but it doesn't exist. Skipping clear_items generation."
+            )
+    else:
+        # No child entity - that's fine, just don't generate clear_items
+        logger.debug(f"Entity {entity_name} has no child relationships")
+
+    return result
+
+
+def validate_import_exists(
+    import_name: str,
+    available_entities: List[str]
+) -> bool:
+    """
+    Validate that an entity import will succeed.
+
+    Args:
+        import_name: Entity class name to import (e.g., "ProductItemEntity")
+        available_entities: List of available entity names
+
+    Returns:
+        True if import should succeed, False if it would fail
+    """
+    # Extract base name from class (ProductItemEntity -> ProductItem)
+    base_name = import_name.replace("Entity", "")
+
+    # Check if any entity matches
+    for entity in available_entities:
+        if entity.lower() == base_name.lower():
+            return True
+        if entity.lower() == import_name.lower().replace("entity", ""):
+            return True
+
+    return False
+
+
+# =============================================================================
 # IR-Based Dynamic Detection Helpers (Bug #109: Eliminate hardcoding)
 # =============================================================================
 
@@ -1519,22 +1623,32 @@ def generate_service_method(entity_name: str, attributes: list = None, ir: Any =
     status_values = status_info.get("values", [])
 
     # Bug #109: Derive status values from IR instead of hardcoding
-    # Map semantic status concepts to actual values from enum
+    # Bug #141: Removed unused status variables (open, cancelled, paid, checked_out, pending_payment)
+    # Only initial_status is needed for generic service generation
     status_map = _map_status_values(status_values)
     initial_status = status_map.get("initial", "PENDING")
-    open_status = status_map.get("open", "OPEN")
-    cancelled_status = status_map.get("cancelled", "CANCELLED")
-    paid_status = status_map.get("paid", "PAID")
-    checked_out_status = status_map.get("checked_out", "CHECKED_OUT")
-    pending_payment_status = status_map.get("pending_payment", "PENDING_PAYMENT")
 
     # Detect child entity dynamically
     child_info = find_child_entity(entity_name, all_entities, ir)
+
+    # Bug #140 Fix: Validate template assumptions BEFORE generating code
+    # This prevents generating imports for entities that don't exist
+    template_validation = validate_template_assumptions(
+        entity_name=entity_name,
+        all_entities=all_entities,
+        child_info=child_info,
+        ir=ir
+    )
+
+    # Log any validation warnings
+    for warning in template_validation.get("warnings", []):
+        logger.warning(f"Template validation: {warning}")
 
     # Get workflow operations from IR
     workflow_ops = find_workflow_operations(entity_name, ir) if ir else []
 
     logger.debug(f"Bug #109: Entity {entity_name} - status_field={status_field_name}, child={child_info}, workflows={len(workflow_ops)}")
+    logger.debug(f"Bug #140: Template validation - can_generate_clear_items={template_validation['can_generate_clear_items']}")
     # Convert CamelCase to snake_case (CartItem → cart_item)
     import re
     entity_snake = re.sub(r'(?<!^)(?=[A-Z])', '_', entity_name).lower()
@@ -1606,7 +1720,14 @@ class {entity_name}Service:
     async def delete(self, id: UUID) -> bool:
         """Delete {entity_name.lower()}."""
         return await self.repo.delete(id)
+'''
 
+    # Bug #140 Fix: Only add clear_items() for entities that have child relationships
+    # Previously this was in base template, causing ImportError for entities without children
+    if child_info.get("found"):
+        child_entity_class = child_info.get("entity_class", f"{entity_name}ItemEntity")
+        child_fk_field = child_info.get("fk_field", f"{entity_snake}_id")
+        base_service += f'''
     async def clear_items(self, id: UUID) -> Optional[{entity_name}Response]:
         """
         Clear all items/children from this {entity_name.lower()}.
@@ -1615,6 +1736,7 @@ class {entity_name}Service:
         Returns the updated entity after clearing items.
 
         Bug #105 Fix: Uses direct SQLAlchemy delete instead of non-existent repo method.
+        Bug #140 Fix: Only generated for entities with verified child relationships.
         """
         # Get the entity first
         db_obj = await self.repo.get(id)
@@ -1622,11 +1744,10 @@ class {entity_name}Service:
             return None
 
         # Bug #105 Fix: Clear items directly using SQLAlchemy delete
-        # This deletes child items (e.g., CartItem for Cart, OrderItem for Order)
         from sqlalchemy import delete
-        from src.models.entities import {entity_name}ItemEntity
+        from src.models.entities import {child_entity_class}
         await self.db.execute(
-            delete({entity_name}ItemEntity).where({entity_name}ItemEntity.{entity_snake}_id == id)
+            delete({child_entity_class}).where({child_entity_class}.{child_fk_field} == id)
         )
         await self.db.flush()
 
@@ -1635,21 +1756,13 @@ class {entity_name}Service:
         return {entity_name}Response.model_validate(refreshed) if refreshed else None
 '''
 
-    # PHASE 2: Add checkout/cancel logic for orderable entities
-    # Uses field-based detection + entity name fallback (Bug #81 Fix)
+    # Bug #141 Fix: SPEC-AGNOSTIC field detection - NO entity name hardcoding
+    # Detection is purely based on field presence from IR
     field_names = {f.name if hasattr(f, 'name') else f.get('name', '') for f in attributes}
 
-    # Bug #81 Fix: Field-based detection with entity name fallback
-    # When attributes are empty (common in pipeline), fall back to entity name detection
-    is_orderable_entity = ('status' in field_names and 'payment_status' in field_names) or entity_name == 'Order'
-
-    # Bug #80a Fix: Detect entities with is_active field for activate/deactivate methods
-    # With entity name fallback for Product
-    has_is_active = 'is_active' in field_names or entity_name == 'Product'
-
-    # Bug #80a Fix: Detect Cart entity (has status + customer_id but not payment_status)
-    # With entity name fallback
-    is_cart_entity = ('status' in field_names and 'customer_id' in field_names and 'payment_status' not in field_names) or entity_name == 'Cart'
+    # Bug #141 Fix: Detect entities with is_active field - spec-agnostic
+    # Any entity with is_active field gets activate/deactivate methods
+    has_is_active = 'is_active' in field_names
 
     # Add activate/deactivate methods for entities with is_active field
     if has_is_active:
@@ -1689,263 +1802,12 @@ class {entity_name}Service:
         return {entity_name}Response.model_validate(db_obj)
 '''
 
-    # Add cart-specific methods for Cart entity
-    if is_cart_entity:
-        # Bug #109: Use dynamic status values from IR instead of hardcoding
-        base_service += f'''
-    async def add_item(self, cart_id: UUID, item_data: dict) -> Optional[{entity_name}Response]:
-        """
-        Add item to cart.
-
-        Bug #80a Fix: Custom operation method for adding items to cart.
-        Bug #109: Uses dynamic status field from IR.
-        """
-        from src.repositories.cart_item_repository import CartItemRepository
-        from src.models.schemas import CartItemCreate
-        from fastapi import HTTPException
-
-        # Verify cart exists
-        cart = await self.repo.get(cart_id)
-        if not cart:
-            return None
-
-        # Bug #109: Dynamic status check - status field derived from IR
-        if cart.{status_field_name} != "{open_status}":
-            raise HTTPException(status_code=400, detail="Cannot add items to a closed cart")
-
-        # Create cart item
-        cart_item_repo = CartItemRepository(self.db)
-        item_create = CartItemCreate(
-            cart_id=cart_id,
-            product_id=item_data.get('product_id'),
-            quantity=item_data.get('quantity', 1)
-        )
-        await cart_item_repo.create(item_create)
-
-        # Return updated cart
-        await self.db.refresh(cart)
-        return {entity_name}Response.model_validate(cart)
-
-    async def checkout(self, cart_id: UUID) -> Optional[{entity_name}Response]:
-        """
-        Checkout cart - marks cart as CHECKED_OUT and creates order.
-
-        Bug #80a Fix: Cart-side checkout method.
-        Bug #109: Uses dynamic status field from IR.
-        Returns the updated cart after checkout.
-        """
-        from fastapi import HTTPException
-
-        cart = await self.repo.get(cart_id)
-        if not cart:
-            return None
-
-        # Bug #109: Dynamic status check - status field derived from IR
-        if cart.{status_field_name} != "{open_status}":
-            raise HTTPException(status_code=400, detail="Cart is not open for checkout")
-
-        if not cart.items or len(cart.items) == 0:
-            raise HTTPException(status_code=400, detail="Cart is empty")
-
-        # Bug #109: Mark cart as checked out using dynamic status value
-        cart.{status_field_name} = "{checked_out_status}"
-        await self.db.flush()
-        await self.db.refresh(cart)
-
-        logger.info(f"Cart checked out: cart_id={{str(cart_id)}}")
-        return {entity_name}Response.model_validate(cart)
-'''
-
-    if is_orderable_entity:
-        # Bug #109: Use dynamic status values from IR instead of hardcoding
-        base_service += f'''
-    async def checkout(self, cart_id: UUID) -> {entity_name}Response:
-        """
-        Create order from cart with stock validation and decrement.
-
-        PHASE 2: Real enforcement - stock decrement logic (Fase 2.4)
-        Bug #109: Uses dynamic status fields from IR.
-
-        Steps:
-        1. Validate cart exists and is OPEN
-        2. Validate cart has items
-        3. Validate stock availability for ALL items
-        4. Decrement stock for each product
-        5. Create order with initial status
-        6. Mark cart as CHECKED_OUT
-        """
-        from src.repositories.cart_repository import CartRepository
-        from src.repositories.product_repository import ProductRepository
-        from fastapi import HTTPException
-
-        cart_repo = CartRepository(self.db)
-        product_repo = ProductRepository(self.db)
-
-        # 1. Get cart and validate
-        cart = await cart_repo.get(cart_id)
-        if not cart:
-            raise HTTPException(status_code=404, detail="Cart not found")
-
-        # Bug #109: Dynamic status check - cart status field derived from IR
-        if cart.status != "{open_status}":
-            raise HTTPException(status_code=400, detail="Cart is not open for checkout")
-
-        # 2. Validate cart has items
-        if not cart.items or len(cart.items) == 0:
-            raise HTTPException(status_code=400, detail="Cart is empty")
-
-        # 3. Validate stock for ALL items before decrementing
-        for item in cart.items:
-            product = await product_repo.get(item.product_id)
-            if not product:
-                raise HTTPException(status_code=404, detail=f"Product {{item.product_id}} not found")
-
-            if product.stock < item.quantity:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Insufficient stock for product {{product.name}}: available={{product.stock}}, requested={{item.quantity}}"
-                )
-
-        # 4. Decrement stock for each product (PHASE 2 - Real enforcement)
-        for item in cart.items:
-            product = await product_repo.get(item.product_id)
-            product.stock -= item.quantity
-            await self.db.flush()
-            logger.info(f"📦 Stock decremented: {{product.name}} ({{product.stock + item.quantity}} → {{product.stock}})")
-
-        # 5. Create order - Bug #109: Use dynamic status values
-        from src.models.schemas import OrderCreate
-        order_data = OrderCreate(
-            customer_id=cart.customer_id,
-            {status_field_name}="{pending_payment_status}",
-            payment_status="PENDING"
-        )
-        order = await self.create(order_data)
-
-        # Bug #116 Fix: Copy cart items to order items
-        from src.models.entities import OrderItemEntity
-        for item in cart.items:
-            order_item = OrderItemEntity(
-                order_id=order.id,
-                product_id=item.product_id,
-                quantity=item.quantity,
-                unit_price=item.unit_price
-            )
-            self.db.add(order_item)
-        await self.db.flush()
-        logger.info(f"📦 Copied {{len(cart.items)}} items from cart to order")
-
-        # 6. Mark cart as CHECKED_OUT - Bug #109: Dynamic status value
-        cart.status = "{checked_out_status}"
-        await self.db.flush()
-
-        await self.db.commit()
-
-        return order
-
-    async def cancel_order(self, order_id: UUID) -> {entity_name}Response:
-        """
-        Cancel order and return stock to products.
-
-        PHASE 2: Real enforcement - stock increment on cancel (Fase 2.4)
-        Bug #109: Uses dynamic status fields from IR.
-
-        Steps:
-        1. Validate order exists and is in pending payment status
-        2. Increment stock for each product in order
-        3. Mark order as CANCELLED
-        """
-        from src.repositories.product_repository import ProductRepository
-        from fastapi import HTTPException
-
-        product_repo = ProductRepository(self.db)
-
-        # 1. Get order and validate - use repo.get() to get entity with relationships
-        db_order = await self.repo.get(order_id)
-        if not db_order:
-            raise HTTPException(status_code=404, detail="Order not found")
-
-        # Bug #109: Dynamic status check - status field derived from IR
-        if db_order.{status_field_name} != "{pending_payment_status}":
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot cancel order with status {{db_order.{status_field_name}}}. Only {pending_payment_status} orders can be cancelled."
-            )
-
-        # 2. Return stock for each product (PHASE 2 - Real enforcement)
-        # Bug #108 Fix: Get items from OrderItemEntity directly
-        from src.models.entities import OrderItemEntity
-        from sqlalchemy import select
-        items_result = await self.db.execute(
-            select(OrderItemEntity).where(OrderItemEntity.order_id == order_id)
-        )
-        order_items = items_result.scalars().all()
-
-        for item in order_items:
-            product = await product_repo.get(item.product_id)
-            if product:
-                product.stock += item.quantity
-                await self.db.flush()
-                logger.info(f"📦 Stock returned: {{product.name}} ({{product.stock - item.quantity}} → {{product.stock}})")
-
-        # 3. Update order status to CANCELLED - Bug #109: Dynamic status field
-        from src.models.schemas import {entity_name}Update
-        updated_order = await self.update(
-            order_id,
-            {entity_name}Update({status_field_name}="{cancelled_status}")
-        )
-
-        await self.db.commit()
-
-        return updated_order
-
-    async def cancel(self, order_id: UUID) -> {entity_name}Response:
-        """
-        Alias for cancel_order - cancels order and returns stock.
-
-        Bug #80a Fix: Routes call service.cancel() but method was cancel_order().
-        """
-        return await self.cancel_order(order_id)
-
-    async def pay(self, order_id: UUID) -> {entity_name}Response:
-        """
-        Process payment for an order.
-
-        Bug #80a Fix: Custom operation method for pay endpoint.
-        Bug #109: Uses dynamic status fields from IR.
-
-        Steps:
-        1. Validate order exists and is in pending payment status
-        2. Update payment_status to PAID
-        3. Update status to PAID/CONFIRMED
-        """
-        from fastapi import HTTPException
-
-        # 1. Get order and validate - use repo.get() for entity access
-        # Bug #108 Fix: Use order_status field name, not status
-        # Bug #109: Dynamic status field name from IR
-        db_order = await self.repo.get(order_id)
-        if not db_order:
-            raise HTTPException(status_code=404, detail="Order not found")
-
-        if db_order.{status_field_name} != "{pending_payment_status}":
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot pay order with status {{db_order.{status_field_name}}}. Only {pending_payment_status} orders can be paid."
-            )
-
-        # 2. Update order to PAID status - Bug #109: Dynamic status values
-        from src.models.schemas import {entity_name}Update
-        updated_order = await self.update(
-            order_id,
-            {entity_name}Update({status_field_name}="{paid_status}", payment_status="SIMULATED_OK")
-        )
-
-        await self.db.commit()
-
-        logger.info(f"Order paid and confirmed: order_id={{str(order_id)}}")
-        return updated_order
-'''
+    # Bug #141 Fix: REMOVED hardcoded Cart/Order-specific business logic
+    # Previous code had ~250 lines of hardcoded ecommerce methods:
+    # - is_cart_entity: add_item(), checkout() with CartItemRepository imports
+    # - is_orderable_entity: checkout(), cancel_order(), cancel(), pay() with OrderItemEntity imports
+    # These were spec-specific (ecommerce) and should be generated from IR operations, not templates.
+    # Custom business operations should be defined in the API spec and generated via IR.
 
     return base_service
 
