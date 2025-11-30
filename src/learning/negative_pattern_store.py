@@ -143,6 +143,82 @@ class GenerationAntiPattern:
         )
 
 
+@dataclass
+class CognitiveRegressionPattern:
+    """
+    Records failed cognitive enhancement attempts for learning.
+
+    When IRCentricCognitivePass enhances code but validation fails,
+    this pattern is stored to avoid repeating the same mistake.
+
+    Reference: COGNITIVE_CODE_GENERATION_PROPOSAL.md v2.0
+    """
+    # Flow context
+    ir_flow: str                      # Flow name that was enhanced
+    flow_id: Optional[str] = None     # Flow ID for semantic matching
+
+    # Enhancement context
+    anti_patterns_applied: List[str] = field(default_factory=list)  # Pattern IDs used
+
+    # Failure details
+    result: str = "ir_contract_violation"  # "ir_contract_violation", "test_regression", "syntax_error"
+    violations: List[str] = field(default_factory=list)  # Specific violations
+
+    # Additional context
+    enhanced_function: Optional[str] = None  # Function that was enhanced
+    original_function: Optional[str] = None  # Original function code
+    file_path: Optional[str] = None          # File where enhancement was attempted
+
+    # Timestamps
+    timestamp: datetime = field(default_factory=datetime.now)
+
+    # Regression ID for deduplication
+    regression_id: Optional[str] = None
+
+    def __post_init__(self):
+        """Generate regression_id if not provided."""
+        if not self.regression_id:
+            key = f"{self.ir_flow}:{self.result}:{':'.join(sorted(self.anti_patterns_applied[:5]))}"
+            self.regression_id = f"crp_{hashlib.md5(key.encode()).hexdigest()[:12]}"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "regression_id": self.regression_id,
+            "ir_flow": self.ir_flow,
+            "flow_id": self.flow_id,
+            "anti_patterns_applied": self.anti_patterns_applied,
+            "result": self.result,
+            "violations": self.violations,
+            "enhanced_function": self.enhanced_function,
+            "original_function": self.original_function,
+            "file_path": self.file_path,
+            "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "CognitiveRegressionPattern":
+        """Create from dictionary."""
+        timestamp = data.get("timestamp")
+        if isinstance(timestamp, str):
+            timestamp = datetime.fromisoformat(timestamp)
+        elif timestamp is None:
+            timestamp = datetime.now()
+
+        return cls(
+            ir_flow=data.get("ir_flow", "unknown"),
+            flow_id=data.get("flow_id"),
+            anti_patterns_applied=data.get("anti_patterns_applied", []),
+            result=data.get("result", "unknown"),
+            violations=data.get("violations", []),
+            enhanced_function=data.get("enhanced_function"),
+            original_function=data.get("original_function"),
+            file_path=data.get("file_path"),
+            timestamp=timestamp,
+            regression_id=data.get("regression_id"),
+        )
+
+
 # =============================================================================
 # Pattern ID Generation
 # =============================================================================
@@ -733,6 +809,324 @@ class NegativePatternStore:
         except Exception as e:
             self.logger.warning(f"Failed to get all patterns: {e}")
             return list(self._cache.values())[:limit]
+
+    # =========================================================================
+    # IR-Centric Cognitive Code Generation Methods
+    # Reference: COGNITIVE_CODE_GENERATION_PROPOSAL.md v2.0
+    # =========================================================================
+
+    def get_patterns_for_flow(
+        self,
+        flow_name: str,
+        min_occurrences: int = None
+    ) -> List[GenerationAntiPattern]:
+        """
+        Get anti-patterns semantically matched to an IRFlow.
+
+        This is the PRIMARY query method for IR-Centric Cognitive Code Generation.
+        Matches patterns by flow name similarity, not file paths.
+
+        Args:
+            flow_name: Flow name (e.g., "add_item_to_cart", "checkout")
+            min_occurrences: Minimum occurrence count (default: 1 for flow matching)
+
+        Returns:
+            List of patterns sorted by severity
+        """
+        min_occ = min_occurrences if min_occurrences is not None else 1
+
+        # Normalize flow name for matching
+        normalized_flow = flow_name.lower().replace("-", "_").replace(" ", "_")
+
+        # Extract keywords from flow name for semantic matching
+        flow_keywords = set(normalized_flow.split("_"))
+
+        # Check cache with semantic matching
+        cached = []
+        for p in self._cache.values():
+            if p.occurrence_count < min_occ:
+                continue
+
+            # Match by endpoint pattern (flows often map to endpoints)
+            endpoint_match = False
+            if p.endpoint_pattern and p.endpoint_pattern != "*":
+                endpoint_normalized = p.endpoint_pattern.lower()
+                # Check if flow keywords appear in endpoint
+                endpoint_match = any(kw in endpoint_normalized for kw in flow_keywords if len(kw) > 2)
+
+            # Match by entity pattern (flows involve entities)
+            entity_match = False
+            if p.entity_pattern and p.entity_pattern != "*":
+                entity_normalized = p.entity_pattern.lower()
+                entity_match = any(kw in entity_normalized for kw in flow_keywords if len(kw) > 2)
+
+            # Match by error message pattern
+            message_match = False
+            if p.error_message_pattern:
+                message_normalized = p.error_message_pattern.lower()
+                message_match = any(kw in message_normalized for kw in flow_keywords if len(kw) > 3)
+
+            if endpoint_match or entity_match or message_match:
+                cached.append(p)
+
+        # If Neo4j available, query for additional patterns
+        if self._neo4j_available and self.driver:
+            try:
+                with self.driver.session() as session:
+                    # Use regex matching for semantic search
+                    keywords_pattern = "|".join(kw for kw in flow_keywords if len(kw) > 2)
+                    if keywords_pattern:
+                        result = session.run("""
+                            MATCH (ap:GenerationAntiPattern)
+                            WHERE ap.occurrence_count >= $min_occ
+                              AND (
+                                ap.endpoint_pattern =~ $pattern OR
+                                ap.entity_pattern =~ $pattern OR
+                                ap.error_message_pattern =~ $pattern
+                              )
+                            RETURN ap
+                            ORDER BY ap.occurrence_count DESC
+                            LIMIT $limit
+                        """, {
+                            "min_occ": min_occ,
+                            "pattern": f"(?i).*({keywords_pattern}).*",
+                            "limit": self.MAX_PATTERNS_PER_QUERY
+                        })
+
+                        for record in result:
+                            pattern = self._node_to_pattern(record["ap"])
+                            if pattern.pattern_id not in {p.pattern_id for p in cached}:
+                                self._cache[pattern.pattern_id] = pattern
+                                cached.append(pattern)
+
+            except Exception as e:
+                self.logger.debug(f"Neo4j flow query fell back to cache: {e}")
+
+        return sorted(cached, key=lambda p: p.severity_score, reverse=True)[:self.MAX_PATTERNS_PER_QUERY]
+
+    def get_patterns_for_constraint_type(
+        self,
+        constraint_type: str,
+        min_occurrences: int = None
+    ) -> List[GenerationAntiPattern]:
+        """
+        Get anti-patterns related to a specific constraint type.
+
+        Constraint types map to common error categories:
+        - stock_constraint → IntegrityError, insufficient stock
+        - workflow_constraint → state transition errors
+        - uniqueness_constraint → duplicate key errors
+        - foreign_key_constraint → referential integrity errors
+
+        Args:
+            constraint_type: Constraint type (e.g., "stock_constraint", "workflow_constraint")
+            min_occurrences: Minimum occurrence count
+
+        Returns:
+            List of patterns sorted by severity
+        """
+        min_occ = min_occurrences if min_occurrences is not None else 1
+
+        # Map constraint types to error patterns
+        constraint_to_errors = {
+            "stock_constraint": ["IntegrityError", "ValueError", "insufficient", "stock"],
+            "workflow_constraint": ["InvalidStateError", "state", "transition", "status"],
+            "uniqueness_constraint": ["IntegrityError", "UniqueViolation", "duplicate", "unique"],
+            "foreign_key_constraint": ["IntegrityError", "ForeignKeyViolation", "foreign", "reference"],
+            "validation_constraint": ["ValidationError", "TypeError", "invalid", "required"],
+            "null_constraint": ["AttributeError", "NoneType", "null", "None"],
+        }
+
+        # Get keywords for this constraint type
+        keywords = constraint_to_errors.get(
+            constraint_type.lower(),
+            constraint_type.lower().replace("_", " ").split()
+        )
+
+        # Check cache
+        cached = []
+        for p in self._cache.values():
+            if p.occurrence_count < min_occ:
+                continue
+
+            # Match by exception class
+            if p.exception_class in keywords:
+                cached.append(p)
+                continue
+
+            # Match by error message pattern
+            if p.error_message_pattern:
+                msg_lower = p.error_message_pattern.lower()
+                if any(kw.lower() in msg_lower for kw in keywords):
+                    cached.append(p)
+
+        return sorted(cached, key=lambda p: p.severity_score, reverse=True)[:self.MAX_PATTERNS_PER_QUERY]
+
+    def store_cognitive_regression(
+        self,
+        regression: "CognitiveRegressionPattern"
+    ) -> bool:
+        """
+        Store a cognitive regression pattern for learning.
+
+        When IRCentricCognitivePass enhances code but the result fails
+        IR validation, this method records the failure to avoid repeating it.
+
+        Args:
+            regression: The cognitive regression pattern to store
+
+        Returns:
+            True if stored successfully
+        """
+        # Store in memory cache
+        if not hasattr(self, '_regression_cache'):
+            self._regression_cache: Dict[str, CognitiveRegressionPattern] = {}
+
+        self._regression_cache[regression.regression_id] = regression
+
+        # Store in Neo4j if available
+        if not self._neo4j_available or not self.driver:
+            self.logger.debug(f"Stored cognitive regression in cache: {regression.regression_id}")
+            return True
+
+        try:
+            with self.driver.session() as session:
+                session.run("""
+                    MERGE (cr:CognitiveRegression {regression_id: $regression_id})
+                    ON CREATE SET
+                        cr.ir_flow = $ir_flow,
+                        cr.flow_id = $flow_id,
+                        cr.anti_patterns_applied = $anti_patterns,
+                        cr.result = $result,
+                        cr.violations = $violations,
+                        cr.file_path = $file_path,
+                        cr.timestamp = datetime(),
+                        cr.occurrence_count = 1
+                    ON MATCH SET
+                        cr.occurrence_count = cr.occurrence_count + 1,
+                        cr.timestamp = datetime()
+                """, {
+                    "regression_id": regression.regression_id,
+                    "ir_flow": regression.ir_flow,
+                    "flow_id": regression.flow_id or "",
+                    "anti_patterns": regression.anti_patterns_applied,
+                    "result": regression.result,
+                    "violations": regression.violations,
+                    "file_path": regression.file_path or "",
+                })
+
+                self.logger.info(f"🧠 Stored cognitive regression: {regression.regression_id} for flow '{regression.ir_flow}'")
+                return True
+
+        except Exception as e:
+            self.logger.warning(f"Failed to store cognitive regression in Neo4j: {e}")
+            return True  # Still in cache
+
+    def get_cognitive_regressions(
+        self,
+        flow_name: Optional[str] = None,
+        limit: int = 50
+    ) -> List["CognitiveRegressionPattern"]:
+        """
+        Get cognitive regression patterns, optionally filtered by flow.
+
+        Args:
+            flow_name: Optional flow name to filter by
+            limit: Maximum patterns to return
+
+        Returns:
+            List of cognitive regression patterns
+        """
+        if not hasattr(self, '_regression_cache'):
+            self._regression_cache = {}
+
+        # Check cache first
+        if flow_name:
+            cached = [
+                r for r in self._regression_cache.values()
+                if r.ir_flow.lower() == flow_name.lower()
+            ]
+        else:
+            cached = list(self._regression_cache.values())
+
+        # Query Neo4j for additional patterns
+        if self._neo4j_available and self.driver:
+            try:
+                with self.driver.session() as session:
+                    if flow_name:
+                        result = session.run("""
+                            MATCH (cr:CognitiveRegression)
+                            WHERE toLower(cr.ir_flow) = toLower($flow_name)
+                            RETURN cr
+                            ORDER BY cr.timestamp DESC
+                            LIMIT $limit
+                        """, {"flow_name": flow_name, "limit": limit})
+                    else:
+                        result = session.run("""
+                            MATCH (cr:CognitiveRegression)
+                            RETURN cr
+                            ORDER BY cr.timestamp DESC
+                            LIMIT $limit
+                        """, {"limit": limit})
+
+                    for record in result:
+                        node = record["cr"]
+                        reg = CognitiveRegressionPattern(
+                            ir_flow=node.get("ir_flow", "unknown"),
+                            flow_id=node.get("flow_id"),
+                            anti_patterns_applied=node.get("anti_patterns_applied", []),
+                            result=node.get("result", "unknown"),
+                            violations=node.get("violations", []),
+                            file_path=node.get("file_path"),
+                            regression_id=node.get("regression_id"),
+                        )
+                        if reg.regression_id not in {r.regression_id for r in cached}:
+                            cached.append(reg)
+
+            except Exception as e:
+                self.logger.debug(f"Neo4j regression query fell back to cache: {e}")
+
+        return cached[:limit]
+
+    def has_cognitive_regression(
+        self,
+        flow_name: str,
+        anti_pattern_ids: List[str]
+    ) -> bool:
+        """
+        Check if this combination of flow + anti-patterns has previously regressed.
+
+        Used by IRCentricCognitivePass to avoid repeating failed enhancements.
+
+        Args:
+            flow_name: The flow name
+            anti_pattern_ids: List of anti-pattern IDs being considered
+
+        Returns:
+            True if this combination has failed before
+        """
+        # Build regression ID to check
+        key = f"{flow_name}:ir_contract_violation:{':'.join(sorted(anti_pattern_ids[:5]))}"
+        check_id = f"crp_{hashlib.md5(key.encode()).hexdigest()[:12]}"
+
+        # Check cache
+        if hasattr(self, '_regression_cache') and check_id in self._regression_cache:
+            return True
+
+        # Check Neo4j
+        if self._neo4j_available and self.driver:
+            try:
+                with self.driver.session() as session:
+                    result = session.run("""
+                        MATCH (cr:CognitiveRegression {regression_id: $reg_id})
+                        RETURN count(cr) > 0 AS exists
+                    """, {"reg_id": check_id})
+                    record = result.single()
+                    return record["exists"] if record else False
+            except Exception:
+                pass
+
+        return False
 
     # =========================================================================
     # Statistics
