@@ -399,6 +399,9 @@ class CodeGenerationService:
 
                         avoidance_parts.append(anti_pattern_context)
 
+                        # Visible logging for debugging learning loop
+                        print(f"🎓 Anti-patterns injected: {len(entity_warnings)} warnings from {stats.get('total_patterns', 0)} stored patterns")
+
                         logger.info(
                             "Built avoidance context from NegativePatternStore",
                             extra={

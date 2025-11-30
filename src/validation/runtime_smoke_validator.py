@@ -23,6 +23,20 @@ import httpx
 
 from src.cognitive.ir.application_ir import ApplicationIR
 from src.cognitive.ir.api_model import Endpoint, HttpMethod
+try:
+    # Rich stack trace data class for smoke-driven repair
+    from src.validation.smoke_repair_orchestrator import StackTrace
+except Exception:
+    # Fallback placeholder to keep runtime smoke working if orchestrator not available
+    @dataclass
+    class StackTrace:
+        endpoint: str = "unknown"
+        error_type: str = "Unknown"
+        exception_class: str = "Unknown"
+        exception_message: str = ""
+        file_path: str = ""
+        line_number: int = 0
+        full_trace: str = ""
 
 # Active Learning imports (optional - graceful degradation if Neo4j unavailable)
 try:
@@ -99,6 +113,7 @@ class RuntimeSmokeTestValidator:
         error_knowledge_repo: Optional["ErrorKnowledgeRepository"] = None,
         pattern_feedback: Optional["PatternFeedbackIntegration"] = None,
         enforce_docker: bool = False,
+        allow_rebuild: bool = True,
     ):
         self.app_dir = Path(app_dir)
         self.host = host
@@ -112,6 +127,8 @@ class RuntimeSmokeTestValidator:
         self._using_docker = False
         # Optional strictness: fail fast if Docker assets are missing/broken
         self.enforce_docker = enforce_docker
+        # Allow skipping docker rebuild when orchestrator disables it
+        self.allow_rebuild = allow_rebuild
         # Active Learning: Repository for learning from failures
         self._error_knowledge_repo = error_knowledge_repo
         self._learning_enabled = error_knowledge_repo is not None and ACTIVE_LEARNING_AVAILABLE
@@ -264,9 +281,6 @@ class RuntimeSmokeTestValidator:
             return
 
         # Bug #145 Fix: Clean up existing volumes BEFORE building to ensure fresh DB state.
-        # Without this cleanup, the named volume 'postgres-data' persists across runs
-        # and contains stale data with random UUIDs instead of seed-compatible UUIDs.
-        # This causes smoke tests to fail with 404 errors when looking for seeded entities.
         cleanup_cmd = [
             'docker', 'compose',
             '-f', 'docker/docker-compose.yml',
@@ -275,35 +289,36 @@ class RuntimeSmokeTestValidator:
         logger.info(f"🧹 Cleaning up previous containers/volumes: {' '.join(cleanup_cmd)}")
         subprocess.run(cleanup_cmd, cwd=str(self.app_dir), capture_output=True, timeout=30)
 
-        # Start docker compose
-        # Bug #85 Fix: Use relative path from app_dir since cwd=app_dir
-        # Bug #86 Fix: Use 'docker compose' (v2) instead of 'docker-compose' for WSL 2
-        # Bug #132 Fix: Force rebuild with --no-cache to prevent using stale cached images
-        #   When code changes (like Bug #131 fix), docker may use cached layers from
-        #   previous builds, causing smoke tests to run against old code.
-        cmd = [
-            'docker', 'compose',
-            '-f', 'docker/docker-compose.yml',
-            'build', '--no-cache'
-        ]
+        # Build only if rebuild is allowed
+        if self.allow_rebuild:
+            # Bug #85 Fix: Use relative path from app_dir since cwd=app_dir
+            # Bug #86 Fix: Use 'docker compose' (v2) instead of 'docker-compose' for WSL 2
+            # Bug #132 Fix: Force rebuild with --no-cache to prevent using stale cached images
+            cmd = [
+                'docker', 'compose',
+                '-f', 'docker/docker-compose.yml',
+                'build', '--no-cache'
+            ]
 
-        logger.info(f"🐳 Building Docker (no cache): {' '.join(cmd)}")
+            logger.info(f"🐳 Building Docker (no cache): {' '.join(cmd)}")
 
-        build_result = subprocess.run(
-            cmd,
-            cwd=str(self.app_dir),
-            capture_output=True,
-            text=True,
-            timeout=180  # 3 min timeout for build
-        )
+            build_result = subprocess.run(
+                cmd,
+                cwd=str(self.app_dir),
+                capture_output=True,
+                text=True,
+                timeout=180  # 3 min timeout for build
+            )
 
-        if build_result.returncode != 0:
-            logger.error(f"Docker build failed: {build_result.stderr}")
-            if self.enforce_docker:
-                raise RuntimeError(f"Docker build failed (enforced): {build_result.stderr[:500]}")
-            # Fallback to uvicorn to avoid hard failure when Dockerfile is missing/misconfigured
-            await self._start_uvicorn_server()
-            return
+            if build_result.returncode != 0:
+                logger.error(f"Docker build failed: {build_result.stderr}")
+                if self.enforce_docker:
+                    raise RuntimeError(f"Docker build failed (enforced): {build_result.stderr[:500]}")
+                # Fallback to uvicorn to avoid hard failure when Dockerfile is missing/misconfigured
+                await self._start_uvicorn_server()
+                return
+        else:
+            logger.info("🐳 Skipping Docker rebuild (allow_rebuild=False)")
 
         # Now start containers
         cmd = [

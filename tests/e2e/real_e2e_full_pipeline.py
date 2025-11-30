@@ -392,7 +392,9 @@ try:
         PromotionStatus,
     )
     STRATIFIED_ARCHITECTURE_AVAILABLE = True
-    GOLDEN_APPS_AVAILABLE = True
+    # DEPRECATED: Golden Apps comparison disabled - IR provides semantic validation
+    # Set ENABLE_GOLDEN_APP=true to re-enable for regression testing in CI
+    GOLDEN_APPS_AVAILABLE = os.getenv('ENABLE_GOLDEN_APP', 'false').lower() == 'true'
     SKELETON_GENERATOR_AVAILABLE = True
     PROMOTION_CRITERIA_AVAILABLE = True
 except ImportError as e:
@@ -3782,6 +3784,9 @@ Once running, visit:
             # Note: In E2E we typically run without Docker rebuild to speed up tests
             # Set with_docker_rebuild=True for production deployments
             print("    ▶️ Starting smoke-driven repair cycle...")
+            # Respect Docker rebuild toggle by updating validator flag during repair
+            if hasattr(smoke_validator, "allow_rebuild"):
+                smoke_validator.allow_rebuild = rebuild_docker
             repair_result = await orchestrator.run_full_repair_cycle(
                 app_path=self.output_path,
                 application_ir=self.application_ir,
@@ -4155,6 +4160,31 @@ Once running, visit:
             print(f"    - Pass rate: {report.pass_rate:.1f}%")
             print(f"    - Endpoint coverage: {report.endpoint_coverage:.1f}%")
 
+            # Bug #156 Fix: Capture Docker server logs for stack traces
+            server_logs = ""
+            if report.failed > 0:
+                try:
+                    import subprocess
+                    docker_compose_path = self.output_path / "docker" / "docker-compose.yml"
+                    if docker_compose_path.exists():
+                        cmd = [
+                            'docker', 'compose',
+                            '-f', str(docker_compose_path),
+                            'logs', 'app', '--no-color', '--tail', '500'
+                        ]
+                        result = subprocess.run(
+                            cmd,
+                            cwd=str(self.output_path),
+                            capture_output=True,
+                            text=True,
+                            timeout=30
+                        )
+                        server_logs = result.stdout + result.stderr
+                        if server_logs:
+                            print(f"    📝 Captured {len(server_logs)} bytes of server logs for repair")
+                except Exception as e:
+                    print(f"    ⚠️ Could not capture Docker logs: {e}")
+
             # Convert to SmokeTestResult compatible format
             violations = []
             endpoint_results = []
@@ -4207,7 +4237,8 @@ Once running, visit:
                 violations=violations,
                 results=endpoint_results,
                 total_time_ms=report.total_duration_ms,
-                server_startup_time_ms=0.0
+                server_startup_time_ms=0.0,
+                server_logs=server_logs  # Bug #156 Fix: Pass server logs for stack trace parsing
             )
 
         except Exception as e:
@@ -5381,9 +5412,11 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
 
         # NOTE: Quality gate checkpoint moved to _phase_9_validation() (Bug #16 fix)
 
-        # Phase 5: Run golden app comparison if available
+        # Phase 5: Run golden app comparison if available (DEPRECATED - IR provides semantic validation)
         golden_app_result = None
-        if GOLDEN_APPS_AVAILABLE and self.golden_app_runner:
+        if not GOLDEN_APPS_AVAILABLE:
+            print("  ⏭️ Golden App comparison skipped (DEPRECATED: IR provides semantic validation)")
+        elif GOLDEN_APPS_AVAILABLE and self.golden_app_runner:
             # Check if current spec matches a golden app
             golden_app_name = self._find_matching_golden_app()
             if golden_app_name:

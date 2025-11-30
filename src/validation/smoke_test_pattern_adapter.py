@@ -688,13 +688,27 @@ class FixPatternLearner:
                 if pattern_id in self._patterns:
                     pattern = self._patterns[pattern_id]
                 else:
+                    # Bug #144 Fix: Convert repair to string to avoid unhashable type errors
+                    # repair can be dict, slice, or other complex objects
+                    try:
+                        if isinstance(repair, dict):
+                            fix_template_str = str(repair.get("description", repair))[:500]
+                        elif isinstance(repair, (list, tuple)):
+                            fix_template_str = str(repair)[:500]
+                        elif isinstance(repair, slice):
+                            fix_template_str = f"slice({repair.start}, {repair.stop}, {repair.step})"
+                        else:
+                            fix_template_str = str(repair)[:500] if repair else ""
+                    except Exception:
+                        fix_template_str = repr(repair)[:500] if repair else ""
+
                     pattern = FixPattern(
                         pattern_id=pattern_id,
                         error_type=error_type,
                         endpoint_pattern=self._generalize_endpoint(endpoint),
                         exception_class=exception_class,
                         fix_type=fix_type,
-                        fix_template=repair
+                        fix_template=fix_template_str
                     )
                     self._patterns[pattern_id] = pattern
 
@@ -843,6 +857,14 @@ class FixPatternLearner:
         try:
             with self.driver.session() as session:
                 for pattern in self._patterns.values():
+                    fix_template = pattern.fix_template
+                    if fix_template is None:
+                        fix_template = ""
+                    try:
+                        fix_template_str = str(fix_template)[:500]
+                    except Exception:
+                        fix_template_str = ""
+
                     session.run("""
                         MERGE (fp:FixPattern {pattern_id: $pattern_id})
                         ON CREATE SET
@@ -860,12 +882,12 @@ class FixPatternLearner:
                             fp.fix_template = $fix_template,
                             fp.last_used = datetime()
                     """, {
-                        "pattern_id": pattern.pattern_id,
+                        "pattern_id": str(pattern.pattern_id),
                         "error_type": pattern.error_type,
                         "endpoint_pattern": pattern.endpoint_pattern,
                         "exception_class": pattern.exception_class,
                         "fix_type": pattern.fix_type,
-                        "fix_template": pattern.fix_template[:500],
+                        "fix_template": fix_template_str,
                         "success_count": pattern.success_count,
                         "failure_count": pattern.failure_count
                     })
@@ -981,6 +1003,8 @@ def get_smoke_pattern_adapter() -> SmokeTestPatternAdapter:
             neo4j_user=os.environ.get("NEO4J_USER", "neo4j"),
             neo4j_password=os.environ.get("NEO4J_PASSWORD", "devmatrix123")
         )
+        # Bug #148 Fix: Load historical pattern scores on singleton creation
+        _smoke_pattern_adapter.load_historical_scores()
     return _smoke_pattern_adapter
 
 
@@ -994,6 +1018,8 @@ def get_fix_pattern_learner() -> FixPatternLearner:
             neo4j_user=os.environ.get("NEO4J_USER", "neo4j"),
             neo4j_password=os.environ.get("NEO4J_PASSWORD", "devmatrix123")
         )
+        # Bug #146 Fix: Load historical patterns on singleton creation
+        _fix_pattern_learner.load_historical_patterns()
     return _fix_pattern_learner
 
 

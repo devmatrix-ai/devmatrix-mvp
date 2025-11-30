@@ -197,3 +197,4 @@ pattern_migration_report_*.txt
 backups/*.json
 Documentacion_IP/
 coverage.json
+tests/e2e/generated_apps/

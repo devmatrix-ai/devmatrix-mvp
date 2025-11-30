@@ -57,6 +57,14 @@ class GenerationAntiPattern:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     @property
+    def confidence(self) -> float:
+        """
+        Compatibility helper: Some consumers expect `confidence`.
+        We use severity_score as a proxy when explicit confidence is absent.
+        """
+        return self.severity_score
+
+    @property
     def prevention_rate(self) -> float:
         """Calculate how often this pattern is prevented vs occurred."""
         total = self.occurrence_count + self.times_prevented
@@ -633,6 +641,61 @@ class NegativePatternStore:
             self.logger.warning(f"Failed to query patterns by error type: {e}")
             return cached
 
+    def get_patterns_by_exception(
+        self,
+        exception_class: str,
+        min_occurrences: int = None
+    ) -> List[GenerationAntiPattern]:
+        """
+        Get all patterns matching a specific exception class.
+
+        Bug #159 Fix: This method was missing, causing repair orchestrator to fail
+        when looking up patterns by exception type (e.g., "IntegrityError", "KeyError").
+
+        Args:
+            exception_class: Exception class name (e.g., "IntegrityError", "ValidationError")
+            min_occurrences: Minimum occurrence count (default: MIN_OCCURRENCE_FOR_PROMPT)
+
+        Returns:
+            List of patterns sorted by severity score
+        """
+        min_occ = min_occurrences or self.MIN_OCCURRENCE_FOR_PROMPT
+
+        cached = [
+            p for p in self._cache.values()
+            if p.exception_class == exception_class and p.occurrence_count >= min_occ
+        ]
+
+        if not self._neo4j_available or not self.driver:
+            return sorted(cached, key=lambda p: p.severity_score, reverse=True)
+
+        try:
+            with self.driver.session() as session:
+                result = session.run("""
+                    MATCH (ap:GenerationAntiPattern)
+                    WHERE ap.exception_class = $exception_class
+                      AND ap.occurrence_count >= $min_occ
+                    RETURN ap
+                    ORDER BY ap.occurrence_count DESC
+                    LIMIT $limit
+                """, {
+                    "exception_class": exception_class,
+                    "min_occ": min_occ,
+                    "limit": self.MAX_PATTERNS_PER_QUERY
+                })
+
+                patterns = []
+                for record in result:
+                    pattern = self._node_to_pattern(record["ap"])
+                    self._cache[pattern.pattern_id] = pattern
+                    patterns.append(pattern)
+
+                return sorted(patterns, key=lambda p: p.severity_score, reverse=True)
+
+        except Exception as e:
+            self.logger.warning(f"Failed to query patterns by exception class: {e}")
+            return cached
+
     def get_all_patterns(
         self,
         min_occurrences: int = 1,
@@ -827,6 +890,8 @@ def get_negative_pattern_store() -> NegativePatternStore:
             neo4j_user=os.environ.get("NEO4J_USER", "neo4j"),
             neo4j_password=os.environ.get("NEO4J_PASSWORD", "devmatrix123")
         )
+        # Bug #147 Fix: Load cached patterns on singleton creation
+        _negative_pattern_store.load_cache()
     return _negative_pattern_store
 
 

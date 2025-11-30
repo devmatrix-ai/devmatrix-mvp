@@ -526,22 +526,71 @@ class CodeRepairAgent:
             constraint_type = parsed["constraint_type"]
             constraint_value = parsed["constraint_value"]
 
+            # Bug #154 Fix: Early filter for 'none' string values from IR
+            # These come from unpopulated constraint fields in the IR and should be skipped
+            # Filter BEFORE semantic mapping to avoid ge=none, le=none, etc. spam in logs
+            if constraint_value is not None and str(constraint_value).lower() == 'none':
+                logger.debug(f"Bug #154: Skipping {constraint_type}=none (unpopulated IR field)")
+                return True  # Treat as handled silently
+
             # Bug #45 Fix: Map semantic constraint names to Pydantic constraint types
             # This prevents "non_empty" from being treated as unknown and retried
+            # Extended mapping to handle IR-level semantic constraints
             semantic_mapping = {
+                # String/value constraints
                 'non_empty': ('min_length', 1),
                 'non_negative': ('ge', 0),
                 'positive': ('gt', 0),
                 'greater_than_zero': ('gt', 0),
+                # Bug #151 Fix: 'presence' should NOT use min_length (only works for strings)
+                # Instead, mark field as required - this works for all types
+                'presence': ('required', True),  # Bug #45 ext: Required field presence
+                'required': ('required', True),
+
+                # Auto-generation constraints
                 'auto_generated': ('default_factory', 'uuid.uuid4'),
                 'auto_increment': ('default_factory', 'uuid.uuid4'),
+
+                # Read-only/computed constraints
                 'read_only': ('read_only', True),
                 'snapshot_at_add_time': ('read_only', True),
                 'snapshot_at_order_time': ('read_only', True),
+                'computed_field': ('computed_field', True),
+
                 # Bug #55 Fix: Map min_value/max_value to Pydantic ge/le
                 'min_value': ('ge', None),  # None = use original constraint_value
                 'max_value': ('le', None),  # None = use original constraint_value
+                'range': ('ge', None),  # Bug #45 ext: Range constraints use ge for min
+
+                # Bug #45 ext: Uniqueness and relationship constraints
+                'uniqueness': ('unique', True),
+                'unique_constraint': ('unique', True),
+                'relationship': ('foreign_key', None),  # FK relationship mapping
+                'foreign_key_constraint': ('foreign_key', None),
+
+                # Bug #45 ext: Nullable/optional mapping
+                'nullable': ('default', None),
+                'optional': ('default', None),
             }
+
+            # Bug #45 ext: Business logic constraints that cannot be mapped to Pydantic
+            # These are domain-specific and handled at application layer, not schema
+            business_logic_constraints = {
+                'status_transition',      # State machine validation
+                'workflow_constraint',    # Business workflow rules
+                'custom',                 # Custom application logic
+                'stock_constraint',       # Inventory business rules
+                'inventory_constraint',   # Stock availability checks
+                'pricing_rule',           # Price calculation rules
+                'discount_rule',          # Discount application rules
+            }
+
+            if constraint_type in business_logic_constraints:
+                logger.info(
+                    f"Bug #45: Constraint '{constraint_type}' is business logic, "
+                    f"handled at application layer (not schema): {validation_str}"
+                )
+                return True  # Acknowledge but don't modify schema
             if constraint_type in semantic_mapping:
                 mapped = semantic_mapping[constraint_type]
                 new_constraint_type = mapped[0]
@@ -1836,6 +1885,9 @@ JSON OUTPUT:"""
                         )
                         if has_fk:
                             logger.debug(f"{entity_name}.{field_name} already has ForeignKey")
+                        # Bug #152 Fix: Skip if c_value is boolean (from relationship mapping)
+                        elif isinstance(self.c_value, bool):
+                            logger.debug(f"Bug #152: Skipping foreign_key for {entity_name}.{field_name} - boolean value, need table reference")
                         else:
                             # Convert 'Customer.id' to 'customers.id'
                             table_column = self.c_value.lower()
