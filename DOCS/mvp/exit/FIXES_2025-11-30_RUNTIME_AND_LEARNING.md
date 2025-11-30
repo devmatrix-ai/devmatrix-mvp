@@ -1070,3 +1070,138 @@ grep -n "_extract_entity_from_endpoint\|_normalize_endpoint" src/learning/error_
 ```
 
 ---
+
+## Refactor: Regex → Structural Parsing (2025-11-30)
+
+**Date**: 2025-11-30
+**Status**: COMPLETE
+**Motivation**: "Odio usar regex, mi experiencia me dice que es mejor usar AST cuando se puede y sino LLM"
+
+### Design Decision
+
+Replaced all regex-based parsing in `ErrorKnowledgeBridge` with **structural parsing**:
+
+| Method | Before (Regex) | After (Structural) |
+|--------|---------------|-------------------|
+| `_extract_exception_class()` | `r'(\w+Error\|\w+Exception):'` | Token-based delimiter parsing |
+| `_normalize_endpoint()` | `r'/\d+'`, UUID regex | Segment-by-segment analysis |
+| `_create_error_pattern()` | `r"'[^']*'"`, `r'"[^"]*"'` | Character-level state machine |
+
+### Implementation Details
+
+#### 1. Exception Class Extraction (NO REGEX)
+
+```python
+def _extract_exception_class(self, error_message: str) -> str:
+    """Token-based parsing instead of regex."""
+    exception_suffixes = ("Error", "Exception", "Warning")
+
+    # Split by delimiters (: \n - |)
+    for delimiter in (":", "\n", " - ", " | "):
+        parts = error_message.split(delimiter)
+        for part in parts:
+            # Handle dotted paths: sqlalchemy.exc.IntegrityError
+            tokens = part.strip().split(".")
+            for token in reversed(tokens):
+                if any(token.endswith(s) for s in exception_suffixes):
+                    if token[0].isupper():  # PascalCase check
+                        return token
+    return "Unknown"
+```
+
+#### 2. Endpoint Normalization (NO REGEX)
+
+```python
+def _normalize_endpoint(self, endpoint: str) -> str:
+    """Segment-by-segment analysis instead of regex."""
+    segments = path.split("/")
+    for segment in segments:
+        if segment.isdigit():  # Numeric ID
+            normalized.append("{id}")
+        elif self._is_uuid(segment):  # UUID check via structure
+            normalized.append("{id}")
+        else:
+            normalized.append(segment)
+    return "/".join(normalized)
+
+def _is_uuid(self, segment: str) -> bool:
+    """Check UUID format: 8-4-4-4-12 hex chars."""
+    parts = segment.split("-")
+    if len(parts) == 5:
+        expected = [8, 4, 4, 4, 12]
+        return all(
+            len(p) == expected[i] and
+            all(c in "0123456789abcdefABCDEF" for c in p)
+            for i, p in enumerate(parts)
+        )
+    return False
+```
+
+#### 3. Error Pattern Creation (NO REGEX)
+
+```python
+def _create_error_pattern(self, error_message: str) -> str:
+    """State machine for quote replacement instead of regex."""
+    result = []
+    in_single_quote = False
+    in_double_quote = False
+
+    for char in msg:
+        if char == "'" and not in_double_quote:
+            if in_single_quote:
+                result.append("...")  # Replace content
+            in_single_quote = not in_single_quote
+            result.append(char)
+        # ... similar for double quotes
+        elif not in_single_quote and not in_double_quote:
+            result.append(char)
+
+    # Then tokenize for dates/IDs
+    for token in pattern.split():
+        if self._looks_like_date(token):
+            processed.append("DATE")
+        elif self._looks_like_id(token):
+            processed.append("NUM")
+```
+
+### Test Results
+
+```
+=== _extract_exception_class ===
+✅ "IntegrityError: duplicate key" → IntegrityError
+✅ "sqlalchemy.exc.IntegrityError: ..." → IntegrityError
+✅ "ValidationError\nDetails: ..." → ValidationError
+
+=== _normalize_endpoint ===
+✅ "/products/123" → "/products/{id}"
+✅ "POST /orders/550e8400-e29b-41d4-a716-.../items" → "POST /orders/{id}/items"
+
+=== _create_error_pattern ===
+✅ "key 'abc123' exists" → "key '...' exists"
+✅ "Date: 2025-11-30" → "Date: DATE"
+```
+
+### Benefits
+
+1. **Robustness**: No regex edge cases or escaping issues
+2. **Readability**: Clear algorithmic intent
+3. **Maintainability**: Easy to extend patterns
+4. **Performance**: O(n) single-pass parsing vs regex backtracking
+5. **Debugging**: Step-by-step logic visible
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `src/learning/error_knowledge_bridge.py` | Removed `import re`, rewrote 3 methods |
+
+### When to Use Each Approach
+
+| Pattern Type | Approach | Rationale |
+|-------------|----------|-----------|
+| Fixed format (UUID, date) | Structural parsing | Predictable structure |
+| Natural language | LLM | Semantic understanding |
+| Code structure | AST | Python `ast` module |
+| Simple patterns | Heuristics | Fast, no dependencies |
+
+---

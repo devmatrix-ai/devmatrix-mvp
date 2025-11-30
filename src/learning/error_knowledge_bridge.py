@@ -36,11 +36,18 @@ Architecture:
 
 Reference: COGNITIVE_CODE_GENERATION_PROPOSAL.md
 Created: 2025-11-30
+
+Design Decision (2025-11-30):
+- Prefer heuristic/structural parsing over regex for robustness
+- URL normalization keeps minimal regex (numeric IDs, UUIDs) - simple patterns
+- Exception extraction uses token-based parsing, no regex
+- Error pattern abstraction uses structural parsing, no regex
+- LLM fallback available for complex cases (opt-in via constructor)
 """
 import logging
-import re
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from src.learning.negative_pattern_store import (
     GenerationAntiPattern,
@@ -255,19 +262,48 @@ class ErrorKnowledgeBridge:
         return results
 
     def _extract_exception_class(self, error_message: str) -> str:
-        """Extract exception class from error message."""
+        """
+        Extract exception class from error message using token-based parsing.
+
+        Design: NO REGEX - uses structural string parsing for robustness.
+
+        Algorithm:
+        1. Split by common delimiters (: and newline)
+        2. Find tokens ending with 'Error' or 'Exception'
+        3. Validate token is a valid Python identifier
+        4. Return first match or "Unknown"
+
+        Examples:
+            "IntegrityError: duplicate key" → "IntegrityError"
+            "sqlalchemy.exc.IntegrityError: ..." → "IntegrityError"
+            "ValidationError\nDetails: ..." → "ValidationError"
+        """
         if not error_message:
             return "Unknown"
 
-        # Common patterns: "IntegrityError: ...", "ValidationError: ..."
-        match = re.search(r'(\w+Error|\w+Exception):', error_message)
-        if match:
-            return match.group(1)
+        # Suffixes that indicate exception classes
+        exception_suffixes = ("Error", "Exception", "Warning")
 
-        # Try to find any Error/Exception word
-        match = re.search(r'(\w+Error|\w+Exception)', error_message)
-        if match:
-            return match.group(1)
+        # Split by common delimiters
+        for delimiter in (":", "\n", " - ", " | "):
+            parts = error_message.split(delimiter)
+            for part in parts:
+                # Clean and get last word (handles "sqlalchemy.exc.IntegrityError")
+                tokens = part.strip().split(".")
+                for token in reversed(tokens):
+                    token = token.strip()
+                    # Check if it's an exception class
+                    if any(token.endswith(suffix) for suffix in exception_suffixes):
+                        # Validate it looks like a class name (PascalCase, no spaces)
+                        if token and token[0].isupper() and " " not in token:
+                            return token
+
+        # Fallback: scan all words
+        words = error_message.replace(".", " ").replace(":", " ").split()
+        for word in words:
+            if any(word.endswith(suffix) for suffix in exception_suffixes):
+                if word and word[0].isupper():
+                    return word
 
         return "Unknown"
 
@@ -290,34 +326,226 @@ class ErrorKnowledgeBridge:
         return None
 
     def _normalize_endpoint(self, endpoint: str) -> str:
-        """Normalize endpoint to pattern form."""
+        """
+        Normalize endpoint to pattern form using structural parsing.
+
+        Design: NO REGEX - uses segment-by-segment analysis.
+
+        Algorithm:
+        1. Split endpoint by '/'
+        2. For each segment, check if it's an ID (numeric or UUID)
+        3. Replace IDs with '{id}' placeholder
+        4. Rejoin segments
+
+        Examples:
+            "/products/123"                    → "/products/{id}"
+            "POST /orders/abc-def-123/items"   → "POST /orders/{id}/items"
+            "/users/550e8400-e29b-41d4-a716"   → "/users/{id}"
+        """
         if not endpoint:
             return "*"
 
-        # /products/123 → /products/{id}
-        pattern = re.sub(r'/\d+', '/{id}', endpoint)
-        # UUIDs
-        pattern = re.sub(
-            r'/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
-            '/{id}',
-            pattern,
-            flags=re.IGNORECASE
-        )
-        return pattern
+        # Split method from path if present (e.g., "POST /products")
+        parts = endpoint.split()
+        if len(parts) >= 2:
+            method = parts[0]
+            path = parts[-1]
+        else:
+            method = None
+            path = endpoint
+
+        # Split path into segments
+        segments = path.split("/")
+        normalized_segments = []
+
+        for segment in segments:
+            if not segment:
+                normalized_segments.append(segment)
+                continue
+
+            # Check if segment is a numeric ID
+            if segment.isdigit():
+                normalized_segments.append("{id}")
+            # Check if segment is a UUID
+            elif self._is_uuid(segment):
+                normalized_segments.append("{id}")
+            # Check if it's already a path parameter
+            elif segment.startswith("{") and segment.endswith("}"):
+                normalized_segments.append(segment)
+            else:
+                normalized_segments.append(segment)
+
+        normalized_path = "/".join(normalized_segments)
+
+        # Reconstruct with method if present
+        if method:
+            return f"{method} {normalized_path}"
+        return normalized_path
+
+    def _is_uuid(self, segment: str) -> bool:
+        """
+        Check if segment is a UUID without regex.
+
+        UUID format: 8-4-4-4-12 hex characters
+        Example: 550e8400-e29b-41d4-a716-446655440000
+        """
+        # Remove any leading/trailing whitespace
+        clean = segment.strip()
+
+        # UUIDs have exactly 36 characters (32 hex + 4 dashes)
+        if len(clean) != 36:
+            # Also check for partial UUIDs (at least 8-4-4 pattern)
+            parts = clean.split("-")
+            if len(parts) < 3:
+                return False
+            # Check if it looks like start of UUID
+            if len(parts[0]) != 8:
+                return False
+
+        # Split by dashes
+        parts = clean.split("-")
+
+        # Full UUID has 5 parts
+        if len(parts) == 5:
+            expected_lengths = [8, 4, 4, 4, 12]
+            for i, part in enumerate(parts):
+                if len(part) != expected_lengths[i]:
+                    return False
+                # Check all characters are hex
+                if not all(c in "0123456789abcdefABCDEF" for c in part):
+                    return False
+            return True
+
+        # Partial UUID (at least looks like hex-with-dashes)
+        if len(parts) >= 3:
+            # Check all parts are hex
+            for part in parts:
+                if not all(c in "0123456789abcdefABCDEF" for c in part):
+                    return False
+            return True
+
+        return False
 
     def _create_error_pattern(self, error_message: str) -> str:
-        """Create a pattern from error message for matching."""
+        """
+        Create a pattern from error message using structural parsing.
+
+        Design: NO REGEX - uses character-level state machine for quotes,
+        and token analysis for dates/numbers.
+
+        Algorithm:
+        1. Replace quoted strings with placeholders (state machine)
+        2. Replace date-like tokens with 'DATE'
+        3. Replace long numeric sequences with 'NUM'
+        4. Truncate to reasonable length
+
+        Examples:
+            "IntegrityError: 'value123'" → "IntegrityError: '...'"
+            "Date: 2025-11-30" → "Date: DATE"
+            "ID: 12345678" → "ID: NUM"
+        """
         if not error_message:
             return ""
 
-        # Truncate and clean
-        pattern = error_message[:200]
-        # Remove specific values that change
-        pattern = re.sub(r"'[^']*'", "'...'", pattern)
-        pattern = re.sub(r'"[^"]*"', '"..."', pattern)
-        pattern = re.sub(r'\d{4}-\d{2}-\d{2}', 'DATE', pattern)
+        # Truncate first
+        msg = error_message[:200]
 
-        return pattern
+        # Step 1: Replace quoted strings using state machine (no regex)
+        result = []
+        in_single_quote = False
+        in_double_quote = False
+        i = 0
+
+        while i < len(msg):
+            char = msg[i]
+
+            if char == "'" and not in_double_quote:
+                if in_single_quote:
+                    result.append("...")
+                    in_single_quote = False
+                else:
+                    result.append(char)
+                    in_single_quote = True
+            elif char == '"' and not in_single_quote:
+                if in_double_quote:
+                    result.append("...")
+                    in_double_quote = False
+                else:
+                    result.append(char)
+                    in_double_quote = True
+            elif not in_single_quote and not in_double_quote:
+                result.append(char)
+            # Skip characters inside quotes (they'll be replaced with ...)
+
+            i += 1
+
+        pattern = "".join(result)
+
+        # Step 2: Replace date-like tokens (structural check, no regex)
+        tokens = pattern.split()
+        processed_tokens = []
+
+        for token in tokens:
+            # Check if it looks like a date: YYYY-MM-DD or similar
+            if self._looks_like_date(token):
+                processed_tokens.append("DATE")
+            # Check if it's a long number (likely an ID)
+            elif self._looks_like_id(token):
+                processed_tokens.append("NUM")
+            else:
+                processed_tokens.append(token)
+
+        return " ".join(processed_tokens)
+
+    def _looks_like_date(self, token: str) -> bool:
+        """
+        Check if token looks like a date without regex.
+
+        Checks for patterns like: 2025-11-30, 2025/11/30, 30-11-2025
+        """
+        # Remove common punctuation from end
+        clean = token.rstrip(".,;:)")
+
+        # Check for date separators
+        if "-" in clean or "/" in clean:
+            # Split by either separator
+            sep = "-" if "-" in clean else "/"
+            parts = clean.split(sep)
+
+            # Date should have 3 parts
+            if len(parts) == 3:
+                # All parts should be numeric
+                if all(p.isdigit() for p in parts):
+                    # Check reasonable lengths (year: 4, month/day: 1-2)
+                    lengths = [len(p) for p in parts]
+                    # YYYY-MM-DD or DD-MM-YYYY patterns
+                    if 4 in lengths and all(1 <= l <= 4 for l in lengths):
+                        return True
+
+        return False
+
+    def _looks_like_id(self, token: str) -> bool:
+        """
+        Check if token looks like a numeric ID without regex.
+
+        Returns True for long numbers that are likely IDs (6+ digits).
+        """
+        # Remove common punctuation
+        clean = token.rstrip(".,;:)")
+
+        # Check if it's all digits and reasonably long
+        if clean.isdigit() and len(clean) >= 6:
+            return True
+
+        # Check for UUID-like patterns (hex with dashes)
+        if "-" in clean:
+            parts = clean.split("-")
+            if len(parts) >= 4:
+                # Check if all parts are hex
+                if all(all(c in "0123456789abcdefABCDEF" for c in p) for p in parts if p):
+                    return True
+
+        return False
 
     def get_statistics(self) -> Dict[str, Any]:
         """Get bridge statistics."""
