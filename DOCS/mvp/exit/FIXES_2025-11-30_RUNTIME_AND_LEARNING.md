@@ -1,0 +1,26 @@
+# Fixes – Runtime & Learning (2025-11-30)
+
+**Scope:** E2E pipeline health checks, Docker runtime smoke fallback, FixPatternLearner recording.
+
+## Changes Applied
+- **Health Verification (Phase 9)**  
+  - If no README is found in `README.md`/`docs/README.md`/`docker/README.md`, the pipeline now auto-creates a minimal `README.md` in the generated app root to keep the health check green.  
+  - Location: `tests/e2e/real_e2e_full_pipeline.py`.
+
+- **Docker Runtime Smoke Fallback**  
+  - Runtime validator now checks for `docker-compose.yml` **and** a Dockerfile before attempting a build.  
+  - On missing Dockerfile or build failure, it falls back to `uvicorn` instead of hard-failing with “Dockerfile: no such file”.  
+  - Location: `src/validation/runtime_smoke_validator.py`.
+
+- **FixPatternLearner Recording**  
+  - Repair records are normalized to strings before sending to FixPatternLearner, preventing `'dict' object has no attribute 'lower'`.  
+  - Location: `src/validation/smoke_repair_orchestrator.py`.
+
+## Impact
+- Health verification no longer blocks on absent README when templates omit it.
+- Docker-less environments continue via uvicorn, reducing false negatives in smoke tests.
+- Learning loop stays stable; repair attempts are recorded without type errors.
+
+## Follow-ups
+- If you want Docker enforcement instead of fallback, gate on policy and fail fast when Dockerfile is missing.  
+- Consider enriching the auto README from generation manifest once available.

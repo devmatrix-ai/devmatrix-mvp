@@ -1292,14 +1292,15 @@ class SmokeRepairOrchestrator:
                 # Determine if iteration was successful overall
                 success = len([r for r in repairs if r.success]) > len(repairs) // 2
 
+                # Convert repairs to strings to match FixPatternLearner expectations.
+                repair_descriptions = [
+                    f"{r.fix_type}: {r.description}" if hasattr(r, "description") else str(r)
+                    for r in repairs
+                ]
+
                 record_id = self.fix_pattern_learner.record_repair_attempt(
                     violations=violations,
-                    repairs=[{
-                        'fix_type': r.fix_type,
-                        'file_path': r.file_path,
-                        'description': r.description,
-                        'success': r.success
-                    } for r in repairs],
+                    repairs=repair_descriptions,
                     success=success,
                     iteration=iteration
                 )

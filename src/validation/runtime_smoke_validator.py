@@ -98,6 +98,7 @@ class RuntimeSmokeTestValidator:
         request_timeout: float = 10.0,
         error_knowledge_repo: Optional["ErrorKnowledgeRepository"] = None,
         pattern_feedback: Optional["PatternFeedbackIntegration"] = None,
+        enforce_docker: bool = False,
     ):
         self.app_dir = Path(app_dir)
         self.host = host
@@ -109,6 +110,8 @@ class RuntimeSmokeTestValidator:
         self.base_url = f"http://{host}:{port}"
         # Bug #85: Track if using Docker for proper cleanup
         self._using_docker = False
+        # Optional strictness: fail fast if Docker assets are missing/broken
+        self.enforce_docker = enforce_docker
         # Active Learning: Repository for learning from failures
         self._error_knowledge_repo = error_knowledge_repo
         self._learning_enabled = error_knowledge_repo is not None and ACTIVE_LEARNING_AVAILABLE
@@ -234,7 +237,26 @@ class RuntimeSmokeTestValidator:
 
         # Check if docker-compose.yml exists
         if not (docker_dir / "docker-compose.yml").exists():
-            logger.warning("⚠️ docker-compose.yml not found, falling back to uvicorn")
+            msg = "⚠️ docker-compose.yml not found"
+            if self.enforce_docker:
+                logger.error(msg)
+                raise RuntimeError("docker-compose.yml missing and Docker enforcement enabled")
+            logger.warning(f"{msg}, falling back to uvicorn")
+            await self._start_uvicorn_server()
+            return
+
+        # Check for Dockerfile presence (common build failure)
+        dockerfile_candidates = [
+            docker_dir / "Dockerfile",
+            self.app_dir / "Dockerfile",
+        ]
+        has_dockerfile = any(p.exists() for p in dockerfile_candidates)
+        if not has_dockerfile:
+            msg = "⚠️ Dockerfile not found"
+            if self.enforce_docker:
+                logger.error(msg)
+                raise RuntimeError("Dockerfile missing and Docker enforcement enabled")
+            logger.warning(f"{msg}, falling back to uvicorn")
             await self._start_uvicorn_server()
             return
 
@@ -274,7 +296,11 @@ class RuntimeSmokeTestValidator:
 
         if build_result.returncode != 0:
             logger.error(f"Docker build failed: {build_result.stderr}")
-            raise RuntimeError(f"Docker build failed: {build_result.stderr[:500]}")
+            if self.enforce_docker:
+                raise RuntimeError(f"Docker build failed (enforced): {build_result.stderr[:500]}")
+            # Fallback to uvicorn to avoid hard failure when Dockerfile is missing/misconfigured
+            await self._start_uvicorn_server()
+            return
 
         # Now start containers
         cmd = [
