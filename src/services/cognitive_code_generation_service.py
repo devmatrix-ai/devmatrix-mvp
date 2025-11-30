@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 import logging
 import os
+import time
 
 # Local imports
 from src.cognitive.ir.application_ir import ApplicationIR
@@ -103,6 +104,112 @@ class CognitiveGenerationMetrics:
         }
 
 
+class CognitiveCircuitBreaker:
+    """
+    Circuit Breaker for cognitive pass failure isolation.
+
+    Disables cognitive pass after repeated failures to prevent
+    cascading failures and allow recovery.
+
+    States:
+    - closed: Normal operation, cognitive pass enabled
+    - open: Cognitive pass disabled due to failures
+    - half-open: Testing if cognitive pass has recovered
+
+    Reference: COGNITIVE_CODE_GENERATION_PROPOSAL.md v2.1
+    """
+
+    def __init__(
+        self,
+        failure_threshold: int = 5,
+        reset_timeout: int = 300,  # 5 minutes
+    ):
+        """
+        Initialize circuit breaker.
+
+        Args:
+            failure_threshold: Failures before opening circuit
+            reset_timeout: Seconds before attempting recovery
+        """
+        self.failures = 0
+        self.successes = 0
+        self.threshold = failure_threshold
+        self.reset_timeout = reset_timeout
+        self.last_failure_time: Optional[float] = None
+        self.state = "closed"
+
+    def record_success(self) -> None:
+        """Record successful cognitive pass."""
+        self.successes += 1
+        if self.state == "half-open":
+            # Recovery successful, close circuit
+            self.state = "closed"
+            self.failures = 0
+            logger.info("Circuit breaker CLOSED - cognitive pass recovered")
+
+    def record_failure(self) -> None:
+        """Record failed cognitive pass."""
+        self.failures += 1
+        self.last_failure_time = time.time()
+
+        if self.state == "half-open":
+            # Recovery failed, reopen circuit
+            self.state = "open"
+            logger.warning("Circuit breaker REOPENED - recovery failed")
+        elif self.failures >= self.threshold:
+            self.state = "open"
+            logger.warning(
+                f"Circuit breaker OPEN after {self.failures} failures - "
+                f"cognitive pass disabled for {self.reset_timeout}s"
+            )
+
+    def should_attempt(self) -> bool:
+        """
+        Check if cognitive pass should be attempted.
+
+        Returns:
+            True if cognitive pass should be attempted
+        """
+        if self.state == "closed":
+            return True
+
+        if self.state == "open":
+            # Check if enough time has passed to try recovery
+            if self.last_failure_time is not None:
+                elapsed = time.time() - self.last_failure_time
+                if elapsed > self.reset_timeout:
+                    self.state = "half-open"
+                    logger.info("Circuit breaker HALF-OPEN - testing recovery")
+                    return True
+            return False
+
+        # half-open: allow one attempt
+        return True
+
+    def get_state(self) -> str:
+        """Get current circuit breaker state."""
+        return self.state
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get circuit breaker statistics."""
+        return {
+            "state": self.state,
+            "failures": self.failures,
+            "successes": self.successes,
+            "threshold": self.threshold,
+            "reset_timeout": self.reset_timeout,
+            "last_failure_time": self.last_failure_time,
+        }
+
+    def reset(self) -> None:
+        """Reset circuit breaker to initial state."""
+        self.failures = 0
+        self.successes = 0
+        self.last_failure_time = None
+        self.state = "closed"
+        logger.info("Circuit breaker RESET")
+
+
 class CognitiveCodeGenerationService:
     """
     Service for cognitive code generation.
@@ -140,6 +247,8 @@ class CognitiveCodeGenerationService:
     ENV_BASELINE_MODE = "COGNITIVE_BASELINE_MODE"
     ENV_CACHE_TTL = "COGNITIVE_CACHE_TTL_HOURS"
     ENV_MAX_PATTERNS = "COGNITIVE_MAX_PATTERNS"
+    ENV_CIRCUIT_BREAKER_THRESHOLD = "COGNITIVE_CIRCUIT_BREAKER_THRESHOLD"
+    ENV_CIRCUIT_BREAKER_TIMEOUT = "COGNITIVE_CIRCUIT_BREAKER_TIMEOUT"
 
     def __init__(
         self,
@@ -172,6 +281,14 @@ class CognitiveCodeGenerationService:
         self._baseline_mode = self._get_env_bool(self.ENV_BASELINE_MODE, False)
         self._cache_ttl = int(os.getenv(self.ENV_CACHE_TTL, "24"))
         self._max_patterns = int(os.getenv(self.ENV_MAX_PATTERNS, "5"))
+        cb_threshold = int(os.getenv(self.ENV_CIRCUIT_BREAKER_THRESHOLD, "5"))
+        cb_timeout = int(os.getenv(self.ENV_CIRCUIT_BREAKER_TIMEOUT, "300"))
+
+        # Initialize circuit breaker
+        self._circuit_breaker = CognitiveCircuitBreaker(
+            failure_threshold=cb_threshold,
+            reset_timeout=cb_timeout,
+        )
 
         # Initialize cache
         self._cache = CognitiveCache(
@@ -248,9 +365,6 @@ class CognitiveCodeGenerationService:
         Returns:
             EnhancementResult with enhanced content
         """
-        import time
-        start_time = time.time()
-
         # If disabled, return unchanged
         if not self._enabled:
             return EnhancementResult(
@@ -260,12 +374,27 @@ class CognitiveCodeGenerationService:
                 success=True,
             )
 
+        # Check circuit breaker
+        if not self._circuit_breaker.should_attempt():
+            logger.debug(
+                f"Circuit breaker OPEN - skipping cognitive pass for {file_path}"
+            )
+            return EnhancementResult(
+                file_path=file_path,
+                original_content=content,
+                enhanced_content=content,
+                success=True,  # Not a failure, just skipped
+            )
+
         try:
             # Run cognitive pass
             result = await self._cognitive_pass.enhance_file(
                 file_path=file_path,
                 content=content,
             )
+
+            # Record success in circuit breaker
+            self._circuit_breaker.record_success()
 
             # Update metrics
             self._update_metrics(result)
@@ -279,6 +408,9 @@ class CognitiveCodeGenerationService:
 
         except Exception as e:
             logger.error(f"Cognitive processing failed for {file_path}: {e}")
+
+            # Record failure in circuit breaker
+            self._circuit_breaker.record_failure()
 
             # Graceful degradation: return original
             return EnhancementResult(
@@ -382,6 +514,18 @@ class CognitiveCodeGenerationService:
         """Get all file results."""
         return self._file_results
 
+    def get_circuit_breaker_state(self) -> str:
+        """Get circuit breaker state."""
+        return self._circuit_breaker.get_state()
+
+    def get_circuit_breaker_statistics(self) -> Dict[str, Any]:
+        """Get circuit breaker statistics."""
+        return self._circuit_breaker.get_statistics()
+
+    def reset_circuit_breaker(self) -> None:
+        """Reset circuit breaker to closed state."""
+        self._circuit_breaker.reset()
+
     def get_summary(self) -> Dict[str, Any]:
         """
         Get comprehensive summary of cognitive generation.
@@ -392,6 +536,7 @@ class CognitiveCodeGenerationService:
             "metrics": self.get_metrics_dict(),
             "cache": self.get_cache_statistics(),
             "pass": self.get_pass_statistics(),
+            "circuit_breaker": self.get_circuit_breaker_statistics(),
             "version": IRCentricCognitivePass.VERSION,
             "timestamp": datetime.now().isoformat(),
         }

@@ -58,6 +58,18 @@ except ImportError:
     get_pattern_feedback_integration = None
     PATTERN_FEEDBACK_AVAILABLE = False
 
+# Bug #161 Fix: Bridge to GenerationAntiPattern for code generation learning
+try:
+    from src.learning.error_knowledge_bridge import (
+        bridge_smoke_error_to_pattern,
+        get_error_knowledge_bridge,
+    )
+    ERROR_KNOWLEDGE_BRIDGE_AVAILABLE = True
+except ImportError:
+    bridge_smoke_error_to_pattern = None
+    get_error_knowledge_bridge = None
+    ERROR_KNOWLEDGE_BRIDGE_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -949,6 +961,32 @@ class RuntimeSmokeTestValidator:
                 logger.debug(f"🧠 Active Learning: Notified PatternFeedback for {endpoint_path}")
             except Exception as e:
                 logger.warning(f"⚠️ Active Learning (PatternFeedback) failed (non-blocking): {e}")
+
+        # Path 3: Bug #161 Fix - Bridge to GenerationAntiPattern for code generation learning
+        # This is the CRITICAL path that enables IRCentricCognitivePass to query learned errors
+        if ERROR_KNOWLEDGE_BRIDGE_AVAILABLE and bridge_smoke_error_to_pattern:
+            try:
+                bridge_result = bridge_smoke_error_to_pattern(
+                    endpoint_path=endpoint_path,
+                    error_type=error_type,
+                    error_message=error_message,
+                    exception_class=violation.get("exception_class"),
+                    entity_name=entity_name,
+                    failed_code=result.stack_trace,
+                    status_code=result.status_code,
+                )
+                if bridge_result.success:
+                    log_msg = "new" if bridge_result.is_new else "existing"
+                    logger.debug(
+                        f"🌉 Active Learning: Bridged to GenerationAntiPattern ({log_msg}) "
+                        f"for {endpoint_path}"
+                    )
+                else:
+                    logger.warning(
+                        f"⚠️ Active Learning (Bridge) incomplete: {bridge_result.message}"
+                    )
+            except Exception as e:
+                logger.warning(f"⚠️ Active Learning (Bridge) failed (non-blocking): {e}")
 
     def _infer_pattern_category_from_file(self, file_path: str) -> str:
         """Infer pattern category from file path."""

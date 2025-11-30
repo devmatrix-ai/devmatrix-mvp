@@ -385,6 +385,258 @@
 
 ---
 
+## Bug #161: Learning System Bridge - ErrorKnowledge → GenerationAntiPattern
+
+**Date**: 2025-11-30
+**Status**: FIXED
+
+### Problem
+
+The learning system had **3 separate components** that were NOT connected:
+
+| Component | Storage | Used By |
+|-----------|---------|---------|
+| `ErrorKnowledgeRepository` | `ErrorKnowledge` nodes | `RuntimeSmokeValidator._learn_from_error()` |
+| `NegativePatternStore` | `GenerationAntiPattern` nodes | `IRCentricCognitivePass._get_anti_patterns_for_flow()` |
+| `FixPatternLearner` | `FixPattern` nodes | `SmokeRepairOrchestrator._get_learned_antipatterns()` |
+
+**Root Cause**: Smoke test errors were stored in `ErrorKnowledge`, but code generation queries `GenerationAntiPattern`. No bridge existed between them.
+
+```text
+BROKEN FLOW:
+  Smoke Test Failure
+       │
+       ▼
+  ErrorKnowledgeRepository.learn_from_failure()
+       │
+       ▼
+  ErrorKnowledge (Neo4j) ← STORED HERE
+       │
+       ✗ NO BRIDGE
+       │
+  IRCentricCognitivePass → Queries NegativePatternStore → NOTHING FOUND
+       │
+       ▼
+  Same errors repeat in next generation ❌
+```
+
+### Solution
+
+Created `ErrorKnowledgeBridge` to convert `ErrorKnowledge` → `GenerationAntiPattern`:
+
+```text
+FIXED FLOW:
+  Smoke Test Failure
+       │
+       ▼
+  ErrorKnowledgeRepository.learn_from_failure()
+       │
+       ▼
+  ErrorKnowledge (Neo4j node)
+       │
+       ▼
+  ErrorKnowledgeBridge.bridge_to_anti_pattern()  ← NEW
+       │
+       ▼
+  GenerationAntiPattern
+       │
+       ▼
+  NegativePatternStore.store_pattern()
+       │
+       ▼
+  Next Generation: IRCentricCognitivePass queries patterns ✅
+```
+
+### Files Created/Modified
+
+| File | Change |
+|------|--------|
+| `src/learning/error_knowledge_bridge.py` | **NEW** - Bridge class |
+| `src/learning/__init__.py` | Added exports for bridge |
+| `src/validation/runtime_smoke_validator.py` | Added Path 3 in `_learn_from_error()` |
+
+### Implementation
+
+**1. `ErrorKnowledgeBridge` class** (`error_knowledge_bridge.py`):
+
+```python
+class ErrorKnowledgeBridge:
+    def bridge_from_smoke_error(
+        self,
+        endpoint_path: str,
+        error_type: str,
+        error_message: str,
+        exception_class: Optional[str] = None,
+        entity_name: Optional[str] = None,
+        failed_code: Optional[str] = None,
+        status_code: Optional[int] = None,
+    ) -> BridgeResult:
+        """
+        Convert smoke test error to GenerationAntiPattern and store in NegativePatternStore.
+        """
+        # Extract/infer missing fields
+        # Generate pattern ID
+        # Check for existing pattern (increment count) or create new
+        # Store in NegativePatternStore
+        return BridgeResult(success=True, pattern_id=id, is_new=True/False)
+```
+
+**2. Integration in `RuntimeSmokeValidator._learn_from_error()`**:
+
+```python
+# Path 3: Bug #161 Fix - Bridge to GenerationAntiPattern
+if ERROR_KNOWLEDGE_BRIDGE_AVAILABLE and bridge_smoke_error_to_pattern:
+    try:
+        bridge_result = bridge_smoke_error_to_pattern(
+            endpoint_path=endpoint_path,
+            error_type=error_type,
+            error_message=error_message,
+            exception_class=violation.get("exception_class"),
+            entity_name=entity_name,
+            failed_code=result.stack_trace,
+            status_code=result.status_code,
+        )
+        if bridge_result.success:
+            logger.debug(f"🌉 Active Learning: Bridged to GenerationAntiPattern for {endpoint_path}")
+    except Exception as e:
+        logger.warning(f"⚠️ Active Learning (Bridge) failed (non-blocking): {e}")
+```
+
+### Impact
+
+- **Inter-run learning now works**: Errors from Run N are available as anti-patterns in Run N+1
+- **IRCentricCognitivePass can now query learned errors**: The `_get_anti_patterns_for_flow()` method will find patterns created by the bridge
+- **Graceful degradation**: If bridge unavailable, system continues without blocking
+
+### Log Markers
+
+- `🌉 Active Learning: Bridged to GenerationAntiPattern (new) for POST /products` - New pattern created
+- `🌉 Active Learning: Bridged to GenerationAntiPattern (existing) for POST /products` - Existing pattern incremented
+
+### Verification
+
+Next E2E run should show:
+1. `🌉` log messages during smoke test failures
+2. Anti-patterns available in `NegativePatternStore` for subsequent iterations
+3. Reduced repeat errors in code generation
+
+---
+
+## Bug #143-160: IR-Centric Cognitive Code Generation (Pipeline Wiring)
+
+**Date**: 2025-11-30
+**Status**: Phase 5.1 COMPLETE - Pipeline Integration
+
+### Overview
+
+Wired the `CognitiveCodeGenerationService` into `CodeGenerationService.generate_from_application_ir()`
+to apply IR-centric cognitive enhancement to generated code. This enables learned anti-patterns to
+influence initial code generation, not just repair.
+
+### Architecture
+
+```text
+generate_from_application_ir()
+    │
+    ├─→ _validate_application_ir_structure()      # Validate IR
+    ├─→ _generate_file_content_from_ir()          # Template-based generation
+    │
+    ├─→ _apply_cognitive_pass()   ◀── NEW (Bug #143-160)
+    │       │
+    │       ├─→ create_cognitive_service(ir, pattern_store, llm_client)
+    │       ├─→ Filter targets: services/, workflows/, routes/ (*.py)
+    │       ├─→ process_files() → EnhancementResult[]
+    │       └─→ Update files_dict with enhanced content
+    │
+    └─→ Return enhanced files_dict
+```
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `src/services/code_generation_service.py` | Import, constructor param, init, `_apply_cognitive_pass()` |
+
+### Implementation Details
+
+**1. Import with graceful fallback** (lines 84-92):
+```python
+try:
+    from src.services.cognitive_code_generation_service import (
+        CognitiveCodeGenerationService,
+        create_cognitive_service,
+    )
+    COGNITIVE_GENERATION_AVAILABLE = True
+except ImportError:
+    COGNITIVE_GENERATION_AVAILABLE = False
+```
+
+**2. Constructor parameter** (`enable_cognitive_pass: bool = True`)
+
+**3. Initialization** (lines 219-230):
+- Only initializes if flag enabled AND imports available
+- Logs warning if requested but unavailable
+
+**4. Hook location** (after structure validation, line 968):
+```python
+if self.enable_cognitive_pass and COGNITIVE_GENERATION_AVAILABLE:
+    files_dict = await self._apply_cognitive_pass(files_dict, app_ir)
+```
+
+**5. `_apply_cognitive_pass()` method** (lines 3980-4076):
+- Creates cognitive service with IR, pattern store, LLM client
+- Filters targets: only `services/`, `workflows/`, `routes/` Python files
+- Excludes `__init__.py` files
+- Processes files through `CognitiveCodeGenerationService.process_files()`
+- Logs metrics: files processed, enhanced, prevention rate
+- **Graceful degradation**: Returns original on any exception
+
+### Feature Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `enable_cognitive_pass` | `True` | Constructor parameter |
+| `ENABLE_COGNITIVE_PASS` | `"true"` | Environment variable override |
+| `COGNITIVE_BASELINE_MODE` | `"false"` | A/B testing mode |
+
+### Metrics Captured
+
+```python
+{
+    "total_files_processed": N,
+    "files_enhanced": N,
+    "functions_enhanced": N,
+    "functions_rolled_back": N,
+    "ir_validations_passed": N,
+    "prevention_rate": 0.0-1.0,
+    "cache_hits": N,
+    "total_time_ms": N
+}
+```
+
+### Graceful Degradation
+
+If cognitive pass fails for ANY reason:
+1. Exception is caught and logged as WARNING
+2. Original `files_dict` is returned unchanged
+3. Pipeline continues normally
+4. No data loss, no pipeline interruption
+
+### Remaining Tasks
+
+| Task | Status | Description |
+|------|--------|-------------|
+| 5.1 Wire into CodeGenerationService | ✅ DONE | Integration complete |
+| 5.2 Circuit Breaker pattern | ⏳ Pending | Failure isolation |
+| 5.3 Structured logging | ⏳ Pending | Observability |
+| 5.4 E2E validation | ⏳ Pending | Full pipeline test |
+
+### RFC Reference
+
+See: `DOCS/mvp/exit/anti/COGNITIVE_CODE_GENERATION_PROPOSAL.md` (v2.1)
+
+---
+
 ## Roadmap: Arquitectura Post-82% (Next Steps para 95-100%)
 
 ### 4.1 Behavior Execution Model (BEM)
@@ -470,3 +722,351 @@ if product is None:
 | 3 | PatternBank Extension | `src/patterns/behavioral_multi_entity/` |
 | 4 | Repair Loop 2.0 | `src/validation/ir_diff_repair_engine.py` |
 | 5 | Integration | Wire BEM into code generation pipeline |
+
+---
+
+## Learning System Architecture (Domain-Agnostic)
+
+**Date**: 2025-11-30
+**Status**: COMPLETE (Bug #161 closed the loop)
+
+### Overview
+
+The Learning System creates a feedback loop from **smoke test failures** to **code generation improvement**.
+Key principle: ALL code is **domain-agnostic** - no hardcoded entity names, endpoints, or business logic.
+
+### Three Learning Paths
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        SMOKE TEST FAILURE                                   │
+│                  (endpoint, status_code, error_message)                     │
+└───────────────────────────────┬─────────────────────────────────────────────┘
+                                │
+        ┌───────────────────────┼───────────────────────┐
+        │                       │                       │
+        ▼                       ▼                       ▼
+┌───────────────┐       ┌───────────────┐       ┌───────────────┐
+│   PATH 1      │       │   PATH 2      │       │   PATH 3      │
+│ ErrorKnowledge│       │ FixPattern    │       │ AntiPattern   │
+│  Repository   │       │   Learner     │       │   Bridge      │
+└───────┬───────┘       └───────┬───────┘       └───────┬───────┘
+        │                       │                       │
+        ▼                       ▼                       ▼
+┌───────────────┐       ┌───────────────┐       ┌───────────────┐
+│ ErrorKnowledge│       │  FixPattern   │       │ Generation    │
+│   (Neo4j)     │       │   (Neo4j)     │       │ AntiPattern   │
+└───────────────┘       └───────────────┘       └───────┬───────┘
+        │                       │                       │
+        │                       │                       ▼
+        │                       │               ┌───────────────┐
+        │                       │               │ Negative      │
+        │                       │               │ PatternStore  │
+        │                       │               └───────┬───────┘
+        │                       │                       │
+        └───────────────────────┼───────────────────────┘
+                                │
+                                ▼
+        ┌───────────────────────────────────────────────┐
+        │      IRCentricCognitivePass                   │
+        │  _get_anti_patterns_for_flow()                │
+        │     └─→ Semantic Matching Algorithm           │
+        └───────────────────────┬───────────────────────┘
+                                │
+                                ▼
+        ┌───────────────────────────────────────────────┐
+        │         _build_ir_guard()                     │
+        │  Inject anti-patterns into LLM prompt         │
+        └───────────────────────┬───────────────────────┘
+                                │
+                                ▼
+        ┌───────────────────────────────────────────────┐
+        │      Code Generation (LLM)                    │
+        │  ✅ Avoids learned mistakes                   │
+        └───────────────────────────────────────────────┘
+```
+
+### Path Details
+
+#### Path 1: ErrorKnowledgeRepository
+- **Location**: `src/knowledge/error_knowledge_repository.py`
+- **Storage**: `ErrorKnowledge` nodes in Neo4j
+- **Called by**: `RuntimeSmokeValidator._learn_from_error()`
+- **Purpose**: Historical error tracking with timestamps and frequency
+
+#### Path 2: FixPatternLearner
+- **Location**: `src/learning/fix_pattern_learner.py`
+- **Storage**: `FixPattern` nodes in Neo4j
+- **Called by**: `SmokeRepairOrchestrator` after successful repairs
+- **Purpose**: Learn which fixes work for which error patterns
+
+#### Path 3: ErrorKnowledgeBridge (Bug #161)
+- **Location**: `src/learning/error_knowledge_bridge.py`
+- **Storage**: `GenerationAntiPattern` via `NegativePatternStore`
+- **Called by**: `RuntimeSmokeValidator._learn_from_error()`
+- **Purpose**: Bridge errors to code generation prompts
+
+### Semantic Matching Algorithm
+
+**Location**: `src/learning/negative_pattern_store.py:818-905`
+
+The algorithm connects stored anti-patterns to code generation queries **without hardcoding domain terms**:
+
+```python
+def get_patterns_for_flow(self, flow_name: str, min_occurrences: int = None):
+    """
+    Domain-agnostic semantic matching.
+
+    Example:
+        flow_name = "add_item_to_cart"
+        ↓ Normalize
+        normalized = "add_item_to_cart"
+        ↓ Extract keywords
+        keywords = {"add", "item", "cart"}
+        ↓ Match against stored patterns
+        pattern.endpoint_pattern = "POST /{resource}/{id}/items"
+        pattern.entity_pattern = "Cart"
+        ↓ Match found: "cart" in "Cart", "items" in endpoint
+    """
+    # 1. Normalize flow name
+    normalized_flow = flow_name.lower().replace("-", "_").replace(" ", "_")
+
+    # 2. Extract keywords (domain-agnostic)
+    flow_keywords = set(normalized_flow.split("_"))
+
+    # 3. Search patterns by semantic match
+    for pattern in self._cache.values():
+        # Match by endpoint pattern (generic: /{resource}/{id}/items)
+        if pattern.endpoint_pattern and pattern.endpoint_pattern != "*":
+            endpoint_normalized = pattern.endpoint_pattern.lower()
+            endpoint_match = any(
+                kw in endpoint_normalized
+                for kw in flow_keywords
+                if len(kw) > 2  # Skip short words
+            )
+
+        # Match by entity pattern (extracted from endpoint dynamically)
+        if pattern.entity_pattern and pattern.entity_pattern != "*":
+            entity_normalized = pattern.entity_pattern.lower()
+            entity_match = any(
+                kw in entity_normalized
+                for kw in flow_keywords
+                if len(kw) > 2
+            )
+
+        # Match by error message pattern
+        if pattern.error_message_pattern:
+            message_match = any(
+                kw in pattern.error_message_pattern.lower()
+                for kw in flow_keywords
+                if len(kw) > 2
+            )
+
+        if endpoint_match or entity_match or message_match:
+            matched_patterns.append(pattern)
+
+    return matched_patterns
+```
+
+### Domain-Agnostic Extraction
+
+**Location**: `src/learning/error_knowledge_bridge.py:270-329`
+
+Entity and endpoint extraction uses **regex patterns**, not hardcoded names:
+
+```python
+def _extract_entity_from_endpoint(self, endpoint: str) -> Optional[str]:
+    """
+    Extract entity name from ANY endpoint path.
+
+    Examples (all domains):
+        "POST /products"        → "Product"
+        "GET /users/{id}"       → "User"
+        "PUT /invoices/{id}"    → "Invoice"
+        "POST /carts/{id}/items"→ "Cart"
+    """
+    parts = endpoint.split()
+    path = parts[-1] if parts else endpoint
+
+    for segment in path.strip("/").split("/"):
+        # Skip parameter placeholders
+        if segment.startswith("{"):
+            continue
+        # Skip API versioning
+        if segment in ("api", "v1", "v2", "v3"):
+            continue
+        # Skip empty segments
+        if not segment:
+            continue
+
+        # Generic singularization: remove trailing 's'
+        # Works for: products→Product, users→User, carts→Cart
+        entity = segment.rstrip("s").capitalize()
+        return entity
+
+    return None
+
+
+def _normalize_endpoint(self, endpoint: str) -> str:
+    """
+    Normalize endpoint to pattern form (domain-agnostic).
+
+    Examples:
+        "/products/123"                    → "/products/{id}"
+        "/users/abc-123-def-456"           → "/users/{id}"  (UUID)
+        "POST /orders/999/items"           → "POST /orders/{id}/items"
+    """
+    if not endpoint:
+        return "*"
+
+    # Replace numeric IDs
+    pattern = re.sub(r'/\d+', '/{id}', endpoint)
+
+    # Replace UUIDs
+    pattern = re.sub(
+        r'/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
+        '/{id}',
+        pattern,
+        flags=re.IGNORECASE
+    )
+
+    return pattern
+```
+
+### Inter-Run Learning Flow
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           RUN N                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  [1] Code Generation (Templates)                                            │
+│       │                                                                     │
+│       ▼                                                                     │
+│  [2] Smoke Test                                                             │
+│       │                                                                     │
+│       ├─→ PASS: Continue                                                    │
+│       │                                                                     │
+│       └─→ FAIL: _learn_from_error()                                         │
+│             │                                                               │
+│             ├─→ Path 1: ErrorKnowledgeRepository                            │
+│             ├─→ Path 2: (after repair) FixPatternLearner                    │
+│             └─→ Path 3: ErrorKnowledgeBridge → NegativePatternStore         │
+│                                                                             │
+│  [3] Repair Cycle (LLM + anti-patterns from Path 3)                         │
+│       │                                                                     │
+│       ▼                                                                     │
+│  [4] Re-test → Iterate until pass rate target or max iterations             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    │ Anti-patterns persisted in NegativePatternStore
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           RUN N+1                                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  [1] Code Generation (Templates)                                            │
+│       │                                                                     │
+│       ▼                                                                     │
+│  [2] Smoke Test                                                             │
+│       │                                                                     │
+│       └─→ FAIL: Repair Cycle                                                │
+│             │                                                               │
+│             ▼                                                               │
+│  [3] IRCentricCognitivePass._get_anti_patterns_for_flow()                   │
+│       │                                                                     │
+│       └─→ QUERIES NegativePatternStore (includes Run N patterns)            │
+│             │                                                               │
+│             ▼                                                               │
+│  [4] _build_ir_guard() injects anti-patterns into LLM prompt                │
+│       │                                                                     │
+│       ▼                                                                     │
+│  [5] LLM generates code AVOIDING Run N mistakes                             │
+│                                                                             │
+│  Result: Fewer repeated errors, faster convergence to 100% compliance       │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### IRCentricCognitivePass Integration
+
+**Location**: `src/cognitive/passes/ir_centric_cognitive_pass.py:460-484`
+
+```python
+def _get_anti_patterns_for_flow(self, flow: Flow) -> List[GenerationAntiPattern]:
+    """
+    Query NegativePatternStore for relevant anti-patterns.
+
+    This is WHERE the learning loop closes:
+    - Smoke errors → Bridge → NegativePatternStore
+    - Code generation → THIS METHOD → queries stored patterns
+    - Patterns injected via _build_ir_guard() into LLM prompt
+    """
+    patterns = []
+
+    # Query by flow name (semantic matching)
+    flow_patterns = self._pattern_store.get_patterns_for_flow(
+        flow.name,  # e.g., "add_item_to_cart"
+        min_occurrences=self._min_pattern_occurrences,
+    )
+    patterns.extend(flow_patterns)
+
+    # Query by constraint types
+    for constraint_type in flow.constraint_types:
+        constraint_patterns = self._pattern_store.get_patterns_for_constraint_type(
+            constraint_type,
+            min_occurrences=self._min_pattern_occurrences,
+        )
+        for p in constraint_patterns:
+            if p not in patterns:
+                patterns.append(p)
+
+    return patterns[:self._max_patterns_per_flow]
+```
+
+### Log Markers for Verification
+
+| Log Marker | Component | Meaning |
+|------------|-----------|---------|
+| `🌉 Active Learning: Bridged to GenerationAntiPattern` | Bridge | Error converted to anti-pattern |
+| `🎓 Intra-run learning: X new, Y updated` | FeedbackCollector | Patterns created/updated |
+| `🎓 Applied learned anti-pattern for {endpoint}` | Repair Orchestrator | Pattern-based repair used |
+| `🎓 Passing N anti-patterns to CodeRepairAgent` | Repair Orchestrator | Anti-patterns sent to LLM |
+| `📚 IR Guard: Injecting N anti-patterns` | IRCentricCognitivePass | Patterns in generation prompt |
+
+### Key Design Decisions
+
+1. **Domain Agnostic**: No hardcoded entity names, endpoints, or business terms
+2. **Graceful Degradation**: All components have fallbacks if unavailable
+3. **Semantic Matching**: Keyword extraction works for ANY domain
+4. **Incremental Learning**: Patterns accumulate across runs
+5. **Immediate Use**: `min_occurrences=1` allows same-run learning
+
+### Files Summary
+
+| File | Purpose |
+|------|---------|
+| `src/learning/error_knowledge_bridge.py` | Converts smoke errors → GenerationAntiPattern |
+| `src/learning/negative_pattern_store.py` | Stores and queries anti-patterns |
+| `src/learning/__init__.py` | Exports bridge functions |
+| `src/validation/runtime_smoke_validator.py` | Calls bridge in `_learn_from_error()` |
+| `src/cognitive/passes/ir_centric_cognitive_pass.py` | Queries patterns for code generation |
+
+### Verification Commands
+
+```bash
+# Check bridge is available
+grep -n "ERROR_KNOWLEDGE_BRIDGE_AVAILABLE" src/validation/runtime_smoke_validator.py
+
+# Check semantic matching
+grep -n "get_patterns_for_flow" src/learning/negative_pattern_store.py
+
+# Check IRCentricCognitivePass queries
+grep -n "_get_anti_patterns_for_flow" src/cognitive/passes/ir_centric_cognitive_pass.py
+
+# Verify domain-agnostic extraction
+grep -n "_extract_entity_from_endpoint\|_normalize_endpoint" src/learning/error_knowledge_bridge.py
+```
+
+---

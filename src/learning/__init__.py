@@ -59,6 +59,14 @@ from src.learning.feedback_collector import (
     process_smoke_feedback_sync,
 )
 
+# Bug #161 Fix: Bridge from ErrorKnowledge to GenerationAntiPattern
+from src.learning.error_knowledge_bridge import (
+    ErrorKnowledgeBridge,
+    BridgeResult,
+    get_error_knowledge_bridge,
+    bridge_smoke_error_to_pattern,
+)
+
 __all__ = [
     # Pattern Store
     "GenerationAntiPattern",
@@ -81,4 +89,9 @@ __all__ = [
     "FeedbackSessionStats",
     "process_smoke_feedback",
     "process_smoke_feedback_sync",
+    # Error Knowledge Bridge (Bug #161)
+    "ErrorKnowledgeBridge",
+    "BridgeResult",
+    "get_error_knowledge_bridge",
+    "bridge_smoke_error_to_pattern",
 ]

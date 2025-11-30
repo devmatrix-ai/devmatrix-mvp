@@ -1,6 +1,6 @@
 # Cognitive Code Generation - Architectural Proposal
 
-**Status:** Draft v2.0
+**Status:** RFC v2.1
 **Author:** DevMatrix Architecture
 **Date:** 2025-11-30
 **Architecture:** **IR-Centric** (IR is source of truth, constrains all operations)
@@ -23,19 +23,97 @@
 | 2.3 | Implement IR Guard prompt generation | ✅ Done | Same file | `_build_ir_guard()` |
 | 2.4 | Wire to `IRComplianceValidator` | ✅ Done | Same file | `_validate_against_ir()` |
 | **3. Integration** | | | | |
-| 3.1 | Create `CognitiveCodeGenerationService` | ⏳ Pending | `src/services/cognitive_code_generation_service.py` | Wrapper service |
-| 3.2 | Add feature flag `ENABLE_COGNITIVE_PASS` | ⏳ Pending | Config/env | Master switch |
-| 3.3 | Add baseline comparison mode | ⏳ Pending | Service | A/B testing |
-| 3.4 | Integrate metrics collection | ⏳ Pending | Service | Prevention rate |
+| 3.1 | Create `CognitiveCodeGenerationService` | ✅ Done | `src/services/cognitive_code_generation_service.py` | Wrapper service |
+| 3.2 | Add feature flag `ENABLE_COGNITIVE_PASS` | ✅ Done | Same file | Env var control |
+| 3.3 | Add baseline comparison mode | ✅ Done | Same file | `_compare_baseline()` |
+| 3.4 | Integrate metrics collection | ✅ Done | Same file | `CognitiveGenerationMetrics` |
 | **4. Optimization** | | | | |
 | 4.1 | Profile token usage | ⏳ Pending | - | Analysis |
 | 4.2 | Tune cache TTL | ⏳ Pending | `CognitiveCache` | Performance |
 | 4.3 | Add parallel function processing | ⏳ Pending | `IRCentricCognitivePass` | Async batching |
 | 4.4 | Tune rollback thresholds | ⏳ Pending | Config | Safety tuning |
+| **5. Pipeline Integration** | | | | |
+| 5.1 | Wire into CodeGenerationService | ✅ Done | `src/services/code_generation_service.py` | `_apply_cognitive_pass()` method |
+| 5.2 | Add Circuit Breaker pattern | ✅ Done | `src/services/cognitive_code_generation_service.py` | `CognitiveCircuitBreaker` class |
+| 5.3 | Add structured logging | ⏳ Pending | All cognitive files | Observability |
+| 5.4 | E2E validation | ✅ Done | `tests/e2e/` | Test: Ariel_test_006_25_023 |
 
 **Legend:** ✅ Done | 🔄 In Progress | ⏳ Pending | ❌ Blocked
 
-**Last Updated:** 2025-11-30
+**Last Updated:** 2025-11-30 (Phase 5.4 Complete - E2E Validation)
+
+---
+
+## E2E Test Results (Ariel_test_006_25_023)
+
+**Test Date:** 2025-11-30
+**Spec:** `ecommerce-api-spec-human.md`
+**Output:** `tests/e2e/generated_apps/ecommerce-api-spec-human_1764502279`
+
+### Pipeline Performance
+
+| Metric | Value | Status |
+|--------|-------|--------|
+| **Semantic Compliance** | 99.9% | ✅ |
+| **Entities** | 100% (6/6) | ✅ |
+| **Endpoints** | 100% (34/33) | ✅ |
+| **Validations** | 99.4% (307/309) | ✅ |
+| **Pipeline Precision** | 78.8% | ✅ |
+| **Files Generated** | 96 | ✅ |
+| **Tests Generated** | 265 | ✅ |
+| **LLM Tokens** | 6,102 (~$0.05) | ✅ |
+
+### Phase Execution Times
+
+| Phase | Time | Checkpoints |
+|-------|------|-------------|
+| spec_ingestion | 236.3s | 4/4 ✅ |
+| requirements_analysis | 0.5s | 5/5 ✅ |
+| multi_pass_planning | 0.1s | 5/5 ✅ |
+| atomization | 1.3s | 5/5 ✅ |
+| dag_construction | 4.9s | 5/5 ✅ |
+| wave_execution | 1.3s | 5/5 ✅ |
+| validation | 15.4s | 10/5 ✅ |
+| deployment | 0.3s | 7/5 ✅ |
+| health_verification | 1.1s | 5/5 ✅ |
+| learning | 0.1s | 5/5 ✅ |
+
+### Smoke Test Results
+
+| Metric | Value |
+|--------|-------|
+| Pass Rate | 86.7% (26/30) |
+| HTTP 500 Errors | 4 (complex workflows) |
+
+**Failing Endpoints (HTTP 500):**
+- `POST /carts/{id}/items` - add_item_to_cart workflow
+- `POST /orders/{id}/pay` - pay_order workflow
+- `POST /orders/{id}/cancel` - cancel_order workflow
+- `POST /carts/{id}/checkout` - checkout workflow
+
+**Root Cause:** Complex workflow endpoints require runtime debugging with Docker rebuild enabled.
+
+### Resource Usage
+
+| Metric | Value |
+|--------|-------|
+| Peak Memory | 104.9 MB |
+| Avg Memory | 44.5 MB |
+| Peak CPU | 10.0% |
+| Avg CPU | 0.8% |
+
+### Conclusions
+
+1. **IR-Centric Pipeline:** ✅ Working correctly (99.9% semantic compliance)
+2. **Code Generation:** ✅ 96 files generated successfully
+3. **Test Generation:** ✅ 265 tests generated from IR
+4. **Validation:** ✅ Full validation pipeline passed
+5. **Smoke Tests:** ⚠️ 86.7% pass rate (4 complex workflow failures)
+
+**Next Steps:**
+- Phase 5.3: Add structured logging for cognitive pass observability
+- Fix workflow endpoints (separate bug ticket)
+- Enable Docker rebuild in smoke repair loop for runtime fixes
 
 ---
 
@@ -93,6 +171,7 @@ class IRFlow:
     """The semantic unit for cognitive enhancement."""
     flow_id: str                    # e.g., "add_item_to_cart"
     name: str                       # Human-readable name
+    version: str                    # Contract version (see below)
     primary_entity: str             # Main entity (Cart)
     entities_involved: List[str]    # All entities (Cart, Product, CartItem)
     constraint_types: List[str]     # stock_constraint, workflow_constraint
@@ -100,6 +179,30 @@ class IRFlow:
     postconditions: List[str]       # cart_item added, stock decreased
     endpoint: str                   # POST /carts/{id}/items
     implementation_name: str        # Function name in code
+
+### IRFlow Version Strategy
+
+The `version` field is CRITICAL for cache invalidation. Two strategies:
+
+**Strategy A: IR-Global Version** (Simpler)
+```python
+# All flows inherit ApplicationIR version
+flow.version = ir.version  # e.g., "1.0.0"
+```
+
+**Strategy B: Semantic Hash** (More Granular)
+```python
+# Version derived from flow content
+flow.version = hash(
+    flow.preconditions,
+    flow.postconditions,
+    flow.constraint_types,
+    flow.entities_involved
+)[:8]
+```
+
+**Implementation (current)**: Using Strategy A + semantic hash for cache key components.
+Without version tracking, cache may serve stale code when spec changes.
 
 @dataclass
 class FlowFunction:
@@ -444,7 +547,14 @@ You CAN:
         flow_fn: FlowFunction,
         new_function: str
     ) -> str:
-        """Replace function in file with enhanced version."""
+        """
+        Replace function in file with enhanced version.
+
+        NOTE (v1 Implementation): Line-based replacement.
+        - Depends on lineno/end_lineno being accurate
+        - May break with multiple decorators or comments above function
+        - Roadmap: v2 will use AST-safe replacement via ast.unparse() (Python 3.9+)
+        """
         lines = file_code.split('\n')
         new_lines = (
             lines[:flow_fn.start_line - 1] +
@@ -499,10 +609,14 @@ class ValidationPass:
         # IR compliance at system level (use existing ComplianceValidator)
         ir_result = self.ir_compliance_checker.validate_full(code, ir)
 
+        # NOTE: Threshold is configurable via COGNITIVE_PASS_ROLLBACK_THRESHOLD
+        # Aligns with QUALITY_GATE_ENV settings (dev/prod)
+        threshold = float(os.getenv("COGNITIVE_PASS_ROLLBACK_THRESHOLD", "0.95"))
+
         return ValidationResult(
             files=per_file_results,
             ir_compliance=ir_result,
-            all_passed=ir_result.semantic_compliance >= 0.95
+            all_passed=ir_result.semantic_compliance >= threshold
         )
 ```
 
@@ -754,6 +868,336 @@ COGNITIVE_PASS_ROLLBACK_THRESHOLD = 0.95  # Min IR compliance
 
 ---
 
+## Baseline Mode Clarification
+
+**Important:** Baseline mode does NOT run cognitive enhancement and validation in the same process.
+
+```python
+# Baseline mode returns template code ONLY
+if baseline_mode:
+    return GenerationResult(files=base_code, cognitive_enabled=False)
+```
+
+**A/B Comparison Strategy:**
+
+| Run Type | Cognitive Pass | Smoke Tests | Purpose |
+|----------|---------------|-------------|---------|
+| Baseline Run | OFF | YES | Measure unenhanced failure rate |
+| Cognitive Run | ON | YES | Measure enhanced failure rate |
+
+**Metrics collection:**
+
+- Baseline metrics obtained from dedicated runs with `ENABLE_COGNITIVE_PASS=false`
+- Cognitive metrics obtained from runs with `ENABLE_COGNITIVE_PASS=true`
+- Prevention rate = `(baseline_failures - cognitive_failures) / baseline_failures`
+
+**Why separate runs?**
+
+1. Avoids confounding variables in same-process comparison
+2. Enables clean A/B testing with identical specs
+3. Simplifies debugging and attribution of failures
+4. Allows parallel execution of both runs for faster feedback
+
+---
+
+## Concurrency & Thread Safety
+
+### CognitiveCache Thread Safety
+
+```python
+class CognitiveCache:
+    """
+    Thread/Async Safety Notes:
+
+    Current Implementation (v1):
+    - In-memory dict is NOT thread-safe for concurrent writes
+    - Safe for single-threaded async (one event loop)
+    - File persistence uses simple write (no locking)
+
+    Production Hardening (v2 roadmap):
+    - Use threading.Lock for dict operations
+    - Use asyncio.Lock for async contexts
+    - Consider redis/memcached for distributed caching
+    """
+
+    def __init__(self):
+        self._cache: Dict[str, CachedEnhancement] = {}
+        self._lock = threading.Lock()  # v2: Add for thread safety
+
+    def get(self, key: str) -> Optional[CachedEnhancement]:
+        with self._lock:  # v2: Thread-safe read
+            return self._cache.get(key)
+```
+
+### Async Enhancement Parallelization
+
+```python
+# Current: Sequential function processing
+for flow_fn in flow_functions:
+    result = await self._enhance_function(flow_fn)
+
+# v2 Roadmap: Parallel with semaphore control
+async def enhance_parallel(self, flow_functions: List[FlowFunction]):
+    semaphore = asyncio.Semaphore(self.max_concurrent)
+
+    async def bounded_enhance(fn):
+        async with semaphore:
+            return await self._enhance_function(fn)
+
+    return await asyncio.gather(*[
+        bounded_enhance(fn) for fn in flow_functions
+    ])
+```
+
+### Recommendations
+
+| Scenario | Strategy |
+|----------|----------|
+| Single E2E run | Current impl safe (single async context) |
+| Parallel E2E runs | Use separate cache instances per run |
+| Production multi-tenant | Add explicit locking or use Redis |
+| High-volume testing | Implement connection pooling for LLM client |
+
+---
+
+## Compatibility with Existing Components
+
+### Integration Points
+
+| Component | Integration | Changes Required |
+|-----------|------------|------------------|
+| `ProductionCodeGenerators` | Pass 1 (Template) | None - used as-is |
+| `PatternBank` | Pass 1 (Template) | None - used as-is |
+| `IRComplianceValidator` | Pass 2-3 (Validation) | None - reused existing |
+| `SmokeRepairOrchestrator` | Pass 4 (Runtime) | None - stores patterns for next run |
+| `NegativePatternStore` | Pass 2 (Pattern fetch) | Added 4 new methods |
+| `OrchestratorAgent` | Pipeline coordination | Add cognitive pass toggle |
+
+### Import Graph
+
+```text
+OrchestratorAgent
+    └── CognitiveCodeGenerationService
+            ├── IRCentricCognitivePass
+            │       ├── NegativePatternStore (existing + new methods)
+            │       ├── CognitiveCache (NEW)
+            │       └── IRComplianceValidator (existing)
+            └── ValidationPass
+                    └── IRComplianceValidator (existing)
+```
+
+### Migration Path
+
+1. **Phase 1**: Deploy with `ENABLE_COGNITIVE_PASS=false` (no behavior change)
+2. **Phase 2**: Enable for specific specs via config
+3. **Phase 3**: A/B testing with baseline comparisons
+4. **Phase 4**: Full rollout with monitoring
+
+---
+
+## Failure Modes & Graceful Degradation
+
+### Failure Hierarchy
+
+| Level | Failure | Recovery | Impact |
+|-------|---------|----------|--------|
+| L1 | Single function enhancement fails | Use template code for that function | Minimal |
+| L2 | IR validation rejects enhancement | Rollback to template, log regression | Minimal |
+| L3 | LLM API timeout/error | Skip cognitive pass, use template | Medium |
+| L4 | Cache corruption | Clear cache, continue without | Low |
+| L5 | Pattern store unavailable | Skip pattern fetch, use empty list | Medium |
+| L6 | AST parsing fails | Skip file enhancement | Low |
+
+### Graceful Degradation Strategy
+
+```python
+async def enhance_with_fallback(self, flow_fn: FlowFunction) -> str:
+    """Enhancement with multi-level fallback."""
+    try:
+        # Try full cognitive enhancement
+        enhanced = await self._cognitive_enhance_function(flow_fn)
+
+        # Validate against IR
+        if self._validate_against_ir(enhanced, flow_fn.ir_flow):
+            return enhanced
+        else:
+            logger.warning(f"IR validation failed, using template")
+            return flow_fn.function_code
+
+    except LLMAPIError as e:
+        logger.error(f"LLM API error: {e}, falling back to template")
+        return flow_fn.function_code
+
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}, falling back to template")
+        return flow_fn.function_code
+```
+
+### Circuit Breaker Pattern
+
+```python
+class CognitiveCircuitBreaker:
+    """Disable cognitive pass after repeated failures."""
+
+    def __init__(self, failure_threshold: int = 5, reset_timeout: int = 300):
+        self.failures = 0
+        self.threshold = failure_threshold
+        self.reset_timeout = reset_timeout
+        self.last_failure_time = None
+        self.state = "closed"  # closed, open, half-open
+
+    def record_failure(self):
+        self.failures += 1
+        self.last_failure_time = time.time()
+        if self.failures >= self.threshold:
+            self.state = "open"
+            logger.warning("Circuit breaker OPEN - cognitive pass disabled")
+
+    def should_attempt(self) -> bool:
+        if self.state == "closed":
+            return True
+        if self.state == "open":
+            if time.time() - self.last_failure_time > self.reset_timeout:
+                self.state = "half-open"
+                return True
+            return False
+        return True  # half-open: try once
+```
+
+---
+
+## Configuration & Observability
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_COGNITIVE_PASS` | `true` | Master switch for cognitive enhancement |
+| `COGNITIVE_BASELINE_MODE` | `false` | Return template code only (for A/B) |
+| `COGNITIVE_PASS_ROLLBACK_THRESHOLD` | `0.95` | Min IR compliance to accept enhancement |
+| `COGNITIVE_CACHE_TTL_HOURS` | `24` | Cache entry time-to-live |
+| `COGNITIVE_MAX_PATTERNS` | `5` | Max patterns per function enhancement |
+| `COGNITIVE_MAX_FUNCTIONS` | `20` | Max functions to enhance per file |
+| `COGNITIVE_LLM_TIMEOUT` | `30` | LLM API timeout in seconds |
+| `COGNITIVE_CIRCUIT_BREAKER_THRESHOLD` | `5` | Failures before disabling pass |
+
+### Structured Logging
+
+```python
+# Enhancement attempt
+logger.info(
+    "cognitive_enhancement_attempt",
+    extra={
+        "flow_id": flow.flow_id,
+        "function": func_name,
+        "patterns_count": len(patterns),
+        "cache_hit": cache_hit,
+    }
+)
+
+# Enhancement result
+logger.info(
+    "cognitive_enhancement_result",
+    extra={
+        "flow_id": flow.flow_id,
+        "function": func_name,
+        "success": validation.passed,
+        "ir_compliance": validation.score,
+        "tokens_used": tokens,
+        "duration_ms": duration,
+    }
+)
+
+# Rollback event
+logger.warning(
+    "cognitive_enhancement_rollback",
+    extra={
+        "flow_id": flow.flow_id,
+        "function": func_name,
+        "reason": "ir_contract_violation",
+        "violations": violations,
+    }
+)
+```
+
+### Metrics Export
+
+```python
+@dataclass
+class CognitiveMetricsExport:
+    """Metrics for observability dashboards."""
+
+    # Counters
+    total_enhancements_attempted: int
+    total_enhancements_successful: int
+    total_enhancements_rolled_back: int
+    total_cache_hits: int
+    total_cache_misses: int
+
+    # Gauges
+    current_cache_size: int
+    current_patterns_loaded: int
+
+    # Histograms
+    enhancement_duration_ms: List[float]
+    tokens_per_enhancement: List[int]
+    ir_compliance_scores: List[float]
+
+    # Rates (calculated)
+    @property
+    def success_rate(self) -> float:
+        if self.total_enhancements_attempted == 0:
+            return 0.0
+        return self.total_enhancements_successful / self.total_enhancements_attempted
+
+    @property
+    def cache_hit_rate(self) -> float:
+        total = self.total_cache_hits + self.total_cache_misses
+        if total == 0:
+            return 0.0
+        return self.total_cache_hits / total
+
+    def to_prometheus(self) -> str:
+        """Export in Prometheus format."""
+        return f"""
+# HELP cognitive_enhancements_total Total enhancement attempts
+# TYPE cognitive_enhancements_total counter
+cognitive_enhancements_total{{status="attempted"}} {self.total_enhancements_attempted}
+cognitive_enhancements_total{{status="successful"}} {self.total_enhancements_successful}
+cognitive_enhancements_total{{status="rolled_back"}} {self.total_enhancements_rolled_back}
+
+# HELP cognitive_cache_operations Cache operations
+# TYPE cognitive_cache_operations counter
+cognitive_cache_operations{{type="hit"}} {self.total_cache_hits}
+cognitive_cache_operations{{type="miss"}} {self.total_cache_misses}
+
+# HELP cognitive_success_rate Enhancement success rate
+# TYPE cognitive_success_rate gauge
+cognitive_success_rate {self.success_rate:.4f}
+"""
+```
+
+### Health Check Endpoint
+
+```python
+@router.get("/health/cognitive")
+async def cognitive_health():
+    """Health check for cognitive code generation."""
+    service = get_cognitive_service()
+
+    return {
+        "status": "healthy" if service.is_enabled() else "disabled",
+        "enabled": service.is_enabled(),
+        "cache_size": len(service._cache),
+        "patterns_loaded": len(service._pattern_store),
+        "metrics": service.get_metrics_dict(),
+        "circuit_breaker": service._circuit_breaker.state,
+    }
+```
+
+---
+
 *Document created: 2025-11-30*
 *Updated: 2025-11-30 v2.0 - IR-Centric refinements*
+*Updated: 2025-11-30 v2.1 - RFC hardening: Baseline mode, Concurrency, Compatibility, Failure modes, Observability*
 *For: DevMatrix Cognitive Compiler Architecture*

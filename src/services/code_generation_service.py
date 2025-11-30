@@ -81,6 +81,16 @@ try:
 except ImportError:
     GENERATION_FEEDBACK_AVAILABLE = False
 
+# Cognitive Code Generation Service - IR-Centric Enhancement (Bug #143-160)
+try:
+    from src.services.cognitive_code_generation_service import (
+        CognitiveCodeGenerationService,
+        create_cognitive_service,
+    )
+    COGNITIVE_GENERATION_AVAILABLE = True
+except ImportError:
+    COGNITIVE_GENERATION_AVAILABLE = False
+
 
 # DAG Synchronizer - Execution Metrics (Milestone 3)
 try:
@@ -114,6 +124,7 @@ class CodeGenerationService:
         enable_pattern_promotion: bool = True,
         enable_dag_sync: bool = True,
         enable_active_learning: bool = True,
+        enable_cognitive_pass: bool = True,
     ):
         """
         Initialize code generation service.
@@ -126,6 +137,7 @@ class CodeGenerationService:
             enable_pattern_promotion: Enable pattern promotion pipeline (Milestone 4)
             enable_dag_sync: Enable DAG synchronization for execution metrics (Milestone 3)
             enable_active_learning: Enable Active Learning for error avoidance (LEARNING_GAPS Phase 1)
+            enable_cognitive_pass: Enable IR-Centric Cognitive Pass for code enhancement (Bug #143-160)
         """
         self.db = db
         self.llm_client = llm_client or EnhancedAnthropicClient()
@@ -204,6 +216,18 @@ class CodeGenerationService:
             except Exception as e:
                 logger.warning(f"Could not initialize Unified RAG Retriever: {e}")
 
+        # Initialize Cognitive Code Generation Service (Bug #143-160)
+        # This service provides IR-centric cognitive enhancement post-generation
+        self.enable_cognitive_pass = enable_cognitive_pass
+        self.cognitive_service: Optional["CognitiveCodeGenerationService"] = None
+        if enable_cognitive_pass and COGNITIVE_GENERATION_AVAILABLE:
+            # Note: cognitive_service is initialized lazily in generate_from_application_ir
+            # because it requires the ApplicationIR which is only available at generation time
+            logger.info("Cognitive Pass enabled (Bug #143-160) - will initialize per-generation")
+        else:
+            self.enable_cognitive_pass = False
+            if enable_cognitive_pass:
+                logger.warning("Cognitive Pass requested but not available (missing imports)")
 
         logger.info(
             "CodeGenerationService initialized",
@@ -213,6 +237,7 @@ class CodeGenerationService:
                 "pattern_promotion": self.enable_pattern_promotion,
                 "dag_sync": self.enable_dag_sync,
                 "active_learning": self.enable_active_learning,
+                "cognitive_pass": self.enable_cognitive_pass,
                 "pattern_bank_enabled": self.pattern_bank is not None,
                 "rag_enabled": self.rag_retriever is not None,
             },
@@ -939,6 +964,11 @@ class CodeGenerationService:
                     "phase": "post_generation"
                 }
             )
+
+            # COGNITIVE PASS: IR-Centric Enhancement (Bug #143-160)
+            # Enhance generated code using learned patterns and IR contracts
+            if self.enable_cognitive_pass and COGNITIVE_GENERATION_AVAILABLE:
+                files_dict = await self._apply_cognitive_pass(files_dict, app_ir)
 
             # Convert multi-file dict to single string for compatibility
             # Format: "=== FILE: path/to/file.py ===\n<content>\n\n"
@@ -3946,6 +3976,104 @@ datefmt = %H:%M:%S
                 errors.append("src/main.py is in FALLBACK MODE (generation failed)")
 
         return errors
+
+    async def _apply_cognitive_pass(
+        self,
+        files_dict: Dict[str, str],
+        app_ir
+    ) -> Dict[str, str]:
+        """Apply IR-Centric Cognitive Pass to enhance generated code.
+
+        This method applies learned patterns and IR contracts to improve
+        the generated code quality. It uses the CognitiveCodeGenerationService
+        which implements:
+        - IR-based semantic caching
+        - Function-level enhancement
+        - IR Guard prompts for constraint enforcement
+        - Rollback on IR violations
+        - Graceful degradation on failures
+
+        Part of Bug #143-160 IR-Centric Cognitive Code Generation.
+
+        Args:
+            files_dict: Dictionary of file paths to content
+            app_ir: ApplicationIR with flows and contracts
+
+        Returns:
+            Enhanced files_dict (original if enhancement fails/disabled)
+        """
+        try:
+            # Initialize cognitive service with current IR
+            from src.services.cognitive_code_generation_service import create_cognitive_service
+            from src.learning.negative_pattern_store import get_negative_pattern_store
+
+            pattern_store = get_negative_pattern_store()
+            self.cognitive_service = create_cognitive_service(
+                ir=app_ir,
+                pattern_store=pattern_store,
+                llm_client=self.llm_client,
+            )
+
+            logger.info(
+                "Starting Cognitive Pass",
+                extra={
+                    "files_count": len(files_dict),
+                    "enabled": self.cognitive_service.is_enabled(),
+                    "phase": "cognitive_enhancement"
+                }
+            )
+
+            # Filter to only Python service/workflow files for enhancement
+            # (Skip __init__.py, config files, etc.)
+            enhancement_targets = [
+                {"path": path, "content": content}
+                for path, content in files_dict.items()
+                if path.endswith(".py")
+                and not path.endswith("__init__.py")
+                and ("services/" in path or "workflows/" in path or "routes/" in path)
+            ]
+
+            if not enhancement_targets:
+                logger.info("No files eligible for cognitive enhancement")
+                return files_dict
+
+            # Process files through cognitive pass
+            results = await self.cognitive_service.process_files(enhancement_targets)
+
+            # Update files_dict with enhanced content
+            enhanced_count = 0
+            for result in results:
+                if result.success and result.enhanced_content != result.original_content:
+                    files_dict[result.file_path] = result.enhanced_content
+                    enhanced_count += 1
+
+            # Get metrics
+            metrics = self.cognitive_service.get_metrics_dict()
+
+            logger.info(
+                "Cognitive Pass completed",
+                extra={
+                    "files_enhanced": enhanced_count,
+                    "total_processed": len(results),
+                    "functions_enhanced": metrics.get("functions_enhanced", 0),
+                    "prevention_rate": metrics.get("prevention_rate", 0),
+                    "cache_hits": metrics.get("cache_hits", 0),
+                    "phase": "cognitive_enhancement"
+                }
+            )
+
+            return files_dict
+
+        except Exception as e:
+            # Graceful degradation: log and return original
+            logger.warning(
+                f"Cognitive Pass failed, using original code: {e}",
+                extra={
+                    "error": str(e),
+                    "phase": "cognitive_enhancement"
+                }
+            )
+            return files_dict
 
     def _generate_fallback_structure(self, app_ir, error_message: str) -> str:
         """Generate minimal valid app structure when generation fails.
