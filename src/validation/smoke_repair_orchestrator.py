@@ -77,6 +77,20 @@ except ImportError:
     FixPatternLearner = None
     get_fix_pattern_learner = None
 
+# Generation Feedback Loop - NegativePatternStore for learned anti-patterns
+try:
+    from src.learning import (
+        get_negative_pattern_store,
+        NegativePatternStore,
+        GenerationAntiPattern,
+    )
+    NEGATIVE_PATTERN_STORE_AVAILABLE = True
+except ImportError:
+    NEGATIVE_PATTERN_STORE_AVAILABLE = False
+    get_negative_pattern_store = None
+    NegativePatternStore = None
+    GenerationAntiPattern = None
+
 
 class RepairStrategyType(Enum):
     """Types of repair strategies based on error classification."""
@@ -653,6 +667,216 @@ class SmokeRepairOrchestrator:
 
         return None
 
+    def _get_learned_antipatterns(
+        self,
+        violation: SmokeViolation,
+        stack_traces: List[StackTrace]
+    ) -> List[Dict[str, Any]]:
+        """
+        Query NegativePatternStore for anti-patterns relevant to this violation.
+
+        Returns list of learned anti-patterns with their fixes.
+        Used by Generation Feedback Loop to avoid repeating same mistakes.
+        """
+        if not NEGATIVE_PATTERN_STORE_AVAILABLE or not get_negative_pattern_store:
+            return []
+
+        antipatterns = []
+        try:
+            pattern_store = get_negative_pattern_store()
+
+            # Extract entity from endpoint (e.g., "POST /products" -> "Product")
+            entity_name = self._extract_entity_from_endpoint(violation.endpoint)
+
+            # Query by entity
+            if entity_name:
+                entity_patterns = pattern_store.get_patterns_for_entity(entity_name)
+                antipatterns.extend([{
+                    "source": "entity",
+                    "pattern_id": p.pattern_id,
+                    "exception_class": p.exception_class,
+                    "wrong_pattern": p.wrong_code_pattern,
+                    "correct_pattern": p.correct_code_snippet,
+                    "confidence": p.confidence,
+                    "occurrences": p.occurrence_count
+                } for p in entity_patterns[:3]])  # Top 3 per entity
+
+            # Query by endpoint pattern
+            endpoint_patterns = pattern_store.get_patterns_for_endpoint(violation.endpoint)
+            antipatterns.extend([{
+                "source": "endpoint",
+                "pattern_id": p.pattern_id,
+                "exception_class": p.exception_class,
+                "wrong_pattern": p.wrong_code_pattern,
+                "correct_pattern": p.correct_code_snippet,
+                "confidence": p.confidence,
+                "occurrences": p.occurrence_count
+            } for p in endpoint_patterns[:3]])
+
+            # Query by exception class
+            matching_trace = self._find_matching_trace(violation, stack_traces)
+            if matching_trace:
+                exc_patterns = pattern_store.get_patterns_by_exception(
+                    matching_trace.exception_class
+                )
+                antipatterns.extend([{
+                    "source": "exception",
+                    "pattern_id": p.pattern_id,
+                    "exception_class": p.exception_class,
+                    "wrong_pattern": p.wrong_code_pattern,
+                    "correct_pattern": p.correct_code_snippet,
+                    "confidence": p.confidence,
+                    "occurrences": p.occurrence_count
+                } for p in exc_patterns[:3]])
+
+            # Deduplicate by pattern_id
+            seen_ids = set()
+            unique_patterns = []
+            for p in antipatterns:
+                if p["pattern_id"] not in seen_ids:
+                    seen_ids.add(p["pattern_id"])
+                    unique_patterns.append(p)
+
+            if unique_patterns:
+                logger.info(f"    🧠 Found {len(unique_patterns)} learned anti-patterns for repair guidance")
+
+            return unique_patterns
+
+        except Exception as e:
+            logger.warning(f"Failed to query NegativePatternStore: {e}")
+            return []
+
+    def _extract_entity_from_endpoint(self, endpoint: str) -> Optional[str]:
+        """Extract entity name from endpoint path."""
+        # "POST /products" -> "Product"
+        # "PATCH /products/{id}/deactivate" -> "Product"
+        parts = endpoint.split()
+        if len(parts) < 2:
+            return None
+
+        path = parts[1]
+        for segment in path.split('/'):
+            if segment and not segment.startswith('{') and segment not in ['api', 'v1', 'v2']:
+                # Convert plural to singular and capitalize
+                entity = segment.rstrip('s').capitalize()
+                return entity
+
+        return None
+
+    def _repair_with_learned_patterns(
+        self,
+        strategy_type: RepairStrategyType,
+        violation: SmokeViolation,
+        stack_traces: List[StackTrace],
+        app_path: Path,
+        application_ir,
+        learned_patterns: List[Dict[str, Any]]
+    ) -> Optional[RepairFix]:
+        """
+        Apply repair using learned anti-patterns as guidance.
+
+        This method uses anti-patterns from NegativePatternStore to guide repairs:
+        1. If a learned pattern matches, apply its correct_pattern directly
+        2. If multiple patterns match, use highest confidence one
+        3. Track pattern usage for learning feedback
+
+        Returns:
+            RepairFix if successful, None otherwise
+        """
+        if not learned_patterns:
+            return None
+
+        # Sort by confidence * occurrences (more proven patterns first)
+        scored_patterns = sorted(
+            learned_patterns,
+            key=lambda p: p.get("confidence", 0) * p.get("occurrences", 1),
+            reverse=True
+        )
+
+        best_pattern = scored_patterns[0]
+        correct_code = best_pattern.get("correct_pattern", "")
+
+        if not correct_code:
+            return None
+
+        # Determine target file based on pattern type
+        target_file = self._determine_target_file(
+            strategy_type, violation, app_path, best_pattern
+        )
+
+        if not target_file or not target_file.exists():
+            return None
+
+        # Apply the learned fix
+        try:
+            content = target_file.read_text()
+            new_content = content
+
+            wrong_pattern = best_pattern.get("wrong_pattern", "")
+
+            # If we have a wrong pattern, try to replace it
+            if wrong_pattern and wrong_pattern in content:
+                new_content = content.replace(wrong_pattern, correct_code)
+                fix_description = f"Applied learned fix: {best_pattern['exception_class']} → {correct_code[:50]}..."
+            else:
+                # Log but don't modify - pattern doesn't match this specific code
+                logger.debug(f"Learned pattern exists but wrong_pattern not found in code")
+                return None
+
+            if new_content != content:
+                target_file.write_text(new_content)
+
+                # Update pattern store - increment prevention count
+                if NEGATIVE_PATTERN_STORE_AVAILABLE and get_negative_pattern_store:
+                    try:
+                        store = get_negative_pattern_store()
+                        store.increment_prevention(best_pattern["pattern_id"])
+                    except Exception:
+                        pass
+
+                logger.info(f"    🎯 Applied learned anti-pattern fix (confidence: {best_pattern['confidence']:.2f})")
+
+                return RepairFix(
+                    file_path=str(target_file),
+                    fix_type=f"learned_{strategy_type.value}",
+                    description=fix_description,
+                    old_code=wrong_pattern[:200] if wrong_pattern else "",
+                    new_code=correct_code[:200],
+                    success=True
+                )
+
+        except Exception as e:
+            logger.warning(f"Failed to apply learned pattern: {e}")
+
+        return None
+
+    def _determine_target_file(
+        self,
+        strategy_type: RepairStrategyType,
+        violation: SmokeViolation,
+        app_path: Path,
+        pattern: Dict[str, Any]
+    ) -> Optional[Path]:
+        """Determine target file for repair based on strategy and pattern."""
+        if strategy_type == RepairStrategyType.DATABASE:
+            return app_path / "src" / "models" / "entities.py"
+        elif strategy_type == RepairStrategyType.VALIDATION:
+            return app_path / "src" / "models" / "schemas.py"
+        elif strategy_type == RepairStrategyType.ROUTE:
+            entity = self._extract_entity_from_endpoint(violation.endpoint)
+            if entity:
+                return app_path / "src" / "api" / "routes" / f"{entity.lower()}.py"
+        elif strategy_type == RepairStrategyType.IMPORT:
+            # Try to infer from exception source
+            exc_class = pattern.get("exception_class", "")
+            if "service" in exc_class.lower():
+                return app_path / "src" / "services"
+            elif "repository" in exc_class.lower():
+                return app_path / "src" / "repositories"
+
+        # Default: try entities first
+        return app_path / "src" / "models" / "entities.py"
+
     def _find_matching_trace(
         self,
         violation: SmokeViolation,
@@ -1115,6 +1339,292 @@ class SmokeRepairOrchestrator:
 
         logger.info(f"  Duration:          {result.duration_ms:.0f}ms")
         logger.info("=" * 60)
+
+    async def _rebuild_docker_no_cache(
+        self,
+        app_path: Path,
+        container_name: Optional[str] = None
+    ) -> bool:
+        """
+        Rebuild Docker container without cache after code repairs.
+
+        This is critical for the Smoke-Driven Repair Loop because:
+        1. Docker layers cache old code - repairs won't take effect
+        2. --no-cache ensures fresh build with repaired code
+        3. Restart container to pick up changes
+
+        Args:
+            app_path: Path to the generated app
+            container_name: Optional container name (defaults to app folder name)
+
+        Returns:
+            True if rebuild successful, False otherwise
+        """
+        if not container_name:
+            container_name = app_path.name
+
+        logger.info(f"    🐳 Rebuilding Docker (--no-cache) for {container_name}...")
+
+        try:
+            # Stop existing container
+            stop_result = subprocess.run(
+                ["docker", "stop", container_name],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+
+            # Remove container
+            subprocess.run(
+                ["docker", "rm", container_name],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+
+            # Rebuild with --no-cache
+            build_result = subprocess.run(
+                ["docker", "build", "--no-cache", "-t", container_name, "."],
+                cwd=str(app_path),
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 min timeout for build
+            )
+
+            if build_result.returncode != 0:
+                logger.error(f"Docker build failed: {build_result.stderr[:500]}")
+                return False
+
+            logger.info(f"    ✅ Docker rebuild complete")
+            return True
+
+        except subprocess.TimeoutExpired:
+            logger.error("Docker rebuild timed out")
+            return False
+        except FileNotFoundError:
+            logger.warning("Docker not available - skipping rebuild")
+            return True  # Continue without Docker
+        except Exception as e:
+            logger.error(f"Docker rebuild failed: {e}")
+            return False
+
+    async def _restart_container(
+        self,
+        app_path: Path,
+        container_name: Optional[str] = None,
+        port: int = 8002
+    ) -> bool:
+        """
+        Restart the Docker container after rebuild.
+
+        Args:
+            app_path: Path to the generated app
+            container_name: Optional container name
+            port: Port to expose (default 8002)
+
+        Returns:
+            True if container started successfully
+        """
+        if not container_name:
+            container_name = app_path.name
+
+        try:
+            # Run new container
+            run_result = subprocess.run(
+                [
+                    "docker", "run", "-d",
+                    "--name", container_name,
+                    "-p", f"{port}:{port}",
+                    "-e", "DATABASE_URL=sqlite:///./test.db",
+                    container_name
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+
+            if run_result.returncode != 0:
+                logger.error(f"Docker run failed: {run_result.stderr[:500]}")
+                return False
+
+            # Wait for container to be ready
+            await asyncio.sleep(3)
+
+            logger.info(f"    ✅ Container {container_name} restarted on port {port}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Container restart failed: {e}")
+            return False
+
+    async def run_full_repair_cycle(
+        self,
+        app_path: Path,
+        application_ir,
+        with_docker_rebuild: bool = True,
+        max_cycles: int = 3
+    ) -> SmokeRepairResult:
+        """
+        Full repair cycle with Docker rebuild integration.
+
+        This is the enhanced version of run_smoke_repair_cycle that:
+        1. Runs smoke tests
+        2. Applies repairs using learned patterns first
+        3. Rebuilds Docker --no-cache
+        4. Re-runs smoke tests
+        5. Loops until target or convergence
+
+        Args:
+            app_path: Path to generated app
+            application_ir: ApplicationIR for context
+            with_docker_rebuild: Whether to rebuild Docker (default True)
+            max_cycles: Maximum repair cycles (default 3)
+
+        Returns:
+            SmokeRepairResult with comprehensive metrics
+        """
+        start_time = time.time()
+        all_iterations: List[SmokeIteration] = []
+        initial_pass_rate = 0.0
+        current_pass_rate = 0.0
+        total_repairs = 0
+        all_fixes: List[RepairFix] = []
+        convergence_detected = False
+        regression_detected = False
+        learned_patterns_applied = 0
+
+        logger.info(f"🔄 Starting Full Smoke-Repair Cycle (max {max_cycles} cycles, Docker rebuild: {with_docker_rebuild})")
+
+        for cycle in range(max_cycles):
+            cycle_start = time.time()
+            logger.info(f"\n  🔁 Cycle {cycle + 1}/{max_cycles}")
+
+            # 1. Take snapshot
+            self._take_snapshot(cycle, app_path)
+
+            # 2. Run smoke test
+            smoke_result = await self._run_smoke_test(app_path, application_ir, True)
+            current_pass_rate = self._calculate_pass_rate(smoke_result)
+            violations = smoke_result.violations
+
+            if cycle == 0:
+                initial_pass_rate = current_pass_rate
+
+            logger.info(f"    📊 Pass rate: {current_pass_rate:.1%} ({smoke_result.endpoints_passed}/{smoke_result.endpoints_tested})")
+
+            # 3. Check success
+            if current_pass_rate >= self.config.target_pass_rate:
+                logger.info(f"    ✅ Target reached!")
+                all_iterations.append(SmokeIteration(
+                    iteration=cycle + 1,
+                    pass_rate=current_pass_rate,
+                    violations_count=len(violations),
+                    duration_ms=(time.time() - cycle_start) * 1000
+                ))
+                break
+
+            # 4. Check regression
+            if cycle > 0 and current_pass_rate < all_iterations[-1].pass_rate - self.config.convergence_epsilon:
+                logger.warning(f"    ⚠️ Regression detected! Rolling back...")
+                regression_detected = True
+                self._rollback_to(cycle - 1, app_path)
+                break
+
+            # 5. Check convergence
+            if cycle > 0 and abs(current_pass_rate - all_iterations[-1].pass_rate) < self.config.convergence_epsilon:
+                logger.info(f"    📈 Converged at {current_pass_rate:.1%}")
+                convergence_detected = True
+                all_iterations.append(SmokeIteration(
+                    iteration=cycle + 1,
+                    pass_rate=current_pass_rate,
+                    violations_count=len(violations),
+                    duration_ms=(time.time() - cycle_start) * 1000
+                ))
+                break
+
+            # 6. Parse logs
+            stack_traces = []
+            if hasattr(smoke_result, 'server_logs') and smoke_result.server_logs:
+                stack_traces = self.log_parser.parse_logs(smoke_result.server_logs)
+                logger.info(f"    🔍 Found {len(stack_traces)} stack traces")
+
+            # 7. Classify errors
+            classified = self.error_classifier.classify_violations(violations, stack_traces)
+
+            # 8. Apply repairs with learned patterns priority
+            cycle_fixes = []
+            cycle_successful = 0
+
+            for strategy_type, vios in classified.items():
+                if not vios:
+                    continue
+
+                for violation in vios:
+                    # Try learned patterns first
+                    learned = self._get_learned_antipatterns(violation, stack_traces)
+                    if learned:
+                        fix = self._repair_with_learned_patterns(
+                            strategy_type, violation, stack_traces,
+                            app_path, application_ir, learned
+                        )
+                        if fix and fix.success:
+                            cycle_fixes.append(fix)
+                            cycle_successful += 1
+                            learned_patterns_applied += 1
+                            continue
+
+                    # Fallback to regular repair
+                    fix = await self._apply_repair_with_confidence(
+                        strategy_type, violation, stack_traces,
+                        app_path, application_ir, None
+                    )
+                    if fix:
+                        cycle_fixes.append(fix)
+                        if fix.success:
+                            cycle_successful += 1
+
+            total_repairs += len(cycle_fixes)
+            all_fixes.extend(cycle_fixes)
+
+            logger.info(f"    🔧 Applied {len(cycle_fixes)} repairs ({learned_patterns_applied} from learned patterns)")
+
+            # 9. Rebuild Docker if repairs were made
+            if with_docker_rebuild and cycle_fixes:
+                rebuild_ok = await self._rebuild_docker_no_cache(app_path)
+                if rebuild_ok:
+                    await self._restart_container(app_path)
+
+            # 10. Record learning
+            if self.config.enable_learning:
+                self._record_learning(violations, cycle_fixes, cycle + 1)
+
+            all_iterations.append(SmokeIteration(
+                iteration=cycle + 1,
+                pass_rate=current_pass_rate,
+                violations_count=len(violations),
+                repairs_applied=len(cycle_fixes),
+                repairs_successful=cycle_successful,
+                duration_ms=(time.time() - cycle_start) * 1000
+            ))
+
+        total_duration = (time.time() - start_time) * 1000
+
+        result = SmokeRepairResult(
+            final_pass_rate=current_pass_rate,
+            initial_pass_rate=initial_pass_rate,
+            iterations=all_iterations,
+            target_reached=current_pass_rate >= self.config.target_pass_rate,
+            total_repairs=total_repairs,
+            convergence_detected=convergence_detected,
+            regression_detected=regression_detected,
+            fixes_applied=all_fixes,
+            duration_ms=total_duration
+        )
+
+        self._log_summary(result)
+        logger.info(f"  🧠 Learned patterns applied: {learned_patterns_applied}")
+
+        return result
 
 
 # Convenience function

@@ -3247,3 +3247,184 @@ async def create(self, data: {entity_name}Create):
 - Repository: Handles model_dump() conversion
 
 ---
+
+## Bug #143: Custom Operations Missing in Services (Routes vs Services Disconnect)
+
+**Status**: IN PROGRESS (2025-11-29)
+
+**Severity**: 🔴 CRITICAL - 4 endpoints returning HTTP 500
+
+**Root Cause**: Routes call custom operation methods (`add_item`, `checkout`, `pay`, `cancel`) that don't exist in Services because:
+1. Bug #141 removed hardcoded ecommerce methods from services
+2. But **didn't replace them with IR-driven generation**
+3. The `workflow_ops` from `find_workflow_operations()` is calculated but **never used**
+
+**Failing Endpoints** (from test run #46):
+```
+POST /carts/{cart_id}/items     → AttributeError: 'CartService' has no attribute 'add_item'
+POST /carts/{id}/checkout       → AttributeError: 'CartService' has no attribute 'checkout'
+POST /orders/{order_id}/pay     → AttributeError: 'OrderService' has no attribute 'pay'
+POST /orders/{order_id}/cancel  → AttributeError: 'OrderService' has no attribute 'cancel'
+```
+
+**Evidence - Routes call non-existent methods**:
+```python
+# tests/e2e/generated_apps/.../src/api/routes/cart.py (line 69)
+cart = await service.add_item(cart_id, cart_item_data.model_dump()...)
+
+# tests/e2e/generated_apps/.../src/api/routes/cart.py (line 184)
+cart = await service.checkout(id)
+
+# tests/e2e/generated_apps/.../src/api/routes/order.py (line 48)
+order = await service.pay(order_id)
+
+# tests/e2e/generated_apps/.../src/api/routes/order.py (line 68)
+order = await service.cancel(order_id)
+```
+
+**Evidence - Services missing these methods**:
+```python
+# tests/e2e/generated_apps/.../src/services/cart_service.py
+class CartService:
+    # Has: create, get, get_by_id, list, update, delete, clear_items
+    # MISSING: add_item(), checkout()
+
+# tests/e2e/generated_apps/.../src/services/order_service.py
+class OrderService:
+    # Has: create, get, get_by_id, list, update, delete
+    # MISSING: pay(), cancel()
+```
+
+### Root Cause Analysis
+
+#### Problem 1: Hardcoded Operations List in Routes
+**File**: `src/services/code_generation_service.py`
+**Lines**: 3631-3683
+
+```python
+# HARDCODED ecommerce-specific operations - NOT domain-agnostic!
+custom_ops_no_body = ['checkout', 'pay', 'cancel', 'deactivate', 'activate', 'clear']
+custom_ops_with_body = ['items']  # e.g., POST /carts/{id}/items
+
+# Route generation calls these methods:
+body += f'''    {entity_snake} = await service.{operation}({id_param})'''
+```
+
+Routes derive operations from **hardcoded lists**, not from IR endpoints.
+
+#### Problem 2: workflow_ops Never Used in Service Generation
+**File**: `src/services/production_code_generators.py`
+**Lines**: 1648, 1805-1812
+
+```python
+# Line 1648: Operations ARE retrieved from IR
+workflow_ops = find_workflow_operations(entity_name, ir) if ir else []
+
+# Lines 1805-1812: Bug #141 removed code but didn't replace it!
+# Bug #141 Fix: REMOVED hardcoded Cart/Order-specific business logic
+# Previous code had ~250 lines of hardcoded ecommerce methods:
+# - is_cart_entity: add_item(), checkout() with CartItemRepository imports
+# - is_orderable_entity: checkout(), cancel_order(), cancel(), pay() with OrderItemEntity imports
+# These were spec-specific (ecommerce) and should be generated from IR operations, not templates.
+# Custom business operations should be defined in the API spec and generated via IR.
+
+return base_service  # ← Returns WITHOUT generating workflow_ops methods!
+```
+
+The comment says "should be generated from IR" but **no code was added to do that!**
+
+### Additional Hardcoded Ecommerce Code Found
+
+| File | Line | Hardcoded Code | Issue |
+|------|------|----------------|-------|
+| `code_generation_service.py` | 3631 | `['checkout', 'pay', 'cancel', ...]` | E-commerce operation names |
+| `production_code_generators.py` | 193-201 | `"cancel"`, `"payment"` status detection | E-commerce status values |
+| `production_code_generators.py` | 698 | `cart_id`, `order_id` field detection | E-commerce entity names |
+| `production_code_generators.py` | 380-382 | `'stock'`, `'inventory'` | E-commerce inventory keywords |
+| `modular_architecture_generator.py` | 335, 447-482 | `snapshot_at_order_time` | E-commerce metadata |
+
+### Required Fix (Domain-Agnostic)
+
+#### Fix Part 1: Service Generation - Use workflow_ops
+**File**: `src/services/production_code_generators.py`
+**After line 1803** (before `return base_service`):
+
+```python
+# Bug #143 Fix: Generate methods for IR-derived custom operations
+for op in workflow_ops:
+    # Normalize operation name: "Pay Order" → "pay_order" or just "pay"
+    flow_name = op.get('name', '') or ''
+    # Extract action word: "Pay Order" → "pay", "Add Item to Cart" → "add_item"
+    op_name = _extract_operation_name(flow_name, entity_name)
+
+    if not op_name or op_name in ['create', 'read', 'update', 'delete', 'list', 'get']:
+        continue  # Skip standard CRUD
+
+    base_service += f'''
+    async def {op_name}(self, id: UUID, data: dict = None) -> Optional[{entity_name}Response]:
+        """
+        {flow_name} operation for {entity_name}.
+        Generated from IR BehaviorModel flow.
+        """
+        db_obj = await self.repo.get(id)
+        if not db_obj:
+            return None
+        # TODO: Implement actual operation logic from IR steps
+        logger.info(f"{entity_name} {op_name}: id={{str(id)}}")
+        return {entity_name}Response.model_validate(db_obj)
+'''
+
+def _extract_operation_name(flow_name: str, entity_name: str) -> str:
+    """Extract method name from flow name, removing entity reference."""
+    # "Pay Order" → "pay", "Add Item to Cart" → "add_item", "Cancel Order" → "cancel"
+    name = flow_name.lower()
+    entity_lower = entity_name.lower()
+
+    # Remove entity name: "pay order" → "pay"
+    name = name.replace(f" {entity_lower}", "").replace(f"{entity_lower} ", "")
+
+    # Convert to snake_case: "add item" → "add_item"
+    name = name.replace(" ", "_").strip("_")
+
+    return name
+```
+
+#### Fix Part 2: Route Generation - Derive from IR
+**File**: `src/services/code_generation_service.py`
+**Lines 3631-3683**: Replace hardcoded list with IR-derived operations
+
+```python
+# Bug #143 Fix: Derive custom operations from endpoint path, not hardcoded list
+def get_custom_operation_from_path(relative_path: str) -> Optional[str]:
+    """
+    Derive operation name from endpoint path dynamically.
+    Examples:
+        /items → add_item (for POST with body)
+        /checkout → checkout
+        /pay → pay
+        /deactivate → deactivate
+    """
+    parts = relative_path.rstrip('/').split('/')
+    for part in reversed(parts):
+        if part.startswith('{'):
+            continue  # Skip path params
+        if part:
+            return part  # Return the action name
+    return None
+
+# Then use it instead of hardcoded lists:
+operation = get_custom_operation_from_path(relative_path)
+if operation == 'items':
+    operation = 'add_item'  # Map items → add_item for consistency
+```
+
+### Files to Modify
+1. `src/services/production_code_generators.py` - Line ~1803 (generate service methods)
+2. `src/services/code_generation_service.py` - Lines 3631-3683 (route custom ops)
+
+### Impact
+- 4 out of 30 endpoints failing (86.7% → 100% target)
+- Blocks full pipeline validation
+- All custom operations affected
+
+---

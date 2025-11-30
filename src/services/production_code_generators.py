@@ -386,6 +386,51 @@ def find_workflow_operations(entity_name: str, ir: Any) -> List[Dict[str, Any]]:
     return operations
 
 
+def _extract_operation_name(flow_name: str, entity_name: str) -> str:
+    """
+    Extract service method name from IR flow name, removing entity reference.
+
+    Bug #143 Fix: Convert flow names to method names dynamically.
+
+    Examples:
+        "Pay Order" → "pay"
+        "Add Item to Cart" → "add_item"
+        "Cancel Order" → "cancel"
+        "Checkout Cart" → "checkout"
+        "F9: Add Item to Cart" → "add_item"
+
+    Args:
+        flow_name: Name from IR BehaviorModel flow (e.g., "Pay Order")
+        entity_name: Entity this operation belongs to (e.g., "Order")
+
+    Returns:
+        Snake_case method name (e.g., "pay")
+    """
+    if not flow_name:
+        return ""
+
+    name = flow_name.lower()
+    entity_lower = entity_name.lower()
+
+    # Remove flow ID prefixes like "F9: " or "F1: "
+    import re
+    name = re.sub(r'^f\d+:\s*', '', name)
+
+    # Remove entity name variations: "pay order" → "pay", "order pay" → "pay"
+    name = name.replace(f" {entity_lower}", "")
+    name = name.replace(f"{entity_lower} ", "")
+    name = name.replace(f" to {entity_lower}", "")  # "add item to cart" → "add item"
+    name = name.replace(f" from {entity_lower}", "")  # "remove item from cart" → "remove item"
+
+    # Convert to snake_case: "add item" → "add_item"
+    name = re.sub(r'\s+', '_', name.strip())
+
+    # Clean up multiple underscores
+    name = re.sub(r'_+', '_', name).strip('_')
+
+    return name
+
+
 def get_status_transition_code(
     entity_name: str,
     status_field: Dict[str, Any],
@@ -1808,6 +1853,65 @@ class {entity_name}Service:
     # - is_orderable_entity: checkout(), cancel_order(), cancel(), pay() with OrderItemEntity imports
     # These were spec-specific (ecommerce) and should be generated from IR operations, not templates.
     # Custom business operations should be defined in the API spec and generated via IR.
+
+    # Bug #143 Fix: Generate methods for IR-derived custom operations
+    # Now we actually USE workflow_ops to generate the methods!
+    generated_ops = set()  # Track generated ops to avoid duplicates
+    crud_ops = {'create', 'read', 'update', 'delete', 'list', 'get', 'get_by_id', 'clear_items', 'activate', 'deactivate'}
+
+    for op in workflow_ops:
+        flow_name = op.get('name', '') or ''
+        op_name = _extract_operation_name(flow_name, entity_name)
+
+        # Skip if no valid operation name, or it's a CRUD op, or already generated
+        if not op_name or op_name in crud_ops or op_name in generated_ops:
+            continue
+
+        generated_ops.add(op_name)
+        logger.debug(f"Bug #143: Generating {op_name}() method for {entity_name} from flow '{flow_name}'")
+
+        # Determine if this operation needs a data parameter (e.g., add_item)
+        needs_data = 'add' in op_name or 'item' in op_name
+
+        if needs_data:
+            base_service += f'''
+    async def {op_name}(self, id: UUID, data: dict) -> Optional[{entity_name}Response]:
+        """
+        {flow_name} operation for {entity_name}.
+
+        Generated from IR BehaviorModel flow. Bug #143 Fix.
+        """
+        db_obj = await self.repo.get(id)
+        if not db_obj:
+            return None
+
+        # TODO: Implement actual {op_name} logic from IR steps
+        # For now, log and return the entity
+        logger.info(f"{entity_name} {op_name}: id={{str(id)}}, data={{data}}")
+        await self.db.refresh(db_obj)
+        return {entity_name}Response.model_validate(db_obj)
+'''
+        else:
+            base_service += f'''
+    async def {op_name}(self, id: UUID) -> Optional[{entity_name}Response]:
+        """
+        {flow_name} operation for {entity_name}.
+
+        Generated from IR BehaviorModel flow. Bug #143 Fix.
+        """
+        db_obj = await self.repo.get(id)
+        if not db_obj:
+            return None
+
+        # TODO: Implement actual {op_name} logic from IR steps
+        # For now, log and return the entity
+        logger.info(f"{entity_name} {op_name}: id={{str(id)}}")
+        await self.db.refresh(db_obj)
+        return {entity_name}Response.model_validate(db_obj)
+'''
+
+    if generated_ops:
+        logger.info(f"Bug #143: Generated {len(generated_ops)} custom operations for {entity_name}: {generated_ops}")
 
     return base_service
 

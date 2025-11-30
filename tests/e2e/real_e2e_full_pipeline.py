@@ -133,6 +133,19 @@ except ImportError as e:
     SmokeRepairConfig = None
     SmokeRepairResult = None
 
+# IR-Code Correlator (for realignment after repairs)
+try:
+    from src.cognitive.services.ir_code_correlator import (
+        IRCodeCorrelator,
+        get_ir_code_correlator
+    )
+    IR_CODE_CORRELATOR_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: IRCodeCorrelator not available: {e}")
+    IR_CODE_CORRELATOR_AVAILABLE = False
+    IRCodeCorrelator = None
+    get_ir_code_correlator = None
+
 # Phase 2: Delta IR Validator (scoped validation for 70% speedup)
 try:
     from src.validation.delta_ir_validator import (
@@ -3519,6 +3532,34 @@ Once running, visit:
             smoke_result = await self._run_ir_smoke_test()
             if smoke_result is not None:
                 self._process_smoke_result(smoke_result)
+
+                # Bug Fix: Call repair loop when IR smoke test fails
+                if not smoke_result.passed and smoke_result.violations:
+                    print(f"\n  🔧 Starting Smoke-Driven Repair Loop ({len(smoke_result.violations)} violations)")
+
+                    # Create smoke validator for repair/re-test cycle
+                    smoke_validator = RuntimeSmokeTestValidator(
+                        app_dir=self.output_path,
+                        port=8002,
+                        startup_timeout=180.0,
+                        request_timeout=10.0
+                    )
+
+                    # Attempt repair with the new orchestrator
+                    await self._attempt_runtime_repair(
+                        smoke_result.violations,
+                        smoke_validator,
+                        smoke_result=smoke_result
+                    )
+
+                    # Mark phase as failed if still not passed
+                    self.metrics_collector.record_error("runtime_smoke_test", {
+                        "error": "Smoke test failed after repair attempts",
+                        "endpoints_failed": smoke_result.endpoints_failed,
+                        "violations": len(smoke_result.violations)
+                    }, critical=True)
+                    print(f"\n  ❌ Phase 8.5 FAILED - Smoke test did not pass after repair")
+
                 return
             else:
                 print("  ⚠️ IR smoke test failed, falling back to LLM orchestrator")
@@ -3531,6 +3572,31 @@ Once running, visit:
             smoke_result = await self._run_llm_smoke_test()
             if smoke_result is not None:
                 self._process_smoke_result(smoke_result)
+
+                # Bug Fix: Call repair loop when LLM smoke test fails
+                if not smoke_result.passed and smoke_result.violations:
+                    print(f"\n  🔧 Starting Smoke-Driven Repair Loop ({len(smoke_result.violations)} violations)")
+
+                    smoke_validator = RuntimeSmokeTestValidator(
+                        app_dir=self.output_path,
+                        port=8002,
+                        startup_timeout=180.0,
+                        request_timeout=10.0
+                    )
+
+                    await self._attempt_runtime_repair(
+                        smoke_result.violations,
+                        smoke_validator,
+                        smoke_result=smoke_result
+                    )
+
+                    self.metrics_collector.record_error("runtime_smoke_test", {
+                        "error": "Smoke test failed after repair attempts",
+                        "endpoints_failed": smoke_result.endpoints_failed,
+                        "violations": len(smoke_result.violations)
+                    }, critical=True)
+                    print(f"\n  ❌ Phase 8.5 FAILED - Smoke test did not pass after repair")
+
                 return
             else:
                 print("  ⚠️ LLM smoke test failed, falling back to basic validator")
@@ -3665,7 +3731,7 @@ Once running, visit:
         """
         # Use new SmokeRepairOrchestrator if available
         if SMOKE_REPAIR_ORCHESTRATOR_AVAILABLE and SmokeRepairOrchestrator:
-            print(f"\n  🔧 Using Smoke-Driven Repair Orchestrator")
+            print(f"\n  🔧 Using Smoke-Driven Repair Orchestrator (Full Cycle)")
 
             # Log Phase 2 component availability
             if DELTA_VALIDATOR_AVAILABLE:
@@ -3674,6 +3740,8 @@ Once running, visit:
                 print(f"    ✅ Repair Confidence Model enabled (probabilistic ranking)")
             if FIX_PATTERN_LEARNER_AVAILABLE:
                 print(f"    ✅ Fix Pattern Learner enabled (cross-session learning)")
+            if IR_CODE_CORRELATOR_AVAILABLE:
+                print(f"    ✅ IR-Code Correlator enabled (realignment after repair)")
 
             config = SmokeRepairConfig(
                 max_iterations=3,
@@ -3688,10 +3756,22 @@ Once running, visit:
                 config=config
             )
 
-            repair_result = await orchestrator.run_smoke_repair_cycle(
+            # Capture smoke results before repair for IR realignment
+            # EndpointTestResult has: endpoint_path, method, success (not 'passed'), status_code
+            passed_results = [r for r in (smoke_result.results if smoke_result else []) if r.success]
+            smoke_results_before = {
+                "violations": violations,
+                "passed_scenarios": [{"endpoint": f"{r.method} {r.endpoint_path}", "status_code": r.status_code} for r in passed_results]
+            }
+
+            # Use run_full_repair_cycle for Docker rebuild integration
+            # Note: In E2E we typically run without Docker rebuild to speed up tests
+            # Set with_docker_rebuild=True for production deployments
+            repair_result = await orchestrator.run_full_repair_cycle(
                 app_path=self.output_path,
                 application_ir=self.application_ir,
-                capture_logs=True
+                with_docker_rebuild=False,  # Set True for Docker-based deployments
+                max_cycles=3
             )
 
             # Report results
@@ -3715,6 +3795,48 @@ Once running, visit:
                 if fixes_count > 5:
                     print(f"      ... and {fixes_count - 5} more")
 
+            # IR Realignment after repairs
+            if IR_CODE_CORRELATOR_AVAILABLE and get_ir_code_correlator and repair_result.fixes_applied:
+                try:
+                    print(f"\n  🔄 Realigning IR after repairs...")
+                    correlator = get_ir_code_correlator()
+
+                    # Re-run smoke to get after results
+                    smoke_after = await smoke_validator.validate(self.application_ir)
+                    passed_after = [r for r in smoke_after.results if r.success]
+                    smoke_results_after = {
+                        "violations": smoke_after.violations,
+                        "passed_scenarios": [{"endpoint": f"{r.method} {r.endpoint_path}", "status_code": r.status_code} for r in passed_after]
+                    }
+
+                    # Convert RepairFix objects to dicts
+                    repairs_dicts = [{
+                        "file_path": fix.file_path,
+                        "fix_type": fix.fix_type,
+                        "description": fix.description,
+                        "success": fix.success
+                    } for fix in repair_result.fixes_applied]
+
+                    realignment = correlator.realign_after_repair(
+                        application_ir=self.application_ir,
+                        repairs=repairs_dicts,
+                        smoke_results_before=smoke_results_before,
+                        smoke_results_after=smoke_results_after
+                    )
+
+                    print(f"    ✅ IR realigned: {len(realignment['entities_affected'])} entities, "
+                          f"{len(realignment['endpoints_affected'])} endpoints affected")
+                    print(f"    📈 Pass rate delta: {realignment['pass_rate_delta']:+.1%}")
+
+                    self.metrics_collector.add_checkpoint("runtime_smoke_test", "CP-8.5.IR_REALIGN", {
+                        "entities_affected": realignment["entities_affected"],
+                        "endpoints_affected": realignment["endpoints_affected"],
+                        "pass_rate_delta": realignment["pass_rate_delta"],
+                        "ir_updates": realignment["ir_updates"]
+                    })
+                except Exception as e:
+                    print(f"    ⚠️ IR realignment failed: {e}")
+
             self.metrics_collector.add_checkpoint("runtime_smoke_test", "CP-8.5.SMOKE_REPAIR", {
                 "iterations": iterations_count,
                 "initial_pass_rate": repair_result.initial_pass_rate,
@@ -3726,7 +3848,8 @@ Once running, visit:
                 "duration_ms": repair_result.duration_ms,
                 "phase2_delta_validator": DELTA_VALIDATOR_AVAILABLE,
                 "phase2_confidence_model": REPAIR_CONFIDENCE_MODEL_AVAILABLE,
-                "phase2_pattern_learner": FIX_PATTERN_LEARNER_AVAILABLE
+                "phase2_pattern_learner": FIX_PATTERN_LEARNER_AVAILABLE,
+                "phase2_ir_correlator": IR_CODE_CORRELATOR_AVAILABLE
             })
 
             if repair_result.target_reached:
@@ -4164,7 +4287,7 @@ Once running, visit:
                         entities.append({
                             "name": e.name,
                             "attributes": [{"name": a.name, "data_type": a.data_type.value if hasattr(a.data_type, 'value') else str(a.data_type)} for a in e.attributes] if hasattr(e, 'attributes') else [],
-                            "relationships": [{"name": r.name} for r in e.relationships] if hasattr(e, 'relationships') else []
+                            "relationships": [{"field_name": r.field_name, "target_entity": r.target_entity, "type": r.type.value if hasattr(r.type, 'value') else str(r.type)} for r in e.relationships] if hasattr(e, 'relationships') else []
                         })
 
                 endpoints = []

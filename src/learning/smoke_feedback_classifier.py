@@ -409,7 +409,17 @@ class SmokeFeedbackClassifier:
         stack_trace: str
     ) -> ErrorClassification:
         """Classify error type and extract patterns."""
-        error_type_raw = violation.get("error_type", "Unknown")
+        error_type_raw = violation.get("error_type")
+
+        # If no error_type, infer from actual_status (HTTP code)
+        if not error_type_raw:
+            actual_status = violation.get("actual_status")
+            if actual_status:
+                # Convert HTTP status to error type: 500 → "HTTP_500"
+                error_type_raw = f"HTTP_{actual_status}"
+            else:
+                error_type_raw = "Unknown"
+
         error_message = violation.get("error_message", "") or ""
 
         # Normalize exception class

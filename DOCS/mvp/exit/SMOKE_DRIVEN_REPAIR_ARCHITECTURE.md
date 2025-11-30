@@ -1272,6 +1272,368 @@ class DeltaIRValidator:
 
 ---
 
+## Critical Integration Points (User Requirements)
+
+### 1. IR Realignment After Repairs
+
+**Requisito:** "recorda q se tiene q alimentar y realinear con IR"
+
+Después de cada repair, el sistema DEBE realinear con IR para mantener consistencia:
+
+```python
+class IRCodeCorrelator:
+    """
+    Realinea IR después de reparaciones de código.
+
+    Ubicación: src/cognitive/services/ir_code_correlator.py
+    """
+
+    async def realign_after_repair(
+        self,
+        fixes: List[CodeFix],
+        application_ir: ApplicationIR,
+    ) -> IRRealignmentResult:
+        """
+        Flujo:
+        1. Parse qué cambió en cada fix
+        2. Identificar elementos IR afectados
+        3. Actualizar IR constraints/fields si cambió el código
+        4. Persistir IR actualizado
+        5. Registrar delta para learning
+        """
+        realignments = []
+
+        for fix in fixes:
+            # 1. Analizar cambios
+            changes = self._analyze_fix_changes(fix)
+
+            # 2. Encontrar elementos IR afectados
+            affected = self._find_affected_ir_elements(changes, application_ir)
+
+            # 3. Aplicar realignment
+            for element in affected:
+                if element.type == "entity_field":
+                    # Fix cambió nullable? Actualizar IR
+                    if "nullable" in changes.keywords:
+                        element.ir_node.nullable = True
+
+                elif element.type == "endpoint":
+                    # Fix cambió response schema? Actualizar IR
+                    if "response" in changes.keywords:
+                        element.ir_node.response_schema = changes.new_schema
+
+                realignments.append(IRRealignment(
+                    element=element,
+                    before=element.original_state,
+                    after=element.new_state,
+                ))
+
+        # 4. Persistir IR actualizado
+        await self._persist_ir(application_ir)
+
+        # 5. Registrar para learning
+        self._record_ir_delta(realignments)
+
+        return IRRealignmentResult(
+            realignments=realignments,
+            ir_version=application_ir.version + 1,
+        )
+```
+
+**Flujo de datos IR Realignment:**
+```
+Smoke Error → Repair Code → IR Correlator → Update IR → Persist
+      ↓              ↓              ↓              ↓
+  violations     code fixes    find deltas   new IR version
+                                    ↓
+                          Learning System (record deltas)
+```
+
+### 2. Integration con NegativePatternStore (Learned Anti-Patterns)
+
+**Requisito:** "y de lo aprendido"
+
+El repair loop DEBE consultar anti-patterns aprendidos para:
+1. Aplicar fixes conocidos primero (alta confianza)
+2. Evitar reparaciones que fallaron antes
+3. Mejorar prompts de repair con context histórico
+
+```python
+class SmokeRepairOrchestrator:
+    """
+    Integración con NegativePatternStore en el repair loop.
+    """
+
+    async def _repair_with_learned_patterns(
+        self,
+        violation: SmokeViolation,
+        stack_trace: str,
+        app_path: Path,
+    ) -> Optional[CodeFix]:
+        """
+        Orden de prioridad para repair:
+        1. Anti-pattern conocido con fix (NegativePatternStore)
+        2. Fix pattern histórico exitoso (FixPatternLearner)
+        3. LLM-based repair (fallback)
+        """
+
+        # 1. Consultar NegativePatternStore (Generation Feedback Loop)
+        from src.learning import get_negative_pattern_store
+        pattern_store = get_negative_pattern_store()
+
+        # Buscar anti-pattern que matchee este error
+        anti_pattern = pattern_store.get_patterns_for_error(
+            error_type=violation.error_type,
+            entity=self._extract_entity(violation.endpoint),
+        )
+
+        if anti_pattern and anti_pattern.correct_code_snippet:
+            logger.info(
+                f"📚 Using learned anti-pattern: {anti_pattern.pattern_id} "
+                f"(seen {anti_pattern.occurrence_count}x)"
+            )
+
+            # Aplicar fix conocido
+            fix = await self._apply_known_fix(
+                violation=violation,
+                fix_template=anti_pattern.correct_code_snippet,
+                app_path=app_path,
+            )
+
+            if fix:
+                # Incrementar prevention count
+                pattern_store.increment_prevention(anti_pattern.pattern_id)
+                return fix
+
+        # 2. Consultar FixPatternLearner (Smoke Repair Learning)
+        from src.validation.smoke_test_pattern_adapter import get_fix_pattern_learner
+        fix_learner = get_fix_pattern_learner()
+
+        known_fix = fix_learner.get_known_fix(
+            error_type=violation.error_type,
+            endpoint_pattern=violation.endpoint,
+            exception_class=self._extract_exception(stack_trace),
+        )
+
+        if known_fix and known_fix.success_rate >= 0.7:
+            logger.info(
+                f"🎯 Using historical fix pattern: {known_fix.pattern_id} "
+                f"(success rate: {known_fix.success_rate:.0%})"
+            )
+            return await self._apply_fix_template(known_fix.fix_template, app_path)
+
+        # 3. Fallback: LLM repair con context enriquecido
+        logger.info("🤖 Using LLM repair with learned context")
+        return await self._llm_repair_with_context(
+            violation=violation,
+            stack_trace=stack_trace,
+            anti_patterns=[anti_pattern] if anti_pattern else [],
+            app_path=app_path,
+        )
+```
+
+### 3. Docker Rebuild sin Cache
+
+**Requisito:** "volver a levantar docker sin cache y otra vez smoke"
+
+Después de cada repair iteration, rebuild forzado:
+
+```python
+async def _rebuild_docker_no_cache(self, app_path: Path) -> None:
+    """
+    Reconstruye Docker sin cache para asegurar que los cambios se apliquen.
+
+    IMPORTANTE: --no-cache es crítico porque:
+    1. El código fue modificado durante repair
+    2. Docker puede tener layers cacheadas con código viejo
+    3. Sin --no-cache, los cambios NO se verían
+    """
+    compose_file = app_path / "docker-compose.yml"
+
+    logger.info("🔄 Rebuilding Docker (--no-cache)...")
+
+    # 1. Down containers
+    await run_command(
+        f"docker-compose -f {compose_file} down -v",  # -v para volumes también
+        cwd=app_path,
+        timeout=60,
+    )
+
+    # 2. Build sin cache
+    await run_command(
+        f"docker-compose -f {compose_file} build --no-cache",
+        cwd=app_path,
+        timeout=300,  # 5 min para build completo
+    )
+
+    # 3. Up fresh
+    await run_command(
+        f"docker-compose -f {compose_file} up -d",
+        cwd=app_path,
+        timeout=120,
+    )
+
+    # 4. Wait healthy
+    await self._wait_for_healthy(app_path, timeout=60, retries=10)
+
+    logger.info("✅ Docker rebuilt and healthy")
+```
+
+### Complete Repair Loop con Todas las Integraciones
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                    COMPLETE SMOKE-DRIVEN REPAIR LOOP                             │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│  ITERATION N:                                                                    │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │                                                                          │    │
+│  │  1. SMOKE TEST                                                           │    │
+│  │     ├── Run all scenarios                                                │    │
+│  │     ├── Capture server logs                                              │    │
+│  │     └── Parse stack traces                                               │    │
+│  │              │                                                           │    │
+│  │              ▼                                                           │    │
+│  │  2. COLLECT FEEDBACK (Learning)                                         │    │
+│  │     ├── SmokeFeedbackClassifier.classify_for_generation()               │    │
+│  │     └── NegativePatternStore.store(anti_pattern)                        │    │
+│  │              │                                                           │    │
+│  │              ▼                                                           │    │
+│  │  3. REPAIR WITH LEARNED PATTERNS                                        │    │
+│  │     ├── Query NegativePatternStore (anti-patterns)  ◀── "de lo aprendido" │    │
+│  │     ├── Query FixPatternLearner (historical fixes)                      │    │
+│  │     └── LLM repair with enriched context (fallback)                     │    │
+│  │              │                                                           │    │
+│  │              ▼                                                           │    │
+│  │  4. IR REALIGNMENT                              ◀── "realinear con IR"  │    │
+│  │     ├── IRCodeCorrelator.realign_after_repair()                         │    │
+│  │     ├── Update IR constraints if code changed                           │    │
+│  │     └── Persist updated IR                                              │    │
+│  │              │                                                           │    │
+│  │              ▼                                                           │    │
+│  │  5. DOCKER REBUILD (--no-cache)                ◀── "sin cache"          │    │
+│  │     ├── docker-compose down -v                                          │    │
+│  │     ├── docker-compose build --no-cache                                 │    │
+│  │     └── docker-compose up -d + wait healthy                             │    │
+│  │              │                                                           │    │
+│  │              ▼                                                           │    │
+│  │  6. CONVERGENCE CHECK                                                    │    │
+│  │     ├── pass_rate >= 80%? → SUCCESS                                     │    │
+│  │     ├── regression? → ROLLBACK                                          │    │
+│  │     └── max_iterations? → STOP                                          │    │
+│  │                                                                          │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                          │                                                       │
+│                          ▼                                                       │
+│  LOOP ──────────────────────────────────────────────────────────────────────────│
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+LEARNING FEEDBACK:
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│  Smoke Results → FeedbackCollector → NegativePatternStore ──┐                   │
+│                                                              │                   │
+│  Repair Results → FixPatternLearner ────────────────────────┤                   │
+│                                                              │                   │
+│  IR Changes → IRCodeCorrelator.record_delta() ──────────────┤                   │
+│                                                              ▼                   │
+│                                             ┌─────────────────────┐             │
+│                                             │  NEXT GENERATION    │             │
+│                                             │  IMPROVEMENT        │             │
+│                                             │                     │             │
+│                                             │  - CodeGen uses     │             │
+│                                             │    anti-patterns    │             │
+│                                             │  - Repair uses      │             │
+│                                             │    fix patterns     │             │
+│                                             │  - IR stays         │             │
+│                                             │    consistent       │             │
+│                                             └─────────────────────┘             │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Archivos a Modificar/Crear
+
+| Archivo | Acción | Cambios | Estado |
+|---------|--------|---------|--------|
+| `src/validation/smoke_repair_orchestrator.py` | MODIFICAR | Agregar `_repair_with_learned_patterns()`, `_rebuild_docker_no_cache()`, `run_full_repair_cycle()` | ✅ COMPLETADO |
+| `src/cognitive/services/ir_code_correlator.py` | MODIFICAR | Agregar `realign_after_repair()` | ✅ COMPLETADO |
+| `tests/e2e/real_e2e_full_pipeline.py` | MODIFICAR | Integrar IR realignment y usar `run_full_repair_cycle()` | ✅ COMPLETADO |
+
+---
+
+## Implementation Session Log - 2025-11-30
+
+### Nuevos Métodos Implementados
+
+#### smoke_repair_orchestrator.py
+
+1. **`_get_learned_antipatterns()`**
+   - Query NegativePatternStore para anti-patterns relevantes
+   - Busca por: entidad, endpoint, exception class
+   - Deduplica por pattern_id
+   - Returns: List[Dict] con patterns y su metadata
+
+2. **`_repair_with_learned_patterns()`**
+   - Usa anti-patterns como guía de repair
+   - Ordena por confidence × occurrences
+   - Aplica correct_pattern si wrong_pattern matchea
+   - Incrementa prevention_count en éxito
+
+3. **`_rebuild_docker_no_cache()`**
+   - Stop → Remove → Build --no-cache
+   - Timeout 5 min para build
+   - Graceful degradation si Docker no disponible
+
+4. **`_restart_container()`**
+   - Run con port mapping
+   - Wait 3s para startup
+   - Returns bool para control flow
+
+5. **`run_full_repair_cycle()`**
+   - Ciclo completo: Smoke → Learned Patterns → Repair → Docker Rebuild → Loop
+   - Soporta `with_docker_rebuild` flag
+   - Tracking de `learned_patterns_applied`
+   - Integración de todos los Phase 2 components
+
+#### ir_code_correlator.py
+
+6. **`realign_after_repair()`**
+   - Actualiza ApplicationIR después de repairs
+   - Calcula pass_rate delta
+   - Infiere entities/endpoints afectados
+   - Persiste IRRealignment a Neo4j
+
+7. **`_infer_entity_from_repair()`**
+   - Extrae entity name de repair description
+   - Patterns: "to X_id", "Made X_"
+   - Fallback: basename de file path
+
+8. **`_update_entity_metadata()`** / **`_update_endpoint_metadata()`**
+   - Agrega _repair_history a IR elements
+   - Tracking de fix_type, description, timestamp
+
+### E2E Pipeline Integration
+
+- Import de `IRCodeCorrelator`, `get_ir_code_correlator`
+- Flag `IR_CODE_CORRELATOR_AVAILABLE`
+- Usa `run_full_repair_cycle()` con `with_docker_rebuild=False` (E2E mode)
+- Post-repair: `realign_after_repair()` para sync IR
+- Métricas adicionales: `phase2_ir_correlator`, `CP-8.5.IR_REALIGN`
+
+### Verificación
+
+```bash
+# Imports OK
+PYTHONPATH=/home/kwar/code/agentic-ai python3 -c "
+from src.validation.smoke_repair_orchestrator import SmokeRepairOrchestrator
+from src.cognitive.services.ir_code_correlator import get_ir_code_correlator
+print('✅ All imports OK')
+"
+```
+
+---
+
 **Documento creado:** 2025-11-29
-**Última actualización:** 2025-11-29
+**Última actualización:** 2025-11-30
 **Autor:** DevMatrix Pipeline Team

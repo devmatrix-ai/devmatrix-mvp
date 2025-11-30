@@ -623,6 +623,247 @@ class IRCodeCorrelator:
             self.logger.error(f"Failed to get historical correlations: {e}")
             return []
 
+    def realign_after_repair(
+        self,
+        application_ir,
+        repairs: List[Dict[str, Any]],
+        smoke_results_before: Dict[str, Any],
+        smoke_results_after: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Realign ApplicationIR after code repairs.
+
+        This method updates the IR to reflect code changes made during repair:
+        1. Mark affected entities with repair metadata
+        2. Update endpoint pass rates
+        3. Track repair effectiveness per IR element
+        4. Store alignment data for learning
+
+        Args:
+            application_ir: The ApplicationIR to realign
+            repairs: List of repair dicts with fix_type, file_path, description, success
+            smoke_results_before: Smoke results before repair
+            smoke_results_after: Smoke results after repair
+
+        Returns:
+            Dict with realignment summary:
+            - entities_affected: List of entity names that were repaired
+            - endpoints_affected: List of endpoints that improved
+            - pass_rate_delta: Change in overall pass rate
+            - ir_updates: Count of IR metadata updates
+        """
+        entities_affected = set()
+        endpoints_affected = set()
+        ir_updates = 0
+
+        # Calculate pass rate delta
+        pass_rate_before = self._calculate_pass_rate(smoke_results_before)
+        pass_rate_after = self._calculate_pass_rate(smoke_results_after)
+        pass_rate_delta = pass_rate_after - pass_rate_before
+
+        self.logger.info(f"🔄 Realigning IR after repair (Δ pass rate: {pass_rate_delta:+.1%})")
+
+        # Track affected entities from repairs
+        for repair in repairs:
+            if not repair.get("success"):
+                continue
+
+            file_path = repair.get("file_path", "")
+            fix_type = repair.get("fix_type", "")
+
+            # Infer affected entity from file path
+            if "entities.py" in file_path or "models" in file_path:
+                # Database/model repairs affect entities
+                entity_name = self._infer_entity_from_repair(repair)
+                if entity_name:
+                    entities_affected.add(entity_name)
+                    ir_updates += self._update_entity_metadata(
+                        application_ir, entity_name, repair
+                    )
+
+            if "schemas.py" in file_path:
+                # Schema repairs affect validation
+                entity_name = self._infer_entity_from_repair(repair)
+                if entity_name:
+                    entities_affected.add(entity_name)
+
+            if "routes" in file_path or "api" in file_path:
+                # Route repairs affect endpoints
+                endpoint = self._infer_endpoint_from_repair(repair)
+                if endpoint:
+                    endpoints_affected.add(endpoint)
+                    ir_updates += self._update_endpoint_metadata(
+                        application_ir, endpoint, repair
+                    )
+
+        # Compare violations to identify improved endpoints
+        violations_before = set(
+            v.get("endpoint", "") for v in smoke_results_before.get("violations", [])
+        )
+        violations_after = set(
+            v.get("endpoint", "") for v in smoke_results_after.get("violations", [])
+        )
+
+        # Endpoints that were failing but now pass
+        improved_endpoints = violations_before - violations_after
+        endpoints_affected.update(improved_endpoints)
+
+        # Persist realignment to Neo4j
+        self._persist_realignment(
+            entities_affected=list(entities_affected),
+            endpoints_affected=list(endpoints_affected),
+            pass_rate_delta=pass_rate_delta,
+            repairs_count=len([r for r in repairs if r.get("success")])
+        )
+
+        summary = {
+            "entities_affected": list(entities_affected),
+            "endpoints_affected": list(endpoints_affected),
+            "pass_rate_delta": pass_rate_delta,
+            "ir_updates": ir_updates,
+            "improved_endpoints": list(improved_endpoints),
+            "pass_rate_before": pass_rate_before,
+            "pass_rate_after": pass_rate_after
+        }
+
+        self.logger.info(f"  ✅ IR realigned: {len(entities_affected)} entities, {len(endpoints_affected)} endpoints affected")
+
+        return summary
+
+    def _calculate_pass_rate(self, smoke_results: Dict[str, Any]) -> float:
+        """Calculate pass rate from smoke results."""
+        violations = smoke_results.get("violations", [])
+        passed = smoke_results.get("passed_scenarios", [])
+        total = len(violations) + len(passed)
+        return len(passed) / total if total > 0 else 0.0
+
+    def _infer_entity_from_repair(self, repair: Dict[str, Any]) -> Optional[str]:
+        """Infer entity name from repair context."""
+        description = repair.get("description", "")
+        file_path = repair.get("file_path", "")
+
+        # Try to extract from description
+        import re
+        # Patterns like "Added nullable=True to category_id" -> Category
+        field_match = re.search(r'to\s+(\w+)_id', description)
+        if field_match:
+            return field_match.group(1).capitalize()
+
+        # Patterns like "Made product_name optional" -> Product
+        field_match = re.search(r'Made\s+(\w+)_', description)
+        if field_match:
+            return field_match.group(1).capitalize()
+
+        # Try from file path
+        if "routes" in file_path:
+            # routes/product.py -> Product
+            import os
+            basename = os.path.basename(file_path)
+            if basename.endswith(".py"):
+                return basename[:-3].capitalize()
+
+        return None
+
+    def _infer_endpoint_from_repair(self, repair: Dict[str, Any]) -> Optional[str]:
+        """Infer endpoint from repair context."""
+        description = repair.get("description", "")
+
+        # Patterns like "Missing route: POST /products"
+        import re
+        route_match = re.search(r'(GET|POST|PUT|PATCH|DELETE)\s+(/\S+)', description)
+        if route_match:
+            return f"{route_match.group(1)} {route_match.group(2)}"
+
+        return None
+
+    def _update_entity_metadata(
+        self,
+        application_ir,
+        entity_name: str,
+        repair: Dict[str, Any]
+    ) -> int:
+        """Update entity metadata in ApplicationIR."""
+        updates = 0
+
+        if not hasattr(application_ir, 'entities'):
+            return 0
+
+        for entity in application_ir.entities:
+            if hasattr(entity, 'name') and entity.name.lower() == entity_name.lower():
+                # Add repair metadata
+                if not hasattr(entity, '_repair_history'):
+                    entity._repair_history = []
+
+                entity._repair_history.append({
+                    "fix_type": repair.get("fix_type"),
+                    "description": repair.get("description"),
+                    "timestamp": datetime.now().isoformat()
+                })
+                updates += 1
+                break
+
+        return updates
+
+    def _update_endpoint_metadata(
+        self,
+        application_ir,
+        endpoint: str,
+        repair: Dict[str, Any]
+    ) -> int:
+        """Update endpoint metadata in ApplicationIR."""
+        updates = 0
+
+        if not hasattr(application_ir, 'endpoints'):
+            return 0
+
+        for ep in application_ir.endpoints:
+            ep_path = f"{ep.method.upper() if hasattr(ep, 'method') else 'GET'} {ep.path if hasattr(ep, 'path') else ''}"
+            if ep_path == endpoint:
+                if not hasattr(ep, '_repair_history'):
+                    ep._repair_history = []
+
+                ep._repair_history.append({
+                    "fix_type": repair.get("fix_type"),
+                    "description": repair.get("description"),
+                    "timestamp": datetime.now().isoformat()
+                })
+                updates += 1
+                break
+
+        return updates
+
+    def _persist_realignment(
+        self,
+        entities_affected: List[str],
+        endpoints_affected: List[str],
+        pass_rate_delta: float,
+        repairs_count: int
+    ):
+        """Persist realignment data to Neo4j."""
+        if not self._neo4j_available or not self.driver:
+            return
+
+        try:
+            with self.driver.session() as session:
+                session.run("""
+                    CREATE (r:IRRealignment {
+                        timestamp: datetime(),
+                        entities_affected: $entities,
+                        endpoints_affected: $endpoints,
+                        pass_rate_delta: $delta,
+                        repairs_count: $repairs
+                    })
+                """, {
+                    "entities": entities_affected,
+                    "endpoints": endpoints_affected,
+                    "delta": pass_rate_delta,
+                    "repairs": repairs_count
+                })
+
+                self.logger.info("Persisted IR realignment to Neo4j")
+        except Exception as e:
+            self.logger.warning(f"Failed to persist realignment: {e}")
+
 
 # =============================================================================
 # Singleton Instance

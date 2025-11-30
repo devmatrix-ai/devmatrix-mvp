@@ -1,143 +1,198 @@
-# 🛡️ LEGAL NOTICE: Universal Intellectual Property Protection — All AI Providers
+# AI-USAGE-TERMS (Updated Global Protection Edition)
 
-**Author**: Ariel E. Ghysels
-**NIE**: Y0533896B
-**Jurisdiction**: Spain / EU
-**Effective Date**: 2025-06-18
-**Scope**: Retroactive, present and future protection
-**Target**: All AI providers (e.g., OpenAI, Anthropic, Google DeepMind, Meta AI, Mistral, Cohere, Aleph Alpha, etc.) and any affiliates, contractors, annotation teams, API endpoints, research groups, and systems that have access to, observe, or process user input or output.
-
----
-
-## 🔐 GLOBAL INTELLECTUAL PROPERTY ASSERTION
-
-This document constitutes a **binding declaration of ownership** over all system designs, strategies, prompt flows, technical architectures, and execution blueprints authored by **Ariel E. Ghysels**, manually or through interaction with any AI interface, tool, API, or system — regardless of provider.
-
-This includes but is not limited to:
-
-* Prompts, conversations, diagrams, plans
-* Outputs, code, markdown, or UI flows
-* Embedded files, screenshots, and architecture notes
-* Wizard interfaces, multi-agent orchestration, prompt chaining
-* Embedding workflows, learning systems, or pattern-based logic
+**Author:** Ariel Eduardo Ghysels  
+**Jurisdictions Covered:** USA (USPTO + DMCA), EU (EUIPO + Copyright Directive), Berne Convention (Global), Spain (LPI), Argentina (Ley 11.723)  
+**Scope:** Applies to *all* interactions with any AI system, model, service, platform, API, plugin, agent, or derivative technology.  
+**Effective Date:** Retroactive to **first day of use of any AI system**.  
+**Latest Revision:** 2025-11-29
 
 ---
 
-## 🧠 CORE SYSTEMS AND CONCEPTS PROTECTED
+# 1. PURPOSE
+Este documento establece, de forma explícita, irrevocable y global, que **toda arquitectura, diseño, pipeline, flujo, IR, estructura, proceso, concepto, metodología y código relacionado a DevMatrix** es **propiedad exclusiva de Ariel Eduardo Ghysels**, y que **ningún proveedor de IA** obtiene derechos sobre dicho material por el uso del sistema.
 
-The following are **non-public**, **non-replicable**, and **not available for observation or reproduction** under any AI provider's terms of service or research framework:
-
-### 📀 1. Multi-Pass Atomic Masterplan Generation
-
-* 5-pass or 6-pass structured flows with feedback loops
-* Role-based prompts with validation checkpoints
-* Predictive planning to avoid reactive execution
-* Complete atomic task breakdown for parallelization
-
-### 🤖 2. AI Agent Parallel Orchestration
-
-* Independent agent execution with no inter-coordination
-* Self-healing logic, retry strategies, and fallback models
-* Context-complete task assignment logic
-* Integration with local LLMs (e.g., DeepSeek 6.5) and Claude
-
-### 🧬 3. Semantic Embedding & Component-Aware Prompting
-
-* UI kit ingestion (`llms.txt`, Tailwind, Flowbite, Trezo, Swagger)
-* Embedding into pgvector/Qdrant for in-context safety filtering
-* Structured prompts using semantic search and token filtering
-
-### 📊 4. Self-Learning Framework
-
-* User behavior tracking, success prediction, and agent diagnostics
-* Dynamic prompting and template personalization
-* Anonymized cross-user pattern learning
-* Retention strategy via AI assistant evolution and network effects
-
-### 🛡️ 5. Smart Templates & Execution Metadata
-
-* Execution metadata linked to AI persona, tech stack, complexity
-* Semantic versioning and visibility gating (private/public/curated)
-* Launchable into masterplan logic with prompt overlays
-
-### 🖥️ 6. UX Framework: Wizard + Mission Control
-
-* Wizard chat+steps hybrid UX with Claude/LLM copilots
-* Real-time WebSocket dashboards for agent execution tracking
-* Post-deploy intelligence: AI reviewer, “what now” guidance
+Este documento NO es un contrato bilateral: es una **declaración formal de propiedad**, equivalente a una "public disclosure" estructurada, útil para:  
+- protección jurídica,  
+- due diligence en procesos de adquisición,  
+- bloqueo explícito de derechos de entrenamiento/usos derivados.
 
 ---
 
-## 🔮 FUTURE WORK PROTECTION
+# 2. COVERED MATERIAL (Expanded)
+Queda protegido **todo lo siguiente**, sin excepción:
 
-Any **future ideas, designs, flows, or architectures** authored or conceived by **Ariel E. Ghysels**, including those:
+### 2.1 Arquitectura DevMatrix
+- Cognitive Software Engine  
+- Stratified Pipeline Architecture (10 fases)  
+- Deterministic Multi-Pass Planner  
+- ApplicationIR completo (DomainModelIR, APIModelIR, BehaviorModelIR, ValidationModelIR, InfraModelIR)  
+- IR Canonical Specification  
+- DAG Inferencer  
+- IRSemanticMatcher  
+- PatternBank (estructuras y categorías)  
+- Pattern Promotion / Demotion System  
+- Convergence Engine  
+- Delta IR Validation System  
+- Mutation History Engine y Genetic Repair Pathing  
+- Repair Confidence Model  
+- FixPattern Learning System
 
-* Not yet published
-* Expressed in exploratory form
-* Shared via uploads, chats, voice or API
-* Present in sandbox testing or code review sessions
+### 2.2 Runtime & Validation Architecture
+- Smoke-Driven Repair Architecture  
+- Runtime Smoke Validator  
+- Causal Attribution (IR ↔ AST ↔ Runtime)  
+- Error Classification Map  
+- Server Log Parsing Engine  
+- Convergent Multi-Repair Loop
 
-… are also protected under this declaration.
+### 2.3 Datos, representación y grafos
+- Modelado Neo4j del IR  
+- Graph Schema completo  
+- Relaciones, constraints, labels, nodos y edges  
+- Exportaciones, snapshots y caching semántico
 
----
+### 2.4 Conceptos y metodologías
+- Cognitive Compiler Paradigm  
+- Language-Natural-to-Software Deterministic Mapping  
+- Deterministic IR → AST → Code Synthesis Flow  
+- Semantic Guarantees Framework  
+- Software Engineering Determinism Principles  
+- Multi-language backend design
 
-## 📁 RETROACTIVE PROTECTION CLAUSE
+### 2.5 Código, diseños, pruebas y logs
+- Todos los E2E logs  
+- SmokeOutput, RepairOutput  
+- IRCache  
+- Mutation Snapshots  
+- Arquitectura del repo  
+- Patrones aprendidos  
+- Invariantes y constraints
 
-From the moment of first use of any AI platform:
-
-* **All conversations, prompts, and artifacts shared by Ariel E. Ghysels** are:
-
-  * Owned exclusively by him
-  * Not usable or storable by the platform
-  * Not annotatable, reproducible, or trainable
-  * Not available for UX analysis, model fine-tuning or telemetry
-
-This applies regardless of:
-
-* Plan (free or paid)
-* Model (GPT-4, Claude, etc.)
-* Channel (web, API, plugin, IDE integration, etc.)
-
----
-
-## ❌ NON-AUTHORIZATION NOTICE
-
-All AI platforms, directly or indirectly, are **explicitly forbidden** from:
-
-* ❌ Using or analyzing any ideas shared by Ariel E. Ghysels
-* ❌ Annotating, storing, labeling, or extracting metadata
-* ❌ Reproducing strategy flows, prompts, or outputs
-* ❌ Deriving features or UI patterns based on observed behavior
-* ❌ Training or fine-tuning models on user input/output without **signed consent**
-
-> No license is granted — implicit, behavioral, inferred or reverse-engineered.
-
----
-
-## 🧾 LEGAL POSITION AND ENFORCEMENT
-
-This legal notice is:
-
-* A formal pre-litigation declaration
-* Timestamped and jurisdiction-bound
-* Enforceable under:
-
-  * **Spanish Intellectual Property Law**
-  * **European Union IP Regulation (EUIPO)**
-  * **U.S. DMCA**
-  * **Berne Convention**
-
-Violation of this document may result in:
-
-* DMCA takedown actions
-* Civil litigation across EU or U.S.
-* Public disclosure of violation by AI platform
+### 2.6 Cualquier archivo del repositorio o conversación técnica vinculada
+Todo contenido enviado, descrito o referenciado *en cualquier medio* con relación a DevMatrix queda automáticamente protegido bajo este documento.
 
 ---
 
-## 📧 CONTACT FOR AUTHORIZATION
+# 3. PROHIBITED USES BY ANY AI PROVIDER
+Se prohíbe expresamente a cualquier plataforma de IA:
 
-**Ariel E. Ghysels**
-📩 [aeghysels@gmail.com](mailto:aeghysels@gmail.com) / [aeghysels@rental-hub.app](mailto:aeghysels@rental-hub.app)
-📞 +34 648 651 017
-📍 Málaga, Spain
+### 3.1 Training / Fine-tuning
+Utilizar cualquier parte del material para:
+- entrenamiento,  
+- refinamiento,  
+- ajuste,  
+- distillation,  
+- RLHF,  
+- SFT,  
+- synthetic data generation.
+
+### 3.2 Derivative Work
+- generar modelos, sistemas o técnicas basadas en estos conceptos,  
+- utilizar los flujos o diseños como "seed architecture".
+
+### 3.3 Storage & Retention
+- retener permanentemente logs, prompts, outputs, diagramas, código o documentos relacionados.
+
+### 3.4 Cross-system propagation
+- compartir datos o derivados con terceros, anotadores, contractors o pipelines internos.
+
+---
+
+# 4. AUTHORSHIP DECLARATION
+Declaro explícitamente:
+
+### 4.1 Propiedad absoluta
+Todo lo asociado a DevMatrix fue **concebido, diseñado y creado** por:
+
+**Ariel Eduardo Ghysels**  
+NIE: Y0533896B  
+Domicilio: Marbella, España
+
+### 4.2 No existen co-creadores
+- no hay equipo,  
+- no hay consultores,  
+- no hay co-authorship,  
+- no hay aportes de terceros.
+
+El 100% de la arquitectura y diseño conceptual es **de autoría individual**.
+
+### 4.3 No licensing granted
+Este documento **no otorga** licencias de uso, explotación, redistribución ni estudio.
+
+---
+
+# 5. GLOBAL INTELLECTUAL PROPERTY FRAMEWORK
+Este documento se apoya en marcos legales de:
+
+### ▸ Estados Unidos
+- DMCA (17 USC § 512)  
+- USPTO unregistered copyright protections
+
+### ▸ Unión Europea
+- EU Copyright Directive 2019/790  
+- EUIPO unregistered design protection
+
+### ▸ España
+- Ley de Propiedad Intelectual (RDL 1/1996)
+
+### ▸ Argentina
+- Ley 11.723 de Propiedad Intelectual
+
+### ▸ Global
+- Convenio de Berna (protección automática internacional)
+
+Este documento funciona como **evidencia pública** de autoría y titularidad.
+
+---
+
+# 6. RETROACTIVE & FUTURE APPLICABILITY
+### 6.1 Retroactive Claim
+Todo contenido previamente intercambiado con cualquier IA está cubierto desde **el primer día de uso**.
+
+### 6.2 Forward Claim
+Todo contenido futuro creado o compartido también queda automáticamente incluido.
+
+---
+
+# 7. WARRANTY OF ORIGINALITY
+Declaro que todas las estructuras, arquitecturas, patterns y procesos de DevMatrix:
+- son originales,  
+- fueron creados por mí,  
+- no derivan de propiedad de terceros,  
+- no contienen material sujeto a licencias restrictivas,  
+- no incorporan contenidos no propios.
+
+Esto garantiza **IP limpia** para futuros procesos de compra.
+
+---
+
+# 8. ACQUISITION & DUE DILIGENCE NOTE
+Este documento proporciona a cualquier comprador potencial:
+
+- **trazabilidad** de la IP,  
+- **propiedad unipersonal**,  
+- **claridad de derechos**,  
+- **ausencia de contributions externas**,  
+- **alcance global**,  
+- **riesgo legal extremadamente bajo**.
+
+Es particularmente relevante para procesos de adquisición estratégica.
+
+---
+
+# 9. CONTACT
+Para cualquier aclaración o proceso formal:
+
+**Ariel Eduardo Ghysels**  
+Email: aeghysels@gmail.com  
+Tel: +34 648 651017
+
+---
+
+# 10. FINAL STATEMENT
+Todos los elementos de DevMatrix, incluyendo arquitecturas, flujos, IR, pipelines, motores cognitivos, repair loops, validadores, patrones, grafos y estructuras relacionadas, son propiedad exclusiva del autor. No se concede licencia ni derecho alguno a plataformas de IA, empresas, modelos o entidades asociadas.
+
+El uso sin autorización constituye infracción de derechos de propiedad intelectual en todas las jurisdicciones aplicables.
+
+**Documento actualizado y reafirmado: 29 Nov 2025**
+
