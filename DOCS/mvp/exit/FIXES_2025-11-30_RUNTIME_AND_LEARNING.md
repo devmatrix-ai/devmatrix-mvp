@@ -1205,3 +1205,58 @@ def _create_error_pattern(self, error_message: str) -> str:
 | Simple patterns | Heuristics | Fast, no dependencies |
 
 ---
+
+## Bug #162: ErrorKnowledgeBridge API Method Name Mismatch
+
+**Date**: 2025-11-30
+**Status**: ✅ FIXED
+**Severity**: High (broke Active Learning during smoke tests)
+
+### Error Observed
+
+During smoke-driven repair loop:
+```
+Bridge failed: 'NegativePatternStore' object has no attribute 'get_pattern'
+⚠️ Active Learning (Bridge) incomplete: Bridge failed: 'NegativePatternStore' object has no attribute 'get_pattern'
+```
+
+Followed by:
+```
+Bridge failed: 'NegativePatternStore' object has no attribute 'store_pattern'
+```
+
+### Root Cause
+
+`ErrorKnowledgeBridge` was calling incorrect method names on `NegativePatternStore`:
+- Called `get_pattern()` but actual method is `get()`
+- Called `store_pattern()` but actual method is `store()`
+
+### Fix Applied
+
+| Line | Before | After |
+|------|--------|-------|
+| 32 (docstring) | `NegativePatternStore.store_pattern()` | `NegativePatternStore.store()` |
+| 164 | `self._pattern_store.get_pattern(pattern_id)` | `self._pattern_store.get(pattern_id)` |
+| 187 | `self._pattern_store.store_pattern(anti_pattern)` | `self._pattern_store.store(anti_pattern)` |
+
+### Verification
+
+```
+✅ Bridge result: success=True, is_new=True, message=Created new anti-pattern
+```
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `src/learning/error_knowledge_bridge.py` | Fixed 2 method calls, updated docstring |
+
+### NegativePatternStore API Reference
+
+Available methods in `negative_pattern_store.py`:
+- `get(pattern_id)` - Line 427
+- `store(pattern)` - Line 343
+- `exists(pattern_id)` - Line 405
+- `increment_occurrence(pattern_id)` - Line 453
+
+---

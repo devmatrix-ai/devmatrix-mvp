@@ -29,7 +29,7 @@ Architecture:
     GenerationAntiPattern
            │
            ▼
-    NegativePatternStore.store_pattern()
+    NegativePatternStore.store()
            │
            ▼
     Next Generation: IRCentricCognitivePass queries patterns ✓
@@ -161,7 +161,7 @@ class ErrorKnowledgeBridge:
             )
 
             # Check if pattern already exists
-            existing = self._pattern_store.get_pattern(pattern_id)
+            existing = self._pattern_store.get(pattern_id)
             if existing:
                 # Increment occurrence count
                 self._pattern_store.increment_occurrence(pattern_id)
@@ -184,7 +184,7 @@ class ErrorKnowledgeBridge:
             )
 
             # Store in NegativePatternStore
-            stored = self._pattern_store.store_pattern(anti_pattern)
+            stored = self._pattern_store.store(anti_pattern)
 
             if stored:
                 self._bridged_count += 1
