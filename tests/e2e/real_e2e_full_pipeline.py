@@ -3745,7 +3745,7 @@ Once running, visit:
 
             config = SmokeRepairConfig(
                 max_iterations=3,
-                target_pass_rate=0.80,
+                target_pass_rate=1.00,  # Bug #115 Fix: Enforce 100% pass rate to avoid skipping repairs
                 convergence_epsilon=0.01,
                 enable_server_log_capture=True,
                 enable_learning=True
@@ -4304,7 +4304,8 @@ Once running, visit:
                 correlation_report = correlator.analyze_generation(
                     entities=entities,
                     endpoints=endpoints,
-                    smoke_results=smoke_result.violations if hasattr(smoke_result, 'violations') else []
+                    # Bug #116 Fix: Pass dict with 'violations' key, not list
+                    smoke_results={"violations": smoke_result.violations if hasattr(smoke_result, 'violations') else []}
                 )
 
                 if correlation_report.high_risk_patterns:

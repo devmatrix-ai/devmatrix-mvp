@@ -1,0 +1,35 @@
+  ⚠️ IR-Code correlation skipped: 'list' object has no attribute 'get'
+📊 Generation feedback: 0 new, 22 updated anti-patterns [45ms]
+  🎓 Generation Feedback Loop: 0 new, 22 updated anti-patterns
+     (Classification rate: 100%)
+
+  ❌ Phase 8.5 FAILED - Smoke test did not pass
+
+  🔧 Starting Smoke-Driven Repair Loop (22 violations)
+
+  🔧 Using Smoke-Driven Repair Orchestrator (Full Cycle)
+    ✅ Delta IR Validator enabled (70% speedup)
+--
+    - Total repairs: 0
+    - Duration: 69623ms
+
+  ✅ Target pass rate reached!
+
+  ❌ Phase 8.5 FAILED - Smoke test did not pass after repair
+✅ Phase Complete: Runtime Smoke Test
+▶️  Phase: Validation
+
+✅ Phase 7: Validation (Enhanced with Semantic Validation)
+  ✓ Checkpoint: CP-7.1: File structure validated (1/5)
+--
+  Tests Fixed:         0
+  Regressions:         0
+  Repair Time:         829.8ms
+  Repair Status:       SKIPPED - Compliance is perfect (100.0%)
+
+⚠️  ERROR TRACKING & RECOVERY
+------------------------------------------------------------------------------------------
+  Total Errors:        2
+  Recovered Errors:    0
+  Critical Errors:     2
+  Recovery Rate:       0.0%

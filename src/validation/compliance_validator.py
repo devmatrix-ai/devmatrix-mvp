@@ -1112,11 +1112,27 @@ class ComplianceValidator:
                             if sig not in validations_expected:
                                 validations_expected.append(sig)
 
-            # If no explicit validations from entities, use ValidationModelIR rules
-            if not validations_expected:
-                validation_rules = self._get_validation_rules_from_spec(spec_requirements)
-                for rule in validation_rules:
-                    validations_expected.append(f"{rule.entity}.{rule.field}: {rule.type.value}")
+            # Bug #117 Fix: Always include ValidationModelIR rules in expectations
+            # Previously this was a fallback, causing a gap where DomainModel provided basic rules (required)
+            # but ValidationModelIR provided advanced rules (gt=0, regex), leading to 100% compliance
+            # but failing tests. Now we merge both sources.
+            validation_rules = self._get_validation_rules_from_spec(spec_requirements)
+            for rule in validation_rules:
+                # Normalize rule to match signature format
+                constraint_str = rule.type.value
+                if rule.condition:
+                    # Map condition to constraint string if possible
+                    # e.g. condition="> 0" -> "gt=0"
+                    if ">" in rule.condition and "0" in rule.condition:
+                        constraint_str = "gt=0"
+                    elif "regex" in rule.type.value or "pattern" in rule.type.value:
+                        constraint_str = f"pattern={rule.condition}"
+                
+                sig = f"{rule.entity}.{rule.attribute}: {constraint_str}"
+                
+                # Avoid duplicates if DomainModel already provided this rule
+                if sig not in validations_expected:
+                    validations_expected.append(sig)
 
             # 5. Calculate compliance per category
             entity_compliance = self._calculate_compliance(entities_found, entities_expected)
