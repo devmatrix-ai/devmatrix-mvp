@@ -158,7 +158,7 @@ class RuntimeSmokeTestValidator:
             )
 
         server_logs = ""
-        stack_traces = []
+        stack_traces: List[StackTrace] = []
 
         try:
             # 2. Get endpoints from IR
@@ -186,8 +186,11 @@ class RuntimeSmokeTestValidator:
             # 4. Capture server logs BEFORE stopping (for smoke-driven repair)
             if violations:  # Only capture if there are failures
                 server_logs = await self._capture_server_logs()
-                stack_traces = self._extract_stack_traces(server_logs)
+                stack_trace_dicts = self._extract_stack_traces(server_logs)
+                stack_traces = [self._to_stack_trace(t) for t in stack_trace_dicts if t]
                 logger.info(f"📝 Captured {len(stack_traces)} stack traces from server logs")
+                # Attach best-effort traces to violations
+                self._attach_traces_to_violations(violations, stack_traces)
 
         finally:
             # 5. Stop server (always)
@@ -463,6 +466,51 @@ class RuntimeSmokeTestValidator:
             })
 
         return traces
+
+    def _to_stack_trace(self, trace_dict: Dict[str, Any]) -> StackTrace:
+        """Convert raw trace dict to StackTrace dataclass."""
+        error_type = trace_dict.get("error_type", "Unknown")
+        exception_class = trace_dict.get("type", None) or error_type
+        return StackTrace(
+            endpoint=trace_dict.get("endpoint", "unknown"),
+            error_type=error_type,
+            exception_class=exception_class,
+            exception_message=trace_dict.get("error_message", ""),
+            file_path=trace_dict.get("file", ""),
+            line_number=trace_dict.get("line", 0),
+            full_trace=trace_dict.get("full_trace", "")
+        )
+
+    def _attach_traces_to_violations(
+        self,
+        violations: List[Dict[str, Any]],
+        stack_traces: List[StackTrace]
+    ) -> None:
+        """Best-effort match of stack traces to violations by file/endpoint."""
+        if not stack_traces or not violations:
+            return
+
+        # Index by file for quick lookup
+        traces_by_file = {t.file_path: t for t in stack_traces if t.file_path}
+
+        for violation in violations:
+            file_path = violation.get("file", "")
+            matched_trace = None
+
+            if file_path and file_path in traces_by_file:
+                matched_trace = traces_by_file[file_path]
+            else:
+                # Fallback: match by endpoint substring in full_trace
+                endpoint = violation.get("endpoint", "")
+                for trace in stack_traces:
+                    if endpoint and endpoint in trace.full_trace:
+                        matched_trace = trace
+                        break
+
+            if matched_trace:
+                violation["stack_trace"] = matched_trace.full_trace
+                violation["stack_trace_obj"] = matched_trace
+                violation["exception_class"] = matched_trace.exception_class
 
     async def _stop_server(self) -> None:
         """Stop the server (Docker or uvicorn)."""
@@ -929,11 +977,13 @@ class RuntimeSmokeTestValidator:
             "type": "runtime_error",
             "severity": "critical",
             "endpoint": f"{endpoint.method.value} {endpoint.path}",
+            "method": endpoint.method.value,
             "error_type": result.error_type,
             "error_message": result.error_message,
             "stack_trace": result.stack_trace,
             "file": file_path,
             "status_code": result.status_code,
+            "expected_status": result.status_code or 200,
             "fix_hint": self._generate_fix_hint(result)
         }
 

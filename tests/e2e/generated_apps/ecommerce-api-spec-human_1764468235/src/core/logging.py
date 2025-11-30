@@ -1,0 +1,37 @@
+"""
+Structured Logging Configuration
+
+Uses structlog for JSON-formatted logs with context variables.
+"""
+import structlog
+from structlog.contextvars import merge_contextvars
+import logging
+
+
+def setup_logging(log_level: str = "INFO"):
+    """
+    Configure structured logging with context.
+
+    Args:
+        log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
+    """
+    structlog.configure(
+        processors=[
+            merge_contextvars,  # Add context vars (request_id, user_id)
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.add_logger_name,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.processors.JSONRenderer()
+        ],
+        wrapper_class=structlog.stdlib.BoundLogger,
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+
+    logging.basicConfig(
+        format="%(message)s",
+        level=log_level,
+    )

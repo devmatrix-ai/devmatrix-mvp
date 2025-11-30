@@ -1,0 +1,13 @@
+{
+  "app_name": "ecommerce",
+  "passed": true,
+  "duration_ms": 88775.71320533752,
+  "ir_comparison": null,
+  "openapi_comparison": null,
+  "metrics_comparison": {
+    "status": "improved",
+    "match_percentage": 100.0
+  },
+  "errors": [],
+  "warnings": []
+}

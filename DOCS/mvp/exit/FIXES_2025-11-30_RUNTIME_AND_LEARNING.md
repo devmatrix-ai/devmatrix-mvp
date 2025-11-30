@@ -14,6 +14,10 @@
   - New env toggle `ENFORCE_DOCKER_RUNTIME` = `1|true` forces fail-fast (no fallback) when Docker assets are missing or build fails.
   - Location: `src/validation/runtime_smoke_validator.py`.
 
+- **Smoke Repair Docker Rebuild Toggle**  
+  - Smoke-driven repair now allows enabling/disabling Docker rebuilds via `SMOKE_REPAIR_DOCKER_REBUILD` (default: disabled to avoid missing-Dockerfile hangs).  
+  - Location: `tests/e2e/real_e2e_full_pipeline.py` (repair orchestrator call).
+
 - **FixPatternLearner Recording**  
   - Repair records are normalized to strings before sending to FixPatternLearner, preventing `'dict' object has no attribute 'lower'`.  
   - Location: `src/validation/smoke_repair_orchestrator.py`.

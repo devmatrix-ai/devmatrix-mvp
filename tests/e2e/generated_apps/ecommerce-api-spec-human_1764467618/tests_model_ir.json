@@ -1,0 +1,3314 @@
+{
+  "seed_entities": [
+    {
+      "entity_name": "Product",
+      "table_name": "products",
+      "fields": [
+        {
+          "field_name": "name",
+          "value": "Test Name",
+          "generator": null
+        },
+        {
+          "field_name": "description",
+          "value": "Test description",
+          "generator": null
+        },
+        {
+          "field_name": "price",
+          "value": 99.99,
+          "generator": null
+        },
+        {
+          "field_name": "stock",
+          "value": 1,
+          "generator": null
+        },
+        {
+          "field_name": "is_active",
+          "value": true,
+          "generator": null
+        }
+      ],
+      "dependencies": [],
+      "count": 1,
+      "source_entity_id": "Product"
+    },
+    {
+      "entity_name": "Customer",
+      "table_name": "customers",
+      "fields": [
+        {
+          "field_name": "email",
+          "value": "test@example.com",
+          "generator": "faker.email"
+        },
+        {
+          "field_name": "full_name",
+          "value": "Test Name",
+          "generator": null
+        },
+        {
+          "field_name": "registration_date",
+          "value": "2025-01-01T00:00:00Z",
+          "generator": null
+        }
+      ],
+      "dependencies": [],
+      "count": 1,
+      "source_entity_id": "Customer"
+    },
+    {
+      "entity_name": "Cart",
+      "table_name": "carts",
+      "fields": [
+        {
+          "field_name": "customer_id",
+          "value": "{{ref:customer.id}}",
+          "generator": "uuid4"
+        },
+        {
+          "field_name": "status",
+          "value": "active",
+          "generator": null
+        }
+      ],
+      "dependencies": [
+        "customer"
+      ],
+      "count": 1,
+      "source_entity_id": "Cart"
+    },
+    {
+      "entity_name": "CartItem",
+      "table_name": "cart_items",
+      "fields": [
+        {
+          "field_name": "cart_id",
+          "value": "{{ref:cart.id}}",
+          "generator": "uuid4"
+        },
+        {
+          "field_name": "product_id",
+          "value": "{{ref:product.id}}",
+          "generator": "uuid4"
+        },
+        {
+          "field_name": "quantity",
+          "value": 1,
+          "generator": null
+        },
+        {
+          "field_name": "unit_price",
+          "value": 99.99,
+          "generator": null
+        }
+      ],
+      "dependencies": [
+        "cart",
+        "product"
+      ],
+      "count": 1,
+      "source_entity_id": "CartItem"
+    },
+    {
+      "entity_name": "Order",
+      "table_name": "orders",
+      "fields": [
+        {
+          "field_name": "customer_id",
+          "value": "{{ref:customer.id}}",
+          "generator": "uuid4"
+        },
+        {
+          "field_name": "order_status",
+          "value": "active",
+          "generator": null
+        },
+        {
+          "field_name": "payment_status",
+          "value": "active",
+          "generator": null
+        },
+        {
+          "field_name": "total_amount",
+          "value": 1.0,
+          "generator": null
+        },
+        {
+          "field_name": "creation_date",
+          "value": "2025-01-01T00:00:00Z",
+          "generator": null
+        }
+      ],
+      "dependencies": [
+        "customer"
+      ],
+      "count": 1,
+      "source_entity_id": "Order"
+    },
+    {
+      "entity_name": "OrderItem",
+      "table_name": "order_items",
+      "fields": [
+        {
+          "field_name": "order_id",
+          "value": "{{ref:order.id}}",
+          "generator": "uuid4"
+        },
+        {
+          "field_name": "product_id",
+          "value": "{{ref:product.id}}",
+          "generator": "uuid4"
+        },
+        {
+          "field_name": "quantity",
+          "value": 1,
+          "generator": null
+        },
+        {
+          "field_name": "unit_price",
+          "value": 99.99,
+          "generator": null
+        }
+      ],
+      "dependencies": [
+        "order",
+        "product"
+      ],
+      "count": 1,
+      "source_entity_id": "OrderItem"
+    }
+  ],
+  "endpoint_suites": [
+    {
+      "endpoint_path": "/health",
+      "http_method": "GET",
+      "operation_id": "health_check",
+      "happy_path": {
+        "scenario_id": "0cea746b",
+        "name": "health_check_happy_path",
+        "description": "Happy path test for GET /health",
+        "endpoint_path": "/health",
+        "http_method": "GET",
+        "operation_id": "health_check",
+        "test_type": "smoke",
+        "priority": "critical",
+        "path_params": {},
+        "query_params": {},
+        "headers": {},
+        "request_body": null,
+        "expected_outcome": "success",
+        "expected_status_code": 200,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 200
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": false,
+        "requires_seed_data": [],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "health_check"
+      },
+      "edge_cases": [],
+      "error_cases": [],
+      "covered_parameters": [],
+      "covered_response_codes": [
+        200
+      ]
+    },
+    {
+      "endpoint_path": "/products",
+      "http_method": "POST",
+      "operation_id": "create_product",
+      "happy_path": {
+        "scenario_id": "88352a67",
+        "name": "create_product_happy_path",
+        "description": "Happy path test for POST /products",
+        "endpoint_path": "/products",
+        "http_method": "POST",
+        "operation_id": "create_product",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {},
+        "query_params": {},
+        "headers": {},
+        "request_body": {
+          "name": "Test Name",
+          "price": 99.99,
+          "stock": 1
+        },
+        "expected_outcome": "success",
+        "expected_status_code": 201,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 201
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": false,
+        "requires_seed_data": [
+          "Product"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "create_product"
+      },
+      "edge_cases": [],
+      "error_cases": [
+        {
+          "scenario_id": "c065241a",
+          "name": "create_product_validation_error",
+          "description": "Test with invalid request body",
+          "endpoint_path": "/products",
+          "http_method": "POST",
+          "operation_id": "create_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {},
+          "query_params": {},
+          "headers": {},
+          "request_body": {},
+          "expected_outcome": "validation_error",
+          "expected_status_code": 422,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 422
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "covered_parameters": [],
+      "covered_response_codes": [
+        201,
+        422
+      ]
+    },
+    {
+      "endpoint_path": "/products",
+      "http_method": "GET",
+      "operation_id": "list_products",
+      "happy_path": {
+        "scenario_id": "0ba7704f",
+        "name": "list_products_happy_path",
+        "description": "Happy path test for GET /products",
+        "endpoint_path": "/products",
+        "http_method": "GET",
+        "operation_id": "list_products",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {},
+        "query_params": {},
+        "headers": {},
+        "request_body": null,
+        "expected_outcome": "success",
+        "expected_status_code": 200,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 200
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": false,
+        "requires_seed_data": [
+          "Product"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "list_products"
+      },
+      "edge_cases": [
+        {
+          "scenario_id": "607e5be0",
+          "name": "list_products_no_optional_params",
+          "description": "Test without optional parameters",
+          "endpoint_path": "/products",
+          "http_method": "GET",
+          "operation_id": "list_products",
+          "test_type": "smoke",
+          "priority": "low",
+          "path_params": {},
+          "query_params": {},
+          "headers": {},
+          "request_body": null,
+          "expected_outcome": "success",
+          "expected_status_code": 200,
+          "assertions": [],
+          "requires_auth": false,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "error_cases": [],
+      "covered_parameters": [
+        "skip",
+        "limit"
+      ],
+      "covered_response_codes": [
+        200
+      ]
+    },
+    {
+      "endpoint_path": "/products/{id}",
+      "http_method": "GET",
+      "operation_id": "get_product",
+      "happy_path": {
+        "scenario_id": "94b9e0a7",
+        "name": "get_product_happy_path",
+        "description": "Happy path test for GET /products/{id}",
+        "endpoint_path": "/products/{id}",
+        "http_method": "GET",
+        "operation_id": "get_product",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": null,
+        "expected_outcome": "success",
+        "expected_status_code": 200,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 200
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": false,
+        "requires_seed_data": [
+          "Product"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "get_product"
+      },
+      "edge_cases": [],
+      "error_cases": [
+        {
+          "scenario_id": "3ba23615",
+          "name": "get_product_not_found",
+          "description": "Test with non-existent resource ID",
+          "endpoint_path": "/products/{id}",
+          "http_method": "GET",
+          "operation_id": "get_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "00000000-0000-0000-0000-000000000000"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": null,
+          "expected_outcome": "client_error",
+          "expected_status_code": 404,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 404
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "covered_parameters": [
+        "id"
+      ],
+      "covered_response_codes": [
+        200,
+        404
+      ]
+    },
+    {
+      "endpoint_path": "/products/{id}",
+      "http_method": "PUT",
+      "operation_id": "update_product",
+      "happy_path": {
+        "scenario_id": "86b4905b",
+        "name": "update_product_happy_path",
+        "description": "Happy path test for PUT /products/{id}",
+        "endpoint_path": "/products/{id}",
+        "http_method": "PUT",
+        "operation_id": "update_product",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": {},
+        "expected_outcome": "success",
+        "expected_status_code": 200,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 200
+          }
+        ],
+        "requires_auth": false,
+        "requires_seed_data": [
+          "Product"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "update_product"
+      },
+      "edge_cases": [],
+      "error_cases": [
+        {
+          "scenario_id": "47739c3b",
+          "name": "update_product_not_found",
+          "description": "Test with non-existent resource ID",
+          "endpoint_path": "/products/{id}",
+          "http_method": "PUT",
+          "operation_id": "update_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "00000000-0000-0000-0000-000000000000"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": null,
+          "expected_outcome": "client_error",
+          "expected_status_code": 404,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 404
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        },
+        {
+          "scenario_id": "51ef622b",
+          "name": "update_product_validation_error",
+          "description": "Test with invalid request body",
+          "endpoint_path": "/products/{id}",
+          "http_method": "PUT",
+          "operation_id": "update_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {},
+          "query_params": {},
+          "headers": {},
+          "request_body": {},
+          "expected_outcome": "validation_error",
+          "expected_status_code": 422,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 422
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "covered_parameters": [
+        "id"
+      ],
+      "covered_response_codes": [
+        200,
+        404,
+        422
+      ]
+    },
+    {
+      "endpoint_path": "/products/{id}/deactivate",
+      "http_method": "POST",
+      "operation_id": "deactivate_product",
+      "happy_path": {
+        "scenario_id": "2ead7f7e",
+        "name": "deactivate_product_happy_path",
+        "description": "Happy path test for POST /products/{id}/deactivate",
+        "endpoint_path": "/products/{id}/deactivate",
+        "http_method": "POST",
+        "operation_id": "deactivate_product",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": {},
+        "expected_outcome": "success",
+        "expected_status_code": 201,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 201
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": false,
+        "requires_seed_data": [
+          "Product"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "deactivate_product"
+      },
+      "edge_cases": [],
+      "error_cases": [],
+      "covered_parameters": [
+        "id"
+      ],
+      "covered_response_codes": [
+        201
+      ]
+    },
+    {
+      "endpoint_path": "/customers",
+      "http_method": "POST",
+      "operation_id": "register_customer",
+      "happy_path": {
+        "scenario_id": "d3922859",
+        "name": "register_customer_happy_path",
+        "description": "Happy path test for POST /customers",
+        "endpoint_path": "/customers",
+        "http_method": "POST",
+        "operation_id": "register_customer",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {},
+        "query_params": {},
+        "headers": {},
+        "request_body": {
+          "email": "test@example.com",
+          "full_name": "Test Name"
+        },
+        "expected_outcome": "success",
+        "expected_status_code": 201,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 201
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": false,
+        "requires_seed_data": [
+          "Customer"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "register_customer"
+      },
+      "edge_cases": [],
+      "error_cases": [
+        {
+          "scenario_id": "227982a0",
+          "name": "register_customer_validation_error",
+          "description": "Test with invalid request body",
+          "endpoint_path": "/customers",
+          "http_method": "POST",
+          "operation_id": "register_customer",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {},
+          "query_params": {},
+          "headers": {},
+          "request_body": {},
+          "expected_outcome": "validation_error",
+          "expected_status_code": 422,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 422
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "covered_parameters": [],
+      "covered_response_codes": [
+        201,
+        422
+      ]
+    },
+    {
+      "endpoint_path": "/customers/{id}",
+      "http_method": "GET",
+      "operation_id": "get_customer",
+      "happy_path": {
+        "scenario_id": "97f85876",
+        "name": "get_customer_happy_path",
+        "description": "Happy path test for GET /customers/{id}",
+        "endpoint_path": "/customers/{id}",
+        "http_method": "GET",
+        "operation_id": "get_customer",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": null,
+        "expected_outcome": "success",
+        "expected_status_code": 200,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 200
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": false,
+        "requires_seed_data": [
+          "Customer"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "get_customer"
+      },
+      "edge_cases": [],
+      "error_cases": [
+        {
+          "scenario_id": "40d831b8",
+          "name": "get_customer_not_found",
+          "description": "Test with non-existent resource ID",
+          "endpoint_path": "/customers/{id}",
+          "http_method": "GET",
+          "operation_id": "get_customer",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "00000000-0000-0000-0000-000000000000"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": null,
+          "expected_outcome": "client_error",
+          "expected_status_code": 404,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 404
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "covered_parameters": [
+        "id"
+      ],
+      "covered_response_codes": [
+        200,
+        404
+      ]
+    },
+    {
+      "endpoint_path": "/carts",
+      "http_method": "POST",
+      "operation_id": "create_cart",
+      "happy_path": {
+        "scenario_id": "cea1a119",
+        "name": "create_cart_happy_path",
+        "description": "Happy path test for POST /carts",
+        "endpoint_path": "/carts",
+        "http_method": "POST",
+        "operation_id": "create_cart",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {},
+        "query_params": {},
+        "headers": {},
+        "request_body": {
+          "customer_id": "00000000-0000-4000-8000-000000000002"
+        },
+        "expected_outcome": "success",
+        "expected_status_code": 201,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 201
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": false,
+        "requires_seed_data": [
+          "Cart"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "create_cart"
+      },
+      "edge_cases": [],
+      "error_cases": [
+        {
+          "scenario_id": "afc47a76",
+          "name": "create_cart_validation_error",
+          "description": "Test with invalid request body",
+          "endpoint_path": "/carts",
+          "http_method": "POST",
+          "operation_id": "create_cart",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {},
+          "query_params": {},
+          "headers": {},
+          "request_body": {},
+          "expected_outcome": "validation_error",
+          "expected_status_code": 422,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 422
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "covered_parameters": [],
+      "covered_response_codes": [
+        201,
+        422
+      ]
+    },
+    {
+      "endpoint_path": "/carts/{id}",
+      "http_method": "GET",
+      "operation_id": "get_cart",
+      "happy_path": {
+        "scenario_id": "1b4f8996",
+        "name": "get_cart_happy_path",
+        "description": "Happy path test for GET /carts/{id}",
+        "endpoint_path": "/carts/{id}",
+        "http_method": "GET",
+        "operation_id": "get_cart",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": null,
+        "expected_outcome": "success",
+        "expected_status_code": 200,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 200
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": false,
+        "requires_seed_data": [
+          "Cart"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "get_cart"
+      },
+      "edge_cases": [],
+      "error_cases": [
+        {
+          "scenario_id": "efe1efa5",
+          "name": "get_cart_not_found",
+          "description": "Test with non-existent resource ID",
+          "endpoint_path": "/carts/{id}",
+          "http_method": "GET",
+          "operation_id": "get_cart",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "00000000-0000-0000-0000-000000000000"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": null,
+          "expected_outcome": "client_error",
+          "expected_status_code": 404,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 404
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "covered_parameters": [
+        "id"
+      ],
+      "covered_response_codes": [
+        200,
+        404
+      ]
+    },
+    {
+      "endpoint_path": "/carts/{id}/items",
+      "http_method": "POST",
+      "operation_id": "add_item_to_cart",
+      "happy_path": {
+        "scenario_id": "be46b232",
+        "name": "add_item_to_cart_happy_path",
+        "description": "Happy path test for POST /carts/{id}/items",
+        "endpoint_path": "/carts/{id}/items",
+        "http_method": "POST",
+        "operation_id": "add_item_to_cart",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": {
+          "product_id": "00000000-0000-4000-8000-000000000001",
+          "quantity": 1
+        },
+        "expected_outcome": "success",
+        "expected_status_code": 201,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 201
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": false,
+        "requires_seed_data": [
+          "Cart"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "add_item_to_cart"
+      },
+      "edge_cases": [],
+      "error_cases": [
+        {
+          "scenario_id": "76911352",
+          "name": "add_item_to_cart_validation_error",
+          "description": "Test with invalid request body",
+          "endpoint_path": "/carts/{id}/items",
+          "http_method": "POST",
+          "operation_id": "add_item_to_cart",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {},
+          "query_params": {},
+          "headers": {},
+          "request_body": {},
+          "expected_outcome": "validation_error",
+          "expected_status_code": 422,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 422
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "covered_parameters": [
+        "id"
+      ],
+      "covered_response_codes": [
+        201,
+        422
+      ]
+    },
+    {
+      "endpoint_path": "/carts/{cart_id}/items/{item_id}",
+      "http_method": "PUT",
+      "operation_id": "update_cart_item_quantity",
+      "happy_path": {
+        "scenario_id": "e652c848",
+        "name": "update_cart_item_quantity_happy_path",
+        "description": "Happy path test for PUT /carts/{cart_id}/items/{item_id}",
+        "endpoint_path": "/carts/{cart_id}/items/{item_id}",
+        "http_method": "PUT",
+        "operation_id": "update_cart_item_quantity",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "cart_id": "{{seed_id}}",
+          "item_id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": {
+          "quantity": 1
+        },
+        "expected_outcome": "success",
+        "expected_status_code": 200,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 200
+          }
+        ],
+        "requires_auth": false,
+        "requires_seed_data": [
+          "Cart"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "update_cart_item_quantity"
+      },
+      "edge_cases": [],
+      "error_cases": [
+        {
+          "scenario_id": "d70f2ca8",
+          "name": "update_cart_item_quantity_not_found",
+          "description": "Test with non-existent resource ID",
+          "endpoint_path": "/carts/{cart_id}/items/{item_id}",
+          "http_method": "PUT",
+          "operation_id": "update_cart_item_quantity",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "cart_id": "00000000-0000-0000-0000-000000000000",
+            "item_id": "00000000-0000-0000-0000-000000000000"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": null,
+          "expected_outcome": "client_error",
+          "expected_status_code": 404,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 404
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        },
+        {
+          "scenario_id": "1a8eaf99",
+          "name": "update_cart_item_quantity_validation_error",
+          "description": "Test with invalid request body",
+          "endpoint_path": "/carts/{cart_id}/items/{item_id}",
+          "http_method": "PUT",
+          "operation_id": "update_cart_item_quantity",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {},
+          "query_params": {},
+          "headers": {},
+          "request_body": {},
+          "expected_outcome": "validation_error",
+          "expected_status_code": 422,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 422
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "covered_parameters": [
+        "cart_id",
+        "item_id"
+      ],
+      "covered_response_codes": [
+        200,
+        404,
+        422
+      ]
+    },
+    {
+      "endpoint_path": "/carts/{id}/clear",
+      "http_method": "POST",
+      "operation_id": "clear_cart",
+      "happy_path": {
+        "scenario_id": "2d8b85bf",
+        "name": "clear_cart_happy_path",
+        "description": "Happy path test for POST /carts/{id}/clear",
+        "endpoint_path": "/carts/{id}/clear",
+        "http_method": "POST",
+        "operation_id": "clear_cart",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": {},
+        "expected_outcome": "success",
+        "expected_status_code": 201,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 201
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": false,
+        "requires_seed_data": [
+          "Cart"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "clear_cart"
+      },
+      "edge_cases": [],
+      "error_cases": [],
+      "covered_parameters": [
+        "id"
+      ],
+      "covered_response_codes": [
+        201
+      ]
+    },
+    {
+      "endpoint_path": "/orders",
+      "http_method": "POST",
+      "operation_id": "checkout",
+      "happy_path": {
+        "scenario_id": "610c0b19",
+        "name": "checkout_happy_path",
+        "description": "Happy path test for POST /orders",
+        "endpoint_path": "/orders",
+        "http_method": "POST",
+        "operation_id": "checkout",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {},
+        "query_params": {},
+        "headers": {},
+        "request_body": {
+          "cart_id": "00000000-0000-4000-8000-000000000003"
+        },
+        "expected_outcome": "success",
+        "expected_status_code": 201,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 201
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": false,
+        "requires_seed_data": [
+          "Order"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "checkout"
+      },
+      "edge_cases": [],
+      "error_cases": [
+        {
+          "scenario_id": "024f8963",
+          "name": "checkout_validation_error",
+          "description": "Test with invalid request body",
+          "endpoint_path": "/orders",
+          "http_method": "POST",
+          "operation_id": "checkout",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {},
+          "query_params": {},
+          "headers": {},
+          "request_body": {},
+          "expected_outcome": "validation_error",
+          "expected_status_code": 422,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 422
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "covered_parameters": [],
+      "covered_response_codes": [
+        201,
+        422
+      ]
+    },
+    {
+      "endpoint_path": "/orders/{id}/pay",
+      "http_method": "POST",
+      "operation_id": "pay_order",
+      "happy_path": {
+        "scenario_id": "a515fa46",
+        "name": "pay_order_happy_path",
+        "description": "Happy path test for POST /orders/{id}/pay",
+        "endpoint_path": "/orders/{id}/pay",
+        "http_method": "POST",
+        "operation_id": "pay_order",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": {},
+        "expected_outcome": "success",
+        "expected_status_code": 201,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 201
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": false,
+        "requires_seed_data": [
+          "Order"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "pay_order"
+      },
+      "edge_cases": [],
+      "error_cases": [],
+      "covered_parameters": [
+        "id"
+      ],
+      "covered_response_codes": [
+        201
+      ]
+    },
+    {
+      "endpoint_path": "/orders/{id}/cancel",
+      "http_method": "POST",
+      "operation_id": "cancel_order",
+      "happy_path": {
+        "scenario_id": "1ed4f6a9",
+        "name": "cancel_order_happy_path",
+        "description": "Happy path test for POST /orders/{id}/cancel",
+        "endpoint_path": "/orders/{id}/cancel",
+        "http_method": "POST",
+        "operation_id": "cancel_order",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": {},
+        "expected_outcome": "success",
+        "expected_status_code": 201,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 201
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": false,
+        "requires_seed_data": [
+          "Order"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "cancel_order"
+      },
+      "edge_cases": [],
+      "error_cases": [],
+      "covered_parameters": [
+        "id"
+      ],
+      "covered_response_codes": [
+        201
+      ]
+    },
+    {
+      "endpoint_path": "/customers/{customer_id}/orders",
+      "http_method": "GET",
+      "operation_id": "list_customer_orders",
+      "happy_path": {
+        "scenario_id": "72988558",
+        "name": "list_customer_orders_happy_path",
+        "description": "Happy path test for GET /customers/{customer_id}/orders",
+        "endpoint_path": "/customers/{customer_id}/orders",
+        "http_method": "GET",
+        "operation_id": "list_customer_orders",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "customer_id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": null,
+        "expected_outcome": "success",
+        "expected_status_code": 200,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 200
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": false,
+        "requires_seed_data": [
+          "Customer"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "list_customer_orders"
+      },
+      "edge_cases": [
+        {
+          "scenario_id": "b78c10ce",
+          "name": "list_customer_orders_no_optional_params",
+          "description": "Test without optional parameters",
+          "endpoint_path": "/customers/{customer_id}/orders",
+          "http_method": "GET",
+          "operation_id": "list_customer_orders",
+          "test_type": "smoke",
+          "priority": "low",
+          "path_params": {},
+          "query_params": {},
+          "headers": {},
+          "request_body": null,
+          "expected_outcome": "success",
+          "expected_status_code": 200,
+          "assertions": [],
+          "requires_auth": false,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "error_cases": [
+        {
+          "scenario_id": "2cbe38aa",
+          "name": "list_customer_orders_not_found",
+          "description": "Test with non-existent resource ID",
+          "endpoint_path": "/customers/{customer_id}/orders",
+          "http_method": "GET",
+          "operation_id": "list_customer_orders",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "customer_id": "00000000-0000-0000-0000-000000000000"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": null,
+          "expected_outcome": "client_error",
+          "expected_status_code": 404,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 404
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "covered_parameters": [
+        "customer_id",
+        "status"
+      ],
+      "covered_response_codes": [
+        200,
+        404
+      ]
+    },
+    {
+      "endpoint_path": "/orders/{id}",
+      "http_method": "GET",
+      "operation_id": "get_order",
+      "happy_path": {
+        "scenario_id": "820ec033",
+        "name": "get_order_happy_path",
+        "description": "Happy path test for GET /orders/{id}",
+        "endpoint_path": "/orders/{id}",
+        "http_method": "GET",
+        "operation_id": "get_order",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": null,
+        "expected_outcome": "success",
+        "expected_status_code": 200,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 200
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": false,
+        "requires_seed_data": [
+          "Order"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "get_order"
+      },
+      "edge_cases": [],
+      "error_cases": [
+        {
+          "scenario_id": "43edac3f",
+          "name": "get_order_not_found",
+          "description": "Test with non-existent resource ID",
+          "endpoint_path": "/orders/{id}",
+          "http_method": "GET",
+          "operation_id": "get_order",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "00000000-0000-0000-0000-000000000000"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": null,
+          "expected_outcome": "client_error",
+          "expected_status_code": 404,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 404
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "covered_parameters": [
+        "id"
+      ],
+      "covered_response_codes": [
+        200,
+        404
+      ]
+    },
+    {
+      "endpoint_path": "/carts",
+      "http_method": "GET",
+      "operation_id": "list_carts",
+      "happy_path": {
+        "scenario_id": "e99d1ae6",
+        "name": "list_carts_happy_path",
+        "description": "Happy path test for GET /carts",
+        "endpoint_path": "/carts",
+        "http_method": "GET",
+        "operation_id": "list_carts",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {},
+        "query_params": {},
+        "headers": {},
+        "request_body": null,
+        "expected_outcome": "success",
+        "expected_status_code": 200,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 200
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": true,
+        "requires_seed_data": [
+          "Cart"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "list_carts"
+      },
+      "edge_cases": [],
+      "error_cases": [],
+      "covered_parameters": [],
+      "covered_response_codes": [
+        200
+      ]
+    },
+    {
+      "endpoint_path": "/customers",
+      "http_method": "GET",
+      "operation_id": "list_customers",
+      "happy_path": {
+        "scenario_id": "d9f608c5",
+        "name": "list_customers_happy_path",
+        "description": "Happy path test for GET /customers",
+        "endpoint_path": "/customers",
+        "http_method": "GET",
+        "operation_id": "list_customers",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {},
+        "query_params": {},
+        "headers": {},
+        "request_body": null,
+        "expected_outcome": "success",
+        "expected_status_code": 200,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 200
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": true,
+        "requires_seed_data": [
+          "Customer"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "list_customers"
+      },
+      "edge_cases": [],
+      "error_cases": [],
+      "covered_parameters": [],
+      "covered_response_codes": [
+        200
+      ]
+    },
+    {
+      "endpoint_path": "/orders",
+      "http_method": "GET",
+      "operation_id": "list_orders",
+      "happy_path": {
+        "scenario_id": "e3693151",
+        "name": "list_orders_happy_path",
+        "description": "Happy path test for GET /orders",
+        "endpoint_path": "/orders",
+        "http_method": "GET",
+        "operation_id": "list_orders",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {},
+        "query_params": {},
+        "headers": {},
+        "request_body": null,
+        "expected_outcome": "success",
+        "expected_status_code": 200,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 200
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": true,
+        "requires_seed_data": [
+          "Order"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "list_orders"
+      },
+      "edge_cases": [],
+      "error_cases": [],
+      "covered_parameters": [],
+      "covered_response_codes": [
+        200
+      ]
+    },
+    {
+      "endpoint_path": "/products/{id}",
+      "http_method": "DELETE",
+      "operation_id": "delete_product",
+      "happy_path": {
+        "scenario_id": "0e94d9ed",
+        "name": "delete_product_happy_path",
+        "description": "Happy path test for DELETE /products/{id}",
+        "endpoint_path": "/products/{id}",
+        "http_method": "DELETE",
+        "operation_id": "delete_product",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": null,
+        "expected_outcome": "success",
+        "expected_status_code": 204,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 204
+          }
+        ],
+        "requires_auth": true,
+        "requires_seed_data": [
+          "Product"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "delete_product"
+      },
+      "edge_cases": [],
+      "error_cases": [
+        {
+          "scenario_id": "2b63e466",
+          "name": "delete_product_not_found",
+          "description": "Test with non-existent resource ID",
+          "endpoint_path": "/products/{id}",
+          "http_method": "DELETE",
+          "operation_id": "delete_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "00000000-0000-0000-0000-000000000000"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": null,
+          "expected_outcome": "client_error",
+          "expected_status_code": 404,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 404
+            }
+          ],
+          "requires_auth": true,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "covered_parameters": [
+        "id"
+      ],
+      "covered_response_codes": [
+        204,
+        404
+      ]
+    },
+    {
+      "endpoint_path": "/carts/{id}",
+      "http_method": "DELETE",
+      "operation_id": "delete_cart",
+      "happy_path": {
+        "scenario_id": "c0209515",
+        "name": "delete_cart_happy_path",
+        "description": "Happy path test for DELETE /carts/{id}",
+        "endpoint_path": "/carts/{id}",
+        "http_method": "DELETE",
+        "operation_id": "delete_cart",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": null,
+        "expected_outcome": "success",
+        "expected_status_code": 204,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 204
+          }
+        ],
+        "requires_auth": true,
+        "requires_seed_data": [
+          "Cart"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "delete_cart"
+      },
+      "edge_cases": [],
+      "error_cases": [
+        {
+          "scenario_id": "9aea8b8d",
+          "name": "delete_cart_not_found",
+          "description": "Test with non-existent resource ID",
+          "endpoint_path": "/carts/{id}",
+          "http_method": "DELETE",
+          "operation_id": "delete_cart",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "00000000-0000-0000-0000-000000000000"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": null,
+          "expected_outcome": "client_error",
+          "expected_status_code": 404,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 404
+            }
+          ],
+          "requires_auth": true,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "covered_parameters": [
+        "id"
+      ],
+      "covered_response_codes": [
+        204,
+        404
+      ]
+    },
+    {
+      "endpoint_path": "/customers/{id}",
+      "http_method": "DELETE",
+      "operation_id": "delete_customer",
+      "happy_path": {
+        "scenario_id": "5b036021",
+        "name": "delete_customer_happy_path",
+        "description": "Happy path test for DELETE /customers/{id}",
+        "endpoint_path": "/customers/{id}",
+        "http_method": "DELETE",
+        "operation_id": "delete_customer",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": null,
+        "expected_outcome": "success",
+        "expected_status_code": 204,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 204
+          }
+        ],
+        "requires_auth": true,
+        "requires_seed_data": [
+          "Customer"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "delete_customer"
+      },
+      "edge_cases": [],
+      "error_cases": [
+        {
+          "scenario_id": "8556a9f4",
+          "name": "delete_customer_not_found",
+          "description": "Test with non-existent resource ID",
+          "endpoint_path": "/customers/{id}",
+          "http_method": "DELETE",
+          "operation_id": "delete_customer",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "00000000-0000-0000-0000-000000000000"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": null,
+          "expected_outcome": "client_error",
+          "expected_status_code": 404,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 404
+            }
+          ],
+          "requires_auth": true,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "covered_parameters": [
+        "id"
+      ],
+      "covered_response_codes": [
+        204,
+        404
+      ]
+    },
+    {
+      "endpoint_path": "/orders/{id}",
+      "http_method": "DELETE",
+      "operation_id": "delete_order",
+      "happy_path": {
+        "scenario_id": "987b81cd",
+        "name": "delete_order_happy_path",
+        "description": "Happy path test for DELETE /orders/{id}",
+        "endpoint_path": "/orders/{id}",
+        "http_method": "DELETE",
+        "operation_id": "delete_order",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": null,
+        "expected_outcome": "success",
+        "expected_status_code": 204,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 204
+          }
+        ],
+        "requires_auth": true,
+        "requires_seed_data": [
+          "Order"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "delete_order"
+      },
+      "edge_cases": [],
+      "error_cases": [
+        {
+          "scenario_id": "87bbbe18",
+          "name": "delete_order_not_found",
+          "description": "Test with non-existent resource ID",
+          "endpoint_path": "/orders/{id}",
+          "http_method": "DELETE",
+          "operation_id": "delete_order",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "00000000-0000-0000-0000-000000000000"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": null,
+          "expected_outcome": "client_error",
+          "expected_status_code": 404,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 404
+            }
+          ],
+          "requires_auth": true,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "covered_parameters": [
+        "id"
+      ],
+      "covered_response_codes": [
+        204,
+        404
+      ]
+    },
+    {
+      "endpoint_path": "/products/{id}/deactivate",
+      "http_method": "PATCH",
+      "operation_id": "deactivate_product",
+      "happy_path": {
+        "scenario_id": "2b2496e0",
+        "name": "deactivate_product_happy_path",
+        "description": "Happy path test for PATCH /products/{id}/deactivate",
+        "endpoint_path": "/products/{id}/deactivate",
+        "http_method": "PATCH",
+        "operation_id": "deactivate_product",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": {},
+        "expected_outcome": "success",
+        "expected_status_code": 200,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 200
+          }
+        ],
+        "requires_auth": true,
+        "requires_seed_data": [
+          "Product"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "deactivate_product"
+      },
+      "edge_cases": [],
+      "error_cases": [
+        {
+          "scenario_id": "afafd643",
+          "name": "deactivate_product_not_found",
+          "description": "Test with non-existent resource ID",
+          "endpoint_path": "/products/{id}/deactivate",
+          "http_method": "PATCH",
+          "operation_id": "deactivate_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "00000000-0000-0000-0000-000000000000"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": null,
+          "expected_outcome": "client_error",
+          "expected_status_code": 404,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 404
+            }
+          ],
+          "requires_auth": true,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "covered_parameters": [
+        "id"
+      ],
+      "covered_response_codes": [
+        200,
+        404
+      ]
+    },
+    {
+      "endpoint_path": "/products/{id}/activate",
+      "http_method": "PATCH",
+      "operation_id": "activate_product",
+      "happy_path": {
+        "scenario_id": "cca8f8e6",
+        "name": "activate_product_happy_path",
+        "description": "Happy path test for PATCH /products/{id}/activate",
+        "endpoint_path": "/products/{id}/activate",
+        "http_method": "PATCH",
+        "operation_id": "activate_product",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": {},
+        "expected_outcome": "success",
+        "expected_status_code": 200,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 200
+          }
+        ],
+        "requires_auth": true,
+        "requires_seed_data": [
+          "Product"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "activate_product"
+      },
+      "edge_cases": [],
+      "error_cases": [
+        {
+          "scenario_id": "6a08128a",
+          "name": "activate_product_not_found",
+          "description": "Test with non-existent resource ID",
+          "endpoint_path": "/products/{id}/activate",
+          "http_method": "PATCH",
+          "operation_id": "activate_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "00000000-0000-0000-0000-000000000000"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": null,
+          "expected_outcome": "client_error",
+          "expected_status_code": 404,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 404
+            }
+          ],
+          "requires_auth": true,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "covered_parameters": [
+        "id"
+      ],
+      "covered_response_codes": [
+        200,
+        404
+      ]
+    },
+    {
+      "endpoint_path": "/carts/{id}/checkout",
+      "http_method": "POST",
+      "operation_id": "checkout_cart",
+      "happy_path": {
+        "scenario_id": "ba04d9ca",
+        "name": "checkout_cart_happy_path",
+        "description": "Happy path test for POST /carts/{id}/checkout",
+        "endpoint_path": "/carts/{id}/checkout",
+        "http_method": "POST",
+        "operation_id": "checkout_cart",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": {},
+        "expected_outcome": "success",
+        "expected_status_code": 201,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 201
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": true,
+        "requires_seed_data": [
+          "Cart"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "checkout_cart"
+      },
+      "edge_cases": [],
+      "error_cases": [],
+      "covered_parameters": [
+        "id"
+      ],
+      "covered_response_codes": [
+        201
+      ]
+    },
+    {
+      "endpoint_path": "/carts/{id}/items/{product_id}",
+      "http_method": "DELETE",
+      "operation_id": "remove_item_from_cart",
+      "happy_path": {
+        "scenario_id": "e42353f2",
+        "name": "remove_item_from_cart_happy_path",
+        "description": "Happy path test for DELETE /carts/{id}/items/{product_id}",
+        "endpoint_path": "/carts/{id}/items/{product_id}",
+        "http_method": "DELETE",
+        "operation_id": "remove_item_from_cart",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "id": "{{seed_id}}",
+          "product_id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": null,
+        "expected_outcome": "success",
+        "expected_status_code": 204,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 204
+          }
+        ],
+        "requires_auth": true,
+        "requires_seed_data": [
+          "Cart"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "remove_item_from_cart"
+      },
+      "edge_cases": [],
+      "error_cases": [
+        {
+          "scenario_id": "dc6a2996",
+          "name": "remove_item_from_cart_not_found",
+          "description": "Test with non-existent resource ID",
+          "endpoint_path": "/carts/{id}/items/{product_id}",
+          "http_method": "DELETE",
+          "operation_id": "remove_item_from_cart",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "00000000-0000-0000-0000-000000000000",
+            "product_id": "00000000-0000-0000-0000-000000000000"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": null,
+          "expected_outcome": "client_error",
+          "expected_status_code": 404,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 404
+            }
+          ],
+          "requires_auth": true,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "covered_parameters": [
+        "id",
+        "product_id"
+      ],
+      "covered_response_codes": [
+        204,
+        404
+      ]
+    },
+    {
+      "endpoint_path": "/orders/{id}/items/{product_id}",
+      "http_method": "PUT",
+      "operation_id": "add_item_to_order",
+      "happy_path": {
+        "scenario_id": "3ec78de7",
+        "name": "add_item_to_order_happy_path",
+        "description": "Happy path test for PUT /orders/{id}/items/{product_id}",
+        "endpoint_path": "/orders/{id}/items/{product_id}",
+        "http_method": "PUT",
+        "operation_id": "add_item_to_order",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "id": "{{seed_id}}",
+          "product_id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": {},
+        "expected_outcome": "success",
+        "expected_status_code": 200,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 200
+          }
+        ],
+        "requires_auth": true,
+        "requires_seed_data": [
+          "Order"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "add_item_to_order"
+      },
+      "edge_cases": [],
+      "error_cases": [
+        {
+          "scenario_id": "5b30ecf9",
+          "name": "add_item_to_order_not_found",
+          "description": "Test with non-existent resource ID",
+          "endpoint_path": "/orders/{id}/items/{product_id}",
+          "http_method": "PUT",
+          "operation_id": "add_item_to_order",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "00000000-0000-0000-0000-000000000000",
+            "product_id": "00000000-0000-0000-0000-000000000000"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": null,
+          "expected_outcome": "client_error",
+          "expected_status_code": 404,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 404
+            }
+          ],
+          "requires_auth": true,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "covered_parameters": [
+        "id",
+        "product_id"
+      ],
+      "covered_response_codes": [
+        200,
+        404
+      ]
+    },
+    {
+      "endpoint_path": "/orders/{id}/items/{product_id}",
+      "http_method": "DELETE",
+      "operation_id": "remove_item_from_order",
+      "happy_path": {
+        "scenario_id": "a2a714bd",
+        "name": "remove_item_from_order_happy_path",
+        "description": "Happy path test for DELETE /orders/{id}/items/{product_id}",
+        "endpoint_path": "/orders/{id}/items/{product_id}",
+        "http_method": "DELETE",
+        "operation_id": "remove_item_from_order",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {
+          "id": "{{seed_id}}",
+          "product_id": "{{seed_id}}"
+        },
+        "query_params": {},
+        "headers": {},
+        "request_body": null,
+        "expected_outcome": "success",
+        "expected_status_code": 204,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 204
+          }
+        ],
+        "requires_auth": true,
+        "requires_seed_data": [
+          "Order"
+        ],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "remove_item_from_order"
+      },
+      "edge_cases": [],
+      "error_cases": [
+        {
+          "scenario_id": "d33c1829",
+          "name": "remove_item_from_order_not_found",
+          "description": "Test with non-existent resource ID",
+          "endpoint_path": "/orders/{id}/items/{product_id}",
+          "http_method": "DELETE",
+          "operation_id": "remove_item_from_order",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "00000000-0000-0000-0000-000000000000",
+            "product_id": "00000000-0000-0000-0000-000000000000"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": null,
+          "expected_outcome": "client_error",
+          "expected_status_code": 404,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 404
+            }
+          ],
+          "requires_auth": true,
+          "requires_seed_data": [],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": null
+        }
+      ],
+      "covered_parameters": [
+        "id",
+        "product_id"
+      ],
+      "covered_response_codes": [
+        204,
+        404
+      ]
+    },
+    {
+      "endpoint_path": "/health/ready",
+      "http_method": "GET",
+      "operation_id": "readiness_check",
+      "happy_path": {
+        "scenario_id": "20400307",
+        "name": "readiness_check_happy_path",
+        "description": "Happy path test for GET /health/ready",
+        "endpoint_path": "/health/ready",
+        "http_method": "GET",
+        "operation_id": "readiness_check",
+        "test_type": "smoke",
+        "priority": "critical",
+        "path_params": {},
+        "query_params": {},
+        "headers": {},
+        "request_body": null,
+        "expected_outcome": "success",
+        "expected_status_code": 200,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 200
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": false,
+        "requires_seed_data": [],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "readiness_check"
+      },
+      "edge_cases": [],
+      "error_cases": [],
+      "covered_parameters": [],
+      "covered_response_codes": [
+        200
+      ]
+    },
+    {
+      "endpoint_path": "/metrics",
+      "http_method": "GET",
+      "operation_id": "get_metrics",
+      "happy_path": {
+        "scenario_id": "4950a52b",
+        "name": "get_metrics_happy_path",
+        "description": "Happy path test for GET /metrics",
+        "endpoint_path": "/metrics",
+        "http_method": "GET",
+        "operation_id": "get_metrics",
+        "test_type": "smoke",
+        "priority": "medium",
+        "path_params": {},
+        "query_params": {},
+        "headers": {},
+        "request_body": null,
+        "expected_outcome": "success",
+        "expected_status_code": 200,
+        "assertions": [
+          {
+            "assertion_type": "status_code",
+            "path": null,
+            "operator": "equals",
+            "expected_value": 200
+          },
+          {
+            "assertion_type": "response_time",
+            "path": null,
+            "operator": "less_than",
+            "expected_value": 5000
+          }
+        ],
+        "requires_auth": false,
+        "requires_seed_data": [],
+        "depends_on_scenarios": [],
+        "source_endpoint_id": "get_metrics"
+      },
+      "edge_cases": [],
+      "error_cases": [],
+      "covered_parameters": [],
+      "covered_response_codes": [
+        200
+      ]
+    }
+  ],
+  "flow_suites": [
+    {
+      "flow_id": "5e1754fb",
+      "name": "flow_F1: Create Product",
+      "description": "The system allows creating a new product with name, description, price, stock and status",
+      "scenarios": [
+        {
+          "scenario_id": "17d8d731",
+          "name": "F1: Create Product_2_create",
+          "description": "Happy path test for POST /products",
+          "endpoint_path": "/products",
+          "http_method": "POST",
+          "operation_id": "create_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {},
+          "query_params": {},
+          "headers": {},
+          "request_body": {
+            "name": "Test Name",
+            "price": 99.99,
+            "stock": 1
+          },
+          "expected_outcome": "success",
+          "expected_status_code": 201,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 201
+            },
+            {
+              "assertion_type": "response_time",
+              "path": null,
+              "operator": "less_than",
+              "expected_value": 5000
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [
+            "Product"
+          ],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": "create_product"
+        }
+      ],
+      "cleanup_after": true,
+      "timeout_seconds": 60,
+      "source_flow_name": "F1: Create Product"
+    },
+    {
+      "flow_id": "920d8324",
+      "name": "flow_F4: Update Product",
+      "description": "Change name, description, price, stock or status of an existing product",
+      "scenarios": [
+        {
+          "scenario_id": "21891653",
+          "name": "F4: Update Product_3_update",
+          "description": "Happy path test for PUT /products/{id}",
+          "endpoint_path": "/products/{id}",
+          "http_method": "PUT",
+          "operation_id": "update_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "{{seed_id}}"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": {},
+          "expected_outcome": "success",
+          "expected_status_code": 200,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 200
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [
+            "Product"
+          ],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": "update_product"
+        }
+      ],
+      "cleanup_after": true,
+      "timeout_seconds": 60,
+      "source_flow_name": "F4: Update Product"
+    },
+    {
+      "flow_id": "d3cfb227",
+      "name": "flow_F5: Deactivate Product",
+      "description": "Mark a product as inactive (is_active = false). It's not deleted, just hidden",
+      "scenarios": [
+        {
+          "scenario_id": "aa7c402a",
+          "name": "F5: Deactivate Product_2_update",
+          "description": "Happy path test for PUT /products/{id}",
+          "endpoint_path": "/products/{id}",
+          "http_method": "PUT",
+          "operation_id": "update_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "{{seed_id}}"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": {},
+          "expected_outcome": "success",
+          "expected_status_code": 200,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 200
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [
+            "Product"
+          ],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": "update_product"
+        }
+      ],
+      "cleanup_after": true,
+      "timeout_seconds": 60,
+      "source_flow_name": "F5: Deactivate Product"
+    },
+    {
+      "flow_id": "14f753a5",
+      "name": "flow_F6: Register Customer",
+      "description": "Create new account with email and name. If email already exists, return Error 400",
+      "scenarios": [
+        {
+          "scenario_id": "c1acb847",
+          "name": "F6: Register Customer_4_create",
+          "description": "Happy path test for POST /products",
+          "endpoint_path": "/products",
+          "http_method": "POST",
+          "operation_id": "create_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {},
+          "query_params": {},
+          "headers": {},
+          "request_body": {
+            "name": "Test Name",
+            "price": 99.99,
+            "stock": 1
+          },
+          "expected_outcome": "success",
+          "expected_status_code": 201,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 201
+            },
+            {
+              "assertion_type": "response_time",
+              "path": null,
+              "operator": "less_than",
+              "expected_value": 5000
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [
+            "Product"
+          ],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": "create_product"
+        }
+      ],
+      "cleanup_after": true,
+      "timeout_seconds": 60,
+      "source_flow_name": "F6: Register Customer"
+    },
+    {
+      "flow_id": "52edf1bb",
+      "name": "flow_F8: Create Cart",
+      "description": "The system creates an OPEN cart for a customer. If one OPEN already exists, it reuses it",
+      "scenarios": [
+        {
+          "scenario_id": "4ac6fb24",
+          "name": "F8: Create Cart_3_create",
+          "description": "Happy path test for POST /products",
+          "endpoint_path": "/products",
+          "http_method": "POST",
+          "operation_id": "create_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {},
+          "query_params": {},
+          "headers": {},
+          "request_body": {
+            "name": "Test Name",
+            "price": 99.99,
+            "stock": 1
+          },
+          "expected_outcome": "success",
+          "expected_status_code": 201,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 201
+            },
+            {
+              "assertion_type": "response_time",
+              "path": null,
+              "operator": "less_than",
+              "expected_value": 5000
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [
+            "Product"
+          ],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": "create_product"
+        }
+      ],
+      "cleanup_after": true,
+      "timeout_seconds": 60,
+      "source_flow_name": "F8: Create Cart"
+    },
+    {
+      "flow_id": "1be3014c",
+      "name": "flow_F9: Add Item to Cart",
+      "description": "Add a specific product with quantity. Validates product is active, has sufficient stock. If product already in cart, increases quantity instead of duplicating. Saves current price as unit_price",
+      "scenarios": [
+        {
+          "scenario_id": "23582513",
+          "name": "F9: Add Item to Cart_5_create",
+          "description": "Happy path test for POST /products",
+          "endpoint_path": "/products",
+          "http_method": "POST",
+          "operation_id": "create_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {},
+          "query_params": {},
+          "headers": {},
+          "request_body": {
+            "name": "Test Name",
+            "price": 99.99,
+            "stock": 1
+          },
+          "expected_outcome": "success",
+          "expected_status_code": 201,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 201
+            },
+            {
+              "assertion_type": "response_time",
+              "path": null,
+              "operator": "less_than",
+              "expected_value": 5000
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [
+            "Product"
+          ],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": "create_product"
+        },
+        {
+          "scenario_id": "1f604cc8",
+          "name": "F9: Add Item to Cart_6_update",
+          "description": "Happy path test for PUT /products/{id}",
+          "endpoint_path": "/products/{id}",
+          "http_method": "PUT",
+          "operation_id": "update_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "{{seed_id}}"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": {},
+          "expected_outcome": "success",
+          "expected_status_code": 200,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 200
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [
+            "Product"
+          ],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": "update_product"
+        }
+      ],
+      "cleanup_after": true,
+      "timeout_seconds": 60,
+      "source_flow_name": "F9: Add Item to Cart"
+    },
+    {
+      "flow_id": "b9ad5542",
+      "name": "flow_F11: Update Item Quantity",
+      "description": "Change the quantity of a product in the cart. If quantity <= 0, remove the item. If quantity > available stock, return Error 400",
+      "scenarios": [
+        {
+          "scenario_id": "f5c15c64",
+          "name": "F11: Update Item Quantity_3_delete",
+          "description": "Happy path test for DELETE /products/{id}",
+          "endpoint_path": "/products/{id}",
+          "http_method": "DELETE",
+          "operation_id": "delete_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "{{seed_id}}"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": null,
+          "expected_outcome": "success",
+          "expected_status_code": 204,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 204
+            }
+          ],
+          "requires_auth": true,
+          "requires_seed_data": [
+            "Product"
+          ],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": "delete_product"
+        },
+        {
+          "scenario_id": "2894bf8b",
+          "name": "F11: Update Item Quantity_5_update",
+          "description": "Happy path test for PUT /products/{id}",
+          "endpoint_path": "/products/{id}",
+          "http_method": "PUT",
+          "operation_id": "update_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "{{seed_id}}"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": {},
+          "expected_outcome": "success",
+          "expected_status_code": 200,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 200
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [
+            "Product"
+          ],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": "update_product"
+        }
+      ],
+      "cleanup_after": true,
+      "timeout_seconds": 60,
+      "source_flow_name": "F11: Update Item Quantity"
+    },
+    {
+      "flow_id": "5a53f4f7",
+      "name": "flow_F12: Empty Cart",
+      "description": "Remove all items from the OPEN cart",
+      "scenarios": [
+        {
+          "scenario_id": "5b3e94c1",
+          "name": "F12: Empty Cart_2_delete",
+          "description": "Happy path test for DELETE /products/{id}",
+          "endpoint_path": "/products/{id}",
+          "http_method": "DELETE",
+          "operation_id": "delete_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "{{seed_id}}"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": null,
+          "expected_outcome": "success",
+          "expected_status_code": 204,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 204
+            }
+          ],
+          "requires_auth": true,
+          "requires_seed_data": [
+            "Product"
+          ],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": "delete_product"
+        }
+      ],
+      "cleanup_after": true,
+      "timeout_seconds": 60,
+      "source_flow_name": "F12: Empty Cart"
+    },
+    {
+      "flow_id": "2a51352c",
+      "name": "flow_F13: Checkout (Create Order)",
+      "description": "The customer finalizes their purchase. The system validates cart is not empty, validates stock for all items, subtracts stock from products, creates order with status PENDING_PAYMENT, marks cart as CHECKED_OUT, calculates total amount automatically",
+      "scenarios": [
+        {
+          "scenario_id": "f43923e9",
+          "name": "F13: Checkout (Create Order)_4_update",
+          "description": "Happy path test for PUT /products/{id}",
+          "endpoint_path": "/products/{id}",
+          "http_method": "PUT",
+          "operation_id": "update_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "{{seed_id}}"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": {},
+          "expected_outcome": "success",
+          "expected_status_code": 200,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 200
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [
+            "Product"
+          ],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": "update_product"
+        },
+        {
+          "scenario_id": "120c700e",
+          "name": "F13: Checkout (Create Order)_5_create",
+          "description": "Happy path test for POST /products",
+          "endpoint_path": "/products",
+          "http_method": "POST",
+          "operation_id": "create_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {},
+          "query_params": {},
+          "headers": {},
+          "request_body": {
+            "name": "Test Name",
+            "price": 99.99,
+            "stock": 1
+          },
+          "expected_outcome": "success",
+          "expected_status_code": 201,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 201
+            },
+            {
+              "assertion_type": "response_time",
+              "path": null,
+              "operator": "less_than",
+              "expected_value": 5000
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [
+            "Product"
+          ],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": "create_product"
+        },
+        {
+          "scenario_id": "4343032c",
+          "name": "F13: Checkout (Create Order)_6_create",
+          "description": "Happy path test for POST /products",
+          "endpoint_path": "/products",
+          "http_method": "POST",
+          "operation_id": "create_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {},
+          "query_params": {},
+          "headers": {},
+          "request_body": {
+            "name": "Test Name",
+            "price": 99.99,
+            "stock": 1
+          },
+          "expected_outcome": "success",
+          "expected_status_code": 201,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 201
+            },
+            {
+              "assertion_type": "response_time",
+              "path": null,
+              "operator": "less_than",
+              "expected_value": 5000
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [
+            "Product"
+          ],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": "create_product"
+        },
+        {
+          "scenario_id": "6fd4b037",
+          "name": "F13: Checkout (Create Order)_8_update",
+          "description": "Happy path test for PUT /products/{id}",
+          "endpoint_path": "/products/{id}",
+          "http_method": "PUT",
+          "operation_id": "update_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "{{seed_id}}"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": {},
+          "expected_outcome": "success",
+          "expected_status_code": 200,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 200
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [
+            "Product"
+          ],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": "update_product"
+        }
+      ],
+      "cleanup_after": true,
+      "timeout_seconds": 60,
+      "source_flow_name": "F13: Checkout (Create Order)"
+    },
+    {
+      "flow_id": "6d36c667",
+      "name": "flow_F14: Pay Order (Simulated)",
+      "description": "Mark an order as paid. Current status must be PENDING_PAYMENT. Change to PAID and payment_status to SIMULATED_OK. Only allowed if order is waiting for payment",
+      "scenarios": [
+        {
+          "scenario_id": "80153e16",
+          "name": "F14: Pay Order (Simulated)_3_update",
+          "description": "Happy path test for PUT /products/{id}",
+          "endpoint_path": "/products/{id}",
+          "http_method": "PUT",
+          "operation_id": "update_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "{{seed_id}}"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": {},
+          "expected_outcome": "success",
+          "expected_status_code": 200,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 200
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [
+            "Product"
+          ],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": "update_product"
+        },
+        {
+          "scenario_id": "d420168b",
+          "name": "F14: Pay Order (Simulated)_4_update",
+          "description": "Happy path test for PUT /products/{id}",
+          "endpoint_path": "/products/{id}",
+          "http_method": "PUT",
+          "operation_id": "update_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "{{seed_id}}"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": {},
+          "expected_outcome": "success",
+          "expected_status_code": 200,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 200
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [
+            "Product"
+          ],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": "update_product"
+        }
+      ],
+      "cleanup_after": true,
+      "timeout_seconds": 60,
+      "source_flow_name": "F14: Pay Order (Simulated)"
+    },
+    {
+      "flow_id": "acfc409d",
+      "name": "flow_F15: Cancel Order",
+      "description": "Cancel an order and return stock. Current status must be PENDING_PAYMENT. Change to CANCELLED and add back the quantity to products",
+      "scenarios": [
+        {
+          "scenario_id": "a9af8862",
+          "name": "F15: Cancel Order_3_update",
+          "description": "Happy path test for PUT /products/{id}",
+          "endpoint_path": "/products/{id}",
+          "http_method": "PUT",
+          "operation_id": "update_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "{{seed_id}}"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": {},
+          "expected_outcome": "success",
+          "expected_status_code": 200,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 200
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [
+            "Product"
+          ],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": "update_product"
+        },
+        {
+          "scenario_id": "f24cb85c",
+          "name": "F15: Cancel Order_4_update",
+          "description": "Happy path test for PUT /products/{id}",
+          "endpoint_path": "/products/{id}",
+          "http_method": "PUT",
+          "operation_id": "update_product",
+          "test_type": "smoke",
+          "priority": "medium",
+          "path_params": {
+            "id": "{{seed_id}}"
+          },
+          "query_params": {},
+          "headers": {},
+          "request_body": {},
+          "expected_outcome": "success",
+          "expected_status_code": 200,
+          "assertions": [
+            {
+              "assertion_type": "status_code",
+              "path": null,
+              "operator": "equals",
+              "expected_value": 200
+            }
+          ],
+          "requires_auth": false,
+          "requires_seed_data": [
+            "Product"
+          ],
+          "depends_on_scenarios": [],
+          "source_endpoint_id": "update_product"
+        }
+      ],
+      "cleanup_after": true,
+      "timeout_seconds": 60,
+      "source_flow_name": "F15: Cancel Order"
+    }
+  ],
+  "standalone_scenarios": [],
+  "metrics_config": {
+    "min_endpoint_coverage": 100.0,
+    "min_scenario_pass_rate": 80.0,
+    "max_response_time_ms": 5000,
+    "max_startup_time_ms": 30000,
+    "thresholds": [
+      {
+        "metric_name": "endpoint_coverage",
+        "warning_threshold": 90.0,
+        "critical_threshold": 80.0,
+        "unit": "percent"
+      },
+      {
+        "metric_name": "smoke_pass_rate",
+        "warning_threshold": 90.0,
+        "critical_threshold": 70.0,
+        "unit": "percent"
+      },
+      {
+        "metric_name": "response_time_p95",
+        "warning_threshold": 2000.0,
+        "critical_threshold": 5000.0,
+        "unit": "ms"
+      }
+    ]
+  },
+  "generated_at": "2025-11-30T01:57:27.487460",
+  "generator_version": "1.0.0",
+  "source_ir_hash": "2aee6cab110d"
+}

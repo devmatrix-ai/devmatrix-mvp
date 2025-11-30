@@ -55,3 +55,1815 @@
 📋 Phase 1: Spec Ingestion (Enhanced with SpecParser)
     - 📝 Spec translated to English (structure preserved)
   ✓ Checkpoint: CP-1.1: Spec loaded from file (1/4)
+    - Extracting ApplicationIR (cache: Neo4j+Redis)...
+Redis connection established {'host': 'localhost', 'port': 6379, 'db': 0}
+    - ApplicationIR: 6 entities, 33 endpoints, 17 flows, 95 validations
+    - 🗄️ ApplicationIR persisted to Neo4j graph
+  ✓ Checkpoint: CP-1.2: Requirements extracted (2/4)
+    - Functional requirements: 56 (source: ApplicationIR)
+    - Entities: 6
+    - Endpoints: 33
+    - Business logic/flows: 19
+    - 🎓 Spec complexity: 0.00 (est. 5000ms)
+  ✓ Checkpoint: CP-1.3: Context loaded (3/4)
+  ✓ Checkpoint: CP-1.4: Complexity assessed (4/4)
+✅ Phase Completed: spec_ingestion (42452ms)
+  ✅ Contract validation: PASSED
+✅ Phase Complete: Spec Ingestion
+▶️  Phase: Validation Scaling
+
+✨ Phase 1.5: Validation Scaling (Pattern + LLM + Graph)
+    - Using OPTION 1: LLM NORMALIZATION (Selected)
+    - Normalizing with LLM...
+    - 📊 LLM tokens tracked: 3319 in + 2841 out = 6160 total
+    - ✅ LLM normalization succeeded (6 entities)
+    - Extracting validations from spec (6 entities)...
+    - ✅ Extraction complete
+    - Total validations extracted: 106
+      • format: 28
+      • presence: 42
+      • range: 7
+      • relationship: 10
+      • stock_constraint: 4
+      • uniqueness: 13
+      • workflow_constraint: 2
+    - Coverage: 106/106 (100.0%)
+    - Average confidence: 0.85
+  ✅ Contract validation: PASSED
+✅ Phase Complete: Validation Scaling
+▶️  Phase: Requirements Analysis
+
+================================================================================
+🔍 Phase 2: Requirements Analysis
+================================================================================
+📋 Semantic Classification (RequirementsClassifier)
+📝 Classifying requirements semantically...
+✓ Classification completed
+    ├─ Total requirements: 17
+    ├─ Functional: 17
+    ├─ Non-functional: 0
+    ├─ Dependency graph nodes: 3
+    ├─ Valid DAG: True
+📦 Domain Distribution
+    ├─ crud: 13
+    ├─ payment: 2
+    ├─ workflow: 2
+📋 Ground Truth Validation
+📝 Validating against ground truth...
+ℹ️ Loaded ground truth
+    ├─ Requirements: 19
+📊 Classification Metrics
+    ├─ Accuracy: 47.1%
+    ├─ Precision: 85.0%
+  ✓ Checkpoint: CP-2.1: Functional requirements (1/5)
+  ✓ Checkpoint: CP-2.2: Non-functional requirements (2/5)
+  ✓ Checkpoint: CP-2.3: Dependencies identified (3/5)
+  ✓ Checkpoint: CP-2.4: Constraints extracted (4/5)
+📋 Pattern Matching & Analysis
+📝 Searching for similar patterns (real)...
+    ✓ Found 10 matching patterns
+✓ Pattern matching completed
+    ├─ Patterns found: 10
+  ✓ Checkpoint: CP-2.5: Patterns matched (5/5)
+📋 Validation Checkpoints
+✓ Checkpoint CP-2.1: Functional requirements classification
+✓ Checkpoint CP-2.2: Non-functional requirements extraction
+✓ Checkpoint CP-2.3: Dependency identification
+✓ Checkpoint CP-2.4: Constraint extraction
+✓ Checkpoint CP-2.5: Pattern matching validation
+✅ Phase Completed: requirements_analysis (554ms)
+📊 Phase Metrics
+    ├─ Classification Accuracy: 47.1%
+    ├─ Pattern Precision: 80.0%
+    ├─ Pattern Recall: 47.1%
+    ├─ Pattern F1-Score: 59.3%
+    ├─ Contract Validation: PASSED
+✅ Phase Complete: Requirements Analysis
+▶️  Phase: Multi-Pass Planning
+
+📐 Phase 3: Multi-Pass Planning
+  📐 DAG nodes from IR: 56 (entities: 6, endpoints: 33, flows: 17)
+  ✓ Checkpoint: CP-3.1: Initial DAG created (1/5)
+  ✓ Checkpoint: CP-3.2: Dependencies refined (2/5)
+  ✓ Checkpoint: CP-3.3: Resources optimized (3/5)
+  ✓ Checkpoint: CP-3.4: Cycles repaired (4/5)
+  ✓ Checkpoint: CP-3.5: DAG validated (5/5)
+  📋 Using DAG ground truth: 23 nodes, 30 edges expected
+✅ Phase Completed: multi_pass_planning (103ms)
+  📊 DAG Accuracy: 64.2%
+  ✅ Contract validation: PASSED
+  🔍 Execution Order Validation: 100.0% (violations: 0)
+✅ Phase Complete: Multi-Pass Planning
+▶️  Phase: Atomization
+
+⚛️ Phase 4: Atomization
+  ✓ Checkpoint: CP-4.1: Step 1 (1/5)
+  ✓ Checkpoint: CP-4.2: Step 2 (2/5)
+  ✓ Checkpoint: CP-4.3: Step 3 (3/5)
+  ✓ Checkpoint: CP-4.4: Step 4 (4/5)
+  ✓ Checkpoint: CP-4.5: Atomization complete (5/5)
+✅ Phase Completed: atomization (1302ms)
+  📊 Atomization Quality: 100.0%
+  ✅ Contract validation: PASSED
+✅ Phase Complete: Atomization
+▶️  Phase: DAG Construction
+
+🔗 Phase 5: DAG Construction
+  ✓ Checkpoint: CP-5.1: Step 1 (1/5)
+  ✓ Checkpoint: CP-5.2: Step 2 (2/5)
+  ✓ Checkpoint: CP-5.3: Step 3 (3/5)
+  ✓ Checkpoint: CP-5.4: Step 4 (4/5)
+  ✓ Checkpoint: CP-5.5: Step 5 (5/5)
+✅ Phase Completed: dag_construction (1603ms)
+  ✅ Contract validation: PASSED
+✅ Phase Complete: DAG Construction
+▶️  Phase: Code Generation
+
+================================================================================
+🔍 Phase 6: Code Generation
+================================================================================
+  ✓ Checkpoint: CP-6.1: Code generation started (1/5)
+🏗️ Code Generation Initialization
+✓ Checkpoint CP-6.1: Code generation started
+    (Using IR-centric code generation: DomainModelIR, APIModelIR, ValidationModelIR, InfrastructureModelIR)
+📝 Generating code from requirements...
+ℹ️ Dependency waves prepared
+    ├─ Wave count: 2
+    ├─ Validation phase: Phase 7
+🔧 Code Composition
+  📝 Composing production-ready application... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
+  📦 Parsed production mode output: 96 files
+📚 Pattern Retrieval from PatternBank
+📦 Categories Retrieved
+    ├─ Core Config: 1
+    ├─ Database (Async): 1
+    ├─ Observability: 5
+    ├─ Models (Pydantic): 1
+    ├─ Models (SQLAlchemy): 1
+    ├─ Repository Pattern: 1
+    ├─ Business Logic: 1
+    ├─ API Routes: 1
+    ├─ Security Hardening: 1
+    ├─ Test Infrastructure: 7
+    ├─ Docker Infrastructure: 4
+    ├─ Project Config: 3
+✓ Total patterns retrieved: 27
+    ├─ Categories: 12
+    ├─ Status: Ready for composition
+
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    📦 Code Generation Components
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    Component                              |     Patterns     |     Files Generated     | Status
+  --------------------------------------------------------------------------------------------------------------
+    Core                                     |         4        |           4           |   ✅
+    Models                                   |         3        |           3           |   ✅
+    Services                                 |         7        |           7           |   ✅
+    API Routes                               |        10        |          10           |   ✅
+    Middleware                               |         1        |           1           |   ✅
+    Migrations                               |         4        |           4           |   ✅
+    Tests                                    |         6        |           6           |   ✅
+    Other                                    |        61        |          61           |   ✅
+  --------------------------------------------------------------------------------------------------------------
+    ⏱️  1416ms                               |        📦 261.8KB       |          📊 96          |  ✅ 100%
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+✓ Code generation completed
+    ├─ Total files: 96
+    ├─ Duration: 1.4s
+  ✓ Checkpoint: CP-6.2: Models generated (2/5)
+  ✓ Checkpoint: CP-6.3: Routes generated (3/5)
+✓ Checkpoint CP-6.2: Pattern retrieval completed
+✓ Checkpoint CP-6.3: Code composition started
+  ✓ Checkpoint: CP-6.4: Tests generated (4/5)
+✓ Checkpoint CP-6.4: File generation completed
+  ✓ Checkpoint: CP-6.5: Code generation complete (5/5)
+✓ Checkpoint CP-6.5: Production mode validation
+✅ Phase Completed: wave_execution (1517ms)
+📊 Generation Metrics
+    ├─ Execution Success Rate: 100.0%
+    ├─ Recovery Rate: 0.0%
+    ├─ Contract Validation: PASSED
+
+  🧪 Phase 6.5: IR-based Test Generation
+    ✅ Generated 267 tests across 3 files:
+       - validation: test_validation_generated.py (183 tests)
+       - integration: test_integration_generated.py (35 tests)
+       - contract: test_contract_generated.py (49 tests)
+
+  🔧 Phase 6.6: IR-based Service Generation
+    ✅ Generated 4 service files:
+       - Product_flows: product_flow_methods.py
+       - Customer_flows: customer_flow_methods.py
+       - Cart_flows: cart_flow_methods.py
+       - Order_flows: order_flow_methods.py
+    📊 Flow coverage: 100.0% (17/17)
+✅ Phase Complete: Code Generation
+▶️  Phase: Deployment
+
+📦 Phase 8: Deployment
+
+  🔍 Running basic validation pipeline...
+  ✅ PASSED | Files: 96 | Errors: 0 | Warnings: 3 | Time: 186ms
+
+  📋 Generation manifest saved: tests/e2e/generated_apps/ecommerce-api-spec-human_1764467618/generation_manifest.json
+📊 Stratum Distribution:
+┌───────────┬───────┬────────┬───────────┐
+│ Stratum   │ Files │ Pct    │ Time (ms) │
+├───────────┼───────┼────────┼───────────┤
+│ TEMPLATE  │    31 │  32.3% │         0 │
+│ AST       │    59 │  61.5% │         0 │
+│ LLM       │     6 │   6.2% │         0 │
+├───────────┼───────┼────────┼───────────┤
+│ TOTAL     │    96 │ 100.0% │         0 │
+└───────────┴───────┴────────┴───────────┘
+
+📊 Stratum Performance:
+┌──────────┬─────────┬─────────┬──────────┬──────────┬────────────┐
+│ Stratum  │ Files   │ Time    │ Detected │ Repaired │ LLM Tokens │
+├──────────┼─────────┼─────────┼──────────┼──────────┼────────────┤
+│ TEMPLATE │    31 │      4ms │        0 │        0 │          0 │
+│ AST      │    59 │      6ms │        0 │        0 │          0 │
+│ LLM      │     6 │      0ms │        0 │        0 │      6,160 │
+│ QA       │     - │    186ms │        0 │        0 │          0 │
+├──────────┼─────────┼─────────┼──────────┼──────────┼────────────┤
+│ TOTAL    │    96 │    196ms │        0 │        0 │      6,160 │
+└──────────┴─────────┴─────────┴──────────┴──────────┴────────────┘
+
+✅ Overall Success Rate: 100.0%
+🎚️ Execution Mode: HYBRID
+  📊 Stratum metrics saved: tests/e2e/generated_apps/ecommerce-api-spec-human_1764467618/stratum_metrics.json
+
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    💾 Deployment Complete
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    Metric                                  |           Result            |     Status
+  --------------------------------------------------------------------------------------------------------------
+    Files Saved                             |               96        |       ✅     
+    Total Size                              |          261.8KB        |       ✅     
+    Deployment Time                         |             15ms        |       ✅     
+    Output Location                         |  .../_1764467618        |       ✅     
+  --------------------------------------------------------------------------------------------------------------
+    ✅ All 96 files successfully deployed to disk                                                
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  ✓ Checkpoint: CP-8.1: Files saved to disk (1/5)
+  ✓ Checkpoint: CP-8.2: Directory structure created (2/5)
+  ✓ Checkpoint: CP-8.3: README not generated (missing from code generation) (3/5)
+  ✓ Checkpoint: CP-8.4: Dependencies documented (4/5)
+  ✓ Checkpoint: CP-8.5: Generation manifest saved (5/5)
+  ✓ Checkpoint: CP-8.6: Stratum metrics saved (6/5)
+
+  🏆 Running golden app comparison: ecommerce
+No JSON found in LLM response
+No JSON found in LLM response
+Invalid validation type: BUSINESS_RULE, skipping rule
+Invalid validation type: BUSINESS_RULE, skipping rule
+Invalid validation type: BUSINESS_RULE, skipping rule
+Golden App: ecommerce
+Status: ✅ PASSED
+Duration: 85945ms
+  Metrics: ✅ Metrics: 100.0% match
+  Regressions: ✅ Regressions: 100.0% match
+  🏆 Golden app comparison saved: tests/e2e/generated_apps/ecommerce-api-spec-human_1764467618/golden_app_comparison.json
+  ✓ Checkpoint: CP-8.8: Golden app comparison (7/5)
+  ✓ Checkpoint: CP-8.9: Deployment complete (8/5)
+✅ Phase Completed: deployment (86250ms)
+  ✅ Generated app saved to: tests/e2e/generated_apps/ecommerce-api-spec-human_1764467618
+✅ Phase Complete: Deployment
+▶️  Phase: Code Repair
+
+🔧 Phase 6.5: Code Repair (Task Group 4)
+
+  🔍 CP-6.5.1: Running compliance pre-check...
+Successfully imported FastAPI app
+Extracted 6 entities from OpenAPI schemas: ['Cart', 'CartItem', 'Customer', 'Order', 'OrderItem', 'Product']
+After checking entities.py: 6 entities found: ['Cart', 'CartItem', 'Customer', 'Order', 'OrderItem', 'Product']
+Extracted 34 endpoints from OpenAPI paths
+Extracted 62 validations from OpenAPI schemas
+After checking schemas.py with AST: 169 validations found
+✅ Extracted 34 SQLAlchemy constraints using AST parser
+🧠 Using SemanticMatcher for ML-based constraint matching
+🚀 Using IRSemanticMatcher for fast batch matching
+Declarative base created
+🧠 IR matching: 308/310 = 99.4%
+📊 IRSemanticMatcher: 308/310 = 99.4%
+⚠️ Semantic matching: 308/310 = 99.4%
+   Unmatched: ['Order.items: custom', 'Order.items: stock_constraint']
+📊 SemanticMatcher: 308/310 validations matched = 99.4%
+OpenAPI-based compliance validation complete: 99.9% (entities: 100.0%, endpoints: 100.0%, validations: 99.4%)
+  ✓ Pre-check complete: 99.9% compliance
+    - Entities: 6/6
+    - Endpoints: 34/33
+
+  🤖 CP-6.5.2: Initializing repair dependencies...
+  ✓ Dependencies initialized
+
+  🔄 CP-6.5.3: Converting ComplianceReport to TestResult format...
+Converting ComplianceReport with 99.9% compliance
+Converted 274 compliance failures to TestResult format
+  ✓ Test results adapted: 274 failures converted
+
+  🔁 CP-6.5.4: Executing repair loop...
+📋 Repair Iterations
+📝 Starting repair loop (max 3 iterations)...
+⏳ Iteration 1/3
+📝 Analyzing 274 failures...
+📝 Applying repairs...
+        📐 CodeRepairAgent initialized with ApplicationIR
+CodeRepair: Using IR-centric mode (ApplicationIR)
+CodeRepair (IR): 0 missing entities, 0 missing endpoints
+CodeRepair (IR): 274 missing validations/constraints
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Added max_length=2000 to Product.description
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=0.01'
+Added ge=0.01 to Product.price
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=0'
+Added ge=0 to Product.stock
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Added min_length=3 to Customer.email
+Added max_length=255 to Customer.email
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Added pattern=^[a-za-z0-9._%+-]+@[a-za-z0-9.-]+\.[a-za-z]{2,}$ to Customer.email
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Mapping format=email → pattern
+Added pattern=^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$ to Customer.email
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=datetime handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2: Mapping enum_values → enum=['open', 'checked_out']
+Updated Cart.status to Literal['open', 'checked_out']
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=1'
+Added ge=1 to CartItem.quantity
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=0.01'
+Added ge=0.01 to CartItem.unit_price
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2: Mapping enum_values → enum=['pending_payment', 'paid', 'cancelled']
+Updated Order.order_status to Literal['pending_payment', 'paid', 'cancelled']
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2: Mapping enum_values → enum=['pending', 'simulated_ok', 'failed']
+Updated Order.payment_status to Literal['pending', 'simulated_ok', 'failed']
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=0'
+Added ge=0 to Order.total_amount
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=datetime handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=1'
+Added ge=1 to OrderItem.quantity
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=0.01'
+Added ge=0.01 to OrderItem.unit_price
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Added gt=0 to Product.stock
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Product.name: presence'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'uniqueness' from 'Customer.email: uniqueness'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Customer.email: presence'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Customer.full_name: presence'
+Added gt=0 to Order.total_amount
+Bug #45: Ignoring unrecognized constraint 'status_transition' from 'Cart.status: status_transition'
+Bug #45: Ignoring unrecognized constraint 'status_transition' from 'Order.order_status: status_transition'
+Bug #45: Ignoring unrecognized constraint 'custom' from 'Cart.customer_id: custom'
+Bug #45: Ignoring unrecognized constraint 'custom' from 'CartItem.product_id: custom'
+Bug #45: Ignoring unrecognized constraint 'stock_constraint' from 'CartItem.quantity: stock_constraint'
+Bug #45: Ignoring unrecognized constraint 'custom' from 'Order.items: custom'
+Bug #45: Ignoring unrecognized constraint 'stock_constraint' from 'Order.items: stock_constraint'
+Bug #45: Ignoring unrecognized constraint 'workflow_constraint' from 'Order.order_status: workflow_constraint'
+Bug #45: Ignoring unrecognized constraint 'custom' from 'Product.stock: custom'
+Bug #45: Ignoring unrecognized constraint 'custom' from 'CartItem.unit_price: custom'
+Bug #45: Ignoring unrecognized constraint 'custom' from 'OrderItem.unit_price: custom'
+Bug #45: Ignoring unrecognized constraint 'custom' from 'Order.total_amount: custom'
+Bug #45: Ignoring unrecognized constraint 'relationship' from 'Product.id: relationship'
+Bug #45: Ignoring unrecognized constraint 'relationship' from 'Customer.id: relationship'
+Bug #45: Ignoring unrecognized constraint 'relationship' from 'Cart.id: relationship'
+Bug #45: Ignoring unrecognized constraint 'relationship' from 'Order.id: relationship'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Product.id: presence'
+Bug #45: Ignoring unrecognized constraint 'uniqueness' from 'Product.id: uniqueness'
+Task 2: Unknown format=true, skipping
+Task 2: Unknown format=true, skipping
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Product.price: presence'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Product.stock: presence'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Product.is_active: presence'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Customer.id: presence'
+Bug #45: Ignoring unrecognized constraint 'uniqueness' from 'Customer.id: uniqueness'
+Task 2: Unknown format=true, skipping
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Customer.registration_date: presence'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Cart.id: presence'
+Bug #45: Ignoring unrecognized constraint 'uniqueness' from 'Cart.id: uniqueness'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Cart.customer_id: presence'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Cart.status: presence'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'CartItem.id: presence'
+Bug #45: Ignoring unrecognized constraint 'uniqueness' from 'CartItem.id: uniqueness'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'CartItem.cart_id: presence'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'CartItem.product_id: presence'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'CartItem.quantity: presence'
+Bug #45: Ignoring unrecognized constraint 'range' from 'CartItem.quantity: range'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'CartItem.unit_price: presence'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Order.id: presence'
+Bug #45: Ignoring unrecognized constraint 'uniqueness' from 'Order.id: uniqueness'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Order.customer_id: presence'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Order.order_status: presence'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Order.payment_status: presence'
+Bug #45: Ignoring unrecognized constraint 'status_transition' from 'Order.payment_status: status_transition'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Order.total_amount: presence'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Order.creation_date: presence'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'OrderItem.id: presence'
+Bug #45: Ignoring unrecognized constraint 'uniqueness' from 'OrderItem.id: uniqueness'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'OrderItem.order_id: presence'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'OrderItem.product_id: presence'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'OrderItem.quantity: presence'
+Bug #45: Ignoring unrecognized constraint 'range' from 'OrderItem.quantity: range'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'OrderItem.unit_price: presence'
+✓ Applied 274 repairs
+    ├─ Endpoints added: 0
+    ├─ Validations added: 274
+📝 Re-validating compliance...
+Validating app at /home/kwar/code/agentic-ai/tests/e2e/generated_apps/ecommerce-api-spec-human_1764467618 using OpenAPI schema
+Converting DATABASE_URL to async driver for validation
+Successfully imported FastAPI app
+Extracted 6 entities from OpenAPI schemas: ['Cart', 'CartItem', 'Customer', 'Order', 'OrderItem', 'Product']
+After checking entities.py: 6 entities found: ['Cart', 'CartItem', 'Customer', 'Order', 'OrderItem', 'Product']
+Extracted 34 endpoints from OpenAPI paths
+Extracted 62 validations from OpenAPI schemas
+After checking schemas.py with AST: 176 validations found
+✅ Extracted 34 SQLAlchemy constraints using AST parser
+🧠 Using SemanticMatcher for ML-based constraint matching
+🚀 Using IRSemanticMatcher for fast batch matching
+Declarative base created
+🧠 IR matching: 308/310 = 99.4%
+📊 IRSemanticMatcher: 308/310 = 99.4%
+⚠️ Semantic matching: 308/310 = 99.4%
+   Unmatched: ['Order.items: custom', 'Order.items: stock_constraint']
+📊 SemanticMatcher: 308/310 validations matched = 99.4%
+OpenAPI-based compliance validation complete: 99.9% (entities: 100.0%, endpoints: 100.0%, validations: 99.4%)
+ℹ️ Post-repair compliance: 99.9% → 99.9%
+    ├─ Status: ⚠️
+    ├─ Delta: +0.0%
+    ├─ Validations: 308/310 → 308/310
+    ├─ Tests fixed: 274
+ℹ️ No improvement
+    ├─ Status: =
+    ├─ Message: Plateau reached
+⏳ Iteration 2/3
+📝 Analyzing 274 failures...
+📝 Applying repairs...
+CodeRepair: Using IR-centric mode (ApplicationIR)
+CodeRepair (IR): 0 missing entities, 0 missing endpoints
+CodeRepair (IR): 274 missing validations/constraints
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Added max_length=2000 to Product.description
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=0.01'
+Added ge=0.01 to Product.price
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=0'
+Added ge=0 to Product.stock
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Added min_length=3 to Customer.email
+Added max_length=255 to Customer.email
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Added pattern=^[a-za-z0-9._%+-]+@[a-za-z0-9.-]+\.[a-za-z]{2,}$ to Customer.email
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Mapping format=email → pattern
+Added pattern=^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$ to Customer.email
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=datetime handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2: Mapping enum_values → enum=['open', 'checked_out']
+Updated Cart.status to Literal['open', 'checked_out']
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=1'
+Added ge=1 to CartItem.quantity
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=0.01'
+Added ge=0.01 to CartItem.unit_price
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2: Mapping enum_values → enum=['pending_payment', 'paid', 'cancelled']
+Updated Order.order_status to Literal['pending_payment', 'paid', 'cancelled']
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2: Mapping enum_values → enum=['pending', 'simulated_ok', 'failed']
+Updated Order.payment_status to Literal['pending', 'simulated_ok', 'failed']
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=0'
+Added ge=0 to Order.total_amount
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=datetime handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=none'
+Bug #51: Skipping ge=none (invalid numeric value)
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: format=uuid handled natively by Pydantic, skipping
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=1'
+Added ge=1 to OrderItem.quantity
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Bug #51: Skipping min_length=none (invalid numeric value)
+Bug #51: Skipping max_length=none (invalid numeric value)
+Bug #45: Mapping 'min_value' → 'ge=0.01'
+Added ge=0.01 to OrderItem.unit_price
+Bug #45: Mapping 'max_value' → 'le=none'
+Bug #51: Skipping le=none (invalid numeric value)
+Bug #51: Skipping pattern=none (invalid pattern)
+Task 2.5: Skipping enum_values=none (no values)
+Task 2: Skipping format=none (no format specified)
+Added gt=0 to Product.stock
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Product.name: presence'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'uniqueness' from 'Customer.email: uniqueness'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Customer.email: presence'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Customer.full_name: presence'
+Added gt=0 to Order.total_amount
+Bug #45: Ignoring unrecognized constraint 'status_transition' from 'Cart.status: status_transition'
+Bug #45: Ignoring unrecognized constraint 'status_transition' from 'Order.order_status: status_transition'
+Bug #45: Ignoring unrecognized constraint 'custom' from 'Cart.customer_id: custom'
+Bug #45: Ignoring unrecognized constraint 'custom' from 'CartItem.product_id: custom'
+Bug #45: Ignoring unrecognized constraint 'stock_constraint' from 'CartItem.quantity: stock_constraint'
+Bug #45: Ignoring unrecognized constraint 'custom' from 'Order.items: custom'
+Bug #45: Ignoring unrecognized constraint 'stock_constraint' from 'Order.items: stock_constraint'
+Bug #45: Ignoring unrecognized constraint 'workflow_constraint' from 'Order.order_status: workflow_constraint'
+Bug #45: Ignoring unrecognized constraint 'custom' from 'Product.stock: custom'
+Bug #45: Ignoring unrecognized constraint 'custom' from 'CartItem.unit_price: custom'
+Bug #45: Ignoring unrecognized constraint 'custom' from 'OrderItem.unit_price: custom'
+Bug #45: Ignoring unrecognized constraint 'custom' from 'Order.total_amount: custom'
+Bug #45: Ignoring unrecognized constraint 'relationship' from 'Product.id: relationship'
+Bug #45: Ignoring unrecognized constraint 'relationship' from 'Customer.id: relationship'
+Bug #45: Ignoring unrecognized constraint 'relationship' from 'Cart.id: relationship'
+Bug #45: Ignoring unrecognized constraint 'relationship' from 'Order.id: relationship'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Product.id: presence'
+Bug #45: Ignoring unrecognized constraint 'uniqueness' from 'Product.id: uniqueness'
+Task 2: Unknown format=true, skipping
+Task 2: Unknown format=true, skipping
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Product.price: presence'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Product.stock: presence'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Product.is_active: presence'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Customer.id: presence'
+Bug #45: Ignoring unrecognized constraint 'uniqueness' from 'Customer.id: uniqueness'
+Task 2: Unknown format=true, skipping
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Customer.registration_date: presence'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Cart.id: presence'
+Bug #45: Ignoring unrecognized constraint 'uniqueness' from 'Cart.id: uniqueness'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Cart.customer_id: presence'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Cart.status: presence'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'CartItem.id: presence'
+Bug #45: Ignoring unrecognized constraint 'uniqueness' from 'CartItem.id: uniqueness'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'CartItem.cart_id: presence'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'CartItem.product_id: presence'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'CartItem.quantity: presence'
+Bug #45: Ignoring unrecognized constraint 'range' from 'CartItem.quantity: range'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'CartItem.unit_price: presence'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Order.id: presence'
+Bug #45: Ignoring unrecognized constraint 'uniqueness' from 'Order.id: uniqueness'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Order.customer_id: presence'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Order.order_status: presence'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Order.payment_status: presence'
+Bug #45: Ignoring unrecognized constraint 'status_transition' from 'Order.payment_status: status_transition'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Order.total_amount: presence'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'Order.creation_date: presence'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'OrderItem.id: presence'
+Bug #45: Ignoring unrecognized constraint 'uniqueness' from 'OrderItem.id: uniqueness'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'OrderItem.order_id: presence'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'OrderItem.product_id: presence'
+Task 2: Unknown format=true, skipping
+Bug #45: Ignoring unrecognized constraint 'presence' from 'OrderItem.quantity: presence'
+Bug #45: Ignoring unrecognized constraint 'range' from 'OrderItem.quantity: range'
+Bug #45: Ignoring unrecognized constraint 'presence' from 'OrderItem.unit_price: presence'
+✓ Applied 274 repairs
+    ├─ Endpoints added: 0
+    ├─ Validations added: 274
+📝 Re-validating compliance...
+Validating app at /home/kwar/code/agentic-ai/tests/e2e/generated_apps/ecommerce-api-spec-human_1764467618 using OpenAPI schema
+Converting DATABASE_URL to async driver for validation
+Successfully imported FastAPI app
+Extracted 6 entities from OpenAPI schemas: ['Cart', 'CartItem', 'Customer', 'Order', 'OrderItem', 'Product']
+After checking entities.py: 6 entities found: ['Cart', 'CartItem', 'Customer', 'Order', 'OrderItem', 'Product']
+Extracted 34 endpoints from OpenAPI paths
+Extracted 62 validations from OpenAPI schemas
+After checking schemas.py with AST: 176 validations found
+✅ Extracted 34 SQLAlchemy constraints using AST parser
+🧠 Using SemanticMatcher for ML-based constraint matching
+🚀 Using IRSemanticMatcher for fast batch matching
+Declarative base created
+🧠 IR matching: 308/310 = 99.4%
+📊 IRSemanticMatcher: 308/310 = 99.4%
+⚠️ Semantic matching: 308/310 = 99.4%
+   Unmatched: ['Order.items: custom', 'Order.items: stock_constraint']
+📊 SemanticMatcher: 308/310 validations matched = 99.4%
+OpenAPI-based compliance validation complete: 99.9% (entities: 100.0%, endpoints: 100.0%, validations: 99.4%)
+ℹ️ Post-repair compliance: 99.9% → 99.9%
+    ├─ Status: ⚠️
+    ├─ Delta: +0.0%
+    ├─ Validations: 308/310 → 308/310
+    ├─ Tests fixed: 274
+ℹ️ No improvement
+    ├─ Status: =
+    ├─ Message: Plateau reached
+ℹ️ Stopping iteration
+    ├─ Reason: No improvement for 2 consecutive iterations
+
+  📊 CP-6.5.5: Metrics collected
+  ✅ Phase 6.5 complete
+    - Initial compliance: 99.9%
+    - Final compliance: 99.9%
+    - Improvement: +0.0%
+✅ Phase Complete: Code Repair
+▶️  Phase: Runtime Smoke Test
+
+🔥 Phase 8.5: Runtime Smoke Test (Task 10)
+  🎯 Using IR-Centric Smoke Test (TestsIR - deterministic)
+    📝 Phase 1: Generating TestsModelIR from ApplicationIR...
+    💾 TestsModelIR saved: tests/e2e/generated_apps/ecommerce-api-spec-human_1764467618/tests_model_ir.json
+    📊 Generated 76 scenarios, 33 endpoint suites
+    📋 By type: {'unit': 0, 'integration': 0, 'smoke': 76, 'contract': 0, 'e2e': 0}
+    🔗 Testing against: http://127.0.0.1:8002
+    🧹 Bug #145: Cleaning up previous containers/volumes for fresh DB state...
+    🐳 Starting Docker containers...
+    ⏳ Waiting for server at http://127.0.0.1:8002...
+HTTP Request: GET http://127.0.0.1:8002/health/health "HTTP/1.1 404 Not Found"
+    ✅ Server ready in 0.0s (via http://127.0.0.1:8002/health/health)
+    🚀 Phase 2: Executing 76 scenarios...
+HTTP Request: GET http://127.0.0.1:8002/health "HTTP/1.1 200 OK"
+HTTP Request: GET http://127.0.0.1:8002/health/ready "HTTP/1.1 200 OK"
+HTTP Request: POST http://127.0.0.1:8002/products "HTTP/1.1 201 Created"
+HTTP Request: POST http://127.0.0.1:8002/products "HTTP/1.1 422 Unprocessable Entity"
+HTTP Request: GET http://127.0.0.1:8002/products "HTTP/1.1 200 OK"
+HTTP Request: GET http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 200 OK"
+HTTP Request: GET http://127.0.0.1:8002/products/00000000-0000-0000-0000-000000000000 "HTTP/1.1 404 Not Found"
+HTTP Request: PUT http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 200 OK"
+HTTP Request: PUT http://127.0.0.1:8002/products/00000000-0000-0000-0000-000000000000 "HTTP/1.1 422 Unprocessable Entity"
+HTTP Request: PUT http://127.0.0.1:8002/products/%7Bid%7D "HTTP/1.1 422 Unprocessable Entity"
+HTTP Request: POST http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001/deactivate "HTTP/1.1 201 Created"
+HTTP Request: POST http://127.0.0.1:8002/customers "HTTP/1.1 201 Created"
+HTTP Request: POST http://127.0.0.1:8002/customers "HTTP/1.1 422 Unprocessable Entity"
+HTTP Request: GET http://127.0.0.1:8002/customers/00000000-0000-4000-8000-000000000002 "HTTP/1.1 200 OK"
+HTTP Request: GET http://127.0.0.1:8002/customers/00000000-0000-0000-0000-000000000000 "HTTP/1.1 404 Not Found"
+HTTP Request: POST http://127.0.0.1:8002/carts "HTTP/1.1 201 Created"
+HTTP Request: POST http://127.0.0.1:8002/carts "HTTP/1.1 422 Unprocessable Entity"
+HTTP Request: GET http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003 "HTTP/1.1 200 OK"
+HTTP Request: GET http://127.0.0.1:8002/carts/00000000-0000-0000-0000-000000000000 "HTTP/1.1 404 Not Found"
+HTTP Request: POST http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003/items "HTTP/1.1 500 Internal Server Error"
+HTTP Request: POST http://127.0.0.1:8002/carts/%7Bid%7D/items "HTTP/1.1 422 Unprocessable Entity"
+HTTP Request: PUT http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003/items/00000000-0000-4000-8000-000000000006 "HTTP/1.1 200 OK"
+HTTP Request: PUT http://127.0.0.1:8002/carts/00000000-0000-0000-0000-000000000000/items/00000000-0000-0000-0000-000000000000 "HTTP/1.1 422 Unprocessable Entity"
+HTTP Request: PUT http://127.0.0.1:8002/carts/%7Bcart_id%7D/items/%7Bitem_id%7D "HTTP/1.1 422 Unprocessable Entity"
+HTTP Request: POST http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003/clear "HTTP/1.1 201 Created"
+HTTP Request: POST http://127.0.0.1:8002/orders "HTTP/1.1 422 Unprocessable Entity"
+HTTP Request: POST http://127.0.0.1:8002/orders "HTTP/1.1 422 Unprocessable Entity"
+HTTP Request: POST http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005/pay "HTTP/1.1 500 Internal Server Error"
+HTTP Request: POST http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005/cancel "HTTP/1.1 500 Internal Server Error"
+HTTP Request: GET http://127.0.0.1:8002/customers/00000000-0000-4000-8000-000000000002/orders "HTTP/1.1 200 OK"
+HTTP Request: GET http://127.0.0.1:8002/customers/00000000-0000-0000-0000-000000000000/orders "HTTP/1.1 404 Not Found"
+HTTP Request: GET http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005 "HTTP/1.1 200 OK"
+HTTP Request: GET http://127.0.0.1:8002/orders/00000000-0000-0000-0000-000000000000 "HTTP/1.1 404 Not Found"
+HTTP Request: GET http://127.0.0.1:8002/carts "HTTP/1.1 200 OK"
+HTTP Request: GET http://127.0.0.1:8002/customers "HTTP/1.1 200 OK"
+HTTP Request: GET http://127.0.0.1:8002/orders "HTTP/1.1 200 OK"
+HTTP Request: DELETE http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 204 No Content"
+HTTP Request: DELETE http://127.0.0.1:8002/products/00000000-0000-0000-0000-000000000000 "HTTP/1.1 404 Not Found"
+HTTP Request: DELETE http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003 "HTTP/1.1 204 No Content"
+HTTP Request: DELETE http://127.0.0.1:8002/carts/00000000-0000-0000-0000-000000000000 "HTTP/1.1 404 Not Found"
+HTTP Request: DELETE http://127.0.0.1:8002/customers/00000000-0000-4000-8000-000000000002 "HTTP/1.1 204 No Content"
+HTTP Request: DELETE http://127.0.0.1:8002/customers/00000000-0000-0000-0000-000000000000 "HTTP/1.1 404 Not Found"
+HTTP Request: DELETE http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005 "HTTP/1.1 204 No Content"
+HTTP Request: DELETE http://127.0.0.1:8002/orders/00000000-0000-0000-0000-000000000000 "HTTP/1.1 404 Not Found"
+HTTP Request: PATCH http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001/deactivate "HTTP/1.1 404 Not Found"
+HTTP Request: PATCH http://127.0.0.1:8002/products/00000000-0000-0000-0000-000000000000/deactivate "HTTP/1.1 404 Not Found"
+HTTP Request: PATCH http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001/activate "HTTP/1.1 404 Not Found"
+HTTP Request: PATCH http://127.0.0.1:8002/products/00000000-0000-0000-0000-000000000000/activate "HTTP/1.1 404 Not Found"
+HTTP Request: POST http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003/checkout "HTTP/1.1 500 Internal Server Error"
+HTTP Request: DELETE http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003/items/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+HTTP Request: DELETE http://127.0.0.1:8002/carts/00000000-0000-0000-0000-000000000000/items/00000000-0000-0000-0000-000000000000 "HTTP/1.1 404 Not Found"
+HTTP Request: PUT http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005/items/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+HTTP Request: PUT http://127.0.0.1:8002/orders/00000000-0000-0000-0000-000000000000/items/00000000-0000-0000-0000-000000000000 "HTTP/1.1 422 Unprocessable Entity"
+HTTP Request: DELETE http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005/items/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+HTTP Request: DELETE http://127.0.0.1:8002/orders/00000000-0000-0000-0000-000000000000/items/00000000-0000-0000-0000-000000000000 "HTTP/1.1 404 Not Found"
+HTTP Request: GET http://127.0.0.1:8002/metrics "HTTP/1.1 200 OK"
+HTTP Request: POST http://127.0.0.1:8002/products "HTTP/1.1 201 Created"
+HTTP Request: PUT http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+HTTP Request: PUT http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+HTTP Request: POST http://127.0.0.1:8002/products "HTTP/1.1 201 Created"
+HTTP Request: POST http://127.0.0.1:8002/products "HTTP/1.1 201 Created"
+HTTP Request: POST http://127.0.0.1:8002/products "HTTP/1.1 201 Created"
+HTTP Request: PUT http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+HTTP Request: DELETE http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+HTTP Request: PUT http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+HTTP Request: DELETE http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+HTTP Request: PUT http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+HTTP Request: POST http://127.0.0.1:8002/products "HTTP/1.1 201 Created"
+HTTP Request: POST http://127.0.0.1:8002/products "HTTP/1.1 201 Created"
+HTTP Request: PUT http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+HTTP Request: PUT http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+HTTP Request: PUT http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+HTTP Request: PUT http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+HTTP Request: PUT http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+HTTP Request: GET http://127.0.0.1:8002/products "HTTP/1.1 200 OK"
+HTTP Request: GET http://127.0.0.1:8002/customers/%7Bcustomer_id%7D/orders "HTTP/1.1 422 Unprocessable Entity"
+
+  📊 IR Smoke Test Results:
+    - Total scenarios: 76
+    - Passed: 53
+    - Failed: 23
+    - Pass rate: 69.7%
+    - Endpoint coverage: 100.0%
+    💾 Detailed results saved: tests/e2e/generated_apps/ecommerce-api-spec-human_1764467618/ir_smoke_test_results.json
+
+  📊 Smoke Test Results:
+    - Scenarios tested: 76
+    - Passed: 53
+    - Failed: 23
+    - Total time: 384ms
+  ⚠️ 23 scenarios failed smoke test
+    ❌ POST /carts/{id}/items [add_item_to_cart_happy_path]: expected 201, got 500
+    ❌ POST /orders [checkout_happy_path]: expected 201, got 422
+    ❌ POST /orders/{id}/pay [pay_order_happy_path]: expected 201, got 500
+    ❌ POST /orders/{id}/cancel [cancel_order_happy_path]: expected 201, got 500
+    ❌ PATCH /products/{id}/deactivate [deactivate_product_happy_path]: expected 200, got 404
+    ... and 18 more
+  💾 Smoke test results saved: tests/e2e/generated_apps/ecommerce-api-spec-human_1764467618/smoke_test_results.json
+Generated 23 learning events: 0 positive, 23 negative
+📊 Updated pattern scores: 5 patterns (avg score 0.35, promoted: 0, demoted: 0)
+   Categories: routes: 5
+   Events: +0 positive, -23 negative
+📊 Updated pattern scores: 5 patterns (avg score 0.35, promoted: 0, demoted: 0)
+   Categories: routes: 5
+   Events: +0 positive, -23 negative
+  🎓 Pattern learning: 5 patterns updated
+Persisted IR correlation report to Neo4j
+  🎓 IR-Code correlation: 2 high-risk patterns
+    ⚠️ entity: Entities with >50% complexity and <70% pass rate...
+    ⚠️ entity: Entities with enum fields tend to have generation issues...
+Processing 23 smoke violations
+Created anti-pattern: gap_3caf45f3d35a (HTTP_500 on Cart)
+Created anti-pattern: gap_894a51cd6cae (HTTP_422 on Order)
+Created anti-pattern: gap_17d16ced7638 (HTTP_500 on Order)
+Created anti-pattern: gap_8318f1f4177d (HTTP_500 on Order)
+Created anti-pattern: gap_0f7e48cfde48 (HTTP_404 on Product)
+Created anti-pattern: gap_774c3ac31de8 (HTTP_404 on Product)
+Created anti-pattern: gap_450f5943d18d (HTTP_500 on Cart)
+Created anti-pattern: gap_e3a0ffcc2b8e (HTTP_404 on Cart)
+Created anti-pattern: gap_cfa8665ed2e3 (HTTP_404 on Order)
+Created anti-pattern: gap_ff61d91aba7a (HTTP_404 on Order)
+Created anti-pattern: gap_024af4dfa8d8 (HTTP_404 on Product)
+Created anti-pattern: gap_024af4dfa8d8 (HTTP_404 on Product)
+Created anti-pattern: gap_024af4dfa8d8 (HTTP_404 on Product)
+Created anti-pattern: gap_caef819a2ad7 (HTTP_404 on Product)
+Created anti-pattern: gap_024af4dfa8d8 (HTTP_404 on Product)
+Created anti-pattern: gap_caef819a2ad7 (HTTP_404 on Product)
+Created anti-pattern: gap_024af4dfa8d8 (HTTP_404 on Product)
+Created anti-pattern: gap_024af4dfa8d8 (HTTP_404 on Product)
+Created anti-pattern: gap_024af4dfa8d8 (HTTP_404 on Product)
+Created anti-pattern: gap_024af4dfa8d8 (HTTP_404 on Product)
+Created anti-pattern: gap_024af4dfa8d8 (HTTP_404 on Product)
+Created anti-pattern: gap_024af4dfa8d8 (HTTP_404 on Product)
+Created anti-pattern: gap_8400adbd1fc5 (HTTP_422 on Customer)
+📊 Generation feedback: 0 new, 23 updated anti-patterns [70ms]
+📊 Generation feedback: 0 new, 23 updated anti-patterns [70ms]
+  🎓 Generation Feedback Loop: 0 new, 23 updated anti-patterns
+     (Classification rate: 100%)
+
+  ❌ Phase 8.5 FAILED - Smoke test did not pass
+
+  🔧 Starting Smoke-Driven Repair Loop (23 violations)
+
+  🔧 Using Smoke-Driven Repair Orchestrator (Full Cycle)
+    ✅ Delta IR Validator enabled (70% speedup)
+    ✅ Repair Confidence Model enabled (probabilistic ranking)
+    ✅ Fix Pattern Learner enabled (cross-session learning)
+    ✅ IR-Code Correlator enabled (realignment after repair)
+  ✅ Delta IR Validator enabled (70% validation speedup)
+  ✅ Repair Confidence Model enabled (probabilistic ranking)
+  ✅ Fix Pattern Learner enabled (cross-session learning)
+🔄 Starting Full Smoke-Repair Cycle (max 3 cycles, Docker rebuild: True)
+
+  🔁 Cycle 1/3
+🧹 Cleaning up previous containers/volumes: docker compose -f docker/docker-compose.yml down -v --remove-orphans
+🐳 Building Docker (no cache): docker compose -f docker/docker-compose.yml build --no-cache
+🐳 Starting Docker: docker compose -f docker/docker-compose.yml up -d
+HTTP Request: GET http://127.0.0.1:8002/health "HTTP/1.1 200 OK"
+✅ Server started in 59671ms at http://127.0.0.1:8002
+🔍 Testing 30 endpoints...
+HTTP Request: POST http://127.0.0.1:8002/products "HTTP/1.1 201 Created"
+  ✅ POST /products: 201
+HTTP Request: GET http://127.0.0.1:8002/products "HTTP/1.1 200 OK"
+  ✅ GET /products: 200
+HTTP Request: GET http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 200 OK"
+  ✅ GET /products/{id}: 200
+HTTP Request: PUT http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 200 OK"
+  ✅ PUT /products/{id}: 200
+HTTP Request: POST http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001/deactivate "HTTP/1.1 201 Created"
+  ✅ POST /products/{id}/deactivate: 201
+HTTP Request: POST http://127.0.0.1:8002/customers "HTTP/1.1 201 Created"
+  ✅ POST /customers: 201
+HTTP Request: GET http://127.0.0.1:8002/customers/00000000-0000-4000-8000-000000000002 "HTTP/1.1 200 OK"
+  ✅ GET /customers/{id}: 200
+HTTP Request: POST http://127.0.0.1:8002/carts "HTTP/1.1 201 Created"
+  ✅ POST /carts: 201
+HTTP Request: GET http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003 "HTTP/1.1 200 OK"
+  ✅ GET /carts/{id}: 200
+HTTP Request: POST http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003/items "HTTP/1.1 500 Internal Server Error"
+  ❌ POST /carts/{id}/items: HTTP_500
+HTTP Request: PUT http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003/items/00000000-0000-4000-8000-000000000006 "HTTP/1.1 200 OK"
+  ✅ PUT /carts/{cart_id}/items/{item_id}: 200
+HTTP Request: POST http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003/clear "HTTP/1.1 201 Created"
+  ✅ POST /carts/{id}/clear: 201
+HTTP Request: POST http://127.0.0.1:8002/orders "HTTP/1.1 422 Unprocessable Entity"
+  ✅ POST /orders: 422
+HTTP Request: POST http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005/pay "HTTP/1.1 500 Internal Server Error"
+  ❌ POST /orders/{id}/pay: HTTP_500
+HTTP Request: POST http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005/cancel "HTTP/1.1 500 Internal Server Error"
+  ❌ POST /orders/{id}/cancel: HTTP_500
+HTTP Request: GET http://127.0.0.1:8002/customers/00000000-0000-4000-8000-000000000002/orders "HTTP/1.1 200 OK"
+  ✅ GET /customers/{customer_id}/orders: 200
+HTTP Request: GET http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005 "HTTP/1.1 200 OK"
+  ✅ GET /orders/{id}: 200
+HTTP Request: GET http://127.0.0.1:8002/carts "HTTP/1.1 200 OK"
+  ✅ GET /carts: 200
+HTTP Request: GET http://127.0.0.1:8002/customers "HTTP/1.1 200 OK"
+  ✅ GET /customers: 200
+HTTP Request: GET http://127.0.0.1:8002/orders "HTTP/1.1 200 OK"
+  ✅ GET /orders: 200
+HTTP Request: DELETE http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 204 No Content"
+  ✅ DELETE /products/{id}: 204
+HTTP Request: DELETE http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003 "HTTP/1.1 204 No Content"
+  ✅ DELETE /carts/{id}: 204
+HTTP Request: DELETE http://127.0.0.1:8002/customers/00000000-0000-4000-8000-000000000002 "HTTP/1.1 204 No Content"
+  ✅ DELETE /customers/{id}: 204
+HTTP Request: DELETE http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005 "HTTP/1.1 204 No Content"
+  ✅ DELETE /orders/{id}: 204
+HTTP Request: PATCH http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001/deactivate "HTTP/1.1 404 Not Found"
+  ✅ PATCH /products/{id}/deactivate: 404
+HTTP Request: PATCH http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001/activate "HTTP/1.1 404 Not Found"
+  ✅ PATCH /products/{id}/activate: 404
+HTTP Request: POST http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003/checkout "HTTP/1.1 500 Internal Server Error"
+  ❌ POST /carts/{id}/checkout: HTTP_500
+HTTP Request: DELETE http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003/items/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+  ✅ DELETE /carts/{id}/items/{product_id}: 404
+HTTP Request: PUT http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005/items/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+  ✅ PUT /orders/{id}/items/{product_id}: 404
+HTTP Request: DELETE http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005/items/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+  ✅ DELETE /orders/{id}/items/{product_id}: 404
+📝 Captured 1 stack traces from server logs
+🐳 Stopping Docker: docker compose -f docker/docker-compose.yml down -v --remove-orphans
+    📊 Pass rate: 86.7% (26/30)
+    🔍 Found 1 stack traces
+Failed to query NegativePatternStore: 'GenerationAntiPattern' object has no attribute 'wrong_code_pattern'
+Failed to query NegativePatternStore: 'GenerationAntiPattern' object has no attribute 'wrong_code_pattern'
+Failed to query NegativePatternStore: 'GenerationAntiPattern' object has no attribute 'wrong_code_pattern'
+Failed to query NegativePatternStore: 'GenerationAntiPattern' object has no attribute 'wrong_code_pattern'
+    🔧 Applied 4 repairs (0 from learned patterns)
+    🐳 Rebuilding Docker (--no-cache) for ecommerce-api-spec-human_1764467618...
+Docker build failed: #0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 2B done
+#1 DONE 0.0s
+ERROR: failed to solve: failed to read dockerfile: open Dockerfile: no such file or directory
+
+Recorded 4 violations × 4 repairs = 16 pattern updates (success=False)
+    📝 Recorded repair attempt #16 to FixPatternLearner
+
+  🔁 Cycle 2/3
+🧹 Cleaning up previous containers/volumes: docker compose -f docker/docker-compose.yml down -v --remove-orphans
+🐳 Building Docker (no cache): docker compose -f docker/docker-compose.yml build --no-cache
+🐳 Starting Docker: docker compose -f docker/docker-compose.yml up -d
+HTTP Request: GET http://127.0.0.1:8002/health "HTTP/1.1 200 OK"
+✅ Server started in 45182ms at http://127.0.0.1:8002
+🔍 Testing 30 endpoints...
+HTTP Request: POST http://127.0.0.1:8002/products "HTTP/1.1 201 Created"
+  ✅ POST /products: 201
+HTTP Request: GET http://127.0.0.1:8002/products "HTTP/1.1 200 OK"
+  ✅ GET /products: 200
+HTTP Request: GET http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 200 OK"
+  ✅ GET /products/{id}: 200
+HTTP Request: PUT http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 200 OK"
+  ✅ PUT /products/{id}: 200
+HTTP Request: POST http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001/deactivate "HTTP/1.1 201 Created"
+  ✅ POST /products/{id}/deactivate: 201
+HTTP Request: POST http://127.0.0.1:8002/customers "HTTP/1.1 201 Created"
+  ✅ POST /customers: 201
+HTTP Request: GET http://127.0.0.1:8002/customers/00000000-0000-4000-8000-000000000002 "HTTP/1.1 200 OK"
+  ✅ GET /customers/{id}: 200
+HTTP Request: POST http://127.0.0.1:8002/carts "HTTP/1.1 201 Created"
+  ✅ POST /carts: 201
+HTTP Request: GET http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003 "HTTP/1.1 200 OK"
+  ✅ GET /carts/{id}: 200
+HTTP Request: POST http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003/items "HTTP/1.1 500 Internal Server Error"
+  ❌ POST /carts/{id}/items: HTTP_500
+HTTP Request: PUT http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003/items/00000000-0000-4000-8000-000000000006 "HTTP/1.1 200 OK"
+  ✅ PUT /carts/{cart_id}/items/{item_id}: 200
+HTTP Request: POST http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003/clear "HTTP/1.1 201 Created"
+  ✅ POST /carts/{id}/clear: 201
+HTTP Request: POST http://127.0.0.1:8002/orders "HTTP/1.1 422 Unprocessable Entity"
+  ✅ POST /orders: 422
+HTTP Request: POST http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005/pay "HTTP/1.1 500 Internal Server Error"
+  ❌ POST /orders/{id}/pay: HTTP_500
+HTTP Request: POST http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005/cancel "HTTP/1.1 500 Internal Server Error"
+  ❌ POST /orders/{id}/cancel: HTTP_500
+HTTP Request: GET http://127.0.0.1:8002/customers/00000000-0000-4000-8000-000000000002/orders "HTTP/1.1 200 OK"
+  ✅ GET /customers/{customer_id}/orders: 200
+HTTP Request: GET http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005 "HTTP/1.1 200 OK"
+  ✅ GET /orders/{id}: 200
+HTTP Request: GET http://127.0.0.1:8002/carts "HTTP/1.1 200 OK"
+  ✅ GET /carts: 200
+HTTP Request: GET http://127.0.0.1:8002/customers "HTTP/1.1 200 OK"
+  ✅ GET /customers: 200
+HTTP Request: GET http://127.0.0.1:8002/orders "HTTP/1.1 200 OK"
+  ✅ GET /orders: 200
+HTTP Request: DELETE http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 204 No Content"
+  ✅ DELETE /products/{id}: 204
+HTTP Request: DELETE http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003 "HTTP/1.1 204 No Content"
+  ✅ DELETE /carts/{id}: 204
+HTTP Request: DELETE http://127.0.0.1:8002/customers/00000000-0000-4000-8000-000000000002 "HTTP/1.1 204 No Content"
+  ✅ DELETE /customers/{id}: 204
+HTTP Request: DELETE http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005 "HTTP/1.1 204 No Content"
+  ✅ DELETE /orders/{id}: 204
+HTTP Request: PATCH http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001/deactivate "HTTP/1.1 404 Not Found"
+  ✅ PATCH /products/{id}/deactivate: 404
+HTTP Request: PATCH http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001/activate "HTTP/1.1 404 Not Found"
+  ✅ PATCH /products/{id}/activate: 404
+HTTP Request: POST http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003/checkout "HTTP/1.1 500 Internal Server Error"
+  ❌ POST /carts/{id}/checkout: HTTP_500
+HTTP Request: DELETE http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003/items/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+  ✅ DELETE /carts/{id}/items/{product_id}: 404
+HTTP Request: PUT http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005/items/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+  ✅ PUT /orders/{id}/items/{product_id}: 404
+HTTP Request: DELETE http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005/items/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+  ✅ DELETE /orders/{id}/items/{product_id}: 404
+📝 Captured 1 stack traces from server logs
+🐳 Stopping Docker: docker compose -f docker/docker-compose.yml down -v --remove-orphans
+    📊 Pass rate: 86.7% (26/30)
+    📈 Converged at 86.7%
+
+============================================================
+📊 SMOKE-REPAIR CYCLE SUMMARY
+============================================================
+  Initial pass rate: 86.7%
+  Final pass rate:   86.7%
+  Improvement:       +0.0%
+  Iterations:        2
+  Total repairs:     4
+  Target reached:    ❌
+  ⚠️ Convergence detected (no further improvement)
+  Duration:          131050ms
+============================================================
+  🧠 Learned patterns applied: 0
+
+  📊 Smoke-Driven Repair Results:
+    - Iterations: 2
+    - Initial pass rate: 86.7%
+    - Final pass rate: 86.7%
+    - Target reached: ❌
+    - Converged: True
+    - Regressed: False
+    - Total repairs: 4
+    - Duration: 131050ms
+
+    Applied fixes:
+      - [generic] Generic error on POST /carts/{id}/items: HTTP_500
+      - [generic] Generic error on POST /orders/{id}/pay: HTTP_500
+      - [generic] Generic error on POST /orders/{id}/cancel: HTTP_500
+      - [generic] Generic error on POST /carts/{id}/checkout: HTTP_500
+
+  🔄 Realigning IR after repairs...
+🧹 Cleaning up previous containers/volumes: docker compose -f docker/docker-compose.yml down -v --remove-orphans
+🐳 Building Docker (no cache): docker compose -f docker/docker-compose.yml build --no-cache
+🐳 Starting Docker: docker compose -f docker/docker-compose.yml up -d
+HTTP Request: GET http://127.0.0.1:8002/health "HTTP/1.1 200 OK"
+✅ Server started in 48428ms at http://127.0.0.1:8002
+🔍 Testing 30 endpoints...
+HTTP Request: POST http://127.0.0.1:8002/products "HTTP/1.1 201 Created"
+  ✅ POST /products: 201
+HTTP Request: GET http://127.0.0.1:8002/products "HTTP/1.1 200 OK"
+  ✅ GET /products: 200
+HTTP Request: GET http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 200 OK"
+  ✅ GET /products/{id}: 200
+HTTP Request: PUT http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 200 OK"
+  ✅ PUT /products/{id}: 200
+HTTP Request: POST http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001/deactivate "HTTP/1.1 201 Created"
+  ✅ POST /products/{id}/deactivate: 201
+HTTP Request: POST http://127.0.0.1:8002/customers "HTTP/1.1 201 Created"
+  ✅ POST /customers: 201
+HTTP Request: GET http://127.0.0.1:8002/customers/00000000-0000-4000-8000-000000000002 "HTTP/1.1 200 OK"
+  ✅ GET /customers/{id}: 200
+HTTP Request: POST http://127.0.0.1:8002/carts "HTTP/1.1 201 Created"
+  ✅ POST /carts: 201
+HTTP Request: GET http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003 "HTTP/1.1 200 OK"
+  ✅ GET /carts/{id}: 200
+HTTP Request: POST http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003/items "HTTP/1.1 500 Internal Server Error"
+  ❌ POST /carts/{id}/items: HTTP_500
+HTTP Request: PUT http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003/items/00000000-0000-4000-8000-000000000006 "HTTP/1.1 200 OK"
+  ✅ PUT /carts/{cart_id}/items/{item_id}: 200
+HTTP Request: POST http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003/clear "HTTP/1.1 201 Created"
+  ✅ POST /carts/{id}/clear: 201
+HTTP Request: POST http://127.0.0.1:8002/orders "HTTP/1.1 422 Unprocessable Entity"
+  ✅ POST /orders: 422
+HTTP Request: POST http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005/pay "HTTP/1.1 500 Internal Server Error"
+  ❌ POST /orders/{id}/pay: HTTP_500
+HTTP Request: POST http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005/cancel "HTTP/1.1 500 Internal Server Error"
+  ❌ POST /orders/{id}/cancel: HTTP_500
+HTTP Request: GET http://127.0.0.1:8002/customers/00000000-0000-4000-8000-000000000002/orders "HTTP/1.1 200 OK"
+  ✅ GET /customers/{customer_id}/orders: 200
+HTTP Request: GET http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005 "HTTP/1.1 200 OK"
+  ✅ GET /orders/{id}: 200
+HTTP Request: GET http://127.0.0.1:8002/carts "HTTP/1.1 200 OK"
+  ✅ GET /carts: 200
+HTTP Request: GET http://127.0.0.1:8002/customers "HTTP/1.1 200 OK"
+  ✅ GET /customers: 200
+HTTP Request: GET http://127.0.0.1:8002/orders "HTTP/1.1 200 OK"
+  ✅ GET /orders: 200
+HTTP Request: DELETE http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001 "HTTP/1.1 204 No Content"
+  ✅ DELETE /products/{id}: 204
+HTTP Request: DELETE http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003 "HTTP/1.1 204 No Content"
+  ✅ DELETE /carts/{id}: 204
+HTTP Request: DELETE http://127.0.0.1:8002/customers/00000000-0000-4000-8000-000000000002 "HTTP/1.1 204 No Content"
+  ✅ DELETE /customers/{id}: 204
+HTTP Request: DELETE http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005 "HTTP/1.1 204 No Content"
+  ✅ DELETE /orders/{id}: 204
+HTTP Request: PATCH http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001/deactivate "HTTP/1.1 404 Not Found"
+  ✅ PATCH /products/{id}/deactivate: 404
+HTTP Request: PATCH http://127.0.0.1:8002/products/00000000-0000-4000-8000-000000000001/activate "HTTP/1.1 404 Not Found"
+  ✅ PATCH /products/{id}/activate: 404
+HTTP Request: POST http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003/checkout "HTTP/1.1 500 Internal Server Error"
+  ❌ POST /carts/{id}/checkout: HTTP_500
+HTTP Request: DELETE http://127.0.0.1:8002/carts/00000000-0000-4000-8000-000000000003/items/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+  ✅ DELETE /carts/{id}/items/{product_id}: 404
+HTTP Request: PUT http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005/items/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+  ✅ PUT /orders/{id}/items/{product_id}: 404
+HTTP Request: DELETE http://127.0.0.1:8002/orders/00000000-0000-4000-8000-000000000005/items/00000000-0000-4000-8000-000000000001 "HTTP/1.1 404 Not Found"
+  ✅ DELETE /orders/{id}/items/{product_id}: 404
+📝 Captured 1 stack traces from server logs
+🐳 Stopping Docker: docker compose -f docker/docker-compose.yml down -v --remove-orphans
+🔄 Realigning IR after repair (Δ pass rate: +16.9%)
+Persisted IR realignment to Neo4j
+  ✅ IR realigned: 0 entities, 9 endpoints affected
+    ✅ IR realigned: 0 entities, 9 endpoints affected
+    📈 Pass rate delta: +16.9%
+
+  ⚠️ Converged at 86.7% (no further improvement)
+
+  ❌ Phase 8.5 FAILED - Smoke test did not pass after repair
+✅ Phase Complete: Runtime Smoke Test
+▶️  Phase: Validation
+
+✅ Phase 7: Validation (Enhanced with Semantic Validation)
+  ✓ Checkpoint: CP-7.1: File structure validated (1/5)
+  ✓ Checkpoint: CP-7.2: Syntax validation (2/5)
+
+  📊 Validating dependency execution order...
+    Wave 1: 6 requirements (dependency level 1/3)
+    Wave 2: 11 requirements (dependency level 2/3)
+  ✅ Execution order validated: 2 dependency waves respected
+  ✓ Checkpoint: CP-7.2.5: Dependency order validated (3/5)
+
+  🔍 Running semantic validation (ComplianceValidator)...
+    (Using validation source: ApplicationIR)
+Validating app at /home/kwar/code/agentic-ai/tests/e2e/generated_apps/ecommerce-api-spec-human_1764467618 using OpenAPI schema
+Converting DATABASE_URL to async driver for validation
+Successfully imported FastAPI app
+Extracted 6 entities from OpenAPI schemas: ['Cart', 'CartItem', 'Customer', 'Order', 'OrderItem', 'Product']
+After checking entities.py: 6 entities found: ['Cart', 'CartItem', 'Customer', 'Order', 'OrderItem', 'Product']
+Extracted 34 endpoints from OpenAPI paths
+Extracted 62 validations from OpenAPI schemas
+After checking schemas.py with AST: 176 validations found
+✅ Extracted 34 SQLAlchemy constraints using AST parser
+🧠 Using SemanticMatcher for ML-based constraint matching
+🚀 Using IRSemanticMatcher for fast batch matching
+Declarative base created
+🧠 IR matching: 308/310 = 99.4%
+📊 IRSemanticMatcher: 308/310 = 99.4%
+⚠️ Semantic matching: 308/310 = 99.4%
+   Unmatched: ['Order.items: custom', 'Order.items: stock_constraint']
+📊 SemanticMatcher: 308/310 validations matched = 99.4%
+OpenAPI-based compliance validation complete: 99.9% (entities: 100.0%, endpoints: 100.0%, validations: 99.4%)
+  ✅ Semantic validation PASSED: 99.9% compliance
+
+🌐 Endpoints: 33/33 required matched (+1 inferred = 34 total)
+   ✅ GET /health, GET /health/ready, GET /metrics, GET /products, POST /products
+   ... and 28 more required
+
+   📝 Inferred endpoints (best practices): 1
+   - GET /
+
+📦 Entities (6 required, 6 present):
+   ✅ Cart, CartItem, Customer, Order, OrderItem, Product
+  ✓ Checkpoint: CP-7.3: Semantic validation complete (4/5)
+
+  🔍 Running UUID serialization validation...
+  ✅ UUID serialization validation PASSED (no issues found)
+  ✓ Checkpoint: CP-7.3.5: UUID serialization validated (5/5)
+  ✓ Checkpoint: CP-7.4: Business logic validation (6/5)
+
+  🔬 Running IR-based Compliance Check (Dual Mode)...
+    📊 STRICT mode (exact matching):
+📋 Entity compliance (strict): 100.0%
+📋 Flow compliance (strict): 100.0%
+📋 Constraint compliance (strict): 70.5%
+📊 Overall IR compliance (strict): 90.2%
+      ✅ Entities: 100.0%
+      ✅ Flows: 100.0%
+      ⚠️ Constraints: 70.5%
+    📈 RELAXED mode (semantic matching):
+📋 Entity compliance (relaxed): 100.0%
+📋 Flow compliance (relaxed): 100.0%
+📋 Constraint compliance (relaxed): 54.7%
+📊 Overall IR compliance (relaxed): 84.9%
+      ✅ Entities: 100.0%
+      ✅ Flows: 100.0%
+      ⚠️ Constraints: 54.7%
+┌─────────────────────────────────────────────────┐
+│          Compliance Metrics Dashboard           │
+├─────────────────────────────────────────────────┤
+│ Semantic Compliance:      99.9% ✅              │
+│ IR Compliance (Relaxed):  84.9% ⚠️              │
+│ IR Compliance (Strict):   90.2% ✅ (dev-only)   │
+├─────────────────────────────────────────────────┤
+│ Entities:  sem=100% rel=100% str=100%    │
+│ Flows:     sem=100% rel=100% str=100%    │
+│ Constraints:sem= 99% rel= 55% str= 71%    │
+└─────────────────────────────────────────────────┘
+  💡 Note: Constraint compliance (52-71%) is expected because:
+     - Semantic equivalents (range vs ge/le) counted as misses
+     - Schema decorators differ from IR format (Pydantic vs OpenAPI)
+     - 100% functional compliance achieved (entities, endpoints, flows)
+  ✓ Checkpoint: CP-7.4.5: IR compliance validated (7/5)
+  ✓ Checkpoint: CP-7.5: Test generation check (8/5)
+  📋 Test files discovered: 4
+  ✅ Tests executed: 244 total (from 4 files)
+     - Passed: 157
+     - Failed: 87
+  ✓ Checkpoint: CP-7.6: Quality metrics (9/5)
+✅ Phase Completed: validation (13639ms)
+
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    ✅ Validation Results Summary
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    Metric                                  |           Result            |     Status
+  --------------------------------------------------------------------------------------------------------------
+    Semantic Compliance                     |            99.9%        |       ✅     
+    Entities                                |              6/6        |       ✅     
+    Endpoints                               |            34/33        |       ✅     
+    Files Generated                         |               96        |       ✅     
+    Test Pass Rate                          |            64.3%        |      ⚠️     
+    Contract Validation                     |           PASSED        |       ✅     
+  --------------------------------------------------------------------------------------------------------------
+    Overall Validation Status: ✅ PASSED                                          
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+✅ Quality gate PASSED for dev
+
+🚦 Quality Gate Report
+┌──────────────────────────────────────────────────┐
+│ Environment: DEV                                  │
+│ Status: ✅ PASSED                                 │
+├──────────────────────────────────────────────────┤
+│ Compliance                                       │
+│   Semantic:  100.0% ≥  90.0% ✅              │
+│   IR Relaxed: 84.9% ≥  70.0% ✅              │
+│   IR Strict:  90.2% ≥  50.0% ✅              │
+├──────────────────────────────────────────────────┤
+│ Quality Counts                                   │
+│   Errors:       0 ≤    5 ✅                      │
+│   Warnings:     3 ≤   20 ✅                      │
+│   Regressions:  0 (allowed) ✅                 │
+└──────────────────────────────────────────────────┘
+  🚦 Quality gate result saved: tests/e2e/generated_apps/ecommerce-api-spec-human_1764467618/quality_gate.json
+  ✓ Checkpoint: CP-7.7: Quality gate evaluated (10/5)
+✅ Phase Complete: Validation
+▶️  Phase: Health Verification
+
+🏥 Phase 9: Health Verification
+  ✓ File check: src/main.py
+  ✓ File check: requirements.txt
+  ✓ File check: README.md (README.md (auto-created))
+  ✓ Checkpoint: CP-9.1: Step 1 (1/5)
+  ✓ Checkpoint: CP-9.2: Step 2 (2/5)
+  ✓ Checkpoint: CP-9.3: Step 3 (3/5)
+  ✓ Checkpoint: CP-9.4: Step 4 (4/5)
+  ✓ Checkpoint: CP-9.5: Step 5 (5/5)
+✅ Phase Completed: health_verification (1103ms)
+  ✅ App is ready to run!
+
+🎉 PIPELINE COMPLETO: App generada en tests/e2e/generated_apps/ecommerce-api-spec-human_1764467618
+✅ Phase Complete: Health Verification
+▶️  Phase: Learning
+
+🧠 Phase 10: Learning
+  ✓ Checkpoint: CP-10.1: Execution status assessed (1/5)
+Stored candidate 08b08eb0-8b5e-48b1-94a9-2caf77ecc421
+  ✓ Checkpoint: CP-10.2: Pattern registered (2/5)
+  ✓ Checkpoint: CP-10.3: Checking promotion candidates (3/5)
+Checking 1 patterns for promotion eligibility
+⏳ Pattern 08b08eb0... pending (score: 0.00 < 0.7)
+Promotion check complete: 0/1 promoted
+  ✓ Checkpoint: CP-10.4: Promotion check complete (4/5)
+    - Total candidates: 1
+    - Promoted: 0
+    - Failed: 1
+  ✓ Checkpoint: CP-10.5: Learning phase complete (5/5)
+✅ Phase Completed: learning (114ms)
+  ✅ Learning phase complete
+✅ Phase Complete: Learning
+
+============================================================
+🏁 Pipeline finished
+============================================================
+DomainModelGraphRepository connection closed
+APIModelGraphRepository connection closed
+FullIRGraphLoader connection closed
+IRPersistenceService closed
+Generating learning report...
+Found 0 failure patterns
+Found 0 success patterns
+Found 0 entity error profiles
+Learning report generated: 0 failures, 0 successes, 1 insights
+
+🎓 Learning Insights:
+    💡 Most effective fix strategy: 'None' with 0% confidence
+
+📊 Metrics saved to: tests/e2e/metrics/real_e2e_ecommerce-api-spec-human_1764467618.json
+
+
+
+==========================================================================================
+                              📊 REPORTE COMPLETO E2E                              
+==========================================================================================
+
+🎯 EXECUTION SUMMARY
+------------------------------------------------------------------------------------------
+  Spec:                tests/e2e/test_specs/ecommerce-api-spec-human.md
+  Output:              tests/e2e/generated_apps/ecommerce-api-spec-human_1764467618
+  Status:              partial_success
+  Duration:            7.6 minutes (455576ms)
+  Overall Progress:    100.0%
+  Execution Success:   100.0%
+  Pipeline Ops Rate:   100.0%
+
+🧪 TESTING & QUALITY
+------------------------------------------------------------------------------------------
+  Generated Tests:     64.3% pass rate
+     Note: Includes research/stress tests (no-gating).
+           Gating criteria: semantic + IR compliance, not tests.
+  Contract Violations: 0
+  Acceptance Criteria: 0/0
+
+📚 PATTERN LEARNING & REUSE
+------------------------------------------------------------------------------------------
+  Pattern Reuse Rate:  100.0%
+  Patterns Matched:    10
+  Patterns Stored:     1
+  Patterns Promoted:   0
+  Patterns Reused:     10
+  New Patterns:        0
+  Candidates Created:  1
+
+🔧 CODE REPAIR & RECOVERY
+------------------------------------------------------------------------------------------
+  Repair Applied:      True
+  Repair Iterations:   2
+  Repair Improvement:  0.0%
+  Tests Fixed:         0
+  Regressions:         0
+  Repair Time:         3548.2ms
+
+⚠️  ERROR TRACKING & RECOVERY
+------------------------------------------------------------------------------------------
+  Total Errors:        2
+  Recovered Errors:    0
+  Critical Errors:     2
+  Recovery Rate:       0.0%
+
+💾 RESOURCE USAGE
+------------------------------------------------------------------------------------------
+  Peak Memory:         120.6 MB
+  Avg Memory:          45.9 MB
+  Peak CPU:            10.0%
+  Avg CPU:             0.8%
+
+🤖 LLM USAGE & COST
+------------------------------------------------------------------------------------------
+  Total API Calls:     1
+  Total Tokens:        6,160
+    ├─ Prompt Tokens:  3,319
+    └─ Completion:     2,841
+  Estimated Cost:      $0.05 USD
+
+🗄️  DATABASE PERFORMANCE
+------------------------------------------------------------------------------------------
+  Neo4j Queries:       0
+  Qdrant Queries:      0
+  Neo4j IR Persistence: ⚠️ Stats unavailable
+
+⏱️  PHASE EXECUTION TIMES
+------------------------------------------------------------------------------------------
+  ✅ spec_ingestion             42452ms  (4/4 checkpoints)
+  ✅ requirements_analysis        554ms  (5/5 checkpoints)
+  ✅ multi_pass_planning          103ms  (5/5 checkpoints)
+  ✅ atomization                 1302ms  (5/5 checkpoints)
+  ✅ dag_construction            1603ms  (5/5 checkpoints)
+  ✅ wave_execution              1517ms  (5/5 checkpoints)
+  ✅ validation                 13639ms  (10/5 checkpoints)
+  ✅ deployment                 86250ms  (8/5 checkpoints)
+  ✅ health_verification         1103ms  (5/5 checkpoints)
+  ✅ learning                     114ms  (5/5 checkpoints)
+
+📋 SEMANTIC COMPLIANCE
+------------------------------------------------------------------------------------------
+  Overall Compliance:  99.9%
+    ├─ Entities:       100.0% (6/6)
+    ├─ Endpoints:      100.0% (34/33)
+    └─ Validations:    99.4% (308/310 required)
+
+  🎯 Spec-to-App Precision: 99.9%
+     → Generated app fully implements spec requirements and executes successfully
+
+📊 PRECISION & ACCURACY METRICS
+------------------------------------------------------------------------------------------
+  🎯 Overall Pipeline Performance:
+     Ops Success:      100.0%
+     Precision:        78.8%
+
+🔬 RESEARCH METRICS (internal use only)
+------------------------------------------------------------------------------------------
+  📊 Pattern Matching (RequirementsClassifier R&D):
+     Precision:        80.0%
+     Recall:           47.1%
+     F1-Score:         59.3%
+  🏷️  Classification Accuracy (research, not gating):
+     Overall:          47.1%
+     Note: Based on 17-19 top-level functional requirements,
+           not 150 atomic IR requirements. See Task 3 in roadmap.
+
+🚀 HOW TO RUN THE GENERATED APP
+------------------------------------------------------------------------------------------
+
+  1. Navigate: cd tests/e2e/generated_apps/ecommerce-api-spec-human_1764467618
+  2. Start:    docker-compose -f docker/docker-compose.yml up -d --build
+  3. Health:   docker-compose -f docker/docker-compose.yml ps
+
+  📍 Endpoints:
+     - API:        http://localhost:8002
+     - Docs:       http://localhost:8002/docs
+     - Health:     http://localhost:8002/health/health
+     - Metrics:    http://localhost:8002/metrics/metrics
+     - Grafana:    http://localhost:3002 (devmatrix/admin)
+     - Prometheus: http://localhost:9091
+     - PostgreSQL: localhost:5433 (devmatrix/admin)
+
+✅ CONTRACT VALIDATION
+------------------------------------------------------------------------------------------
+  ✅ All contracts validated successfully!
+
+==========================================================================================
+

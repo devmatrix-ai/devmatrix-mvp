@@ -3750,6 +3750,13 @@ Once running, visit:
             if IR_CODE_CORRELATOR_AVAILABLE:
                 print(f"    ✅ IR-Code Correlator enabled (realignment after repair)")
 
+            # Control Docker rebuild during repair via env (default off to avoid rebuild failures/hangs)
+            # Set SMOKE_REPAIR_DOCKER_REBUILD=1 to force rebuild on each cycle.
+            rebuild_docker = os.environ.get("SMOKE_REPAIR_DOCKER_REBUILD", "0").lower() in ("1", "true", "yes")
+            if rebuild_docker and not self._docker_enforcement_enabled():
+                print("    ⚠️ Docker rebuild enabled but Docker enforcement is off; rebuild may fail gracefully")
+            print(f"    🔁 Docker rebuild during repair: {'ENABLED' if rebuild_docker else 'disabled'}")
+
             config = SmokeRepairConfig(
                 max_iterations=3,
                 target_pass_rate=1.00,  # Bug #115 Fix: Enforce 100% pass rate to avoid skipping repairs
@@ -3774,12 +3781,14 @@ Once running, visit:
             # Use run_full_repair_cycle for Docker rebuild integration
             # Note: In E2E we typically run without Docker rebuild to speed up tests
             # Set with_docker_rebuild=True for production deployments
+            print("    ▶️ Starting smoke-driven repair cycle...")
             repair_result = await orchestrator.run_full_repair_cycle(
                 app_path=self.output_path,
                 application_ir=self.application_ir,
-                with_docker_rebuild=True,  # Set True for Docker-based deployments
+                with_docker_rebuild=rebuild_docker,
                 max_cycles=3
             )
+            print("    ✅ Repair cycle completed")
 
             # Report results
             iterations_count = len(repair_result.iterations)

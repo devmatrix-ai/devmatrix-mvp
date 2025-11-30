@@ -1,0 +1,61 @@
+"""
+State machine for Order entity.
+"""
+from enum import Enum
+from typing import Dict, Any, List, Optional
+from src.state_machines import BaseStateMachine, StateTransitionError
+
+class OrderState(Enum):
+    """States for Order entity."""
+    INITIAL = "initial"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    ERROR = "error"
+
+
+class OrderStateMachine(BaseStateMachine):
+    """
+    State machine for Order entity.
+
+    Manages state transitions and enforces invariants.
+    """
+
+    def __init__(self, initial_state: OrderState = None):
+        if initial_state is None:
+            initial_state = OrderState.INITIAL
+        super().__init__(initial_state.value)
+        self.state_enum = OrderState
+
+    def can_transition_to(self, new_state: str) -> bool:
+        """Check if transition to new_state is valid."""
+        transitions = self._get_transition_map()
+        current_transitions = transitions.get(self.current_state, [])
+        return new_state in current_transitions
+
+    def get_valid_transitions(self) -> List[str]:
+        """Get list of valid transitions from current state."""
+        transitions = self._get_transition_map()
+        return transitions.get(self.current_state, [])
+
+    def _get_transition_map(self) -> Dict[str, List[str]]:
+        """Define valid state transitions."""
+        return {
+            "initial": ["processing"],
+            "processing": ["completed", "error"],
+            "completed": [],
+            "error": ["processing"],
+        }
+
+    def validate_invariants(self, entity_data: Dict[str, Any]) -> bool:
+        """
+        Validate all invariants for the entity.
+
+        Args:
+            entity_data: Current entity data
+
+        Returns:
+            True if all invariants are satisfied
+        """
+        # Check: Order requires Customer
+        # Extension point: Implement invariant check
+        return True

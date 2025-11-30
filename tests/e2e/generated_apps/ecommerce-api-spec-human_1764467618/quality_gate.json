@@ -1,0 +1,66 @@
+{
+  "environment": "dev",
+  "passed": true,
+  "compliance": {
+    "semantic": 1.0,
+    "ir_relaxed": 0.849122807017544,
+    "ir_strict": 0.9017543859649123
+  },
+  "counts": {
+    "errors": 0,
+    "warnings": 3,
+    "regressions": 0
+  },
+  "checks": {
+    "infra_health": "skip",
+    "docker_build": "skip",
+    "alembic_upgrade": "skip",
+    "syntax_check": "pass",
+    "regression_check": "skip",
+    "smoke_tests": "skip"
+  },
+  "failures": [],
+  "stratum_metrics": {
+    "app_id": "ecommerce-api-spec-human_1764467618",
+    "timestamp": "2025-11-30T01:53:38.458954+00:00",
+    "execution_mode": "hybrid",
+    "strata": {
+      "template": {
+        "duration_ms": 3.7164688110351562,
+        "files_generated": 31,
+        "errors_detected": 0,
+        "errors_repaired": 0,
+        "tokens_used": 0
+      },
+      "ast": {
+        "duration_ms": 5.934476852416992,
+        "files_generated": 59,
+        "errors_detected": 0,
+        "errors_repaired": 0,
+        "tokens_used": 0
+      },
+      "llm": {
+        "duration_ms": 0.3333091735839844,
+        "files_generated": 6,
+        "errors_detected": 0,
+        "errors_repaired": 0,
+        "tokens_used": 6160
+      },
+      "qa": {
+        "duration_ms": 185.64891815185547,
+        "files_generated": 0,
+        "errors_detected": 0,
+        "errors_repaired": 0,
+        "tokens_used": 0
+      }
+    },
+    "totals": {
+      "duration_ms": 195.6331729888916,
+      "files": 96,
+      "errors_detected": 0,
+      "errors_repaired": 0,
+      "llm_tokens": 6160,
+      "success_rate": 100.0
+    }
+  }
+}

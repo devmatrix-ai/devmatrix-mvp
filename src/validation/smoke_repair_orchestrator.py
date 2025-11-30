@@ -308,6 +308,17 @@ class ErrorClassifier:
             endpoint = violation.get('endpoint', '')
             error_type = violation.get('error_type', 'HTTP_500')
             status_code = violation.get('status_code', 500)
+            stack_trace_obj = violation.get('stack_trace_obj')
+            if isinstance(stack_trace_obj, dict):
+                stack_trace_obj = StackTrace(
+                    endpoint=stack_trace_obj.get("endpoint", endpoint),
+                    error_type=stack_trace_obj.get("error_type", error_type),
+                    exception_class=stack_trace_obj.get("exception_class", stack_trace_obj.get("error_type", "Unknown")),
+                    exception_message=stack_trace_obj.get("exception_message", ""),
+                    file_path=stack_trace_obj.get("file_path", stack_trace_obj.get("file", "")),
+                    line_number=stack_trace_obj.get("line_number", stack_trace_obj.get("line", 0)),
+                    full_trace=stack_trace_obj.get("full_trace", stack_trace_obj.get("stack_trace", ""))
+                )
 
             # Determine strategy type
             if status_code == 404:
@@ -332,7 +343,8 @@ class ErrorClassifier:
                 actual_status=status_code or 500,
                 error_type=error_type,
                 error_message=violation.get('error_message', ''),
-                scenario_name=violation.get('scenario_name')
+                scenario_name=violation.get('scenario_name'),
+                stack_trace=stack_trace_obj
             )
 
             classified[strategy_type].append(smoke_violation)
@@ -1292,11 +1304,16 @@ class SmokeRepairOrchestrator:
                 # Determine if iteration was successful overall
                 success = len([r for r in repairs if r.success]) > len(repairs) // 2
 
-                # Convert repairs to strings to match FixPatternLearner expectations.
-                repair_descriptions = [
-                    f"{r.fix_type}: {r.description}" if hasattr(r, "description") else str(r)
-                    for r in repairs
-                ]
+                # Convert repairs to structured payload for FixPatternLearner.
+                repair_descriptions = []
+                for r in repairs:
+                    payload = {
+                        "fix_type": getattr(r, "fix_type", "generic"),
+                        "description": getattr(r, "description", ""),
+                        "file_path": getattr(r, "file_path", ""),
+                        "success": getattr(r, "success", False),
+                    }
+                    repair_descriptions.append(payload)
 
                 record_id = self.fix_pattern_learner.record_repair_attempt(
                     violations=violations,

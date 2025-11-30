@@ -1,0 +1,68 @@
+.PHONY: help install dev test lint format migrate clean docker-up docker-down
+
+help:
+	@echo "Available commands:"
+	@echo "  make install       - Install dependencies"
+	@echo "  make dev          - Run development server"
+	@echo "  make test         - Run tests with coverage"
+	@echo "  make test-watch   - Run tests in watch mode"
+	@echo "  make lint         - Run linters (black, isort, flake8, mypy)"
+	@echo "  make format       - Format code (black, isort)"
+	@echo "  make migrate      - Run database migrations"
+	@echo "  make migrate-new  - Create new migration"
+	@echo "  make db-upgrade   - Upgrade database to latest migration"
+	@echo "  make db-downgrade - Downgrade database to previous migration"
+	@echo "  make clean        - Remove build artifacts and cache"
+	@echo "  make docker-up    - Start Docker containers"
+	@echo "  make docker-down  - Stop Docker containers"
+
+install:
+	poetry install
+
+dev:
+	poetry run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+
+test:
+	poetry run pytest --cov=src --cov-report=html --cov-report=term-missing
+
+test-watch:
+	poetry run pytest --cov=src -v --tb=short -x
+
+lint:
+	poetry run black --check src tests
+	poetry run isort --check-only src tests
+	poetry run flake8 src tests
+	poetry run mypy src
+
+format:
+	poetry run black src tests
+	poetry run isort src tests
+
+migrate:
+	poetry run alembic upgrade head
+
+migrate-new:
+	@read -p "Enter migration name: " name; 	poetry run alembic revision --autogenerate -m "$$name"
+
+db-upgrade:
+	poetry run alembic upgrade head
+
+db-downgrade:
+	poetry run alembic downgrade -1
+
+clean:
+	find . -type d -name __pycache__ -exec rm -rf {} +
+	find . -type d -name .pytest_cache -exec rm -rf {} +
+	find . -type d -name .mypy_cache -exec rm -rf {} +
+	find . -type d -name htmlcov -exec rm -rf {} +
+	find . -type f -name ".coverage" -delete
+	rm -rf build dist *.egg-info
+
+docker-up:
+	docker-compose up -d
+
+docker-down:
+	docker-compose down
+
+docker-logs:
+	docker-compose logs -f

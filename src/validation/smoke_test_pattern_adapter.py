@@ -633,7 +633,7 @@ class FixPatternLearner:
     def record_repair_attempt(
         self,
         violations: List[Dict[str, Any]],
-        repairs: List[str],
+        repairs: List[Any],
         success: bool,
         iteration: int = 1
     ) -> int:
@@ -664,7 +664,9 @@ class FixPatternLearner:
                 exception_class = self._extract_exception_class(error_msg)
 
             for repair in repairs:
-                fix_type = self._classify_fix_type(repair)
+                repair_desc = repair.get("description") if isinstance(repair, dict) else str(repair)
+                fix_type = repair.get("fix_type") if isinstance(repair, dict) else None
+                fix_type = fix_type or self._classify_fix_type(repair_desc)
 
                 # Record attempt
                 record = RepairAttemptRecord(
@@ -672,7 +674,7 @@ class FixPatternLearner:
                     error_type=error_type,
                     exception_class=exception_class,
                     fix_type=fix_type,
-                    fix_description=repair,
+                    fix_description=repair_desc,
                     success=success,
                     iteration=iteration
                 )
@@ -814,7 +816,7 @@ class FixPatternLearner:
 
     def _classify_fix_type(self, repair_description: str) -> str:
         """Classify fix type from repair description."""
-        desc_lower = repair_description.lower()
+        desc_lower = repair_description.lower() if repair_description else ""
 
         if "nullable" in desc_lower or "optional" in desc_lower:
             return "add_nullable"
