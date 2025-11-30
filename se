@@ -1,0 +1,57 @@
+📝 Logging to: /home/kwar/code/agentic-ai/logs/runs/test_devmatrix_000_051.log
+======================================================================
+🚀 DevMatrix E2E Pipeline
+======================================================================
+📄 Spec: tests/e2e/test_specs/ecommerce-api-spec-human.md
+🔧 PRODUCTION_MODE: true
+🧪 LLM Smoke Tests: disabled
+⏱️  Timeout: 9000s
+======================================================================
+
+🧹 Cleared caches: /home/kwar/code/agentic-ai/.devmatrix/ir_cache, /home/kwar/code/agentic-ai/.cache
+🗄️ Neo4j IR persistence enabled
+🎚️ Stratified Architecture: HYBRID mode
+   📋 Manifest tracking enabled
+   📊 Stratum metrics collection enabled
+   🚦 Quality gate: DEV
+   🏆 Golden apps validation: enabled
+   🦴 Skeleton generator: enabled
+   📈 Pattern promotion: enabled
+   ✅ Basic validation pipeline ready
+
+======================================================================
+🚀 REAL E2E TEST: Full Pipeline Execution
+======================================================================
+📄 Spec: tests/e2e/test_specs/ecommerce-api-spec-human.md
+📁 Output: tests/e2e/generated_apps/ecommerce-api-spec-human_1764467618
+======================================================================
+
+🐳 Docker check: OK
+
+
+============================================================
+🚀 E2E Pipeline: ecommerce-api-spec-human
+============================================================
+
+📊 Progress tracking enabled (fallback mode)
+
+
+  🔄 Loading PatternBank... ✓
+  🔄 Connecting to Qdrant... ✓
+  🔄 Loading PatternClassifier... ✓
+  🔄 Loading MultiPassPlanner... ✓
+  🔄 Loading RequirementsClassifier... ✓
+  🔄 Loading ComplianceValidator... ✓
+  🔄 Loading TestResultAdapter... ✓
+  🔄 Loading ErrorPatternStore... ✓
+  🔄 Loading CodeGenerationService... ✓
+
+🔧 Service Initialization
+  ✓ PatternBank                         ✓ Qdrant                              ✓ PatternClassifier                   ✓ MultiPassPlanner                 
+  ✓ RequirementsClassifier              ✓ ComplianceValidator                 ✓ TestResultAdapter                   ✓ ErrorPatternStore                
+  ✓ CodeGenerationService               ✓ PatternFeedbackIntegration       
+▶️  Phase: Spec Ingestion
+
+📋 Phase 1: Spec Ingestion (Enhanced with SpecParser)
+    - 📝 Spec translated to English (structure preserved)
+  ✓ Checkpoint: CP-1.1: Spec loaded from file (1/4)

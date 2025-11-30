@@ -5,11 +5,13 @@
 ## Changes Applied
 - **Health Verification (Phase 9)**  
   - If no README is found in `README.md`/`docs/README.md`/`docker/README.md`, the pipeline now auto-creates a minimal `README.md` in the generated app root to keep the health check green.  
+  - When `generation_manifest.json` exists, the auto README now embeds a short manifest summary (app id, mode, tracked file count).  
   - Location: `tests/e2e/real_e2e_full_pipeline.py`.
 
 - **Docker Runtime Smoke Fallback**  
   - Runtime validator now checks for `docker-compose.yml` **and** a Dockerfile before attempting a build.  
   - On missing Dockerfile or build failure, it falls back to `uvicorn` instead of hard-failing with “Dockerfile: no such file”.  
+  - New env toggle `ENFORCE_DOCKER_RUNTIME` = `1|true` forces fail-fast (no fallback) when Docker assets are missing or build fails.
   - Location: `src/validation/runtime_smoke_validator.py`.
 
 - **FixPatternLearner Recording**  

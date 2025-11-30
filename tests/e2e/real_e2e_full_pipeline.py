@@ -1235,6 +1235,10 @@ class RealE2ETest:
             return self.spec_requirements.metadata
         return {}
 
+    def _docker_enforcement_enabled(self) -> bool:
+        """Return True if Docker runtime must be enforced (no fallback to uvicorn)."""
+        return os.environ.get("ENFORCE_DOCKER_RUNTIME", "0").lower() in ("1", "true", "yes")
+
     def _get_dag_nodes_from_ir(self) -> list:
         """
         Get DAG nodes from ApplicationIR (Phase 3 IR Migration).
@@ -3542,7 +3546,8 @@ Once running, visit:
                         app_dir=self.output_path,
                         port=8002,
                         startup_timeout=180.0,
-                        request_timeout=10.0
+                        request_timeout=10.0,
+                        enforce_docker=self._docker_enforcement_enabled(),
                     )
 
                     # Attempt repair with the new orchestrator
@@ -3581,7 +3586,8 @@ Once running, visit:
                         app_dir=self.output_path,
                         port=8002,
                         startup_timeout=180.0,
-                        request_timeout=10.0
+                        request_timeout=10.0,
+                        enforce_docker=self._docker_enforcement_enabled(),
                     )
 
                     await self._attempt_runtime_repair(
@@ -3609,7 +3615,8 @@ Once running, visit:
                 app_dir=self.output_path,
                 port=8002,  # Docker exposes 8000 -> 8002 in docker-compose.yml
                 startup_timeout=180.0,  # Docker needs time: build + postgres + migrations + seed + uvicorn
-                request_timeout=10.0
+                request_timeout=10.0,
+                enforce_docker=self._docker_enforcement_enabled(),
             )
 
             print(f"  🔍 Starting smoke test against {self.output_path}")
@@ -5429,16 +5436,42 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
                 readme_location = readme_path
                 break
 
+        manifest_summary = ""
+        manifest_path = os.path.join(self.output_dir, "generation_manifest.json")
+        if os.path.exists(manifest_path):
+            try:
+                with open(manifest_path, "r") as mf:
+                    manifest_data = json.load(mf)
+                file_entries = manifest_data.get("files") or manifest_data.get("generated_files")
+                file_count = len(file_entries) if isinstance(file_entries, dict) else None
+                app_id = manifest_data.get("app_id") or manifest_data.get("appId")
+                exec_mode = manifest_data.get("execution_mode") or manifest_data.get("executionMode")
+                parts = []
+                if app_id:
+                    parts.append(f"App ID: {app_id}")
+                if exec_mode:
+                    parts.append(f"Mode: {exec_mode}")
+                if file_count:
+                    parts.append(f"Tracked files: {file_count}")
+                if parts:
+                    manifest_summary = "\n\nManifest\n--------\n" + "\n".join(f"- {p}" for p in parts)
+            except Exception:
+                manifest_summary = ""
+
         if not readme_found:
             # Create a minimal README at root so downstream checks/users have a pointer.
             try:
                 readme_path = os.path.join(self.output_dir, "README.md")
                 with open(readme_path, "w") as f:
-                    f.write(
-                        "# Generated App\n\n"
-                        "This README was auto-created by the E2E pipeline health check.\n"
-                        "Regenerate with full documentation in upstream templates if needed.\n"
-                    )
+                    content = [
+                        "# Generated App",
+                        "",
+                        "This README was auto-created by the E2E pipeline health check.",
+                        "Regenerate with full documentation in upstream templates if needed.",
+                    ]
+                    if manifest_summary:
+                        content.append(manifest_summary)
+                    f.write("\n".join(content) + "\n")
                 readme_found = True
                 readme_location = "README.md (auto-created)"
             except Exception:
