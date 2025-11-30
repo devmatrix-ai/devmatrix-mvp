@@ -7,6 +7,38 @@
 
 ---
 
+## 📊 Implementation Progress Tracker
+
+| Phase | Task | Status | File/Location | Notes |
+|-------|------|--------|---------------|-------|
+| **1. Infrastructure** | | | | |
+| 1.1 | Add `IRFlow` to BehaviorModelIR | ⏳ Pending | `src/cognitive/ir/behavior_model.py` | Extended Flow model |
+| 1.2 | `get_patterns_for_flow()` in NegativePatternStore | ⏳ Pending | `src/learning/negative_pattern_store.py` | New query method |
+| 1.3 | `get_patterns_for_constraint_type()` | ⏳ Pending | `src/learning/negative_pattern_store.py` | New query method |
+| 1.4 | `store_cognitive_regression()` | ⏳ Pending | `src/learning/negative_pattern_store.py` | New store method |
+| 1.5 | Create `CognitiveCache` class | ⏳ Pending | `src/cognitive/cache/cognitive_cache.py` | IR-based keys |
+| **2. Core Implementation** | | | | |
+| 2.1 | Create `IRCentricCognitivePass` class | ⏳ Pending | `src/cognitive/passes/ir_centric_cognitive_pass.py` | Main cognitive pass |
+| 2.2 | Implement function-level AST extraction | ⏳ Pending | Same file | `_extract_flow_functions()` |
+| 2.3 | Implement IR Guard prompt generation | ⏳ Pending | Same file | `_build_ir_guard()` |
+| 2.4 | Wire to `IRComplianceValidator` | ⏳ Pending | Same file | Reuse existing validator |
+| **3. Integration** | | | | |
+| 3.1 | Create `CognitiveCodeGenerationService` | ⏳ Pending | `src/services/cognitive_code_generation_service.py` | Wrapper service |
+| 3.2 | Add feature flag `ENABLE_COGNITIVE_PASS` | ⏳ Pending | Config/env | Master switch |
+| 3.3 | Add baseline comparison mode | ⏳ Pending | Service | A/B testing |
+| 3.4 | Integrate metrics collection | ⏳ Pending | Service | Prevention rate |
+| **4. Optimization** | | | | |
+| 4.1 | Profile token usage | ⏳ Pending | - | Analysis |
+| 4.2 | Tune cache TTL | ⏳ Pending | `CognitiveCache` | Performance |
+| 4.3 | Add parallel function processing | ⏳ Pending | `IRCentricCognitivePass` | Async batching |
+| 4.4 | Tune rollback thresholds | ⏳ Pending | Config | Safety tuning |
+
+**Legend:** ✅ Done | 🔄 In Progress | ⏳ Pending | ❌ Blocked
+
+**Last Updated:** 2025-11-30
+
+---
+
 ## Architectural Philosophy: IR-Centric vs IR-Adjacent
 
 | Approach | Description | This Proposal |
