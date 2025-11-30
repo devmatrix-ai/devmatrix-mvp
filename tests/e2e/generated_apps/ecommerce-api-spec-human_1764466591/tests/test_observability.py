@@ -1,0 +1,275 @@
+"""
+Tests for Observability Infrastructure
+
+Tests for logging, health checks, metrics, and exception handling.
+"""
+import pytest
+from httpx import AsyncClient
+from fastapi import FastAPI
+from unittest.mock import AsyncMock, patch
+import structlog
+
+
+class TestHealthEndpoints:
+    """Test health check endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_health_check_returns_ok(self, client: AsyncClient):
+        """Test /health/health returns 200 OK."""
+        response = await client.get("/health/health")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert "service" in data
+
+    @pytest.mark.asyncio
+    async def test_readiness_check_with_database_ok(self, client: AsyncClient):
+        """Test /health/ready returns 200 when database is accessible."""
+        response = await client.get("/health/ready")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ready"
+        assert data["checks"]["database"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_readiness_check_with_database_failure(self, client: AsyncClient):
+        """Test /health/ready returns 503 when database fails."""
+        # Mock database failure
+        with patch('src.core.database.get_db') as mock_db:
+            mock_session = AsyncMock()
+            mock_session.execute.side_effect = Exception("Database connection failed")
+            mock_db.return_value = mock_session
+
+            response = await client.get("/health/ready")
+
+            assert response.status_code == 503
+            data = response.json()
+            assert data["detail"]["status"] == "not_ready"
+            assert data["detail"]["checks"]["database"] == "failed"
+
+
+class TestMetricsEndpoint:
+    """Test Prometheus metrics endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_metrics_endpoint_returns_prometheus_format(self, client: AsyncClient):
+        """Test /metrics/metrics returns Prometheus-formatted metrics."""
+        response = await client.get("/metrics/metrics")
+
+        assert response.status_code == 200
+        assert "text/plain" in response.headers["content-type"]
+
+        # Check for standard metrics
+        content = response.text
+        assert "http_requests_total" in content
+        assert "http_request_duration_seconds" in content
+
+    @pytest.mark.asyncio
+    async def test_metrics_track_http_requests(self, client: AsyncClient):
+        """Test that HTTP requests are tracked in metrics."""
+        # Make several requests
+        await client.get("/health/health")
+        await client.get("/health/health")
+
+        # Get metrics
+        response = await client.get("/metrics/metrics")
+        content = response.text
+
+        # Verify metrics were recorded
+        assert 'method="GET"' in content
+        assert 'endpoint="/health/health"' in content
+        assert 'status="200"' in content
+
+
+class TestRequestIDMiddleware:
+    """Test Request ID middleware."""
+
+    @pytest.mark.asyncio
+    async def test_request_id_generated_automatically(self, client: AsyncClient):
+        """Test that request ID is generated if not provided."""
+        response = await client.get("/health/health")
+
+        assert "X-Request-ID" in response.headers
+        request_id = response.headers["X-Request-ID"]
+        assert len(request_id) == 36  # UUID format
+
+    @pytest.mark.asyncio
+    async def test_request_id_preserved_from_header(self, client: AsyncClient):
+        """Test that provided request ID is preserved."""
+        custom_id = "custom-request-id-12345"
+
+        response = await client.get(
+            "/health/health",
+            headers={"X-Request-ID": custom_id}
+        )
+
+        assert response.headers["X-Request-ID"] == custom_id
+
+    @pytest.mark.asyncio
+    async def test_request_id_in_error_responses(self, client: AsyncClient):
+        """Test that request ID is included in error responses."""
+        # Trigger a 404
+        response = await client.get("/nonexistent-endpoint")
+
+        assert response.status_code == 404
+        data = response.json()
+        assert "request_id" in data
+
+
+class TestMetricsMiddleware:
+    """Test metrics collection middleware."""
+
+    @pytest.mark.asyncio
+    async def test_metrics_middleware_records_duration(self, client: AsyncClient):
+        """Test that request duration is recorded."""
+        # Make a request
+        await client.get("/health/health")
+
+        # Get metrics
+        response = await client.get("/metrics/metrics")
+        content = response.text
+
+        # Verify duration metric exists
+        assert "http_request_duration_seconds" in content
+
+    @pytest.mark.asyncio
+    async def test_metrics_middleware_records_status_codes(self, client: AsyncClient):
+        """Test that different status codes are tracked."""
+        # Success
+        await client.get("/health/health")
+
+        # Not found
+        await client.get("/nonexistent")
+
+        # Get metrics
+        response = await client.get("/metrics/metrics")
+        content = response.text
+
+        # Verify both status codes tracked
+        assert 'status="200"' in content
+        assert 'status="404"' in content
+
+
+class TestSecurityHeadersMiddleware:
+    """Test security headers middleware."""
+
+    @pytest.mark.asyncio
+    async def test_security_headers_present(self, client: AsyncClient):
+        """Test that security headers are added to responses."""
+        response = await client.get("/health/health")
+
+        # Check all security headers
+        assert response.headers["X-Content-Type-Options"] == "nosniff"
+        assert response.headers["X-Frame-Options"] == "DENY"
+        assert response.headers["X-XSS-Protection"] == "1; mode=block"
+        assert "Strict-Transport-Security" in response.headers
+        assert "Content-Security-Policy" in response.headers
+
+
+class TestExceptionHandlers:
+    """Test global exception handlers."""
+
+    @pytest.mark.asyncio
+    async def test_http_exception_handler_format(self, client: AsyncClient):
+        """Test HTTP exceptions return standard format."""
+        response = await client.get("/nonexistent-endpoint")
+
+        assert response.status_code == 404
+        data = response.json()
+
+        # Verify standard error format
+        assert "error" in data
+        assert "message" in data
+        assert "request_id" in data
+
+    @pytest.mark.asyncio
+    async def test_validation_exception_handler_format(self, client: AsyncClient):
+        """Test validation errors return detailed format."""
+        # Trigger validation error (missing required field)
+        response = await client.post(
+            "/api/v1/tasks",
+            json={"description": "Missing title"}  # title is required
+        )
+
+        assert response.status_code == 422
+        data = response.json()
+
+        # Verify validation error format
+        assert data["error"] == "validation_error"
+        assert "details" in data
+        assert "request_id" in data
+
+    @pytest.mark.asyncio
+    async def test_unhandled_exception_returns_500(self, client: AsyncClient):
+        """Test that unhandled exceptions return 500."""
+        # Mock an unhandled exception
+        with patch('src.api.routes.health.health_check') as mock_endpoint:
+            mock_endpoint.side_effect = RuntimeError("Unexpected error")
+
+            response = await client.get("/health/health")
+
+            assert response.status_code == 500
+            data = response.json()
+            assert data["error"] == "internal_server_error"
+            assert "request_id" in data
+
+
+class TestStructuredLogging:
+    """Test structured logging configuration."""
+
+    def test_structlog_configured_with_json_renderer(self):
+        """Test that structlog is configured with JSON output."""
+        from src.core.logging import setup_logging
+
+        setup_logging("INFO")
+
+        # Get logger
+        logger = structlog.get_logger(__name__)
+
+        # Verify logger is bound
+        assert logger is not None
+
+    def test_structlog_context_variables_binding(self):
+        """Test that context variables can be bound to logs."""
+        logger = structlog.get_logger(__name__)
+
+        # Bind context
+        structlog.contextvars.bind_contextvars(
+            request_id="test-id-123",
+            user_id="user-456"
+        )
+
+        # This should not raise
+        logger.info("test_event", extra_field="value")
+
+        # Clear context
+        structlog.contextvars.clear_contextvars()
+
+
+class TestRootEndpoint:
+    """Test root API endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_root_endpoint_returns_api_info(self, client: AsyncClient):
+        """Test root endpoint returns API metadata."""
+        response = await client.get("/")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Verify API info
+        assert "name" in data
+        assert "version" in data
+        assert "status" in data
+        assert "health" in data
+        assert "metrics" in data
+
+    @pytest.mark.asyncio
+    async def test_root_endpoint_includes_documentation_links(self, client: AsyncClient):
+        """Test root endpoint includes docs links."""
+        response = await client.get("/")
+
+        data = response.json()
+        assert "docs" in data

@@ -1,0 +1,248 @@
+{
+  "passed": false,
+  "total_scenarios": 76,
+  "passed_count": 53,
+  "failed_count": 23,
+  "pass_rate": 69.73684210526315,
+  "endpoint_coverage": 100.0,
+  "violations": [
+    {
+      "type": "smoke_test_failure",
+      "severity": "high",
+      "endpoint": "POST /carts/{id}/items",
+      "scenario": "add_item_to_cart_happy_path",
+      "expected_status": 201,
+      "actual_status": 500,
+      "error_message": "Expected 201, got 500"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "high",
+      "endpoint": "POST /orders",
+      "scenario": "checkout_happy_path",
+      "expected_status": 201,
+      "actual_status": 422,
+      "error_message": "Expected 201, got 422"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "high",
+      "endpoint": "POST /orders/{id}/pay",
+      "scenario": "pay_order_happy_path",
+      "expected_status": 201,
+      "actual_status": 500,
+      "error_message": "Expected 201, got 500"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "high",
+      "endpoint": "POST /orders/{id}/cancel",
+      "scenario": "cancel_order_happy_path",
+      "expected_status": 201,
+      "actual_status": 500,
+      "error_message": "Expected 201, got 500"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "high",
+      "endpoint": "PATCH /products/{id}/deactivate",
+      "scenario": "deactivate_product_happy_path",
+      "expected_status": 200,
+      "actual_status": 404,
+      "error_message": "Expected 200, got 404"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "high",
+      "endpoint": "PATCH /products/{id}/activate",
+      "scenario": "activate_product_happy_path",
+      "expected_status": 200,
+      "actual_status": 404,
+      "error_message": "Expected 200, got 404"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "high",
+      "endpoint": "POST /carts/{id}/checkout",
+      "scenario": "checkout_cart_happy_path",
+      "expected_status": 201,
+      "actual_status": 500,
+      "error_message": "Expected 201, got 500"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "high",
+      "endpoint": "DELETE /carts/{id}/items/{product_id}",
+      "scenario": "remove_item_from_cart_happy_path",
+      "expected_status": 204,
+      "actual_status": 404,
+      "error_message": "Expected 204, got 404"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "high",
+      "endpoint": "PUT /orders/{id}/items/{product_id}",
+      "scenario": "add_item_to_order_happy_path",
+      "expected_status": 200,
+      "actual_status": 404,
+      "error_message": "Expected 200, got 404"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "high",
+      "endpoint": "DELETE /orders/{id}/items/{product_id}",
+      "scenario": "remove_item_from_order_happy_path",
+      "expected_status": 204,
+      "actual_status": 404,
+      "error_message": "Expected 204, got 404"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "medium",
+      "endpoint": "PUT /products/{id}",
+      "scenario": "F4: Update Product_3_update",
+      "expected_status": 200,
+      "actual_status": 404,
+      "error_message": "Expected 200, got 404"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "medium",
+      "endpoint": "PUT /products/{id}",
+      "scenario": "F5: Deactivate Product_2_update",
+      "expected_status": 200,
+      "actual_status": 404,
+      "error_message": "Expected 200, got 404"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "medium",
+      "endpoint": "PUT /products/{id}",
+      "scenario": "F9: Add Item to Cart_6_update",
+      "expected_status": 200,
+      "actual_status": 404,
+      "error_message": "Expected 200, got 404"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "medium",
+      "endpoint": "DELETE /products/{id}",
+      "scenario": "F11: Update Item Quantity_3_delete",
+      "expected_status": 204,
+      "actual_status": 404,
+      "error_message": "Expected 204, got 404"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "medium",
+      "endpoint": "PUT /products/{id}",
+      "scenario": "F11: Update Item Quantity_5_update",
+      "expected_status": 200,
+      "actual_status": 404,
+      "error_message": "Expected 200, got 404"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "medium",
+      "endpoint": "DELETE /products/{id}",
+      "scenario": "F12: Empty Cart_2_delete",
+      "expected_status": 204,
+      "actual_status": 404,
+      "error_message": "Expected 204, got 404"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "medium",
+      "endpoint": "PUT /products/{id}",
+      "scenario": "F13: Checkout (Create Order)_4_update",
+      "expected_status": 200,
+      "actual_status": 404,
+      "error_message": "Expected 200, got 404"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "medium",
+      "endpoint": "PUT /products/{id}",
+      "scenario": "F13: Checkout (Create Order)_8_update",
+      "expected_status": 200,
+      "actual_status": 404,
+      "error_message": "Expected 200, got 404"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "medium",
+      "endpoint": "PUT /products/{id}",
+      "scenario": "F14: Pay Order (Simulated)_3_update",
+      "expected_status": 200,
+      "actual_status": 404,
+      "error_message": "Expected 200, got 404"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "medium",
+      "endpoint": "PUT /products/{id}",
+      "scenario": "F14: Pay Order (Simulated)_4_update",
+      "expected_status": 200,
+      "actual_status": 404,
+      "error_message": "Expected 200, got 404"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "medium",
+      "endpoint": "PUT /products/{id}",
+      "scenario": "F15: Cancel Order_3_update",
+      "expected_status": 200,
+      "actual_status": 404,
+      "error_message": "Expected 200, got 404"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "medium",
+      "endpoint": "PUT /products/{id}",
+      "scenario": "F15: Cancel Order_4_update",
+      "expected_status": 200,
+      "actual_status": 404,
+      "error_message": "Expected 200, got 404"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "medium",
+      "endpoint": "GET /customers/{customer_id}/orders",
+      "scenario": "list_customer_orders_no_optional_params",
+      "expected_status": 200,
+      "actual_status": 422,
+      "error_message": "Expected 200, got 422"
+    }
+  ],
+  "by_priority": {
+    "critical": 2,
+    "high": 0,
+    "medium": 72,
+    "low": 2
+  },
+  "failed_endpoints": [
+    "POST /carts/{id}/items",
+    "POST /orders",
+    "POST /orders/{id}/pay",
+    "POST /orders/{id}/cancel",
+    "PATCH /products/{id}/deactivate",
+    "PATCH /products/{id}/activate",
+    "POST /carts/{id}/checkout",
+    "DELETE /carts/{id}/items/{product_id}",
+    "PUT /orders/{id}/items/{product_id}",
+    "DELETE /orders/{id}/items/{product_id}",
+    "PUT /products/{id}",
+    "PUT /products/{id}",
+    "PUT /products/{id}",
+    "DELETE /products/{id}",
+    "PUT /products/{id}",
+    "DELETE /products/{id}",
+    "PUT /products/{id}",
+    "PUT /products/{id}",
+    "PUT /products/{id}",
+    "PUT /products/{id}",
+    "PUT /products/{id}",
+    "PUT /products/{id}",
+    "GET /customers/{customer_id}/orders"
+  ]
+}
