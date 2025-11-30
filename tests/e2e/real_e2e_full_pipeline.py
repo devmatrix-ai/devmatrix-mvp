@@ -3770,7 +3770,7 @@ Once running, visit:
             repair_result = await orchestrator.run_full_repair_cycle(
                 app_path=self.output_path,
                 application_ir=self.application_ir,
-                with_docker_rebuild=False,  # Set True for Docker-based deployments
+                with_docker_rebuild=True,  # Set True for Docker-based deployments
                 max_cycles=3
             )
 
