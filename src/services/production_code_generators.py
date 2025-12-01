@@ -400,6 +400,7 @@ def _extract_operation_name(flow_name: str, entity_name: str) -> str:
     Extract service method name from IR flow name, removing entity reference.
 
     Bug #143 Fix: Convert flow names to method names dynamically.
+    Bug #166 Fix: Remove parenthetical expressions that create invalid Python identifiers.
 
     Examples:
         "Pay Order" → "pay"
@@ -407,6 +408,8 @@ def _extract_operation_name(flow_name: str, entity_name: str) -> str:
         "Cancel Order" → "cancel"
         "Checkout Cart" → "checkout"
         "F9: Add Item to Cart" → "add_item"
+        "Checkout (Create Order)" → "checkout"
+        "Pay (Simulated)" → "pay"
 
     Args:
         flow_name: Name from IR BehaviorModel flow (e.g., "Pay Order")
@@ -418,11 +421,15 @@ def _extract_operation_name(flow_name: str, entity_name: str) -> str:
     if not flow_name:
         return ""
 
+    import re
     name = flow_name.lower()
     entity_lower = entity_name.lower()
 
+    # Bug #166 Fix: Remove parenthetical expressions FIRST
+    # "Checkout (Create Order)" → "Checkout", "Pay (Simulated)" → "Pay"
+    name = re.sub(r'\s*\([^)]*\)', '', name)
+
     # Remove flow ID prefixes like "F9: " or "F1: "
-    import re
     name = re.sub(r'^f\d+:\s*', '', name)
 
     # Remove entity name variations: "pay order" → "pay", "order pay" → "pay"
@@ -431,10 +438,15 @@ def _extract_operation_name(flow_name: str, entity_name: str) -> str:
     name = name.replace(f" to {entity_lower}", "")  # "add item to cart" → "add item"
     name = name.replace(f" from {entity_lower}", "")  # "remove item from cart" → "remove item"
 
+    # Bug #165 Fix: Remove trailing prepositions left after entity removal
+    # "add item to" → "add item", "remove from" → "remove"
+    name = re.sub(r'\s+(to|from|in|at|for)$', '', name.strip())
+
     # Convert to snake_case: "add item" → "add_item"
     name = re.sub(r'\s+', '_', name.strip())
 
-    # Clean up multiple underscores
+    # Clean up multiple underscores and any remaining invalid characters
+    name = re.sub(r'[^a-z0-9_]', '', name)  # Only keep valid Python identifier chars
     name = re.sub(r'_+', '_', name).strip('_')
 
     return name
