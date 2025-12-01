@@ -135,6 +135,10 @@ class SpecComplexityAnalyzer:
             content = self._load_spec(spec_path)
             spec_data = self._parse_spec(content, spec_path)
 
+            # Bug #171 Fix: For markdown specs, use text-based analysis
+            if spec_path.endswith('.md') or not spec_data:
+                return self._analyze_markdown_spec(spec_id, spec_path, content)
+
             # Count elements
             endpoints = self._count_endpoints(spec_data)
             entities = self._count_entities(spec_data)
@@ -201,6 +205,90 @@ class SpecComplexityAnalyzer:
                 complexity_indicators=["parse_error"],
                 estimated_processing_ms=60000
             )
+
+    def _analyze_markdown_spec(self, spec_id: str, spec_path: str, content: str) -> SpecComplexity:
+        """
+        Bug #171 Fix: Analyze markdown spec using text patterns.
+
+        For markdown specs, we can't use JSON/YAML parsing, so we use regex patterns
+        to estimate entities, endpoints, and complexity from the text.
+        """
+        import re
+
+        # Count endpoints from patterns like "GET /products", "POST /orders"
+        endpoint_patterns = re.findall(
+            r'\b(GET|POST|PUT|PATCH|DELETE)\s+/[a-zA-Z0-9_/{}]+',
+            content, re.IGNORECASE
+        )
+        endpoints = len(endpoint_patterns)
+
+        # Count entities from header patterns like "## Product", "### Order Entity"
+        entity_patterns = re.findall(
+            r'^#+\s+(\w+)\s*(?:Entity|Model|Resource|Schema)?',
+            content, re.MULTILINE | re.IGNORECASE
+        )
+        # Filter common non-entity headers
+        entity_blacklist = {'api', 'overview', 'introduction', 'endpoints', 'authentication',
+                           'flows', 'business', 'requirements', 'summary', 'description'}
+        entities = len([e for e in entity_patterns if e.lower() not in entity_blacklist])
+
+        # Count flows from patterns like "checkout flow", "payment process"
+        flow_patterns = re.findall(
+            r'\b(flow|process|workflow|scenario|use.?case)\b',
+            content, re.IGNORECASE
+        )
+        flows = len(flow_patterns) // 2  # Approximate, flows mentioned multiple times
+
+        # Compute complexity based on text-extracted counts
+        complexity = self._compute_complexity_score(
+            endpoints=endpoints,
+            entities=entities,
+            schemas=entities,  # Use entities as proxy for schemas
+            has_circular=False,
+            has_poly=False,
+            has_external=False
+        )
+
+        # Add markdown-specific complexity factors
+        if 'authentication' in content.lower() or 'oauth' in content.lower():
+            complexity = min(1.0, complexity + 0.1)
+        if 'pagination' in content.lower():
+            complexity = min(1.0, complexity + 0.05)
+
+        # Build indicators
+        indicators = ["markdown_spec"]
+        if endpoints > 20:
+            indicators.append("many_endpoints")
+        if entities > 10:
+            indicators.append("many_entities")
+        if flows > 5:
+            indicators.append("complex_flows")
+
+        # Estimate processing time
+        estimated_time = self._estimate_processing_time(
+            endpoints, entities, entities, False, False, False
+        )
+
+        self.logger.info(
+            f"Markdown spec analysis: {endpoints} endpoints, {entities} entities, "
+            f"complexity={complexity:.2f}"
+        )
+
+        return SpecComplexity(
+            spec_id=spec_id,
+            path=spec_path,
+            size_bytes=len(content),
+            line_count=content.count('\n') + 1,
+            entity_count=entities,
+            endpoint_count=endpoints,
+            schema_count=entities,
+            has_circular_refs=False,
+            has_polymorphism=False,
+            has_external_refs=False,
+            complexity_score=complexity,
+            complexity_indicators=indicators,
+            estimated_processing_ms=estimated_time
+        )
 
     def _load_spec(self, spec_path: str) -> str:
         """Load spec file content."""

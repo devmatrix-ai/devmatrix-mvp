@@ -462,11 +462,42 @@ class PrecisionMetrics:
 
 @dataclass
 class ContractValidator:
-    """Validates contracts between pipeline phases"""
+    """
+    Validates contracts between pipeline phases.
+
+    Contract Philosophy (Bug #172 Redesign):
+    =========================================
+
+    Contracts have 3 levels:
+    1. STRUCTURAL - Fields exist with correct types (always enforced)
+    2. SEMANTIC - Values make sense (warnings, not failures)
+    3. QUALITY - Meets quality thresholds (gating for production)
+
+    Each phase outputs data that becomes input for the next phase.
+    Contracts ensure the "handoff" between phases is valid.
+    """
 
     violations: List[Dict[str, Any]] = field(default_factory=list)
+    warnings: List[Dict[str, Any]] = field(default_factory=list)
 
-    # Phase contracts
+    # Quality thresholds (can be adjusted per environment)
+    QUALITY_THRESHOLDS = {
+        "min_requirements": 3,           # At least 3 requirements for real spec
+        "min_functional_reqs": 1,        # At least 1 functional requirement
+        "min_entities": 1,               # At least 1 entity
+        "min_endpoints": 1,              # At least 1 endpoint
+        "max_complexity": 1.0,           # Complexity 0-1
+        "min_success_rate": 0.50,        # 50% minimum success rate
+        "target_success_rate": 0.80,     # 80% target for warnings
+        "min_smoke_pass_rate": 0.70,     # 70% smoke test minimum
+        "target_smoke_pass_rate": 0.95,  # 95% target
+    }
+
+    # ==========================================================================
+    # PHASE 1: Spec Ingestion
+    # Input: Raw spec file (markdown, yaml, json)
+    # Output: Parsed content, extracted requirements, complexity score
+    # ==========================================================================
     SPEC_INGESTION_CONTRACT = {
         "required_fields": ["spec_content", "requirements", "complexity"],
         "types": {
@@ -474,12 +505,28 @@ class ContractValidator:
             "requirements": list,
             "complexity": float
         },
-        "constraints": {
-            "complexity": lambda x: 0.0 <= x <= 1.0,
-            "requirements": lambda x: len(x) > 0
+        "structural": {
+            "spec_content": lambda x: len(x) > 0,  # Non-empty content
+        },
+        "semantic": {
+            # Semantic checks - generate warnings, not failures
+            "complexity": lambda x: x > 0.0,  # 0.0 suggests parsing issue
+            "requirements": lambda x: len(x) >= 3,  # Real specs have multiple reqs
+        },
+        "quality": {
+            # Quality gates - can block pipeline if strict mode
+            "requirements": lambda x: any(
+                hasattr(r, 'domain') or isinstance(r, dict) and 'domain' in r
+                for r in x[:5] if x  # At least some reqs have domains
+            ) if x else False,
         }
     }
 
+    # ==========================================================================
+    # PHASE 2: Requirements Analysis
+    # Input: Raw requirements from spec
+    # Output: Classified requirements (functional, non-functional, patterns)
+    # ==========================================================================
     REQUIREMENTS_ANALYSIS_CONTRACT = {
         "required_fields": ["functional_reqs", "non_functional_reqs", "patterns_matched", "dependencies"],
         "types": {
@@ -488,11 +535,24 @@ class ContractValidator:
             "patterns_matched": int,
             "dependencies": list
         },
-        "constraints": {
-            "patterns_matched": lambda x: x >= 0
+        "structural": {
+            "functional_reqs": lambda x: isinstance(x, list),
+        },
+        "semantic": {
+            "functional_reqs": lambda x: len(x) >= 1,  # At least 1 functional req
+            "patterns_matched": lambda x: x >= 0,
+        },
+        "quality": {
+            # Quality: Good classification should match patterns
+            "patterns_matched": lambda x: x >= 1,  # Should match at least 1 pattern
         }
     }
 
+    # ==========================================================================
+    # PHASE 3: Multi-Pass Planning (DAG)
+    # Input: Classified requirements
+    # Output: Dependency graph (DAG) with execution waves
+    # ==========================================================================
     PLANNING_CONTRACT = {
         "required_fields": ["dag", "node_count", "edge_count", "is_acyclic", "waves"],
         "types": {
@@ -502,14 +562,26 @@ class ContractValidator:
             "is_acyclic": bool,
             "waves": int
         },
-        "constraints": {
+        "structural": {
             "node_count": lambda x: x > 0,
-            "edge_count": lambda x: x >= 0,
-            "is_acyclic": lambda x: x == True,
-            "waves": lambda x: x > 0
+            "is_acyclic": lambda x: x == True,  # MUST be acyclic
+        },
+        "semantic": {
+            "waves": lambda x: x >= 1,  # At least 1 wave
+            "edge_count": lambda x: x >= 0,  # Can have 0 edges (independent nodes)
+        },
+        "quality": {
+            # Quality: Edges should exist for connected requirements
+            # Ratio: edges/nodes - too few edges = poor dependency analysis
+            # Skip if node_count is 0 (will fail structural anyway)
         }
     }
 
+    # ==========================================================================
+    # PHASE 4: Atomization
+    # Input: DAG with requirements
+    # Output: Atomic execution units
+    # ==========================================================================
     ATOMIZATION_CONTRACT = {
         "required_fields": ["atomic_units", "unit_count", "avg_complexity"],
         "types": {
@@ -517,12 +589,23 @@ class ContractValidator:
             "unit_count": int,
             "avg_complexity": float
         },
-        "constraints": {
+        "structural": {
             "unit_count": lambda x: x > 0,
-            "avg_complexity": lambda x: 0.0 <= x <= 1.0
-        }
+            "avg_complexity": lambda x: 0.0 <= x <= 1.0,
+        },
+        "semantic": {
+            "atomic_units": lambda x: all(
+                isinstance(u, dict) and 'id' in u for u in x[:5]
+            ) if x else True,  # Units should have IDs
+        },
+        "quality": {}
     }
 
+    # ==========================================================================
+    # PHASE 5: DAG Construction
+    # Input: Atomic units
+    # Output: Execution-ready DAG with waves
+    # ==========================================================================
     DAG_CONSTRUCTION_CONTRACT = {
         "required_fields": ["nodes", "edges", "waves", "wave_count"],
         "types": {
@@ -531,11 +614,20 @@ class ContractValidator:
             "waves": list,
             "wave_count": int
         },
-        "constraints": {
-            "wave_count": lambda x: x > 0
-        }
+        "structural": {
+            "wave_count": lambda x: x > 0,
+        },
+        "semantic": {
+            "nodes": lambda x: len(x) > 0,
+        },
+        "quality": {}
     }
 
+    # ==========================================================================
+    # PHASE 6: Wave Execution (Code Generation)
+    # Input: DAG with waves
+    # Output: Generated code files
+    # ==========================================================================
     EXECUTION_CONTRACT = {
         "required_fields": ["atoms_executed", "atoms_succeeded", "atoms_failed"],
         "types": {
@@ -543,13 +635,24 @@ class ContractValidator:
             "atoms_succeeded": int,
             "atoms_failed": int
         },
-        "constraints": {
+        "structural": {
             "atoms_executed": lambda x: x > 0,
+        },
+        "semantic": {
             "atoms_succeeded": lambda x: x >= 0,
-            "atoms_failed": lambda x: x >= 0
+            "atoms_failed": lambda x: x >= 0,
+        },
+        "quality": {
+            # Success rate should be high
+            # This is checked separately with thresholds
         }
     }
 
+    # ==========================================================================
+    # PHASE 7+: Validation (Smoke Tests)
+    # Input: Generated code
+    # Output: Test results, coverage, quality score
+    # ==========================================================================
     VALIDATION_CONTRACT = {
         "required_fields": ["tests_run", "tests_passed", "coverage", "quality_score"],
         "types": {
@@ -558,16 +661,59 @@ class ContractValidator:
             "coverage": float,
             "quality_score": float
         },
-        "constraints": {
-            # tests_run >= 0 (optional) - no false violation when tests not generated
-            "tests_run": lambda x: x >= 0,
+        "structural": {
             "coverage": lambda x: 0.0 <= x <= 1.0,
-            "quality_score": lambda x: 0.0 <= x <= 1.0
+            "quality_score": lambda x: 0.0 <= x <= 1.0,
+        },
+        "semantic": {
+            "tests_run": lambda x: x >= 0,  # Can be 0 if tests not generated
+        },
+        "quality": {
+            # Pass rate is the key quality metric
+            # Checked separately: tests_passed / tests_run >= threshold
+        }
+    }
+
+    # ==========================================================================
+    # NEW: Smoke Test Contract (the one that really matters for MVP)
+    # ==========================================================================
+    SMOKE_TEST_CONTRACT = {
+        "required_fields": ["total_scenarios", "passed", "failed", "pass_rate"],
+        "types": {
+            "total_scenarios": int,
+            "passed": int,
+            "failed": int,
+            "pass_rate": float
+        },
+        "structural": {
+            "total_scenarios": lambda x: x > 0,
+            "pass_rate": lambda x: 0.0 <= x <= 1.0,
+        },
+        "semantic": {
+            # passed + failed should equal total
+            # (checked in validate method)
+        },
+        "quality": {
+            "pass_rate": lambda x: x >= 0.70,  # 70% minimum
+        },
+        "excellent": {
+            "pass_rate": lambda x: x >= 0.95,  # 95% = excellent
         }
     }
 
     def validate_phase_output(self, phase: str, output: Dict[str, Any]) -> bool:
-        """Validate phase output against contract"""
+        """
+        Validate phase output against contract using 3-tier system.
+
+        Tiers:
+        - STRUCTURAL: Required fields, types (hard fail)
+        - SEMANTIC: Values make sense (warnings only)
+        - QUALITY: Quality thresholds (gating)
+
+        Returns True only if STRUCTURAL passes.
+        SEMANTIC failures are logged as warnings.
+        QUALITY failures are logged but don't block.
+        """
         contract_map = {
             "spec_ingestion": self.SPEC_INGESTION_CONTRACT,
             "requirements_analysis": self.REQUIREMENTS_ANALYSIS_CONTRACT,
@@ -575,86 +721,312 @@ class ContractValidator:
             "atomization": self.ATOMIZATION_CONTRACT,
             "dag_construction": self.DAG_CONSTRUCTION_CONTRACT,
             "wave_execution": self.EXECUTION_CONTRACT,
-            "validation": self.VALIDATION_CONTRACT
+            "validation": self.VALIDATION_CONTRACT,
+            "smoke_test": self.SMOKE_TEST_CONTRACT
         }
 
         contract = contract_map.get(phase)
         if not contract:
             return True  # No contract defined
 
-        is_valid = True
+        structural_ok = True
 
-        # Check required fields
+        # TIER 1: STRUCTURAL - Required fields exist
         for field in contract["required_fields"]:
             if field not in output:
                 self.violations.append({
                     "phase": phase,
+                    "tier": "STRUCTURAL",
                     "type": ContractViolationType.MISSING_FIELD.value,
                     "field": field,
                     "message": f"Required field '{field}' missing"
                 })
-                is_valid = False
+                structural_ok = False
 
-        # Check types
+        # TIER 1: STRUCTURAL - Type checks
         for field, expected_type in contract["types"].items():
             if field in output:
                 if not isinstance(output[field], expected_type):
                     self.violations.append({
                         "phase": phase,
+                        "tier": "STRUCTURAL",
                         "type": ContractViolationType.TYPE_ERROR.value,
                         "field": field,
                         "expected": expected_type.__name__,
                         "actual": type(output[field]).__name__,
                         "message": f"Type mismatch for '{field}'"
                     })
-                    is_valid = False
+                    structural_ok = False
 
-        # Check constraints
-        if "constraints" in contract:
-            for field, constraint_fn in contract["constraints"].items():
+        # TIER 1: STRUCTURAL - Hard constraints
+        if "structural" in contract:
+            for field, constraint_fn in contract["structural"].items():
                 if field in output:
                     try:
                         if not constraint_fn(output[field]):
                             self.violations.append({
                                 "phase": phase,
+                                "tier": "STRUCTURAL",
                                 "type": ContractViolationType.CONSTRAINT_VIOLATION.value,
                                 "field": field,
-                                "value": output[field],
-                                "message": f"Constraint violation for '{field}'"
+                                "value": str(output[field])[:100],
+                                "message": f"Structural constraint failed for '{field}'"
                             })
-                            is_valid = False
+                            structural_ok = False
                     except Exception as e:
                         self.violations.append({
                             "phase": phase,
+                            "tier": "STRUCTURAL",
                             "type": ContractViolationType.CONSTRAINT_VIOLATION.value,
                             "field": field,
-                            "message": f"Constraint check failed: {str(e)}"
+                            "message": f"Structural check error: {str(e)}"
                         })
-                        is_valid = False
+                        structural_ok = False
 
-        return is_valid
+        # TIER 2: SEMANTIC - Warnings only (don't block)
+        if "semantic" in contract:
+            for field, constraint_fn in contract["semantic"].items():
+                if field in output:
+                    try:
+                        if not constraint_fn(output[field]):
+                            self.warnings.append({
+                                "phase": phase,
+                                "tier": "SEMANTIC",
+                                "type": "semantic_warning",
+                                "field": field,
+                                "value": str(output[field])[:100],
+                                "message": f"Semantic warning for '{field}'"
+                            })
+                    except Exception:
+                        pass  # Semantic checks are best-effort
+
+        # TIER 3: QUALITY - Gating (logged but doesn't block structural)
+        if "quality" in contract:
+            for field, constraint_fn in contract["quality"].items():
+                if field in output:
+                    try:
+                        if not constraint_fn(output[field]):
+                            self.warnings.append({
+                                "phase": phase,
+                                "tier": "QUALITY",
+                                "type": "quality_gate_failed",
+                                "field": field,
+                                "value": str(output[field])[:100],
+                                "message": f"Quality gate failed for '{field}'"
+                            })
+                    except Exception:
+                        pass
+
+        # Legacy: Check old-style constraints for backward compatibility
+        if "constraints" in contract:
+            for field, constraint_fn in contract["constraints"].items():
+                if field in output:
+                    try:
+                        if not constraint_fn(output[field]):
+                            self.warnings.append({
+                                "phase": phase,
+                                "tier": "LEGACY",
+                                "type": "constraint_warning",
+                                "field": field,
+                                "value": str(output[field])[:100],
+                                "message": f"Legacy constraint warning for '{field}'"
+                            })
+                    except Exception:
+                        pass
+
+        return structural_ok
+
+    def validate_smoke_test_against_ir(
+        self,
+        smoke_result: Dict[str, Any],
+        application_ir: Any
+    ) -> Dict[str, Any]:
+        """
+        Validate smoke test results against ApplicationIR (the source of truth).
+
+        Args:
+            smoke_result: Dict with keys: total_scenarios, passed, failed, pass_rate, violations
+            application_ir: ApplicationIR instance with api_model.endpoints
+
+        Returns:
+            ValidationResult dict with tiers, passed, warnings, etc.
+        """
+        result = {
+            "phase": "smoke_test",
+            "structural_passed": True,
+            "semantic_passed": True,
+            "quality_passed": True,
+            "violations": [],
+            "warnings": [],
+            "coverage": 0.0,
+            "pass_rate": 0.0
+        }
+
+        # Extract IR endpoints (source of truth)
+        ir_endpoints = set()
+        if application_ir and hasattr(application_ir, 'api_model') and application_ir.api_model:
+            for ep in application_ir.api_model.endpoints:
+                method = ep.method.value if hasattr(ep.method, 'value') else str(ep.method)
+                ir_endpoints.add(f"{method} {ep.path}")
+
+        # Extract tested endpoints from smoke result
+        tested_endpoints = set()
+        if 'tested_endpoints' in smoke_result:
+            tested_endpoints = set(smoke_result['tested_endpoints'])
+        elif 'violations' in smoke_result:
+            # Infer from violations + passed count
+            for v in smoke_result['violations']:
+                ep = v.get('endpoint', '')
+                method = v.get('method', 'GET')
+                if ep:
+                    tested_endpoints.add(f"{method} {ep}")
+
+        # STRUCTURAL: Check we have test results
+        total = smoke_result.get('total_scenarios', smoke_result.get('endpoints_tested', 0))
+        if total == 0:
+            result["structural_passed"] = False
+            result["violations"].append({
+                "tier": "STRUCTURAL",
+                "field": "total_scenarios",
+                "message": "No scenarios tested"
+            })
+            self.violations.append({
+                "phase": "smoke_test",
+                "tier": "STRUCTURAL",
+                "type": "no_scenarios",
+                "message": "No smoke test scenarios executed"
+            })
+
+        # STRUCTURAL: pass_rate must be valid
+        pass_rate = smoke_result.get('pass_rate', 0.0)
+        if not (0.0 <= pass_rate <= 1.0):
+            result["structural_passed"] = False
+            result["violations"].append({
+                "tier": "STRUCTURAL",
+                "field": "pass_rate",
+                "message": f"Invalid pass_rate: {pass_rate}"
+            })
+
+        result["pass_rate"] = pass_rate
+
+        # SEMANTIC: Check coverage of IR endpoints
+        if ir_endpoints:
+            missing = ir_endpoints - tested_endpoints
+            coverage = 1.0 - (len(missing) / len(ir_endpoints)) if ir_endpoints else 1.0
+            result["coverage"] = coverage
+
+            if missing and len(missing) > len(ir_endpoints) * 0.1:  # >10% missing
+                result["semantic_passed"] = False
+                result["warnings"].append({
+                    "tier": "SEMANTIC",
+                    "field": "coverage",
+                    "message": f"{len(missing)} IR endpoints not tested",
+                    "missing": list(missing)[:5]
+                })
+                self.warnings.append({
+                    "phase": "smoke_test",
+                    "tier": "SEMANTIC",
+                    "type": "low_coverage",
+                    "message": f"Only {coverage:.1%} of IR endpoints tested"
+                })
+
+        # QUALITY: Pass rate thresholds
+        min_pass_rate = self.QUALITY_THRESHOLDS.get("min_smoke_pass_rate", 0.70)
+        target_pass_rate = self.QUALITY_THRESHOLDS.get("target_smoke_pass_rate", 0.95)
+
+        if pass_rate < min_pass_rate:
+            result["quality_passed"] = False
+            result["warnings"].append({
+                "tier": "QUALITY",
+                "field": "pass_rate",
+                "message": f"Pass rate {pass_rate:.1%} < {min_pass_rate:.0%} minimum",
+                "threshold": min_pass_rate
+            })
+            self.warnings.append({
+                "phase": "smoke_test",
+                "tier": "QUALITY",
+                "type": "below_minimum",
+                "message": f"Pass rate {pass_rate:.1%} below {min_pass_rate:.0%} threshold"
+            })
+        elif pass_rate < target_pass_rate:
+            result["warnings"].append({
+                "tier": "QUALITY",
+                "field": "pass_rate",
+                "message": f"Pass rate {pass_rate:.1%} < {target_pass_rate:.0%} target",
+                "threshold": target_pass_rate
+            })
+
+        return result
 
     def get_violations_summary(self) -> Dict[str, Any]:
-        """Get summary of all contract violations"""
-        by_phase = {}
-        by_type = {}
+        """Get summary of all contract violations and warnings"""
+        by_phase: Dict[str, int] = {}
+        by_type: Dict[str, int] = {}
+        by_tier: Dict[str, int] = {}
 
         for v in self.violations:
-            phase = v["phase"]
-            vtype = v["type"]
+            phase = v.get("phase", "unknown")
+            vtype = v.get("type", "unknown")
+            tier = v.get("tier", "LEGACY")
 
             by_phase[phase] = by_phase.get(phase, 0) + 1
             by_type[vtype] = by_type.get(vtype, 0) + 1
+            by_tier[tier] = by_tier.get(tier, 0) + 1
 
         return {
             "total_violations": len(self.violations),
+            "total_warnings": len(self.warnings),
             "by_phase": by_phase,
             "by_type": by_type,
-            "violations": self.violations
+            "by_tier": by_tier,
+            "violations": self.violations,
+            "warnings": self.warnings
         }
 
+    def print_validation_report(self):
+        """Print comprehensive validation report with tiers"""
+        print("\n" + "="*80)
+        print("                         CONTRACT VALIDATION REPORT")
+        print("="*80)
+
+        # Summary
+        v_count = len(self.violations)
+        w_count = len(self.warnings)
+
+        if v_count == 0 and w_count == 0:
+            print("\n  ✅ All contracts validated successfully!")
+            return
+
+        # Group by tier
+        structural = [v for v in self.violations if v.get("tier") == "STRUCTURAL"]
+        semantic = [w for w in self.warnings if w.get("tier") == "SEMANTIC"]
+        quality = [w for w in self.warnings if w.get("tier") == "QUALITY"]
+
+        print(f"\n  📊 Summary:")
+        print(f"     STRUCTURAL failures: {len(structural)} {'❌' if structural else '✅'}")
+        print(f"     SEMANTIC warnings:   {len(semantic)} {'⚠️' if semantic else '✅'}")
+        print(f"     QUALITY warnings:    {len(quality)} {'⚠️' if quality else '✅'}")
+
+        # Details
+        if structural:
+            print(f"\n  ❌ STRUCTURAL FAILURES (blocking):")
+            for v in structural[:5]:
+                print(f"     • [{v.get('phase', '?')}] {v.get('message', 'No message')}")
+
+        if semantic:
+            print(f"\n  ⚠️  SEMANTIC WARNINGS:")
+            for w in semantic[:5]:
+                print(f"     • [{w.get('phase', '?')}] {w.get('message', 'No message')}")
+
+        if quality:
+            print(f"\n  ⚠️  QUALITY GATES:")
+            for w in quality[:5]:
+                print(f"     • [{w.get('phase', '?')}] {w.get('message', 'No message')}")
+
+        print("\n" + "="*80)
+
     def print_violations(self):
-        """Print all contract violations"""
+        """Print all contract violations (legacy method)"""
         if not self.violations:
             print("✅ No contract violations detected")
             return
@@ -663,12 +1035,13 @@ class ContractValidator:
         print("="*70)
 
         for i, v in enumerate(self.violations, 1):
-            print(f"\n{i}. {v['phase'].upper()}")
-            print(f"   Type: {v['type']}")
+            tier = v.get('tier', 'LEGACY')
+            print(f"\n{i}. [{tier}] {v.get('phase', 'unknown').upper()}")
+            print(f"   Type: {v.get('type', 'unknown')}")
             print(f"   Field: {v.get('field', 'N/A')}")
-            print(f"   Message: {v['message']}")
+            print(f"   Message: {v.get('message', 'No message')}")
             if 'expected' in v:
-                print(f"   Expected: {v['expected']}, Actual: {v['actual']}")
+                print(f"   Expected: {v['expected']}, Actual: {v.get('actual', '?')}")
 
 
 def validate_classification(

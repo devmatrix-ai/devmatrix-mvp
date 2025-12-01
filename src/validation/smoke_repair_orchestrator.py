@@ -1186,7 +1186,7 @@ class SmokeRepairOrchestrator:
             # Use top-ranked candidate
             if confidence_result.top_candidates:
                 best = confidence_result.top_candidates[0]
-                logger.info(f"    🎯 Selected repair: {best.fix_type} (confidence: {best.confidence:.2f})")
+                logger.info(f"    🎯 Selected repair: {best.strategy_type.value} (confidence: {best.confidence:.2f})")
 
                 # Apply the best candidate
                 return await self._apply_repair_strategy(
@@ -1204,35 +1204,68 @@ class SmokeRepairOrchestrator:
         violation: SmokeViolation,
         stack_traces: List[StackTrace],
         app_path: Path
-    ) -> List[Dict[str, Any]]:
-        """Generate possible repair candidates for a violation."""
+    ) -> List["RepairCandidate"]:
+        """Generate possible repair candidates for a violation.
+
+        Returns RepairCandidate objects compatible with RepairConfidenceModel.
+        """
+        from src.validation.repair_confidence_model import RepairCandidate
+        from src.validation.repair_confidence_model import RepairStrategyType as RCMStrategyType
+
         candidates = []
         matching_trace = self._find_matching_trace(violation, stack_traces)
 
+        # Map our strategy type to confidence model's strategy type
+        strategy_map = {
+            RepairStrategyType.DATABASE: RCMStrategyType.ADD_NULLABLE,
+            RepairStrategyType.VALIDATION: RCMStrategyType.ADD_VALIDATOR,
+            RepairStrategyType.IMPORT: RCMStrategyType.FIX_IMPORT,
+            RepairStrategyType.ROUTE: RCMStrategyType.FIX_ROUTE,
+            RepairStrategyType.TYPE: RCMStrategyType.FIX_TYPE,
+            RepairStrategyType.ATTRIBUTE: RCMStrategyType.GENERIC,
+            RepairStrategyType.KEY: RCMStrategyType.FIX_FOREIGN_KEY,
+            RepairStrategyType.SERVICE: RCMStrategyType.GENERIC,
+            RepairStrategyType.GENERIC: RCMStrategyType.GENERIC,
+        }
+        rcm_type = strategy_map.get(strategy_type, RCMStrategyType.GENERIC)
+
         # Base candidate from strategy type
-        candidates.append({
-            'strategy_type': strategy_type.value,
-            'fix_type': strategy_type.value,
-            'target_file': str(app_path / "src" / "models" / "entities.py"),
-            'confidence': 0.5
-        })
+        candidates.append(RepairCandidate(
+            strategy_type=rcm_type,
+            target_file=str(app_path / "src" / "models" / "entities.py"),
+            fix_description=f"Apply {strategy_type.value} fix for {violation.endpoint}",
+            pattern_score=0.5,
+            ir_context_score=0.5,
+            semantic_score=0.5,
+            violation_endpoint=violation.endpoint,
+            error_type=violation.error_type
+        ))
 
         # Add specific candidates based on strategy
         if strategy_type == RepairStrategyType.DATABASE and matching_trace:
-            candidates.append({
-                'strategy_type': 'nullable_fix',
-                'fix_type': 'database',
-                'target_file': str(app_path / "src" / "models" / "entities.py"),
-                'confidence': 0.7
-            })
+            candidates.append(RepairCandidate(
+                strategy_type=RCMStrategyType.ADD_NULLABLE,
+                target_file=str(app_path / "src" / "models" / "entities.py"),
+                fix_description=f"Add nullable to field for {violation.endpoint}",
+                pattern_score=0.7,
+                ir_context_score=0.6,
+                semantic_score=0.5,
+                violation_endpoint=violation.endpoint,
+                error_type=violation.error_type,
+                exception_class=matching_trace.exception_class if matching_trace else ""
+            ))
 
         if strategy_type == RepairStrategyType.VALIDATION:
-            candidates.append({
-                'strategy_type': 'optional_field',
-                'fix_type': 'validation',
-                'target_file': str(app_path / "src" / "models" / "schemas.py"),
-                'confidence': 0.65
-            })
+            candidates.append(RepairCandidate(
+                strategy_type=RCMStrategyType.ADD_VALIDATOR,
+                target_file=str(app_path / "src" / "models" / "schemas.py"),
+                fix_description=f"Add optional field validator for {violation.endpoint}",
+                pattern_score=0.65,
+                ir_context_score=0.5,
+                semantic_score=0.6,
+                violation_endpoint=violation.endpoint,
+                error_type=violation.error_type
+            ))
 
         return candidates
 

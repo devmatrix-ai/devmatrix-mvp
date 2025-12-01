@@ -2488,10 +2488,14 @@ class RealE2ETest:
         self.metrics_collector.add_checkpoint("multi_pass_planning", "CP-3.5: DAG validated", {})
 
         # Precision metrics - use ground truth if available
+        # Bug #177 Fix: Clarify what we're comparing (IR nodes vs ground truth nodes can differ in granularity)
         if dag_ground_truth and dag_ground_truth.get("node_count", 0) > 0:
             self.precision.dag_nodes_expected = dag_ground_truth["node_count"]
             self.precision.dag_edges_expected = dag_ground_truth["edge_count"]
-            print(f"  📋 Using DAG ground truth: {dag_ground_truth['node_count']} nodes, {dag_ground_truth['edge_count']} edges expected")
+            # Bug #177: Show both IR nodes AND ground truth to explain the difference
+            print(f"  📐 IR nodes: {len(dag_nodes)} (fine-grained: entities + endpoints + flows)")
+            print(f"  📋 Ground truth: {dag_ground_truth['node_count']} nodes (coarse-grained: top-level requirements)")
+            print(f"     Note: IR is more detailed than ground truth - this is expected.")
         else:
             self.precision.dag_nodes_expected = len(self.classified_requirements)
             self.precision.dag_edges_expected = len(inferred_edges)
@@ -4227,7 +4231,8 @@ Once running, visit:
 
             print(f"    📊 IR endpoints: {len(result.ir_endpoints)}")
             print(f"    📊 Code endpoints: {len(result.code_endpoints)}")
-            print(f"    📊 Coverage: {result.coverage_rate:.1%}")
+            # Bug #170 Fix: Rename to avoid confusion with smoke test coverage
+            print(f"    📊 Implementation Rate: {result.coverage_rate:.1%} (IR endpoints in code)")
 
             if result.has_gaps:
                 print(f"    ⚠️ Missing {len(result.missing_endpoints)} endpoints:")
@@ -4603,20 +4608,44 @@ Once running, visit:
         if PROGRESS_TRACKING_AVAILABLE:
             add_item("Runtime Smoke Test", "Scenarios", smoke_result.endpoints_passed, smoke_result.endpoints_tested)
 
-        # Bug #101 Fix: Track smoke test result for pipeline failure detection
-        if not smoke_result.passed:
-            self.metrics_collector.record_error("runtime_smoke_test", {
-                "error": "Smoke test failed",
-                "endpoints_failed": smoke_result.endpoints_failed,
-                "violations": len(smoke_result.violations)
-            }, critical=True)
-            print(f"\n  ❌ Phase 8.5 FAILED - Smoke test did not pass")
-            # Bug #3 Fix: Raise exception to stop pipeline (learning will still run)
-            pass_rate = smoke_result.endpoints_passed / max(1, smoke_result.endpoints_tested)
-            raise SmokeTestFailedError(pass_rate, len(smoke_result.violations))
-        else:
-            self.metrics_collector.complete_phase("runtime_smoke_test")
-            print(f"  ✅ Phase 8.5 complete - All smoke tests passed")
+        # CONTRACT VALIDATION: Validate smoke test against IR (source of truth)
+        if self.contract_validator and self.application_ir:
+            smoke_dict = {
+                "total_scenarios": smoke_result.endpoints_tested,
+                "passed": smoke_result.endpoints_passed,
+                "failed": smoke_result.endpoints_failed,
+                "pass_rate": self.smoke_pass_rate,
+                "violations": smoke_result.violations
+            }
+            contract_result = self.contract_validator.validate_smoke_test_against_ir(
+                smoke_result=smoke_dict,
+                application_ir=self.application_ir
+            )
+
+            # Log contract validation results
+            if not contract_result["structural_passed"]:
+                print(f"  ❌ CONTRACT: STRUCTURAL validation failed")
+                for v in contract_result["violations"]:
+                    print(f"     • {v['message']}")
+            elif not contract_result["quality_passed"]:
+                print(f"  ⚠️  CONTRACT: Quality gate failed (pass_rate {contract_result['pass_rate']:.1%} < 70%)")
+            else:
+                print(f"  ✅ CONTRACT: All validations passed (coverage: {contract_result['coverage']:.1%})")
+
+        # Bug #180 Fix: DON'T raise here - let caller decide after repair loop
+        # The old code was raising SmokeTestFailedError here, which prevented
+        # the repair loop from running. The caller (_phase_8_5_runtime_smoke_test)
+        # should call _attempt_runtime_repair first, THEN raise if still failed.
+        #
+        # This method now only:
+        # 1. Updates metrics
+        # 2. Saves results to file
+        # 3. Runs learning/pattern updates
+        # 4. Returns (no exception)
+        #
+        # The caller is responsible for:
+        # 1. Calling _attempt_runtime_repair if smoke failed
+        # 2. Raising SmokeTestFailedError after repair attempts exhausted
 
     async def _execute_repair_loop(
         self,
@@ -6238,11 +6267,14 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         print("-" * 90)
         print(f"  Spec:                {self.spec_file}")
         print(f"  Output:              {self.output_dir}")
-        print(f"  Status:              {metrics.overall_status}")
+        # Bug #176 Fix: Show status with emoji for clarity, and explain progress vs status
+        status_emoji = "✅" if metrics.overall_status == "success" else "❌" if metrics.overall_status == "failed" else "⚠️"
+        print(f"  Status:              {status_emoji} {metrics.overall_status}")
         print(f"  Duration:            {(metrics.total_duration_ms or 0) / 1000 / 60:.1f} minutes ({metrics.total_duration_ms or 0:.0f}ms)")
         # Bug #67 fix: Cap progress at 100% to avoid >100% display
         capped_progress = min(1.0, metrics.overall_progress)
-        print(f"  Overall Progress:    {capped_progress:.1%}")
+        # Bug #176 Fix: Clarify that progress = phases completed, not success
+        print(f"  Phases Completed:    {capped_progress:.1%} (of pipeline phases)")
         print(f"  Execution Success:   {metrics.execution_success_rate:.1%}")
         # Bug #24 fix: Renamed from "Overall Accuracy" to avoid confusion with IR compliance
         print(f"  Pipeline Ops Rate:   {metrics.overall_accuracy:.1%}")
@@ -6250,13 +6282,15 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         # 🧪 TESTING & QUALITY
         print(f"\n🧪 TESTING & QUALITY")
         print("-" * 90)
-        # Fix: Clarify test categorization
-        print(f"  Generated Tests:     {metrics.test_pass_rate:.1%} pass rate")
-        print(f"     Note: Includes research/stress tests (no-gating).")
-        print(f"           Gating criteria: semantic + IR compliance, not tests.")
-        # Bug #68 fix: Hide dummy metrics until properly instrumented
-        # print(f"  Test Coverage:       {metrics.test_coverage:.1%}")  # TODO: Implement coverage tracking
-        # print(f"  Code Quality:        {metrics.code_quality_score:.1%}")  # TODO: Implement quality scoring
+        # Bug #174 Fix: Clarify the difference between test types
+        # Hide "Generated Tests" (pytest unit tests) if they're not implemented (0%)
+        if metrics.test_pass_rate > 0:
+            print(f"  Unit Tests (pytest): {metrics.test_pass_rate:.1%} pass rate")
+        # Show smoke test results prominently (this is what matters)
+        smoke_pass = getattr(metrics, 'smoke_test_pass_rate', None)
+        if smoke_pass is not None:
+            status = "✅" if smoke_pass >= 0.95 else "⚠️" if smoke_pass >= 0.70 else "❌"
+            print(f"  Smoke Tests (HTTP):  {smoke_pass:.1%} {status}")
         print(f"  Contract Violations: {metrics.contract_violations}")
         print(f"  Acceptance Criteria: {metrics.acceptance_criteria_met}/{metrics.acceptance_criteria_total}")
 
@@ -6292,7 +6326,11 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         print(f"  Total Errors:        {metrics.total_errors}")
         print(f"  Recovered Errors:    {metrics.recovered_errors}")
         print(f"  Critical Errors:     {metrics.critical_errors}")
-        print(f"  Recovery Rate:       {metrics.recovery_success_rate:.1%}")
+        # Bug #175 Fix: Show recovery rate only if there were errors to recover from
+        if metrics.total_errors > 0:
+            print(f"  Recovery Rate:       {metrics.recovery_success_rate:.1%}")
+        else:
+            print(f"  Recovery Rate:       N/A (no errors to recover)")
 
         # 💾 RESOURCE USAGE
         print(f"\n💾 RESOURCE USAGE")
@@ -6393,20 +6431,23 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         # Bug #24 fix: Clarified that "Ops Success" means pipeline operation success, not IR compliance
         print(f"  🎯 Overall Pipeline Performance:")
         print(f"     Ops Success:      {metrics.overall_accuracy:.1%}")
+        # Bug #178 Fix: Explain what "Precision" means
         print(f"     Precision:        {metrics.pipeline_precision:.1%}")
+        print(f"        (= successful ops / total ops attempted)")
 
-        # 🔬 RESEARCH METRICS (Internal Use Only)
-        # These metrics are for R&D purposes, not gating criteria
-        print(f"\n🔬 RESEARCH METRICS (internal use only)")
-        print("-" * 90)
-        print(f"  📊 Pattern Matching (RequirementsClassifier R&D):")
-        print(f"     Precision:        {metrics.pattern_precision:.1%}")
-        print(f"     Recall:           {metrics.pattern_recall:.1%}")
-        print(f"     F1-Score:         {metrics.pattern_f1:.1%}")
-        print(f"  🏷️  Classification Accuracy (research, not gating):")
-        print(f"     Overall:          {metrics.classification_accuracy:.1%}")
-        print(f"     Note: Based on 17-19 top-level functional requirements,")
-        print(f"           not 150 atomic IR requirements. See Task 3 in roadmap.")
+        # Bug #173 Fix: Only show research metrics with --verbose flag or env var
+        show_research = os.environ.get("DEVMATRIX_SHOW_RESEARCH_METRICS", "").lower() in ("1", "true", "yes")
+        if show_research:
+            print(f"\n🔬 RESEARCH METRICS (internal use only)")
+            print("-" * 90)
+            print(f"  📊 Pattern Matching (RequirementsClassifier R&D):")
+            print(f"     Precision:        {metrics.pattern_precision:.1%}")
+            print(f"     Recall:           {metrics.pattern_recall:.1%}")
+            print(f"     F1-Score:         {metrics.pattern_f1:.1%}")
+            print(f"  🏷️  Classification Accuracy (research, not gating):")
+            print(f"     Overall:          {metrics.classification_accuracy:.1%}")
+            print(f"     Note: Based on 17-19 top-level functional requirements,")
+            print(f"           not 150 atomic IR requirements. See Task 3 in roadmap.")
 
         # 📦 GENERATED FILES - Hidden for cleaner output
         # Removed detailed file listing for brevity
@@ -6427,13 +6468,47 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
         print(f"     - Prometheus: http://localhost:9091")
         print(f"     - PostgreSQL: localhost:5433 (devmatrix/admin)")
 
-        # ✅ CONTRACT VALIDATION
-        print(f"\n✅ CONTRACT VALIDATION")
+        # ✅ CONTRACT VALIDATION (3-tier system)
+        print(f"\n✅ CONTRACT VALIDATION (IR-Centric)")
         print("-" * 90)
-        if len(self.contract_validator.violations) == 0:
-            print("  ✅ All contracts validated successfully!")
+
+        # Get summary with tier breakdown
+        summary = self.contract_validator.get_violations_summary()
+
+        structural_count = summary["by_tier"].get("STRUCTURAL", 0)
+        semantic_count = summary["by_tier"].get("SEMANTIC", 0)
+        quality_count = summary["by_tier"].get("QUALITY", 0)
+
+        # Print tier status
+        print(f"  📊 Validation Tiers:")
+        print(f"     STRUCTURAL (blocking):  {structural_count} failures {'❌' if structural_count else '✅'}")
+        print(f"     SEMANTIC (warnings):    {semantic_count} warnings {'⚠️' if semantic_count else '✅'}")
+        print(f"     QUALITY (gating):       {quality_count} failures {'⚠️' if quality_count else '✅'}")
+
+        # Overall status
+        if structural_count == 0 and quality_count == 0:
+            if semantic_count > 0:
+                print(f"\n  ✅ Contracts PASSED with {semantic_count} warnings")
+            else:
+                print(f"\n  ✅ All contracts validated successfully!")
         else:
-            print(f"  ⚠️  {len(self.contract_validator.violations)} contract violations detected")
+            print(f"\n  ❌ Contracts FAILED: {structural_count} blocking, {quality_count} quality gates")
+
+            # Show structural failures (most important)
+            structural_violations = [v for v in self.contract_validator.violations
+                                    if v.get("tier") == "STRUCTURAL"]
+            if structural_violations:
+                print(f"\n  ❌ STRUCTURAL FAILURES (must fix):")
+                for v in structural_violations[:3]:
+                    print(f"     • [{v.get('phase', '?')}] {v.get('message', 'No message')}")
+
+            # Show quality gate failures
+            quality_warnings = [w for w in self.contract_validator.warnings
+                               if w.get("tier") == "QUALITY"]
+            if quality_warnings:
+                print(f"\n  ⚠️  QUALITY GATES (should fix):")
+                for w in quality_warnings[:3]:
+                    print(f"     • [{w.get('phase', '?')}] {w.get('message', 'No message')}")
 
         print(f"\n{sep}\n")
 

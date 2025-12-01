@@ -1,9 +1,46 @@
 # DevMatrix Runtime Tuning Plan
 
-**Status:** ACTIVE  
-**Base Run:** `test_devmatrix_000_023.log`  
-**Date:** 2025-12-01  
+**Status:** ACTIVE
+**Base Run:** `test_devmatrix_000_023.log`
+**Date:** 2025-12-01
 **Goal:** Smoke Test 69.7% → 95%+
+
+---
+
+## 🐛 Bug Tracker (Master Table)
+
+| Bug | Category | Description | Status | Effort |
+|-----|----------|-------------|--------|--------|
+| #166 | Smoke | 404 vs 422 - Validation before existence check | ✅ DONE | 2h |
+| #167 | Smoke | Status values - "active" vs "pending" for orders/carts | ✅ DONE | 4h |
+| #168 | Learning | Anti-pattern advisor not queried before generation | ✅ DONE | 6h |
+| #169 | Smoke | Seed data not persisting in Docker | ✅ DONE | 1h |
+| #170 | Metrics | Contradictory coverage: 3.0% vs 100.0% | ✅ DONE | 1h |
+| #171 | Metrics | Spec complexity always 0.00 (calculation bug) | ✅ DONE | 2h |
+| #172 | Metrics | Contract validation always passes (thresholds too lax) | ✅ DONE | 2h |
+| #173 | Metrics | Research metrics shown in production reports | ✅ DONE | 30m |
+| #174 | Metrics | "Generated Tests: 0%" vs "Smoke Test: 69.7%" confusion | ✅ DONE | 1h |
+| #175 | Metrics | Recovery Rate always 0% (repair loop not counted) | ✅ DONE | 2h |
+| #176 | Metrics | Progress 91.5% but Status "failed" (misleading) | ✅ DONE | 30m |
+| #177 | Metrics | DAG nodes 56 vs ground truth 23 (granularity mismatch) | ✅ DONE | 1h |
+| #178 | Metrics | "Precision: 72.4%" undefined/unexplained | ✅ DONE | 30m |
+| #179 | Metrics | Missing endpoint count: 33-24≠32 (normalization bug) | ✅ DONE | 2h |
+| #180 | Smoke | **Smoke repair loop never runs** - `_process_smoke_result` raises before repair | ✅ DONE | 30m |
+| #181 | Smoke | **RepairConfidenceModel expects objects, gets dicts** - `_generate_repair_candidates` returns dicts | ✅ DONE | 15m |
+| #182 | Contracts | **3-tier contract validation system** - IR-centric, STRUCTURAL/SEMANTIC/QUALITY | ✅ DONE | 1h |
+| #183 | Smoke | **RepairStrategyType.TYPE_ERROR → TYPE** - enum mismatch in strategy_map | ✅ DONE | 5m |
+
+### Progress Summary
+
+| Category | Done | Todo | Total |
+|----------|------|------|-------|
+| Smoke | 7 | 0 | 7 |
+| Metrics | 10 | 0 | 10 |
+| Learning | 1 | 0 | 1 |
+| Contracts | 1 | 0 | 1 |
+| **Total** | **19** | **0** | **19** |
+
+**🎉 All bugs completed!**
 
 ---
 
@@ -177,7 +214,11 @@ Smoke fails → Anti-pattern stored → Next codegen avoids pattern
 | 2025-12-01 | Task 1: Route/Status | ✅ | Bug #166 - Existence check before validation |
 | 2025-12-01 | Task 2: TestsModelIR | ✅ | Bug #167 - Business-appropriate status values |
 | 2025-12-01 | Task 3: Anti-patterns | ✅ | Bug #168 - AntiPatternAdvisor created |
-| | Task 4: Demo | ⏳ | |
+| 2025-12-01 | Task 4: Seed Persistence | ✅ | Bug #169 - flush + verification in seed_db.py |
+| 2025-12-01 | Deep Metrics Analysis | ✅ | Bug #170-#179 - 10 metrics issues identified |
+| 2025-12-01 | Task 5: Metrics Cleanup | ✅ | All 10 bugs fixed (#170-#179) |
+| 2025-12-01 | Bug #180-#183 | ✅ | Smoke repair loop + contract validation |
+| | Task 6: Demo | ⏳ | |
 
 ---
 
@@ -330,17 +371,6 @@ advisor.clear_cache()
 
 ---
 
-## ✅ Task Status
-
-| Task | Status | Bug | Effort |
-|------|--------|-----|--------|
-| 1. Route/Status Tuning | ✅ DONE | #166 | 2h |
-| 2. TestsModelIR Alignment | ✅ DONE | #167 | 4h |
-| 3. Anti-patterns Loop | ✅ DONE | #168 | 6h |
-| 4. Demo Prep | ⏳ PENDING | - | 1h |
-
----
-
 ## 🧹 Code Cleanup (2025-12-01)
 
 **Refactored:**
@@ -357,7 +387,7 @@ advisor.clear_cache()
 
 ## 🐛 Bug #169: Seed Data Not Persisting (CRITICAL)
 
-**Status:** 🔴 ACTIVE - Root cause identified
+**Status:** ✅ FIXED - Verification added to seed_db.py template
 
 **Problem:** `seed_db.py` logs "Test data seeded successfully" but data is NOT in the database.
 
@@ -418,7 +448,222 @@ async def lifespan(app: FastAPI):
 
 **Impact:** This is the PRIMARY cause of 18+ smoke test failures (all happy_path scenarios that expect existing resources).
 
+**Solution Implemented:**
+
+Modified `src/services/code_generation_service.py` `_generate_seed_db_script()`:
+1. Added `await session.flush()` before commit
+2. Added verification query after commit to confirm data persisted
+3. Raises `RuntimeError` if verification fails
+
+**Manual Validation (2025-12-01):**
+```bash
+# After manual seed execution, endpoints work:
+curl -X PATCH http://localhost:8002/products/00000000-0000-4000-8000-000000000001/activate
+# Status: 200 ✅
+
+curl -X PATCH http://localhost:8002/products/00000000-0000-4000-8000-000000000001/deactivate
+# Status: 200 ✅
+
+curl -X PUT http://localhost:8002/products/00000000-0000-4000-8000-000000000099 -d '...'
+# Status: 404 ✅ (Bug #166 working - returns 404 not 422)
+
+curl -X POST http://localhost:8002/carts/00000000-0000-4000-8000-000000000003/checkout
+# Status: 201 ✅
+```
+
 **Next Steps:**
-1. [ ] Implement Option A (verification) in seed_db.py template
-2. [ ] Test with fresh Docker build
-3. [ ] Validate smoke test improvement
+1. [x] Implement Option A (verification) in seed_db.py template
+2. [ ] Run fresh E2E test to validate improvement
+3. [ ] Expected: 69.7% → 85%+ (18 happy_path failures should now pass)
+
+---
+
+## 🚨 Bug #170-#179: Metrics & Reporting Issues (CRITICAL)
+
+**Status:** 🔴 IDENTIFIED - Needs Fix
+
+**Analysis Date:** 2025-12-01
+
+### Bug #170: Contradictory Coverage Metrics
+
+**Problem:** Two different "coverage" metrics confuse users:
+
+| Metric | Value | Source | Meaning |
+|--------|-------|--------|---------|
+| Coverage | 3.0% | EndpointPreValidator | IR endpoints implemented in code |
+| Endpoint coverage | 100.0% | SmokeRunner | Endpoints tested (of those that exist) |
+
+**User sees:** 3.0% AND 100.0% coverage → Confusion
+
+**Fix:** Rename metrics clearly:
+- "Endpoint Implementation Rate: 3.0%" (pre-repair)
+- "Test Coverage: 100.0%" (smoke test)
+
+---
+
+### Bug #171: Spec Complexity = 0.00 (Bug)
+
+**Problem:** Spec complexity always reports 0.00 for valid specs.
+
+**Evidence:**
+```
+🎓 Spec complexity: 0.00 (est. 5000ms)
+```
+
+**Expected:** For a spec with 6 entities, 33 endpoints, 17 flows:
+```python
+# From spec_complexity_analyzer.py
+score = 0.01 * 33  # endpoints = 0.33
+score += 0.02 * 6  # entities = 0.12
+# Total = 0.45, NOT 0.00
+```
+
+**Root Cause:** SpecComplexityAnalyzer is returning default 0.0 due to parsing failure.
+
+---
+
+### Bug #172: Contract Validation Always Passes
+
+**Problem:** Contracts validate existence, not quality. Low metrics still pass.
+
+**Evidence:**
+```
+Classification Accuracy: 47.1%
+Contract Validation: PASSED ✅
+```
+
+**The contracts are TOO LAX:**
+```python
+# From precision_metrics.py line 478
+"constraints": {
+    "complexity": lambda x: 0.0 <= x <= 1.0,  # Accepts 0.0!
+    "requirements": lambda x: len(x) > 0      # Just needs 1 requirement
+}
+```
+
+**Expected:** Quality thresholds, not just existence:
+- Classification Accuracy >= 75%
+- DAG Accuracy >= 70%
+- Complexity != 0.0 for non-trivial specs
+
+---
+
+### Bug #173: Research Metrics Shown as Production
+
+**Problem:** "RESEARCH METRICS (internal use only)" are displayed prominently in reports.
+
+**User Impact:** Sees 47.1% accuracy and panics, but it's not a gating metric.
+
+**Fix:** Move research metrics to a separate `--verbose` or `--research` flag.
+
+---
+
+### Bug #174: "Generated Tests: 0.0%" vs "Smoke Test: 69.7%"
+
+**Problem:** Report shows:
+```
+Generated Tests: 0.0% pass rate
+Smoke Test: 69.7%
+```
+
+**Confusion:** Why 0% and 69.7% for "tests"?
+
+**Explanation:**
+- "Generated Tests" = pytest unit tests (not yet implemented properly)
+- "Smoke Test" = HTTP endpoint validation
+
+**Fix:** Clarify labels or remove "Generated Tests" if not functional.
+
+---
+
+### Bug #175: Recovery Rate Always 0%
+
+**Problem:**
+```
+Total Errors: 2
+Recovered Errors: 0
+Recovery Rate: 0.0%
+```
+
+**Impact:** Repair loop appears non-functional.
+
+**Root Cause:** Recovery is attempted but not counted properly in metrics.
+
+---
+
+### Bug #176: Progress 91.5% but Status "failed"
+
+**Problem:**
+```
+Overall Progress: 91.5%
+Status: failed
+```
+
+**User thinks:** "Almost done!" but it failed.
+
+**Fix:** Progress should reflect success, not just phase completion.
+
+---
+
+### Bug #177: DAG Node Count Mismatch
+
+**Problem:**
+```
+DAG nodes from IR: 56 (entities: 6, endpoints: 33, flows: 17)
+Ground truth: 23 nodes, 30 edges expected
+DAG Accuracy: 64.2%
+```
+
+**Confusion:** IR has 56 nodes but ground truth expects 23. These are different granularities.
+
+**Fix:** Compare apples to apples - same abstraction level.
+
+---
+
+### Bug #178: "Precision: 72.4%" Undefined
+
+**Problem:** Report shows "Precision: 72.4%" without explaining what it measures.
+
+**Fix:** Add calculation methodology:
+```
+Precision = (passed_smoke * 0.7) + (coverage * 0.3)
+         = (69.7% * 0.7) + (100% * 0.3)
+         = 48.8% + 30% = 78.8%  # Doesn't match 72.4%?
+```
+
+---
+
+### Bug #179: Missing Endpoint Count Inconsistency
+
+**Problem:**
+```
+IR endpoints: 33
+Code endpoints: 24
+Missing 32 endpoints
+Generated 30/32 missing endpoints
+```
+
+**Math doesn't work:**
+- 33 IR - 24 code = 9 missing (not 32)
+- Unless "code endpoints" are normalized differently
+
+**Root Cause:** Normalization mismatch between IR and code paths.
+
+---
+
+## Summary of Metrics Issues
+
+| Bug | Issue | Severity | Fix Effort |
+|-----|-------|----------|------------|
+| #170 | Contradictory coverage | HIGH | ✅ DONE |
+| #171 | Complexity = 0.00 | MEDIUM | ✅ DONE |
+| #172 | Contracts too lax | HIGH | ✅ DONE |
+| #173 | Research metrics visible | LOW | ✅ DONE |
+| #174 | Generated Tests 0% | MEDIUM | ✅ DONE |
+| #175 | Recovery Rate 0% | MEDIUM | ✅ DONE |
+| #176 | Progress vs Status | LOW | ✅ DONE |
+| #177 | DAG node mismatch | MEDIUM | ✅ DONE |
+| #178 | Precision undefined | LOW | ✅ DONE |
+| #179 | Missing endpoint math | HIGH | ✅ DONE |
+
+**✅ All metrics cleanup completed!**

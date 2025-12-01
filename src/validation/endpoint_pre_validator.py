@@ -121,9 +121,25 @@ class EndpointPreValidator:
                 result.missing_endpoints.append(gap)
 
         result.extra_endpoints = list(extra)
-        result.coverage_rate = len(code_set & ir_set) / len(ir_set) if ir_set else 1.0
+
+        # Bug #170 Fix: Calculate coverage correctly
+        # coverage_rate = matched endpoints / total IR endpoints
+        matched = len(ir_set & code_set)
+        result.coverage_rate = matched / len(ir_set) if ir_set else 1.0
+
+        # Bug #179 Fix: Log debugging info for normalization issues
+        if matched == 0 and len(ir_set) > 0 and len(code_set) > 0:
+            self._log_normalization_debug(ir_set, code_set)
 
         return result
+
+    def _log_normalization_debug(self, ir_set: set, code_set: set):
+        """Log debugging info when no endpoints match (Bug #179)."""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"[Bug #179] No endpoint matches found!")
+        logger.warning(f"  IR sample (first 3): {list(ir_set)[:3]}")
+        logger.warning(f"  Code sample (first 3): {list(code_set)[:3]}")
 
     def _normalize_path(self, path: str) -> str:
         """Normalize path parameters for comparison.
