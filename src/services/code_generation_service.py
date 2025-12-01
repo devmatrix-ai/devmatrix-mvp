@@ -206,6 +206,15 @@ class CodeGenerationService:
             logger.debug("PromptEnhancer not available (missing imports)")
 
 
+        # Bug #168: Initialize AntiPatternAdvisor for route generation advice
+        self.anti_pattern_advisor = None
+        try:
+            from src.learning.anti_pattern_advisor import get_anti_pattern_advisor
+            self.anti_pattern_advisor = get_anti_pattern_advisor()
+            logger.info("🛡️ AntiPatternAdvisor initialized (Bug #168)")
+        except Exception as e:
+            logger.debug(f"AntiPatternAdvisor not available: {e}")
+
         # Initialize modular architecture generator
         self.modular_generator = ModularArchitectureGenerator()
 
@@ -3898,6 +3907,24 @@ router = APIRouter(
 
 '''
 
+        # Bug #168: Query AntiPatternAdvisor for entity-specific advice
+        anti_pattern_advice = None
+        if self.anti_pattern_advisor:
+            try:
+                anti_pattern_advice = self.anti_pattern_advisor.get_advice_for_entity(entity.name)
+                if anti_pattern_advice.has_advice():
+                    logger.info(
+                        f"🛡️ AntiPattern advice for {entity.name}",
+                        extra={
+                            "entity": entity.name,
+                            "avoid_count": len(anti_pattern_advice.avoid_patterns),
+                            "use_count": len(anti_pattern_advice.use_patterns),
+                            "high_risk": anti_pattern_advice.high_risk_count,
+                        }
+                    )
+            except Exception as e:
+                logger.debug(f"Could not get anti-pattern advice: {e}")
+
         # Log endpoints being generated for debugging
         logger.info(
             f"Generating routes for {entity.name}",
@@ -5466,10 +5493,12 @@ datasources:
                     elif 'name' in attr_name.lower():
                         field_assignments.append(f'{attr_name}="Test {entity_name}"')
                     elif 'status' in attr_name.lower():
-                        # Common status values
+                        # Bug #167: Business-appropriate status values based on entity type
+                        # Orders/Carts need "pending" for checkout operations to work
+                        entity_lower = entity_name.lower()
                         if 'payment' in attr_name.lower():
                             field_assignments.append(f'{attr_name}="UNPAID"')
-                        elif 'order' in attr_name.lower():
+                        elif entity_lower in ['order', 'cart', 'basket', 'checkout'] or 'order' in attr_name.lower():
                             field_assignments.append(f'{attr_name}="PENDING"')
                         else:
                             field_assignments.append(f'{attr_name}="ACTIVE"')

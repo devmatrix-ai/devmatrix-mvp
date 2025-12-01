@@ -138,7 +138,8 @@ class TestsIRGenerator:
                 continue
 
             # Get default value for type
-            value = self._get_default_value(attr.data_type, attr.name)
+            # Bug #167: Pass entity name for business-appropriate status values
+            value = self._get_default_value(attr.data_type, attr.name, entity.name)
 
             # Handle foreign keys (detect by name pattern)
             if attr.name.endswith('_id'):
@@ -162,21 +163,40 @@ class TestsIRGenerator:
             source_entity_id=entity.name,
         )
 
-    def _get_default_value(self, data_type: DataType, field_name: str) -> Any:
-        """Get appropriate default value for field."""
+    def _get_default_value(self, data_type: DataType, field_name: str, entity_name: str = "") -> Any:
+        """Get appropriate default value for field.
+
+        Bug #167 Fix: Use business-appropriate status values based on entity type.
+        - Orders/Carts need "pending" status for checkout operations
+        - Products need "active" status for availability
+        - Users need "active" status for authentication
+        """
+        field_lower = field_name.lower()
+        entity_lower = entity_name.lower() if entity_name else ""
+
         # Special cases by field name
-        if 'email' in field_name.lower():
+        if 'email' in field_lower:
             return "test@example.com"
-        if 'name' in field_name.lower():
+        if 'name' in field_lower:
             return "Test Name"
-        if 'price' in field_name.lower():
+        if 'price' in field_lower:
             return 99.99
-        if 'quantity' in field_name.lower() or 'count' in field_name.lower():
+        if 'quantity' in field_lower or 'count' in field_lower:
             return 1
-        if 'status' in field_name.lower():
-            return "active"
-        if 'description' in field_name.lower():
+        if 'description' in field_lower:
             return "Test description"
+
+        # Bug #167: Business-appropriate status values
+        if 'status' in field_lower:
+            # Orders and Carts need "pending" for checkout/payment operations
+            if entity_lower in ['order', 'cart', 'basket', 'checkout']:
+                return "pending"
+            # Products, Users, Customers need "active" for availability
+            return "active"
+
+        # Bug #167: is_active should be True for most entities
+        if field_lower == 'is_active':
+            return True
 
         return self.DEFAULT_VALUES.get(data_type, "test")
 

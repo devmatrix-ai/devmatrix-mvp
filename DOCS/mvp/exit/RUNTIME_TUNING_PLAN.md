@@ -123,9 +123,9 @@ Smoke fails → Anti-pattern stored → Next codegen avoids pattern
    - Check enum values match IR
 
 **Deliverables:**
-- [ ] `AntiPatternAdvisor` class
-- [ ] Integration with `CodeGenerationService`
-- [ ] Feedback loop metrics
+- [x] `AntiPatternAdvisor` class
+- [x] Integration with `CodeGenerationService`
+- [x] Feedback loop metrics
 
 ---
 
@@ -175,8 +175,8 @@ Smoke fails → Anti-pattern stored → Next codegen avoids pattern
 |------|------|--------|-------|
 | 2025-12-01 | Plan created | ✅ | Based on test_devmatrix_000_023.log |
 | 2025-12-01 | Task 1: Route/Status | ✅ | Bug #166 - Existence check before validation |
-| | Task 2: TestsModelIR | ⏳ | |
-| | Task 3: Anti-patterns | ⏳ | |
+| 2025-12-01 | Task 2: TestsModelIR | ✅ | Bug #167 - Business-appropriate status values |
+| 2025-12-01 | Task 3: Anti-patterns | ✅ | Bug #168 - AntiPatternAdvisor created |
 | | Task 4: Demo | ⏳ | |
 
 ---
@@ -210,4 +210,132 @@ return result
 ```
 
 **Expected Impact:** Eliminates ~5 cases of "expected 404, got 422"
+
+---
+
+## 🐛 Bug #167: Business-Appropriate Status Values
+
+**Problem:** TestsModelIR and seed_db.py generate status="active" for all entities, but business operations like checkout/payment require status="pending".
+
+**Example Failure:**
+```
+POST /orders/{id}/checkout
+Expected: 200 (checkout success)
+Actual: 422 (validation error - order status must be "pending")
+```
+
+**Root Cause:**
+- `tests_ir_generator.py` line 177: `if 'status' in field_name.lower(): return "active"`
+- `code_generation_service.py` line 5475: `field_assignments.append(f'{attr_name}="ACTIVE"')`
+
+**Solution:** Use entity-aware status values:
+- Orders, Carts, Baskets, Checkouts → status="pending" (for checkout/payment operations)
+- Products, Users, Customers → status="active" (for availability)
+
+**Files Modified:**
+
+1. `src/services/tests_ir_generator.py`:
+   - Updated `_get_default_value()` to accept `entity_name` parameter
+   - Added entity-type-aware status logic
+
+2. `src/services/code_generation_service.py`:
+   - Updated `_generate_seed_db_script()` status handling
+   - Added entity-type check for pending vs active
+
+**Code Changes:**
+
+```python
+# tests_ir_generator.py - _get_default_value()
+if 'status' in field_lower:
+    # Orders and Carts need "pending" for checkout/payment operations
+    if entity_lower in ['order', 'cart', 'basket', 'checkout']:
+        return "pending"
+    # Products, Users, Customers need "active" for availability
+    return "active"
+```
+
+```python
+# code_generation_service.py - _generate_seed_db_script()
+elif 'status' in attr_name.lower():
+    entity_lower = entity_name.lower()
+    if entity_lower in ['order', 'cart', 'basket', 'checkout'] or 'order' in attr_name.lower():
+        field_assignments.append(f'{attr_name}="PENDING"')
+    else:
+        field_assignments.append(f'{attr_name}="ACTIVE"')
+```
+
+**Expected Impact:** Eliminates ~3-5 cases of "expected 200, got 422" on checkout/payment operations
+
+---
+
+## 🐛 Bug #168: AntiPatternAdvisor Integration
+
+**Problem:** Anti-patterns are stored after smoke test failures but never used to prevent the same errors in future code generation runs.
+
+**Solution:** Created `AntiPatternAdvisor` class that queries `NegativePatternStore` before code generation and provides recommendations.
+
+**Files Created:**
+- `src/learning/anti_pattern_advisor.py` - New advisor class
+
+**Files Modified:**
+- `src/services/code_generation_service.py` - Integrated advisor in constructor and `_generate_route_with_llm()`
+- `src/learning/feedback_collector.py` - Cache invalidation after storing new patterns
+
+**Architecture:**
+
+```
+┌─────────────────────┐     ┌──────────────────────┐
+│ CodeGenerationService│────▶│ AntiPatternAdvisor   │
+└─────────────────────┘     └──────────────────────┘
+                                      │
+                                      ▼
+                            ┌──────────────────────┐
+                            │ NegativePatternStore │
+                            │      (Neo4j)         │
+                            └──────────────────────┘
+                                      ▲
+                                      │
+┌─────────────────────┐     ┌──────────────────────┐
+│ RuntimeSmokeTest    │────▶│ FeedbackCollector    │
+└─────────────────────┘     └──────────────────────┘
+```
+
+**Key Methods:**
+```python
+# Get advice for entity
+advice = advisor.get_advice_for_entity("Order")
+if advice.has_advice():
+    prompt += advice.to_prompt_injection()
+
+# Get route-specific advice
+advice = advisor.get_route_generation_advice("Order", "PUT", "/{id}")
+
+# Cache invalidation after new patterns stored
+advisor.clear_cache()
+```
+
+**Expected Impact:** Prevents recurring errors by consulting historical failure patterns before generating new code.
+
+---
+
+## 📊 Summary of Changes
+
+| Bug | Files Modified | Problem | Solution |
+|-----|----------------|---------|----------|
+| #166 | `code_generation_service.py` | 404 vs 422 confusion | Existence check before validation |
+| #167 | `tests_ir_generator.py`, `code_generation_service.py` | Wrong status for orders/carts | Business-appropriate status values |
+| #168 | `anti_pattern_advisor.py`, `code_generation_service.py`, `feedback_collector.py` | Anti-patterns not used | AntiPatternAdvisor with feedback loop |
+
+**Total Expected Improvement:** ~8-10 fewer smoke test failures (from 69.7% to ~80%+)
+
+---
+
+## ✅ Task Status
+
+| Task | Status | Bug | Effort |
+|------|--------|-----|--------|
+| 1. Route/Status Tuning | ✅ DONE | #166 | 2h |
+| 2. TestsModelIR Alignment | ✅ DONE | #167 | 4h |
+| 3. Anti-patterns Loop | ✅ DONE | #168 | 6h |
+| 4. Demo Prep | ⏳ PENDING | - | 1h |
 

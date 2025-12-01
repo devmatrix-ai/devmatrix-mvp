@@ -188,6 +188,16 @@ class GenerationFeedbackCollector:
         if self._session_stats:
             self._session_stats.update(result)
 
+        # Bug #168: Invalidate AntiPatternAdvisor cache after storing new patterns
+        if result.total_processed > 0:
+            try:
+                from src.learning.anti_pattern_advisor import get_anti_pattern_advisor
+                advisor = get_anti_pattern_advisor()
+                advisor.clear_cache()
+                logger.debug(f"AntiPatternAdvisor cache cleared after {result.total_processed} patterns")
+            except Exception as e:
+                logger.debug(f"Could not clear advisor cache: {e}")
+
         # Log summary
         self._log_processing_result(result)
 
