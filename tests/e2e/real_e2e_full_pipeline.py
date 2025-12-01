@@ -215,6 +215,16 @@ except ImportError as e:
     generate_tests_ir = None
     SmokeRunnerV2 = None
 
+# Bug #10 Fix: Endpoint Pre-Validator (detect missing endpoints BEFORE smoke)
+try:
+    from src.validation.endpoint_pre_validator import EndpointPreValidator, PreValidationResult
+    ENDPOINT_PRE_VALIDATOR_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: EndpointPreValidator not available: {e}")
+    ENDPOINT_PRE_VALIDATOR_AVAILABLE = False
+    EndpointPreValidator = None
+    PreValidationResult = None
+
 # ApplicationIR Extraction (IR-centric architecture)
 from src.specs.spec_to_application_ir import SpecToApplicationIR
 
@@ -642,11 +652,15 @@ async def ensure_docker_running_for_smoke_test(app_dir: Path, timeout: float = 1
             try:
                 async with httpx.AsyncClient(timeout=5.0) as client:
                     response = await client.get(health_url)
-                    # Bug #114: Accept any status < 500 (like runtime_smoke_validator)
-                    if response.status_code < 500:
+                    # Bug #2 Fix: Only accept 200-299 as "server ready"
+                    # 404 means endpoint doesn't exist - server may be up but not healthy
+                    if 200 <= response.status_code < 300:
                         elapsed = time.time() - start_time
                         print(f"    ✅ Server ready in {elapsed:.1f}s (via {health_url})")
                         return True
+                    # Log non-success responses for debugging
+                    elif response.status_code >= 400:
+                        print(f"    ⏳ {health_url} returned {response.status_code}, trying next...")
             except Exception:
                 # Bug #113: Catch ALL exceptions including httpcore.RemoteProtocolError
                 pass
@@ -878,6 +892,9 @@ class RealE2ETest:
 
         # Stratum metrics snapshot (for quality gate evaluation in validation phase)
         self.stratum_metrics_snapshot = None
+
+        # Bug #7 Fix: Smoke test pass rate for quality gate
+        self.smoke_pass_rate = 0.0
 
         # Stratified Architecture Integration (Phase 2.5)
         self.execution_manager = None
@@ -3594,6 +3611,11 @@ Once running, visit:
             self.metrics_collector.complete_phase("runtime_smoke_test")
             return
 
+        # Bug #10 Fix: Pre-validate endpoints BEFORE running smoke tests
+        # This catches missing endpoints that would otherwise show as 404s
+        if ENDPOINT_PRE_VALIDATOR_AVAILABLE and EndpointPreValidator:
+            await self._pre_validate_endpoints()
+
         # TestsIR: Try IR-centric deterministic smoke test first (no LLM, 100% coverage)
         use_ir_smoke = TESTS_IR_AVAILABLE and os.environ.get("USE_IR_SMOKE_TEST", "1") == "1"
 
@@ -3607,20 +3629,13 @@ Once running, visit:
                 if not smoke_result.passed and smoke_result.violations:
                     print(f"\n  🔧 Starting Smoke-Driven Repair Loop ({len(smoke_result.violations)} violations)")
 
-                    # Create smoke validator for repair/re-test cycle
-                    smoke_validator = RuntimeSmokeTestValidator(
-                        app_dir=self.output_path,
-                        port=8002,
-                        startup_timeout=180.0,
-                        request_timeout=10.0,
-                        enforce_docker=self._docker_enforcement_enabled(),
-                    )
-
-                    # Attempt repair with the new orchestrator
+                    # Bug #5 Fix: Use SmokeRunnerV2 for repair cycle (same 76 scenarios)
+                    # This ensures consistency between initial IR smoke test and repair validation
                     await self._attempt_runtime_repair(
                         smoke_result.violations,
-                        smoke_validator,
-                        smoke_result=smoke_result
+                        smoke_validator=None,  # Don't use legacy RuntimeSmokeTestValidator
+                        smoke_result=smoke_result,
+                        use_ir_smoke=True  # Use SmokeRunnerV2 with tests_model
                     )
 
                     # Mark phase as failed if still not passed
@@ -3797,7 +3812,8 @@ Once running, visit:
         self,
         violations: List[Dict],
         smoke_validator,
-        smoke_result: Optional[SmokeTestResult] = None
+        smoke_result: Optional[SmokeTestResult] = None,
+        use_ir_smoke: bool = False  # Bug #5 Fix: Use SmokeRunnerV2 instead of RuntimeSmokeTestValidator
     ) -> None:
         """
         Task 10.7: Attempt to repair runtime violations using Smoke-Driven Repair.
@@ -3810,8 +3826,9 @@ Once running, visit:
 
         Args:
             violations: List of runtime violations from smoke test
-            smoke_validator: RuntimeSmokeTestValidator instance for re-testing
+            smoke_validator: RuntimeSmokeTestValidator instance for re-testing (DEPRECATED)
             smoke_result: Optional SmokeTestResult with server logs
+            use_ir_smoke: Bug #5 Fix - Use SmokeRunnerV2 with tests_model_ir (76 scenarios)
         """
         # Use new SmokeRepairOrchestrator if available
         if SMOKE_REPAIR_ORCHESTRATOR_AVAILABLE and SmokeRepairOrchestrator:
@@ -3842,10 +3859,31 @@ Once running, visit:
                 enable_learning=True
             )
 
-            orchestrator = SmokeRepairOrchestrator(
-                smoke_validator=smoke_validator,
-                config=config
-            )
+            # Bug #5 Fix: Use SmokeRunnerV2 for consistent metrics (76 scenarios)
+            if use_ir_smoke and hasattr(self, '_ir_smoke_tests_model') and self._ir_smoke_tests_model:
+                print(f"    🎯 Using IR-centric smoke test (76 scenarios) for repair validation")
+                orchestrator = SmokeRepairOrchestrator(
+                    smoke_validator=None,  # Don't use legacy RuntimeSmokeTestValidator
+                    smoke_runner_v2=SmokeRunnerV2(self._ir_smoke_tests_model, self._ir_smoke_base_url),
+                    tests_model_ir=self._ir_smoke_tests_model,
+                    base_url=self._ir_smoke_base_url,
+                    config=config
+                )
+            else:
+                # Legacy fallback: Use RuntimeSmokeTestValidator (30 endpoints only)
+                if smoke_validator is None:
+                    smoke_validator = RuntimeSmokeTestValidator(
+                        app_dir=self.output_path,
+                        port=8002,
+                        startup_timeout=180.0,
+                        request_timeout=10.0,
+                        enforce_docker=self._docker_enforcement_enabled(),
+                    )
+                print(f"    ⚠️ Using legacy RuntimeSmokeTestValidator (30 endpoints only)")
+                orchestrator = SmokeRepairOrchestrator(
+                    smoke_validator=smoke_validator,
+                    config=config
+                )
 
             # Capture smoke results before repair for IR realignment
             # EndpointTestResult has: endpoint_path, method, success (not 'passed'), status_code
@@ -4171,6 +4209,77 @@ Once running, visit:
             traceback.print_exc()
             return None
 
+    async def _pre_validate_endpoints(self) -> None:
+        """
+        Bug #10 Fix: Pre-validate endpoints BEFORE running smoke tests.
+
+        Compares IR endpoints vs generated route files to identify gaps.
+        If gaps are found, attempts to generate missing endpoints using CodeRepair.
+
+        This prevents 404 errors in smoke tests by ensuring all IR endpoints
+        exist in the generated code before testing.
+        """
+        print("\n  🔍 Pre-validating endpoints (Bug #10 Fix)...")
+
+        try:
+            validator = EndpointPreValidator(self.application_ir, self.output_path)
+            result = validator.validate()
+
+            print(f"    📊 IR endpoints: {len(result.ir_endpoints)}")
+            print(f"    📊 Code endpoints: {len(result.code_endpoints)}")
+            print(f"    📊 Coverage: {result.coverage_rate:.1%}")
+
+            if result.has_gaps:
+                print(f"    ⚠️ Missing {len(result.missing_endpoints)} endpoints:")
+                for gap in result.missing_endpoints[:5]:
+                    action_tag = " [ACTION]" if gap.is_action else ""
+                    print(f"       - {gap.method} {gap.path}{action_tag}")
+                if len(result.missing_endpoints) > 5:
+                    print(f"       ... and {len(result.missing_endpoints) - 5} more")
+
+                # Attempt to generate missing endpoints using CodeRepair
+                if SERVICES_AVAILABLE and self.code_repair_agent:
+                    print(f"\n    🔧 Attempting to generate missing endpoints...")
+                    generated = 0
+                    for gap in result.missing_endpoints:
+                        try:
+                            # Create endpoint_req-like object for CodeRepair
+                            class EndpointReq:
+                                def __init__(self, method, path, operation_id):
+                                    self.method = method
+                                    self.path = path
+                                    self.operation_id = operation_id
+
+                            endpoint_req = EndpointReq(gap.method, gap.path, gap.operation_id)
+                            repair_result = self.code_repair_agent.repair_missing_endpoint(endpoint_req)
+                            if repair_result:
+                                generated += 1
+                                print(f"       ✅ Generated: {gap.method} {gap.path}")
+                        except Exception as e:
+                            print(f"       ❌ Failed to generate {gap.method} {gap.path}: {e}")
+
+                    if generated > 0:
+                        print(f"    ✅ Generated {generated}/{len(result.missing_endpoints)} missing endpoints")
+                    else:
+                        print(f"    ⚠️ Could not generate any missing endpoints")
+                else:
+                    print(f"    ⚠️ CodeRepair not available, cannot generate missing endpoints")
+
+                self.metrics_collector.add_checkpoint("runtime_smoke_test", "CP-8.5.PRE_VALIDATE", {
+                    "ir_endpoints": len(result.ir_endpoints),
+                    "code_endpoints": len(result.code_endpoints),
+                    "missing_count": len(result.missing_endpoints),
+                    "coverage_rate": result.coverage_rate,
+                    "action_endpoints_missing": sum(1 for g in result.missing_endpoints if g.is_action)
+                })
+            else:
+                print(f"    ✅ All IR endpoints found in generated code")
+
+        except Exception as e:
+            print(f"    ⚠️ Pre-validation failed: {e}")
+            import traceback
+            traceback.print_exc()
+
     async def _run_ir_smoke_test(self) -> Optional[SmokeTestResult]:
         """
         TestsIR: Run IR-centric deterministic smoke tests.
@@ -4211,6 +4320,11 @@ Once running, visit:
             # Bug #111 Fix: Ensure Docker is running
             base_url = "http://127.0.0.1:8002"
             print(f"    🔗 Testing against: {base_url}")
+
+            # Bug #5 Fix: Store tests_model and base_url for repair loop
+            # This allows SmokeRepairOrchestrator to use the same 76 scenarios
+            self._ir_smoke_tests_model = tests_model
+            self._ir_smoke_base_url = base_url
 
             docker_available, docker_msg = check_docker_available()
             if not docker_available:
@@ -4324,11 +4438,18 @@ Once running, visit:
 
     def _process_smoke_result(self, smoke_result: SmokeTestResult) -> None:
         """Process smoke test result and update metrics."""
+        # Bug #7 Fix: Calculate and store smoke pass rate for quality gate
+        if smoke_result.endpoints_tested > 0:
+            self.smoke_pass_rate = smoke_result.endpoints_passed / smoke_result.endpoints_tested
+        else:
+            self.smoke_pass_rate = 0.0
+
         # Report results
         print(f"\n  📊 Smoke Test Results:")
         print(f"    - Scenarios tested: {smoke_result.endpoints_tested}")
         print(f"    - Passed: {smoke_result.endpoints_passed}")
         print(f"    - Failed: {smoke_result.endpoints_failed}")
+        print(f"    - Pass rate: {self.smoke_pass_rate:.1%}")  # Bug #7: Show pass rate
         print(f"    - Total time: {smoke_result.total_time_ms:.0f}ms")
 
         if smoke_result.passed:
@@ -5330,6 +5451,7 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
 
             # Evaluate quality gate
             # Bug #42 Fix: Pass ir_compliance_strict to evaluate()
+            # Bug #7 Fix: Pass smoke_pass_rate to evaluate()
             quality_gate_result = self.quality_gate.evaluate(
                 semantic_compliance=semantic_compliance,
                 ir_compliance_relaxed=ir_compliance_relaxed,
@@ -5337,6 +5459,7 @@ GENERATE COMPLETE REPAIRED CODE BELOW:
                 error_count=error_count,
                 warning_count=warning_count,
                 syntax_check=GateStatus.PASS if (validation_result and validation_result.passed) else GateStatus.FAIL,
+                smoke_pass_rate=self.smoke_pass_rate,  # Bug #7 Fix
                 stratum_metrics=self.stratum_metrics_snapshot.to_dict() if self.stratum_metrics_snapshot else {},
             )
 

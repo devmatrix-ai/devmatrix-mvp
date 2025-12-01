@@ -10,6 +10,7 @@ import hashlib
 import logging
 import os
 import re
+import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -17,6 +18,11 @@ from typing import Any, Dict, List, Optional
 from neo4j import GraphDatabase
 
 logger = logging.getLogger(__name__)
+
+# Suppress Neo4j "index/constraint already exists" notifications
+# These are INFO level and not errors - they just clutter the logs
+logging.getLogger("neo4j.notifications").setLevel(logging.WARNING)
+logging.getLogger("neo4j").setLevel(logging.WARNING)
 
 
 # =============================================================================
@@ -707,10 +713,13 @@ class NegativePatternStore:
         """
         min_occ = min_occurrences or self.MIN_OCCURRENCE_FOR_PROMPT
 
-        # Check cache first
+        # Bug #4 Fix: Normalize entity name for case-insensitive matching
+        entity_name_lower = entity_name.lower().strip()
+
+        # Check cache first (case-insensitive)
         cached = [
             p for p in self._cache.values()
-            if (p.entity_pattern == entity_name or p.entity_pattern == "*")
+            if (p.entity_pattern.lower() == entity_name_lower or p.entity_pattern == "*")
             and p.occurrence_count >= min_occ
         ]
 
@@ -719,9 +728,10 @@ class NegativePatternStore:
 
         try:
             with self.driver.session() as session:
+                # Bug #4 Fix: Use LOWER() for case-insensitive matching in Neo4j
                 result = session.run("""
                     MATCH (ap:GenerationAntiPattern)
-                    WHERE (ap.entity_pattern = $entity_name OR ap.entity_pattern = '*')
+                    WHERE (LOWER(ap.entity_pattern) = LOWER($entity_name) OR ap.entity_pattern = '*')
                       AND ap.occurrence_count >= $min_occ
                     RETURN ap
                     ORDER BY ap.occurrence_count DESC
@@ -824,12 +834,14 @@ class NegativePatternStore:
 
         # Extract entity from schema name (ProductCreate -> Product)
         entity_name = re.sub(r'(Create|Update|Read|Base|Schema)$', '', schema_name)
+        # Bug #4 Fix: Normalize for case-insensitive matching
+        entity_name_lower = entity_name.lower().strip()
 
-        # Get patterns for validation errors
+        # Get patterns for validation errors (case-insensitive)
         cached = [
             p for p in self._cache.values()
             if p.error_type == "validation"
-            and (p.entity_pattern == entity_name or p.entity_pattern == "*")
+            and (p.entity_pattern.lower() == entity_name_lower or p.entity_pattern == "*")
             and p.occurrence_count >= min_occ
         ]
 
@@ -838,10 +850,11 @@ class NegativePatternStore:
 
         try:
             with self.driver.session() as session:
+                # Bug #4 Fix: Use LOWER() for case-insensitive matching
                 result = session.run("""
                     MATCH (ap:GenerationAntiPattern)
                     WHERE ap.error_type = 'validation'
-                      AND (ap.entity_pattern = $entity_name OR ap.entity_pattern = '*')
+                      AND (LOWER(ap.entity_pattern) = LOWER($entity_name) OR ap.entity_pattern = '*')
                       AND ap.occurrence_count >= $min_occ
                     RETURN ap
                     ORDER BY ap.occurrence_count DESC
@@ -1522,7 +1535,7 @@ class NegativePatternStore:
                     "file_path": pattern.file_path,
                 })
 
-                self.logger.info(f"✅ Stored positive repair: {pattern.pattern_id} ({pattern.repair_type})")
+                self.logger.debug(f"Stored positive repair: {pattern.pattern_id} ({pattern.repair_type})")
                 return True
 
         except Exception as e:

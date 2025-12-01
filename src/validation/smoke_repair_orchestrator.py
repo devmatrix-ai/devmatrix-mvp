@@ -477,12 +477,27 @@ class SmokeRepairOrchestrator:
 
     def __init__(
         self,
-        smoke_validator,  # RuntimeSmokeTestValidator
+        smoke_validator=None,  # DEPRECATED: RuntimeSmokeTestValidator (30 endpoints only)
         code_repair_agent=None,  # CodeRepairAgent (optional)
         pattern_adapter=None,  # SmokeTestPatternAdapter for learning
-        config: Optional[SmokeRepairConfig] = None
+        config: Optional[SmokeRepairConfig] = None,
+        # Bug #5 Fix: IR-centric smoke testing (76 scenarios)
+        smoke_runner_v2=None,  # SmokeRunnerV2 instance
+        tests_model_ir=None,  # TestsModelIR for scenario regeneration
+        base_url: str = "http://localhost:8002",  # For SmokeRunnerV2 recreation
     ):
+        # Bug #5 Fix: Prefer IR-centric smoke testing (76 scenarios vs 30 endpoints)
+        self.smoke_runner_v2 = smoke_runner_v2
+        self.tests_model_ir = tests_model_ir
+        self.base_url = base_url
+        self.use_ir_smoke = smoke_runner_v2 is not None and tests_model_ir is not None
+
+        # Legacy fallback
         self.smoke_validator = smoke_validator
+        if smoke_validator and not self.use_ir_smoke:
+            logger.warning("⚠️ Using DEPRECATED RuntimeSmokeTestValidator (30 endpoints). "
+                          "Pass smoke_runner_v2 + tests_model_ir for IR-centric testing (76 scenarios).")
+
         self.code_repair_agent = code_repair_agent
         self.pattern_adapter = pattern_adapter
         self.config = config or SmokeRepairConfig()
@@ -687,9 +702,79 @@ class SmokeRepairOrchestrator:
         application_ir,
         capture_logs: bool
     ):
-        """Run smoke test with optional log capture."""
-        # The RuntimeSmokeTestValidator already handles this
-        return await self.smoke_validator.validate(application_ir)
+        """
+        Run smoke test - prefer IR-centric (76 scenarios) over legacy (30 endpoints).
+
+        Bug #5 Fix: Uses SmokeRunnerV2 when available for consistent metrics
+        between initial IR Smoke test and repair cycle validation.
+        """
+        if self.use_ir_smoke:
+            # IR-centric: 76 scenarios (deterministic, comprehensive)
+            # Re-create runner to ensure fresh state after repairs
+            from src.validation.smoke_runner_v2 import SmokeRunnerV2
+            runner = SmokeRunnerV2(self.tests_model_ir, self.base_url)
+            report = await runner.run()
+
+            # Convert SmokeTestReport to SmokeTestResult format for compatibility
+            return self._convert_report_to_result(report)
+        else:
+            # Legacy fallback: 30 endpoints only (DEPRECATED)
+            if self.smoke_validator:
+                return await self.smoke_validator.validate(application_ir)
+            else:
+                raise ValueError("No smoke validator configured. "
+                               "Pass smoke_runner_v2 + tests_model_ir or smoke_validator.")
+
+    def _convert_report_to_result(self, report):
+        """
+        Convert SmokeTestReport (SmokeRunnerV2) to SmokeTestResult format.
+
+        This ensures compatibility with the rest of the repair orchestrator
+        which expects SmokeTestResult from RuntimeSmokeTestValidator.
+        """
+        from src.validation.runtime_smoke_validator import SmokeTestResult, EndpointTestResult
+
+        # Convert violations from ScenarioResult failures
+        violations = []
+        results = []
+
+        for scenario_result in report.results:
+            # Create EndpointTestResult for each scenario
+            endpoint_result = EndpointTestResult(
+                endpoint_path=scenario_result.endpoint_path,
+                method=scenario_result.http_method,
+                success=scenario_result.status.value == "passed",
+                status_code=scenario_result.actual_status_code,
+                error_type=scenario_result.status.value if scenario_result.status.value != "passed" else None,
+                error_message=scenario_result.error_message,
+                response_time_ms=scenario_result.response_time_ms
+            )
+            results.append(endpoint_result)
+
+            # Create violation for failures
+            if scenario_result.status.value != "passed":
+                violations.append({
+                    "type": "smoke_test_failure",
+                    "severity": "high" if "happy_path" in scenario_result.scenario_name else "medium",
+                    "endpoint": f"{scenario_result.http_method} {scenario_result.endpoint_path}",
+                    "scenario": scenario_result.scenario_name,
+                    "expected_status": scenario_result.expected_status_code,
+                    "actual_status": scenario_result.actual_status_code,
+                    "error_message": scenario_result.error_message or f"Expected {scenario_result.expected_status_code}, got {scenario_result.actual_status_code}"
+                })
+
+        return SmokeTestResult(
+            passed=report.failed == 0,
+            endpoints_tested=report.total_scenarios,
+            endpoints_passed=report.passed,
+            endpoints_failed=report.failed,
+            violations=violations,
+            results=results,
+            total_time_ms=report.total_duration_ms,
+            server_startup_time_ms=0.0,  # SmokeRunnerV2 assumes server is already running
+            server_logs="",
+            stack_traces=[]
+        )
 
     def _calculate_pass_rate(self, smoke_result) -> float:
         """Calculate pass rate from smoke result."""

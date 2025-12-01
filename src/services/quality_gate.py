@@ -177,6 +177,10 @@ class QualityGateResult:
     regression_check: GateStatus = GateStatus.SKIP
     smoke_tests: GateStatus = GateStatus.SKIP
 
+    # Bug #7 Fix: Smoke test pass rate (0.0-1.0)
+    # This is the actual pass rate from IR Smoke test (76 scenarios)
+    smoke_pass_rate: float = 0.0
+
     # Counts
     error_count: int = 0
     warning_count: int = 0
@@ -224,18 +228,32 @@ class QualityGateResult:
                 message=f"{self.error_count} errors exceeds limit",
             ))
 
-        # Check warning count (if not allowed)
-        if not self.policy.allow_warnings and self.warning_count > self.policy.max_warnings:
-            self.failures.append(
-                f"Warnings: {self.warning_count} > max {self.policy.max_warnings}"
-            )
-            self.checks.append(QualityCheckResult(
-                check_name="warning_count",
-                status=GateStatus.FAIL,
-                value=self.warning_count,
-                threshold=self.policy.max_warnings,
-                message=f"{self.warning_count} warnings exceeds limit",
-            ))
+        # Check warning count
+        # Bug #6 Fix: Always evaluate warnings against max_warnings threshold
+        # When allow_warnings=True, exceeding threshold is a WARNING (not FAIL)
+        # When allow_warnings=False, exceeding threshold is a FAIL
+        if self.warning_count > self.policy.max_warnings:
+            if self.policy.allow_warnings:
+                # Soft failure: log warning but don't fail gate
+                self.checks.append(QualityCheckResult(
+                    check_name="warning_count",
+                    status=GateStatus.WARN,
+                    value=self.warning_count,
+                    threshold=self.policy.max_warnings,
+                    message=f"{self.warning_count} warnings exceeds limit (allowed in {self.environment.value})",
+                ))
+            else:
+                # Hard failure: fail the gate
+                self.failures.append(
+                    f"Warnings: {self.warning_count} > max {self.policy.max_warnings}"
+                )
+                self.checks.append(QualityCheckResult(
+                    check_name="warning_count",
+                    status=GateStatus.FAIL,
+                    value=self.warning_count,
+                    threshold=self.policy.max_warnings,
+                    message=f"{self.warning_count} warnings exceeds limit",
+                ))
 
         # Check regressions (if not allowed)
         if not self.policy.allow_regressions and self.regression_count > 0:
@@ -273,6 +291,42 @@ class QualityGateResult:
         # Check smoke tests
         if self.policy.require_smoke_tests:
             self._check_status("smoke_tests", self.smoke_tests)
+
+        # Bug #7 Fix: Check smoke pass rate if provided
+        # In staging/production, smoke must be 100% (1.0)
+        # In dev, smoke failures are warnings (not blocking)
+        if self.smoke_pass_rate > 0:  # Only check if smoke was run
+            if self.policy.require_smoke_tests:
+                # Strict: smoke must be 100%
+                if self.smoke_pass_rate < 1.0:
+                    self.failures.append(
+                        f"Smoke pass rate: {self.smoke_pass_rate:.1%} < 100%"
+                    )
+                    self.checks.append(QualityCheckResult(
+                        check_name="smoke_pass_rate",
+                        status=GateStatus.FAIL,
+                        value=self.smoke_pass_rate,
+                        threshold=1.0,
+                        message=f"Smoke test pass rate {self.smoke_pass_rate:.1%} below 100%",
+                    ))
+                else:
+                    self.checks.append(QualityCheckResult(
+                        check_name="smoke_pass_rate",
+                        status=GateStatus.PASS,
+                        value=self.smoke_pass_rate,
+                        threshold=1.0,
+                        message=f"Smoke test pass rate {self.smoke_pass_rate:.1%}",
+                    ))
+            else:
+                # Informational: log smoke rate but don't fail
+                status = GateStatus.PASS if self.smoke_pass_rate >= 0.8 else GateStatus.WARN
+                self.checks.append(QualityCheckResult(
+                    check_name="smoke_pass_rate",
+                    status=status,
+                    value=self.smoke_pass_rate,
+                    threshold=0.8,
+                    message=f"Smoke test pass rate {self.smoke_pass_rate:.1%} (informational)",
+                ))
 
         self.passed = len(self.failures) == 0
         return self.passed
@@ -420,6 +474,7 @@ class QualityGate:
         syntax_check: Optional[GateStatus] = None,
         regression_check: Optional[GateStatus] = None,
         smoke_tests: Optional[GateStatus] = None,
+        smoke_pass_rate: float = 0.0,  # Bug #7 Fix: Smoke test pass rate
         stratum_metrics: Optional[Dict[str, Any]] = None,
     ) -> QualityGateResult:
         """
@@ -438,6 +493,7 @@ class QualityGate:
             syntax_check: Syntax validation status
             regression_check: Regression pattern check status
             smoke_tests: Smoke test status
+            smoke_pass_rate: Bug #7 Fix - Smoke test pass rate (0.0 - 1.0)
             stratum_metrics: Metrics from Phase 3
 
         Returns:
@@ -458,6 +514,7 @@ class QualityGate:
             syntax_check=syntax_check or GateStatus.SKIP,
             regression_check=regression_check or GateStatus.SKIP,
             smoke_tests=smoke_tests or GateStatus.SKIP,
+            smoke_pass_rate=smoke_pass_rate,  # Bug #7 Fix
             stratum_metrics=stratum_metrics or {},
         )
 
@@ -636,12 +693,26 @@ def format_gate_report(result: QualityGateResult) -> str:
     lines.append(f"│   IR Relaxed:{result.ir_compliance_relaxed:>6.1%} ≥ {policy.min_ir_compliance_relaxed:>6.1%} {ir_ok}              │")
     lines.append(f"│   IR Strict: {result.ir_compliance_strict:>6.1%} ≥ {policy.min_ir_compliance_strict:>6.1%} {strict_ok}              │")
 
+    # Bug #7 Fix: Show smoke pass rate if available
+    if result.smoke_pass_rate > 0:
+        lines.append("├──────────────────────────────────────────────────┤")
+        lines.append("│ Smoke Tests                                      │")
+        smoke_ok = "✅" if result.smoke_pass_rate >= 1.0 else ("⚠️" if result.smoke_pass_rate >= 0.8 else "❌")
+        smoke_threshold = "100.0%" if policy.require_smoke_tests else " 80.0%"
+        lines.append(f"│   Pass Rate: {result.smoke_pass_rate:>6.1%} ≥ {smoke_threshold} {smoke_ok}              │")
+
     lines.append("├──────────────────────────────────────────────────┤")
     lines.append("│ Quality Counts                                   │")
 
     # Quality counts
     err_ok = "✅" if result.error_count <= policy.max_errors else "❌"
-    warn_ok = "✅" if result.warning_count <= policy.max_warnings else "❌"
+    # Bug #6 Fix: Show warning status correctly (⚠️ if exceeded but allowed)
+    if result.warning_count <= policy.max_warnings:
+        warn_ok = "✅"
+    elif policy.allow_warnings:
+        warn_ok = "⚠️"  # Exceeded but allowed
+    else:
+        warn_ok = "❌"
     reg_ok = "✅" if result.regression_count == 0 or policy.allow_regressions else "❌"
 
     lines.append(f"│   Errors:    {result.error_count:>4} ≤ {policy.max_errors:>4} {err_ok}                      │")

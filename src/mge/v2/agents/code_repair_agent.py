@@ -371,7 +371,7 @@ class CodeRepairAgent:
             )
 
             store.store_positive_repair(pattern)
-            logger.info(f"✅ Recorded successful repair: {repair_type} → {fix_description[:50]}")
+            logger.debug(f"Recorded successful repair: {repair_type} → {fix_description[:50]}")
 
         except Exception as e:
             # Don't fail the repair just because learning failed

@@ -10,6 +10,7 @@ Resolves:
 - Metrics: Unified metrics compatible with Code Repair
 """
 import asyncio
+import logging
 import httpx
 import time
 from typing import List, Dict, Any, Optional, Tuple
@@ -23,6 +24,10 @@ from src.cognitive.ir.tests_model import (
     TestPriority,
     ExpectedOutcome,
 )
+
+# Bug #9: Silence httpx verbose logging - only show errors
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 class ScenarioStatus(str, Enum):
@@ -134,6 +139,8 @@ class SmokeRunnerV2:
                 elif result.status == ScenarioStatus.FAILED:
                     report.failed += 1
                     report.failed_endpoints.append(f"{scenario.http_method} {scenario.endpoint_path}")
+                    # Bug #9: Only print failures (not all HTTP requests)
+                    print(f"    ❌ {result.http_method} {result.endpoint_path}: expected {result.expected_status_code}, got {result.actual_status_code}")
                 elif result.status == ScenarioStatus.SKIPPED:
                     report.skipped += 1
                 else:
@@ -313,21 +320,25 @@ class SmokeRunnerV2:
         scenario: TestScenarioIR,
         response: httpx.Response,
     ) -> ScenarioStatus:
-        """Evaluate if response matches expected outcome."""
-        # Check status code
+        """Evaluate if response matches expected outcome.
+
+        QA-strict mode: Only exact status code match is accepted.
+        This ensures:
+        - 201 (Created with body) is not confused with 204 (No Content)
+        - 200 (OK with body) is not confused with 204 (No Content)
+        - If IR says 201, the code MUST return 201
+        """
+        # QA-strict: Only exact match is accepted
         if response.status_code == scenario.expected_status_code:
             return ScenarioStatus.PASSED
 
-        # Check outcome category
+        # Log mismatch for debugging (but still fail)
+        # This helps identify if it's a "close miss" vs completely wrong
         if scenario.expected_outcome == ExpectedOutcome.SUCCESS:
             if 200 <= response.status_code < 300:
-                return ScenarioStatus.PASSED
-        elif scenario.expected_outcome == ExpectedOutcome.CLIENT_ERROR:
-            if 400 <= response.status_code < 500:
-                return ScenarioStatus.PASSED
-        elif scenario.expected_outcome == ExpectedOutcome.VALIDATION_ERROR:
-            if response.status_code == 422:
-                return ScenarioStatus.PASSED
+                # Close miss - right category but wrong code
+                # e.g., expected 201 got 200, or expected 200 got 204
+                pass  # Still fails, but could be logged
 
         return ScenarioStatus.FAILED
 
