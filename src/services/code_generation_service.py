@@ -191,6 +191,21 @@ class CodeGenerationService:
         else:
             self.enable_active_learning = False
 
+        # Initialize PromptEnhancer for anti-pattern injection (LEARNING_GAPS Phase 1.1)
+        self.enable_prompt_enhancement = True
+        self.prompt_enhancer: Optional["GenerationPromptEnhancer"] = None
+        if GENERATION_FEEDBACK_AVAILABLE:
+            try:
+                self.prompt_enhancer = get_prompt_enhancer()
+                logger.info("🎓 PromptEnhancer initialized (LEARNING_GAPS Phase 1.1)")
+            except Exception as e:
+                logger.warning(f"Could not initialize PromptEnhancer: {e}")
+                self.enable_prompt_enhancement = False
+        else:
+            self.enable_prompt_enhancement = False
+            logger.debug("PromptEnhancer not available (missing imports)")
+
+
         # Initialize modular architecture generator
         self.modular_generator = ModularArchitectureGenerator()
 
@@ -237,6 +252,7 @@ class CodeGenerationService:
                 "pattern_promotion": self.enable_pattern_promotion,
                 "dag_sync": self.enable_dag_sync,
                 "active_learning": self.enable_active_learning,
+                "prompt_enhancement": self.enable_prompt_enhancement,
                 "cognitive_pass": self.enable_cognitive_pass,
                 "pattern_bank_enabled": self.pattern_bank is not None,
                 "rag_enabled": self.rag_retriever is not None,
@@ -1678,12 +1694,60 @@ Generate code that is ready to run with `uvicorn main:app --reload` without any 
             file_type_detection=file_type_detection,
         )
 
+
         # Get appropriate strategy and generate prompt
         strategy = PromptStrategyFactory.get_strategy(file_type_detection.file_type)
         generated_prompt = strategy.generate_prompt(context)
 
         # Extract prompt text from GeneratedPrompt object
-        return generated_prompt.prompt if hasattr(generated_prompt, 'prompt') else generated_prompt
+        base_prompt = generated_prompt.prompt if hasattr(generated_prompt, 'prompt') else generated_prompt
+        
+        # LEARNING_GAPS Phase 1.1: Enhance prompt with learned anti-patterns
+        if self.enable_prompt_enhancement and self.prompt_enhancer:
+            try:
+                # Detect task type from task name/description
+                task_lower = task.name.lower() + " " + task.description.lower()
+                
+                if "entity" in task_lower or "model" in task_lower or "entities.py" in task_lower:
+                    # Entity generation task
+                    entity_name = self._extract_entity_name_from_task(task)
+                    if entity_name:
+                        enhanced = self.prompt_enhancer.enhance_entity_prompt(base_prompt, entity_name)
+                        injected_count = len(self.prompt_enhancer.get_injected_patterns())
+                        logger.info(f"🎓 Prompt enhanced for entity '{entity_name}' with {injected_count} anti-patterns")
+                        return enhanced
+                
+                elif "endpoint" in task_lower or "route" in task_lower or "api" in task_lower:
+                    # Endpoint generation task
+                    endpoint_pattern = self._extract_endpoint_pattern_from_task(task)
+                    if endpoint_pattern:
+                        enhanced = self.prompt_enhancer.enhance_endpoint_prompt(base_prompt, endpoint_pattern)
+                        injected_count = len(self.prompt_enhancer.get_injected_patterns())
+                        logger.info(f"🎓 Prompt enhanced for endpoint '{endpoint_pattern}' with {injected_count} anti-patterns")
+                        return enhanced
+                
+                elif "schema" in task_lower or "pydantic" in task_lower:
+                    # Schema generation task
+                    schema_name = self._extract_schema_name_from_task(task)
+                    if schema_name:
+                        enhanced = self.prompt_enhancer.enhance_schema_prompt(base_prompt, schema_name)
+                        injected_count = len(self.prompt_enhancer.get_injected_patterns())
+                        logger.info(f"🎓 Prompt enhanced for schema '{schema_name}' with {injected_count} anti-patterns")
+                        return enhanced
+                
+                # Generic enhancement for other tasks
+                enhanced = self.prompt_enhancer.enhance_generic_prompt(base_prompt)
+                injected_count = len(self.prompt_enhancer.get_injected_patterns())
+                if injected_count > 0:
+                    logger.info(f"🎓 Prompt enhanced (generic) with {injected_count} anti-patterns")
+                return enhanced
+                
+            except Exception as e:
+                logger.warning(f"Failed to enhance prompt: {e}, using base prompt")
+                return base_prompt
+        
+        return base_prompt
+
 
     def _build_prompt_with_feedback(
         self, task: MasterPlanTask, similar_errors: list, successful_patterns: list, last_error: str
@@ -1888,6 +1952,57 @@ Code MUST pass Python compile() without SyntaxError."""
 
         # Default to python
         return "python"
+
+    def _extract_entity_name_from_task(self, task: MasterPlanTask) -> Optional[str]:
+        """Extract entity name from task description/name (LEARNING_GAPS Phase 1.1)."""
+        import re
+        text = task.name + " " + task.description
+        
+        # "Generate/Create Product entity" -> "Product"
+        match = re.search(r'(?:generate|create|implement|add)\s+(\w+)\s+(?:entity|model)', text, re.IGNORECASE)
+        if match:
+            return match.group(1).capitalize()
+        
+        # "entities.py for Cart" -> "Cart"
+        match = re.search(r'entities\.py\s+for\s+(\w+)', text, re.IGNORECASE)
+        if match:
+            return match.group(1).capitalize()
+        
+        return None
+    
+    def _extract_endpoint_pattern_from_task(self, task: MasterPlanTask) -> Optional[str]:
+        """Extract endpoint pattern from task description/name (LEARNING_GAPS Phase 1.1)."""
+        import re
+        text = task.name + " " + task.description
+        
+        # "POST /products" -> "/products"
+        match = re.search(r'(?:GET|POST|PUT|DELETE|PATCH)\s+(/[\w/{}-]+)', text, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        
+        # "endpoint for /products" -> "/products"
+        match = re.search(r'endpoint\s+for\s+(/[\w/{}-]+)', text, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        
+        return None
+    
+    def _extract_schema_name_from_task(self, task: MasterPlanTask) -> Optional[str]:
+        """Extract schema name from task description/name (LEARNING_GAPS Phase 1.1)."""
+        import re
+        text = task.name + " " + task.description
+        
+        # "ProductCreate schema" -> "ProductCreate"
+        match = re.search(r'(\w+(?:Create|Update|Response|List|Base))\s+schema', text, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        
+        # "Pydantic Product model" -> "Product"
+        match = re.search(r'Pydantic\s+(\w+)\s+model', text, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        
+        return None
 
     def _calculate_cost(self, response: Dict[str, Any]) -> float:
         """
