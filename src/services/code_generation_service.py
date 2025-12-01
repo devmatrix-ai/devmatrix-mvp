@@ -508,6 +508,159 @@ class CodeGenerationService:
         else:
             return "service"  # Default to service layer
 
+    async def _apply_antipattern_repair_pass(
+        self,
+        files_dict: Dict[str, str],
+        avoidance_context: str,
+        app_ir
+    ) -> Dict[str, str]:
+        """
+        Apply Anti-Pattern Repair Pass to generated code.
+
+        This method fixes Bug #1: avoidance_context was calculated but never used.
+        After PatternBank composes templates, this pass uses LLM to apply
+        learned anti-patterns to prevent known errors.
+
+        Args:
+            files_dict: Dictionary of file_path -> file_content from PatternBank
+            avoidance_context: String with anti-pattern warnings from _get_avoidance_context
+            app_ir: ApplicationIR for context
+
+        Returns:
+            Updated files_dict with repairs applied
+        """
+        # Target files that commonly have anti-pattern issues
+        TARGET_PATTERNS = [
+            "src/api/routes/",
+            "src/models/entities.py",
+            "src/models/schemas.py",
+            "src/services/",
+            "src/repositories/",
+        ]
+
+        files_to_repair = []
+        for file_path in files_dict:
+            if any(pattern in file_path for pattern in TARGET_PATTERNS):
+                # Skip __init__.py files
+                if file_path.endswith("__init__.py"):
+                    continue
+                files_to_repair.append(file_path)
+
+        if not files_to_repair:
+            logger.debug("No files match anti-pattern repair targets")
+            return files_dict
+
+        logger.info(
+            f"🔧 Anti-Pattern Repair: Processing {len(files_to_repair)} files",
+            extra={"files": files_to_repair}
+        )
+
+        repaired_count = 0
+        for file_path in files_to_repair:
+            original_content = files_dict[file_path]
+
+            try:
+                repaired_content = await self._repair_file_with_antipatterns(
+                    file_path, original_content, avoidance_context, app_ir
+                )
+
+                if repaired_content and repaired_content != original_content:
+                    files_dict[file_path] = repaired_content
+                    repaired_count += 1
+                    logger.info(f"    ✅ Repaired: {file_path}")
+
+            except Exception as e:
+                logger.warning(f"    ⚠️ Repair failed for {file_path}: {e}")
+                # Keep original content on failure
+
+        print(f"🎓 Anti-Pattern Repair Pass: {repaired_count}/{len(files_to_repair)} files updated")
+
+        return files_dict
+
+    async def _repair_file_with_antipatterns(
+        self,
+        file_path: str,
+        content: str,
+        avoidance_context: str,
+        app_ir
+    ) -> Optional[str]:
+        """
+        Use LLM to repair a single file based on anti-patterns.
+
+        Args:
+            file_path: Path of the file being repaired
+            content: Current file content
+            avoidance_context: Anti-pattern warnings to apply
+            app_ir: ApplicationIR for context
+
+        Returns:
+            Repaired content or None if no changes needed
+        """
+        # Skip small files (likely just boilerplate)
+        if len(content) < 100:
+            return None
+
+        # Build repair prompt
+        prompt = f"""You are a code repair assistant. Your task is to fix potential issues in the following Python code based on learned anti-patterns from previous failures.
+
+## ANTI-PATTERNS TO AVOID
+{avoidance_context}
+
+## FILE TO REPAIR: {file_path}
+```python
+{content}
+```
+
+## INSTRUCTIONS
+1. Review the code for any violations of the anti-patterns listed above
+2. Fix ONLY the issues related to the anti-patterns - do not change working code
+3. Common fixes include:
+   - Adding missing imports
+   - Fixing incorrect HTTP status codes (e.g., 204 for DELETE should return nothing)
+   - Adding proper error handling for edge cases
+   - Fixing type mismatches in Pydantic models
+4. Return the COMPLETE fixed code, not just the changes
+5. If no changes are needed, return the original code exactly as-is
+
+## FIXED CODE (complete file):
+```python
+"""
+
+        try:
+            # Use the LLM provider
+            response = await self.llm_provider.generate(
+                prompt=prompt,
+                max_tokens=4000,
+                temperature=0.1  # Low temperature for conservative fixes
+            )
+
+            # Extract code from response
+            repaired_code = self._extract_code_from_response(response)
+
+            if repaired_code and len(repaired_code) > 50:
+                return repaired_code
+            else:
+                return None
+
+        except Exception as e:
+            logger.warning(f"LLM repair failed for {file_path}: {e}")
+            return None
+
+    def _extract_code_from_response(self, response: str) -> Optional[str]:
+        """Extract Python code from LLM response."""
+        import re
+
+        # Try to extract code block
+        code_match = re.search(r'```python\s*(.*?)```', response, re.DOTALL)
+        if code_match:
+            return code_match.group(1).strip()
+
+        # If no code block, check if response looks like Python code
+        if response.strip().startswith(('import ', 'from ', 'class ', 'def ', '#')):
+            return response.strip()
+
+        return None
+
     async def generate_modular_app(self, spec_requirements) -> Dict[str, str]:
         """
         Generate modular FastAPI application (Task Group 2: Modular Architecture).
@@ -922,6 +1075,17 @@ class CodeGenerationService:
                 files_dict.update(behavior_files)
             else:
                 logger.info('No BehaviorModelIR found, skipping behavior generation')
+
+            # ANTI-PATTERN REPAIR PASS: Apply learned patterns to prevent known errors
+            # This fixes Bug #1: avoidance_context calculated but never used
+            if avoidance_context:
+                logger.info(
+                    "🔧 Applying Anti-Pattern Repair Pass",
+                    extra={"avoidance_context_length": len(avoidance_context)}
+                )
+                files_dict = await self._apply_antipattern_repair_pass(
+                    files_dict, avoidance_context, app_ir
+                )
 
             # Add __init__.py files for Python packages
             package_dirs = [

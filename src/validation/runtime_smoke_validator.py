@@ -431,8 +431,13 @@ class RuntimeSmokeTestValidator:
                 try:
                     async with httpx.AsyncClient() as client:
                         response = await client.get(health_url, timeout=2.0)
-                        if response.status_code < 500:
+                        # Bug #2 Fix: Only accept 200-299 as "server ready"
+                        # Previously accepted 404 which gave false positives
+                        if 200 <= response.status_code < 300:
                             return  # Server is ready
+                        elif response.status_code >= 500:
+                            last_error = f"Health check returned {response.status_code}"
+                        # 4xx means endpoint exists but wrong - try next endpoint
                 except Exception as e:
                     last_error = e
 
