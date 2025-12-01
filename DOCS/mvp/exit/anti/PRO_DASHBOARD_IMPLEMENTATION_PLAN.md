@@ -349,16 +349,29 @@ with DashboardManager() as dash:
 
 ## 📋 Plan de Trabajo (v3.0)
 
-| # | Task | Effort | Entregable |
-|---|------|--------|------------|
-| 1 | **DashboardState** | 1h | Dataclass con estado |
-| 2 | **DashboardRenderer** | 3h | Genera Rich Layout |
-| 3 | **DashboardManager** | 2h | Wrapper con API |
-| 4 | **Integrar en pipeline** | 2h | Reemplazar prints |
-| 5 | **Tests** | 1h | Unit tests básicos |
-| 6 | **Docs** | 1h | README con ejemplos |
+| # | Task | Effort | Entregable | Status |
+|---|------|--------|------------|--------|
+| 1 | **DashboardState** | 1h | Dataclass con estado | ✅ DONE |
+| 2 | **DashboardRenderer** | 3h | Genera Rich Layout | ✅ DONE |
+| 3 | **DashboardManager** | 2h | Wrapper con API | ✅ DONE |
+| 4 | **Integrar en pipeline** | 2h | Reemplazar prints | 🔮 DEFERRED |
+| 5 | **Tests** | 1h | Unit tests básicos | 🔮 DEFERRED |
+| 6 | **Docs** | 1h | README con ejemplos | 🔮 DEFERRED |
 
-**Total: ~10h**
+**Progress: 3/6 tasks complete (Core components ready)**
+
+### Archivos Creados:
+- `src/console/dashboard_state.py` - Dataclass con estado completo
+- `src/console/dashboard_renderer.py` - Renderer con 3 zonas (Hero, Metrics, Logs)
+- `src/console/dashboard_manager.py` - API pública con context manager
+
+### Decisión (Dic 2025):
+**Tasks 4-6 diferidos hasta refactor del pipeline.**
+- El pipeline actual tiene ~41 prints dispersos
+- Integración requiere refactor significativo
+- Componentes core están listos para cuando se necesiten
+
+**Total: ~10h (3h completadas, 7h diferidas)**
 
 ---
 
