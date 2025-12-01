@@ -1488,6 +1488,36 @@ ItemSchema = Dict[str, Any]
                     elif constraint_normalized == 'business_rule':
                         # Business rules are not field-level validations, skip
                         logger.debug(f"ℹ️ Skipping 'business_rule' constraint for {field_name} (not a field validation)")
+                    # =========================================================
+                    # Phase 1: Constraint Parser Enhancement (Bug #167)
+                    # Handle "type: value" format constraints from ValidationModelIR
+                    # =========================================================
+                    elif constraint_normalized.startswith('presence_') or constraint_normalized.startswith('presence:'):
+                        # "presence: required" → mark field as required
+                        required = True
+                        logger.debug(f"✅ Parsed 'presence: required' → required=True for {field_name}")
+                    elif constraint_normalized.startswith('uniqueness_') or constraint_normalized.startswith('uniqueness:'):
+                        # "uniqueness: unique" → skip (DB constraint, not Pydantic)
+                        # Uniqueness is enforced at database level, not schema level
+                        logger.debug(f"ℹ️ Skipping 'uniqueness' constraint for {field_name} (enforced at DB level)")
+                    elif constraint_normalized in ('min_value', 'max_value', 'min_length', 'max_length'):
+                        # Standalone constraint name without value - skip with info
+                        # These need actual values to be useful (e.g., "min_value=0")
+                        logger.debug(f"ℹ️ Skipping standalone '{constraint}' for {field_name} (no value provided)")
+                    elif constraint_normalized in ('pattern', 'format', 'enum_values'):
+                        # Standalone constraint name without value - skip with info
+                        # These need actual values (e.g., "pattern=r'^...$'")
+                        logger.debug(f"ℹ️ Skipping standalone '{constraint}' for {field_name} (no value provided)")
+                    elif constraint_normalized.startswith('relationship_') or constraint_normalized.startswith('relationship:'):
+                        # "relationship: must reference existing X" → FK validation
+                        # This is enforced at service/DB level, not schema
+                        logger.debug(f"ℹ️ Skipping 'relationship' constraint for {field_name} (enforced at service/DB level)")
+                    elif constraint_normalized.startswith('status_transition') or constraint_normalized.startswith('workflow_'):
+                        # Status transitions are enforced in service layer
+                        logger.debug(f"ℹ️ Skipping '{constraint_normalized}' for {field_name} (enforced in service layer)")
+                    elif constraint_normalized == 'unique':
+                        # Simple "unique" constraint - DB level
+                        logger.debug(f"ℹ️ Skipping 'unique' constraint for {field_name} (enforced at DB level)")
                     else:
                         logger.warning(f"⚠️ Unparsed constraint '{constraint}' (normalized: '{constraint_normalized}') for {field_name} - SKIPPING")
                 else:
