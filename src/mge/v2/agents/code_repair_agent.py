@@ -30,6 +30,7 @@ from src.services.production_code_generators import normalize_field_name
 
 # Gap 4: Fix Pattern Learning imports (lazy to avoid circular imports)
 _error_pattern_store = None
+_negative_pattern_store = None
 
 def _get_error_pattern_store():
     """Lazy load ErrorPatternStore to avoid circular imports."""
@@ -41,6 +42,17 @@ def _get_error_pattern_store():
         except Exception as e:
             logger.warning(f"Could not load ErrorPatternStore: {e}")
     return _error_pattern_store
+
+def _get_negative_pattern_store():
+    """Lazy load NegativePatternStore for repair learning (Phase 2.2)."""
+    global _negative_pattern_store
+    if _negative_pattern_store is None:
+        try:
+            from src.learning.negative_pattern_store import get_negative_pattern_store
+            _negative_pattern_store = get_negative_pattern_store()
+        except Exception as e:
+            logger.warning(f"Could not load NegativePatternStore: {e}")
+    return _negative_pattern_store
 
 # IR-centric imports (optional - for migration)
 try:
@@ -114,6 +126,19 @@ class CodeRepairAgent:
         # IR-centric mode (Phase 7 migration)
         self.application_ir = application_ir
         self._use_ir = application_ir is not None and IR_AVAILABLE
+
+        # LEARNING_GAPS Phase 1.2: Initialize PromptEnhancer for repair prompts
+        self.prompt_enhancer = None
+        self.enable_prompt_enhancement = False
+        try:
+            from src.learning.prompt_enhancer import get_prompt_enhancer
+            self.prompt_enhancer = get_prompt_enhancer()
+            self.enable_prompt_enhancement = True
+            logger.info("🎓 PromptEnhancer initialized for CodeRepairAgent (LEARNING_GAPS Phase 1.2)")
+        except ImportError:
+            logger.debug("PromptEnhancer not available for CodeRepairAgent (missing imports)")
+        except Exception as e:
+            logger.warning(f"Could not initialize PromptEnhancer for CodeRepairAgent: {e}")
 
     async def repair(
         self,
@@ -192,6 +217,13 @@ class CodeRepairAgent:
                                 repairs_applied.append(f"Added entity: {entity_name}")
                                 if str(self.entities_file) not in repaired_files:
                                     repaired_files.append(str(self.entities_file))
+                                # Phase 2.2: Record successful repair
+                                self._record_successful_repair(
+                                    repair_type="entity_addition",
+                                    fix_description=f"Added missing entity {entity_name}",
+                                    file_path=str(self.entities_file),
+                                    entity_name="*",  # Domain-agnostic
+                                )
                             else:
                                 logger.warning(f"Failed to add entity: {entity_name}")
                     except Exception as e:
@@ -220,6 +252,13 @@ class CodeRepairAgent:
                                     repairs_applied.append(f"Added endpoint: {method} {path}")
                                     if route_file not in repaired_files:
                                         repaired_files.append(route_file)
+                                    # Phase 2.2: Record successful repair
+                                    self._record_successful_repair(
+                                        repair_type="endpoint_addition",
+                                        fix_description=f"Added missing endpoint {method} {path}",
+                                        file_path=route_file,
+                                        endpoint_pattern="*",  # Domain-agnostic
+                                    )
                                 else:
                                     logger.warning(f"Failed to add endpoint: {endpoint_str}")
                     except Exception as e:
@@ -240,6 +279,13 @@ class CodeRepairAgent:
                             schemas_file = str(self.output_path / "src" / "models" / "schemas.py")
                             if schemas_file not in repaired_files:
                                 repaired_files.append(schemas_file)
+                            # Phase 2.2: Record successful repair
+                            self._record_successful_repair(
+                                repair_type="validation_fix",
+                                fix_description=f"Added missing validation {validation_str}",
+                                file_path=schemas_file,
+                                field_pattern="*",  # Domain-agnostic
+                            )
                         else:
                             logger.warning(f"Failed to add validation: {validation_str}")
                     except Exception as e:
@@ -267,6 +313,69 @@ class CodeRepairAgent:
                 repairs_applied=[],
                 error_message=str(e)
             )
+
+    # =========================================================================
+    # LEARNING_GAPS Phase 2.2: Record Successful Repairs
+    # =========================================================================
+
+    def _record_successful_repair(
+        self,
+        repair_type: str,
+        fix_description: str,
+        file_path: str,
+        code_snippet: str = "",
+        entity_name: str = "*",
+        endpoint_pattern: str = "*",
+        field_pattern: str = "*"
+    ) -> None:
+        """
+        Record a successful repair as a PositiveRepairPattern for learning.
+
+        LEARNING_GAPS Phase 2.2: When a repair succeeds, store it so future
+        repairs can benefit from this knowledge.
+
+        Uses domain-agnostic patterns (entity_pattern="*" for generic patterns).
+
+        Args:
+            repair_type: Type of repair (entity_addition, endpoint_addition, etc.)
+            fix_description: Human-readable description of what was fixed
+            file_path: File that was modified
+            code_snippet: Code that was added/modified (truncated to 500 chars)
+            entity_name: Entity name or "*" for generic
+            endpoint_pattern: Endpoint pattern or "*" for generic
+            field_pattern: Field pattern or "*" for generic
+        """
+        try:
+            store = _get_negative_pattern_store()
+            if store is None:
+                logger.debug("NegativePatternStore not available for repair learning")
+                return
+
+            # Import PositiveRepairPattern lazily
+            from src.learning.negative_pattern_store import PositiveRepairPattern
+            import hashlib
+
+            # Generate pattern_id (domain-agnostic)
+            key = f"{repair_type}:{entity_name}:{endpoint_pattern}:{field_pattern}"
+            pattern_id = f"prp_{hashlib.md5(key.encode()).hexdigest()[:12]}"
+
+            pattern = PositiveRepairPattern(
+                pattern_id=pattern_id,
+                repair_type=repair_type,
+                entity_pattern=entity_name,
+                endpoint_pattern=endpoint_pattern,
+                field_pattern=field_pattern,
+                fix_description=fix_description,
+                code_snippet=code_snippet[:500] if code_snippet else "",
+                file_path=file_path,
+            )
+
+            store.store_positive_repair(pattern)
+            logger.info(f"✅ Recorded successful repair: {repair_type} → {fix_description[:50]}")
+
+        except Exception as e:
+            # Don't fail the repair just because learning failed
+            logger.debug(f"Could not record successful repair: {e}")
 
     # =========================================================================
     # IR-CENTRIC REPAIR METHODS (Phase 7 Migration)
@@ -322,6 +431,13 @@ class CodeRepairAgent:
                                 repairs_applied.append(f"Added entity (IR): {entity_name}")
                                 if str(self.entities_file) not in repaired_files:
                                     repaired_files.append(str(self.entities_file))
+                                # Phase 2.2: Record successful repair
+                                self._record_successful_repair(
+                                    repair_type="entity_addition",
+                                    fix_description=f"Added missing entity from IR: {entity_name}",
+                                    file_path=str(self.entities_file),
+                                    entity_name="*",  # Domain-agnostic
+                                )
                             else:
                                 logger.warning(f"Failed to add entity from IR: {entity_name}")
                         else:
@@ -355,6 +471,13 @@ class CodeRepairAgent:
                                     repairs_applied.append(f"Added endpoint (IR): {method} {path}")
                                     if route_file not in repaired_files:
                                         repaired_files.append(route_file)
+                                    # Phase 2.2: Record successful repair
+                                    self._record_successful_repair(
+                                        repair_type="endpoint_addition",
+                                        fix_description=f"Added missing endpoint from IR: {method} {path}",
+                                        file_path=route_file,
+                                        endpoint_pattern="*",  # Domain-agnostic
+                                    )
                                 else:
                                     logger.warning(f"Failed to add endpoint from IR: {endpoint_str}")
                             else:
@@ -383,6 +506,13 @@ class CodeRepairAgent:
                             schemas_file = str(self.output_path / "src" / "models" / "schemas.py")
                             if schemas_file not in repaired_files:
                                 repaired_files.append(schemas_file)
+                            # Phase 2.2: Record successful repair
+                            self._record_successful_repair(
+                                repair_type="validation_fix",
+                                fix_description=f"Added missing validation from IR: {validation_str}",
+                                file_path=schemas_file,
+                                field_pattern="*",  # Domain-agnostic
+                            )
                         else:
                             # Log as info, not warning - constraints can be complex
                             logger.info(f"Constraint not auto-repairable: {validation_str}")

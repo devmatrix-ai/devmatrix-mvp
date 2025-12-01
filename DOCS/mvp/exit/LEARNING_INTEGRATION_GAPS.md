@@ -76,7 +76,7 @@ def repair(self, compliance_report):
 **Goal**: All LLM prompts enhanced with learned anti-patterns  
 **Effort**: 2-3 hours  
 **Files**: `code_generation_service.py`, `code_repair_agent.py`  
-**Status**: ✅ Phase 1.1 COMPLETED | 🔴 Phase 1.2 TODO
+**Status**: ✅ **PHASE 1 COMPLETED** (1.1 + 1.2)
 
 #### 1.1 Integrate into CodeGenerationService ✅ COMPLETED
 **Completed**: 2025-12-01  
@@ -85,12 +85,29 @@ def repair(self, compliance_report):
 **Changes Made**:
 1. Added `self.prompt_enhancer` initialization in `__init__`
 2. Added `self.enable_prompt_enhancement` flag
-3. Enhanced `_build_prompt()` to inject anti-patterns
+3. Enhanced `_build_prompt()` to inject anti-patterns with **6 task type detections**:
+   - **Entity**: "entity", "model", "entities.py" → `enhance_entity_prompt()`
+   - **Endpoint**: "endpoint", "route", "api" → `enhance_endpoint_prompt()`
+   - **Schema**: "schema", "pydantic" → `enhance_schema_prompt()`
+   - **Service**: "service", "business logic" → `enhance_service_prompt()`
+   - **Validation**: "validation", "constraint", "rule" → `enhance_generic_prompt(error_types=[...])`
+   - **Generic**: (fallback) → `enhance_generic_prompt()`
 4. Added helper methods:
-   - `_extract_entity_name_from_task()`
-   - `_extract_endpoint_pattern_from_task()`
-   - `_extract_schema_name_from_task()`
+   - `_extract_entity_name_from_task()` - Extracts "Product" from "Generate Product entity"
+   - `_extract_endpoint_pattern_from_task()` - Extracts "/products" from "POST /products"
+   - `_extract_schema_name_from_task()` - Extracts "ProductCreate" from "ProductCreate schema"
 5. Added logging: "🎓 Prompt enhanced with N anti-patterns"
+
+**Task Type Coverage**:
+```
+✅ Entities (ORM models)      - entity-specific anti-patterns
+✅ Endpoints (API routes)     - endpoint-specific anti-patterns
+✅ Schemas (Pydantic)         - schema-specific anti-patterns
+✅ Services (Business logic)  - service-specific anti-patterns
+✅ Validations (Constraints)  - validation error types
+✅ Generic (Config, utils)    - all error types
+```
+
 
 **Verification Results**:
 ```
@@ -349,13 +366,13 @@ def test_cross_session_learning():
 | Phase | Task | Effort | Owner | Status |
 |-------|------|--------|-------|--------|
 | 1.1 | Integrate PromptEnhancer into CodeGenerationService | 2h | Dev | ✅ DONE (2025-12-01) |
-| 1.2 | Integrate PromptEnhancer into CodeRepairAgent | 1h | Dev | 🔴 TODO |
-| 2.1 | Add PositiveRepairPattern to NegativePatternStore | 2h | Dev | 🔴 TODO |
-| 2.2 | Update CodeRepairAgent to record fixes | 2h | Dev | 🔴 TODO |
+| 1.2 | Integrate PromptEnhancer into CodeRepairAgent | 1h | Dev | ✅ DONE (2025-12-01) |
+| 2.1 | Add PositiveRepairPattern to NegativePatternStore | 2h | Dev | ✅ DONE (2025-12-01) |
+| 2.2 | Update CodeRepairAgent to record fixes | 2h | Dev | ✅ DONE (2025-12-01) |
 | 3.1 | Create learning verification test | 2h | Dev | 🔴 TODO |
-| - | **Total** | **9h** | - | **1/5 Complete** |
+| - | **Total** | **9h** | - | **4/5 Complete (80%)** |
 
-**Estimated Completion**: 1-2 days
+**Estimated Completion**: ~2 hours (Phase 3 only)
 
 ---
 
@@ -417,6 +434,106 @@ When multiple patterns match, prioritize by:
 
 ---
 
+## 📐 Phase 2 Detailed Design (Repair Learning Loop)
+
+**Objective**: Persist successful repairs as reusable positive patterns and surface them back into prompts.
+
+### Data Model & Storage
+- **Node**: `PositiveRepairPattern`
+  - Required: `pattern_id` (PK), `repair_type`, `entity_pattern`, `endpoint_pattern`, `fix_description`, `code_snippet`
+  - Metrics: `success_count` (int), `last_applied` (datetime), `last_repo_hash` (string)
+- **Indexes**: `(pattern_id)`, `(entity_pattern)`, `(endpoint_pattern)`; composite `(repair_type, entity_pattern)`
+- **Cypher Upsert** (draft):
+  ```cypher
+  MERGE (p:PositiveRepairPattern {pattern_id: $pattern_id})
+  ON CREATE SET p.repair_type=$repair_type,
+                p.entity_pattern=$entity_pattern,
+                p.endpoint_pattern=$endpoint_pattern,
+                p.fix_description=$fix_description,
+                p.code_snippet=$code_snippet,
+                p.success_count=1,
+                p.last_applied=timestamp(),
+                p.last_repo_hash=$repo_hash
+  ON MATCH SET p.success_count = p.success_count + 1,
+               p.last_applied=timestamp(),
+               p.code_snippet = coalesce($code_snippet, p.code_snippet),
+               p.last_repo_hash=$repo_hash
+  ```
+
+### API Surface
+- `NegativePatternStore.store_positive_repair(pattern: PositiveRepairPattern) -> bool`
+- `NegativePatternStore.get_positive_patterns(entity_pattern=None, endpoint_pattern=None, repair_type=None) -> List[PositiveRepairPattern]`
+- `PromptEnhancer.enhance_*` to accept `positive_patterns` and prepend them after negative patterns:
+  - Order: 🔴 Negative (avoid) → ✅ Positive (reuse) → ℹ️ Context
+
+### Integration Points
+- **CodeRepairAgent**
+  - After `repair_result.success` → call `_record_successful_repair(...)`
+  - Pass `repo_hash` (git HEAD) for traceability
+  - Truncate `code_snippet` to 500–800 chars to keep prompts compact
+- **PromptEnhancer**
+  - When fetching patterns, pull both negative + positive for the same scope
+  - Positive patterns formatted as concise examples (avoid long prose)
+- **Fallback**
+  - If Neo4j unavailable, log once per run and skip storing (do not block repair)
+
+### Observability
+- Logs:
+  - `✅ Recorded successful repair: <repair_type> for <entity>`
+  - `🎓 Prompt enhanced with <N_neg> anti-patterns and <N_pos> positive patterns`
+- Metrics (optional, Prometheus):
+  - `repair_patterns_stored_total` (labels: `repair_type`)
+  - `prompt_positive_patterns_injected_total`
+
+### Test Plan (Phase 2)
+- Unit: `test_store_positive_repair_upsert` (increments `success_count`)
+- Unit: `test_get_positive_patterns_filters`
+- Integration: simulate successful repair, assert Neo4j node exists and `success_count` increments on repeat
+- Integration: mock `PromptEnhancer` to ensure positive patterns are injected and ordered after negatives
+
+### Risks & Mitigations
+- **Prompt bloat**: Cap positive patterns per prompt (e.g., `max_positive=3`)
+- **Stale snippets**: Include `last_repo_hash`; drop snippets older than N commits if mismatch
+- **Neo4j latency**: async store with fire-and-forget; fallback to in-memory cache if queue backs up
+
+### Ownership & ETA
+- **Owner**: Assign to Repair squad (needs confirmation)
+- **ETA**: 1–2 days once approved
+
+---
+
+## 🎛️ Phase 3 Test Design (Cross-Session Learning)
+
+**Objective**: Prove Session N+1 avoids Session N errors by ≥20% with enhanced prompts and stored patterns.
+
+### Test Harness (draft)
+- Script: `tests/e2e/test_learning_loop_closure.py`
+- Inputs: deterministic spec (e.g., `ecommerce-api-spec-human.md`) and fixed seed for reproducibility
+- Steps:
+  1. **Session 1**: run full pipeline; capture smoke failures + logs; snapshot patterns count
+  2. Assert patterns were stored (negative + positive when repairs run)
+  3. **Session 2**: rerun same spec; capture failures + logs
+  4. Assert logs contain both negative + positive injection messages
+  5. Compute error reduction; assert `> 0.2`
+
+### Metrics to Record
+- `session_id`, `patterns_injected_neg`, `patterns_injected_pos`
+- `smoke_failures_count`, `repair_attempts`, `repair_successes`
+- `error_reduction_ratio` (Session2 vs Session1)
+
+### Validation Criteria
+- Session 2 should:
+  - Inject ≥1 pattern from Session 1
+  - Skip ≥1 previously failing case (manually verify in logs)
+  - Reduce failures by >20%
+
+### Open Items
+- Need stable seeds for LLM responses or recorded responses for determinism
+- Define minimal fixture for Neo4j (container vs in-memory double)
+- Decide how to stub external tools (git, file writes) in CI to keep test hermetic
+
+---
+
 ## 📚 References
 
 - `src/learning/negative_pattern_store.py` - Pattern storage
@@ -428,8 +545,8 @@ When multiple patterns match, prioritize by:
 ---
 
 **Next Steps**:
-1. Review this plan with team
-2. Assign ownership for each phase
-3. Create tracking issues in GitHub
-4. Execute Phase 1 (highest priority)
-5. Verify with E2E tests after each phase
+1. Review Phase 2/3 design and confirm API surface (store/get positive patterns)
+2. Assign owners for 2.1/2.2/3.1 and create tracking issues
+3. Implement Phase 2 (store positive repairs + recording in CodeRepairAgent)
+4. Implement Phase 3 test harness and add to CI gating
+5. Run E2E with logging checks for pattern injection (neg + pos) and target >20% reduction

@@ -1735,6 +1735,28 @@ Generate code that is ready to run with `uvicorn main:app --reload` without any 
                         logger.info(f"🎓 Prompt enhanced for schema '{schema_name}' with {injected_count} anti-patterns")
                         return enhanced
                 
+                elif "service" in task_lower or "business logic" in task_lower:
+                    # Service/business logic generation task
+                    entity_name = self._extract_entity_name_from_task(task)
+                    if entity_name:
+                        enhanced = self.prompt_enhancer.enhance_service_prompt(base_prompt, entity_name)
+                        injected_count = len(self.prompt_enhancer.get_injected_patterns())
+                        logger.info(f"🎓 Prompt enhanced for service '{entity_name}' with {injected_count} anti-patterns")
+                        return enhanced
+                
+                elif "validation" in task_lower or "constraint" in task_lower or "rule" in task_lower:
+                    # Validation/constraint generation task
+                    # Use generic enhancement with validation-specific error types
+                    enhanced = self.prompt_enhancer.enhance_generic_prompt(
+                        base_prompt, 
+                        error_types=["ValidationError", "IntegrityError", "ConstraintViolation"]
+                    )
+                    injected_count = len(self.prompt_enhancer.get_injected_patterns())
+                    if injected_count > 0:
+                        logger.info(f"🎓 Prompt enhanced for validation with {injected_count} anti-patterns")
+                    return enhanced
+
+                
                 # Generic enhancement for other tasks
                 enhanced = self.prompt_enhancer.enhance_generic_prompt(base_prompt)
                 injected_count = len(self.prompt_enhancer.get_injected_patterns())

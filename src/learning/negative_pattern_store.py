@@ -219,6 +219,105 @@ class CognitiveRegressionPattern:
         )
 
 
+@dataclass
+class PositiveRepairPattern:
+    """
+    Successful repair that should be reused.
+    
+    LEARNING_GAPS Phase 2.1: Records repairs that worked to guide future fixes.
+    """
+    pattern_id: str
+    
+    # Repair signature
+    repair_type: str          # "entity_addition", "endpoint_addition", "validation_fix", "import_fix"
+    entity_pattern: str       # "Product", "Order", "*" for generic
+    endpoint_pattern: str     # "POST /{entities}", "*"
+    field_pattern: str        # "foreign_key:*", "nullable:*", "*"
+    
+    # Repair details
+    fix_description: str      # Human-readable description of the fix
+    code_snippet: str         # Code that was added/modified (truncated to 500 chars)
+    file_path: str            # File that was modified (e.g., "src/models/entities.py")
+    
+    # Learning metrics
+    success_count: int = 1    # How many times this repair was successfully applied
+    last_applied: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=datetime.now)
+    
+    # Additional context
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
+    @property
+    def reuse_score(self) -> float:
+        """Higher score = more likely to be useful for future repairs."""
+        # Patterns that have been reused successfully are high value
+        if self.success_count == 0:
+            return 0.0
+        frequency_factor = min(self.success_count / 5, 1.0)  # Cap at 5 reuses
+        recency_factor = 1.0  # Could decay over time
+        return frequency_factor * recency_factor
+    
+    def to_prompt_example(self) -> str:
+        """Format as a positive example for prompts."""
+        example = f"✅ SUCCESSFUL PATTERN (used {self.success_count}x):\n"
+        example += f"   Type: {self.repair_type}\n"
+        example += f"   Context: {self.entity_pattern}"
+        if self.endpoint_pattern != "*":
+            example += f" / {self.endpoint_pattern}"
+        example += f"\n   Solution: {self.fix_description}\n\n"
+        if self.code_snippet:
+            example += f"   Example:\n   ```python\n   {self.code_snippet[:300]}...\n   ```\n"
+        return example
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "pattern_id": self.pattern_id,
+            "repair_type": self.repair_type,
+            "entity_pattern": self.entity_pattern,
+            "endpoint_pattern": self.endpoint_pattern,
+            "field_pattern": self.field_pattern,
+            "fix_description": self.fix_description,
+            "code_snippet": self.code_snippet,
+            "file_path": self.file_path,
+            "success_count": self.success_count,
+            "last_applied": self.last_applied.isoformat() if self.last_applied else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "reuse_score": self.reuse_score,
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "PositiveRepairPattern":
+        """Create from dictionary."""
+        last_applied = data.get("last_applied")
+        created_at = data.get("created_at")
+        
+        if isinstance(last_applied, str):
+            last_applied = datetime.fromisoformat(last_applied)
+        elif last_applied is None:
+            last_applied = datetime.now()
+        
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+        elif created_at is None:
+            created_at = datetime.now()
+        
+        return cls(
+            pattern_id=data["pattern_id"],
+            repair_type=data.get("repair_type", "unknown"),
+            entity_pattern=data.get("entity_pattern", "*"),
+            endpoint_pattern=data.get("endpoint_pattern", "*"),
+            field_pattern=data.get("field_pattern", "*"),
+            fix_description=data.get("fix_description", ""),
+            code_snippet=data.get("code_snippet", ""),
+            file_path=data.get("file_path", ""),
+            success_count=data.get("success_count", 1),
+            last_applied=last_applied,
+            created_at=created_at,
+            metadata=data.get("metadata", {}),
+        )
+
+
 # =============================================================================
 # Pattern ID Generation
 # =============================================================================
@@ -331,7 +430,18 @@ class NegativePatternStore:
                     FOR (ap:GenerationAntiPattern) ON (ap.exception_class)
                 """)
 
-                self.logger.debug("Neo4j schema for GenerationAntiPattern ensured")
+                # Phase 2.1: Schema for PositiveRepairPattern
+                session.run("""
+                    CREATE CONSTRAINT prp_pattern_id IF NOT EXISTS
+                    FOR (pr:PositiveRepairPattern) REQUIRE pr.pattern_id IS UNIQUE
+                """)
+
+                session.run("""
+                    CREATE INDEX prp_repair_type IF NOT EXISTS
+                    FOR (pr:PositiveRepairPattern) ON (pr.repair_type)
+                """)
+
+                self.logger.debug("Neo4j schema for GenerationAntiPattern + PositiveRepairPattern ensured")
 
         except Exception as e:
             self.logger.warning(f"Failed to ensure schema: {e}")
@@ -1346,6 +1456,169 @@ class NegativePatternStore:
         norm_endpoint = self._normalize_endpoint(endpoint)
 
         return norm_pattern == norm_endpoint
+
+    # =========================================================================
+    # Positive Repair Patterns (Phase 2.1 - LEARNING_INTEGRATION_GAPS)
+    # =========================================================================
+
+    def store_positive_repair(self, pattern: PositiveRepairPattern) -> bool:
+        """
+        Store a successful repair pattern for learning.
+
+        LEARNING_GAPS Phase 2.1: When CodeRepairAgent fixes a compliance issue,
+        this records the fix to guide future repairs.
+
+        Uses domain-agnostic patterns (DevMatrix works with any spec domain).
+
+        Args:
+            pattern: The successful repair pattern to store
+
+        Returns:
+            True if stored successfully
+        """
+        # Store in memory cache
+        if not hasattr(self, '_positive_cache'):
+            self._positive_cache: Dict[str, PositiveRepairPattern] = {}
+
+        # Update existing or add new
+        if pattern.pattern_id in self._positive_cache:
+            existing = self._positive_cache[pattern.pattern_id]
+            existing.success_count += 1
+            existing.last_applied = datetime.now()
+        else:
+            self._positive_cache[pattern.pattern_id] = pattern
+
+        # Store in Neo4j if available
+        if not self._neo4j_available or not self.driver:
+            self.logger.debug(f"Stored positive repair in cache: {pattern.pattern_id}")
+            return True
+
+        try:
+            with self.driver.session() as session:
+                session.run("""
+                    MERGE (pr:PositiveRepairPattern {pattern_id: $pattern_id})
+                    ON CREATE SET
+                        pr.repair_type = $repair_type,
+                        pr.entity_pattern = $entity_pattern,
+                        pr.endpoint_pattern = $endpoint_pattern,
+                        pr.field_pattern = $field_pattern,
+                        pr.fix_description = $fix_description,
+                        pr.code_snippet = $code_snippet,
+                        pr.file_path = $file_path,
+                        pr.success_count = 1,
+                        pr.created_at = datetime(),
+                        pr.last_applied = datetime()
+                    ON MATCH SET
+                        pr.success_count = pr.success_count + 1,
+                        pr.last_applied = datetime()
+                """, {
+                    "pattern_id": pattern.pattern_id,
+                    "repair_type": pattern.repair_type,
+                    "entity_pattern": pattern.entity_pattern,
+                    "endpoint_pattern": pattern.endpoint_pattern,
+                    "field_pattern": pattern.field_pattern,
+                    "fix_description": pattern.fix_description,
+                    "code_snippet": pattern.code_snippet[:500],  # Truncate
+                    "file_path": pattern.file_path,
+                })
+
+                self.logger.info(f"✅ Stored positive repair: {pattern.pattern_id} ({pattern.repair_type})")
+                return True
+
+        except Exception as e:
+            self.logger.warning(f"Failed to store positive repair in Neo4j: {e}")
+            return True  # Still in cache
+
+    def get_positive_repairs(
+        self,
+        repair_type: Optional[str] = None,
+        limit: int = 20
+    ) -> List[PositiveRepairPattern]:
+        """
+        Get positive repair patterns for prompt enhancement.
+
+        LEARNING_GAPS Phase 2.1: Used by PromptEnhancer to inject successful
+        repair examples into prompts.
+
+        Args:
+            repair_type: Optional filter by repair type
+            limit: Maximum patterns to return
+
+        Returns:
+            List of successful repair patterns, sorted by reuse_score
+        """
+        if not hasattr(self, '_positive_cache'):
+            self._positive_cache = {}
+
+        # Get from cache
+        if repair_type:
+            cached = [
+                p for p in self._positive_cache.values()
+                if p.repair_type == repair_type
+            ]
+        else:
+            cached = list(self._positive_cache.values())
+
+        # Query Neo4j for additional patterns
+        if self._neo4j_available and self.driver:
+            try:
+                with self.driver.session() as session:
+                    if repair_type:
+                        result = session.run("""
+                            MATCH (pr:PositiveRepairPattern)
+                            WHERE pr.repair_type = $repair_type
+                            RETURN pr
+                            ORDER BY pr.success_count DESC
+                            LIMIT $limit
+                        """, {"repair_type": repair_type, "limit": limit})
+                    else:
+                        result = session.run("""
+                            MATCH (pr:PositiveRepairPattern)
+                            RETURN pr
+                            ORDER BY pr.success_count DESC
+                            LIMIT $limit
+                        """, {"limit": limit})
+
+                    for record in result:
+                        node = record["pr"]
+                        pattern = self._node_to_positive_pattern(node)
+                        if pattern.pattern_id not in {p.pattern_id for p in cached}:
+                            cached.append(pattern)
+
+            except Exception as e:
+                self.logger.debug(f"Neo4j positive repair query fell back to cache: {e}")
+
+        # Sort by reuse score and return
+        return sorted(cached, key=lambda p: p.reuse_score, reverse=True)[:limit]
+
+    def _node_to_positive_pattern(self, node) -> PositiveRepairPattern:
+        """Convert Neo4j node to PositiveRepairPattern."""
+        last_applied = node.get("last_applied")
+        created_at = node.get("created_at")
+
+        if hasattr(last_applied, "to_native"):
+            last_applied = last_applied.to_native()
+        elif last_applied is None:
+            last_applied = datetime.now()
+
+        if hasattr(created_at, "to_native"):
+            created_at = created_at.to_native()
+        elif created_at is None:
+            created_at = datetime.now()
+
+        return PositiveRepairPattern(
+            pattern_id=node["pattern_id"],
+            repair_type=node.get("repair_type", "unknown"),
+            entity_pattern=node.get("entity_pattern", "*"),
+            endpoint_pattern=node.get("endpoint_pattern", "*"),
+            field_pattern=node.get("field_pattern", "*"),
+            fix_description=node.get("fix_description", ""),
+            code_snippet=node.get("code_snippet", ""),
+            file_path=node.get("file_path", ""),
+            success_count=node.get("success_count", 1),
+            last_applied=last_applied,
+            created_at=created_at,
+        )
 
 
 # =============================================================================
