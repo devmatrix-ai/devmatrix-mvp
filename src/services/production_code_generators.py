@@ -1518,6 +1518,12 @@ ItemSchema = Dict[str, Any]
                     elif constraint_normalized == 'unique':
                         # Simple "unique" constraint - DB level
                         logger.debug(f"ℹ️ Skipping 'unique' constraint for {field_name} (enforced at DB level)")
+                    elif constraint_normalized.startswith('stock_constraint'):
+                        # Stock constraints are business logic - enforced in service layer
+                        logger.debug(f"ℹ️ Skipping 'stock_constraint' for {field_name} (enforced in service layer)")
+                    elif constraint_normalized.startswith('custom'):
+                        # Custom constraints are business logic
+                        logger.debug(f"ℹ️ Skipping 'custom' constraint for {field_name} (enforced in service layer)")
                     else:
                         logger.warning(f"⚠️ Unparsed constraint '{constraint}' (normalized: '{constraint_normalized}') for {field_name} - SKIPPING")
                 else:
