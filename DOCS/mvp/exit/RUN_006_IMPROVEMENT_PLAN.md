@@ -1,5 +1,20 @@
 # Run 006 Improvement Plan
 
+## ✅ RESOLVED - Run 008 Results (2025-12-01)
+
+| Métrica | Run 007 | Run 008 | Cambio |
+|---------|---------|---------|--------|
+| **Smoke Test Pass Rate** | 86.7% (stuck) | **100.0%** ✅ | +13.3% |
+| **Semantic Compliance** | 99.9% | **99.9%** ✅ | = |
+| **Test Pass Rate** | 67.2% | **64.6%** | -2.6% |
+
+### Bugs Fixed:
+- **Bug #165**: IR parameter not passed to service generator
+- **Bug #165**: Trailing prepositions in method names
+- **Bug #166**: Parenthetical expressions creating invalid Python identifiers
+
+---
+
 **Date**: 2025-12-01
 **Log**: `logs/runs/Ariel_test_006_25_026_07.log`
 **Status**: 🔴 IN PROGRESS
