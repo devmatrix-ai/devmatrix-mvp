@@ -4041,28 +4041,30 @@ router = APIRouter(
 
                     if operation == 'add_item':
                         # add_item needs request body
-                        # Bug #142 Fix: Use schema_entity_snake_data (cart_item_data) not entity_snake_data (cart_data)
-                        # For POST /carts/{id}/items, the request body schema is CartItemCreate, not CartCreate
-                        body += f'''    {entity_snake} = await service.add_item({id_param}, {schema_entity_snake}_data.model_dump() if hasattr({schema_entity_snake}_data, 'model_dump') else {schema_entity_snake}_data)
-
-    if not {entity_snake}:
+                        # Bug #166 Fix: Check existence first to return proper 404
+                        body += f'''    # Bug #166 Fix: Check existence first to return proper 404
+    existing = await service.get({id_param})
+    if not existing:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"{entity.name} with id {{{id_param}}} not found"
         )
 
+    {entity_snake} = await service.add_item({id_param}, {schema_entity_snake}_data.model_dump() if hasattr({schema_entity_snake}_data, 'model_dump') else {schema_entity_snake}_data)
     return {entity_snake}
 '''
                     else:
                         # Custom operation without body (checkout, pay, cancel, deactivate, activate)
-                        body += f'''    {entity_snake} = await service.{operation}({id_param})
-
-    if not {entity_snake}:
+                        # Bug #166 Fix: Check existence first to return proper 404
+                        body += f'''    # Bug #166 Fix: Check existence first to return proper 404
+    existing = await service.get({id_param})
+    if not existing:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"{entity.name} with id {{{id_param}}} not found"
         )
 
+    {entity_snake} = await service.{operation}({id_param})
     return {entity_snake}
 '''
                 else:
@@ -4073,15 +4075,18 @@ router = APIRouter(
 '''
             elif method == 'put':
                 id_param = path_params[0] if path_params else 'id'
-                # Bug #139 Fix: Use schema_entity_snake for nested resources (e.g., cart_item_data)
-                body += f'''    {entity_snake} = await service.update({id_param}, {schema_entity_snake}_data)
-
-    if not {entity_snake}:
+                # Bug #166 Fix: Check existence BEFORE update to return 404 instead of 422
+                # This ensures we return 404 (not found) rather than letting Pydantic
+                # validation errors (422) mask the fact that the resource doesn't exist
+                body += f'''    # Bug #166 Fix: Check existence first to return proper 404
+    existing = await service.get({id_param})
+    if not existing:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"{entity.name} with id {{{id_param}}} not found"
         )
 
+    {entity_snake} = await service.update({id_param}, {schema_entity_snake}_data)
     return {entity_snake}
 '''
             elif method == 'delete':
@@ -4109,27 +4114,30 @@ router = APIRouter(
 
                 if operation:
                     # Custom operation: call service.{operation}(id)
-                    body += f'''    {entity_snake} = await service.{operation}({id_param})
-
-    if not {entity_snake}:
+                    # Bug #166 Fix: Check existence first to return proper 404
+                    body += f'''    # Bug #166 Fix: Check existence first to return proper 404
+    existing = await service.get({id_param})
+    if not existing:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"{entity.name} with id {{{id_param}}} not found"
         )
 
+    {entity_snake} = await service.{operation}({id_param})
     return {entity_snake}
 '''
                 else:
                     # Generic PATCH: call service.update(id, data) - partial update
-                    # Bug #139 Fix: Use schema_entity_snake for nested resources
-                    body += f'''    {entity_snake} = await service.update({id_param}, {schema_entity_snake}_data)
-
-    if not {entity_snake}:
+                    # Bug #166 Fix: Check existence first to return proper 404
+                    body += f'''    # Bug #166 Fix: Check existence first to return proper 404
+    existing = await service.get({id_param})
+    if not existing:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"{entity.name} with id {{{id_param}}} not found"
         )
 
+    {entity_snake} = await service.update({id_param}, {schema_entity_snake}_data)
     return {entity_snake}
 '''
 
