@@ -522,8 +522,56 @@ class {entity_name}Entity(Base):
 
     __tablename__ = "{entity_plural}"
 
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 '''
+
+        # Track generated relationships to avoid duplicates
+        generated_rels = set()
+        generated_targets = set()
+
+        # Generate explicit relationships from IR
+        relationships = entity.get('relationships', [])
+        for rel in relationships:
+            # Handle both dict and object access
+            if isinstance(rel, dict):
+                r_name = rel.get('field_name')
+                r_target = rel.get('target_entity')
+                r_back_populates = rel.get('back_populates')
+                r_type = rel.get('type')
+            else:
+                r_name = getattr(rel, 'field_name', '')
+                r_target = getattr(rel, 'target_entity', '')
+                r_back_populates = getattr(rel, 'back_populates', None)
+                r_type = getattr(rel, 'type', '')
+
+            if not r_name or not r_target:
+                continue
+
+            # Normalize target name (ensure Entity suffix)
+            target_cls = f"{r_target}Entity" if not r_target.endswith('Entity') else r_target
+            
+            # Default lazy load
+            lazy = "select"
+            if r_type == "one_to_many" or r_type == "many_to_many":
+                lazy = "selectin"
+            
+            # Check overrides
+            if r_name in field_overrides:
+                override = field_overrides[r_name]
+                if 'lazy' in override:
+                    lazy = override['lazy']
+            
+            rel_def = f'    {r_name} = relationship("{target_cls}", lazy="{lazy}"'
+            if r_back_populates:
+                rel_def += f', back_populates="{r_back_populates}"'
+            rel_def += ')\n'
+            
+            code += rel_def
+            generated_rels.add(r_name)
+            generated_targets.add(target_cls)
+
+
 
         # Generate columns dynamically from entity fields
         # Skip system fields that are added automatically (id, created_at, updated_at)
@@ -641,11 +689,8 @@ class {entity_name}Entity(Base):
                 parent_exists = any(e.get('name') == parent_name for e in entities)
                 if parent_exists:
                     # Determine back_populates name on the parent
-                    # If we are CartItem, parent is Cart. Back ref on Cart should be 'items'
-                    if entity_name == f"{parent_name}Item":
-                        back_populates = "items"
-                    else:
-                        back_populates = entity_plural # e.g. Customer -> orders
+                    # Agnostic approach: Use the plural of this entity (e.g. CartItem -> cart_items)
+                    back_populates = entity_plural
 
                     # Check for lazy_load override
                     lazy = "select" # Default
@@ -655,9 +700,13 @@ class {entity_name}Entity(Base):
                             lazy = override['lazy']
                             logger.info(f"🎓 Pattern Override: {entity_name}.{parent_snake} lazy={lazy} (learned from AttributeError)")
                     
-                    # Add relationship
-                    # e.g. cart = relationship("CartEntity", back_populates="items", lazy="select")
-                    code += f'    {parent_snake} = relationship("{parent_name}Entity", back_populates="{back_populates}", lazy="{lazy}")\n'
+                    # Add relationship if not already generated explicitly
+                    target_cls = f"{parent_name}Entity"
+                    if parent_snake not in generated_rels and target_cls not in generated_targets:
+                        # e.g. cart = relationship("CartEntity", back_populates="cart_items", lazy="select")
+                        code += f'    {parent_snake} = relationship("{parent_name}Entity", back_populates="{back_populates}", lazy="{lazy}")\n'
+                        generated_rels.add(parent_snake)
+                        generated_targets.add(target_cls)
 
         # Generate relationships (Backward: One-to-Many)
         # Scan other entities to see if they point to us
@@ -688,13 +737,11 @@ class {entity_name}Entity(Base):
                 if f_name == target_fk or f_name == target_fk_snake:
                     # Found a child entity!
                     # Determine collection name
-                    if other_name == f"{entity_name}Item":
-                        collection_name = "items"
-                    else:
-                        collection_name = other_entity.get('plural', f"{other_name}s").lower()
+                    # Agnostic approach: Use the plural of the child entity (e.g. CartItem -> cart_items)
+                    collection_name = other_entity.get('plural', f"{other_name}s").lower()
                     
                     # Back reference name on the child
-                    # If child is CartItem, it has 'cart' relationship
+                    # e.g. CartItem has 'cart' relationship
                     back_populates = ent_snake
 
                     # Check for lazy_load override on the collection
@@ -705,7 +752,12 @@ class {entity_name}Entity(Base):
                             lazy = override['lazy']
                             logger.info(f"🎓 Pattern Override: {entity_name}.{collection_name} lazy={lazy} (learned from AttributeError)")
                     
-                    code += f'    {collection_name} = relationship("{other_name}Entity", back_populates="{back_populates}", lazy="{lazy}")\n'
+                    # Add relationship if not already generated explicitly
+                    target_cls = f"{other_name}Entity"
+                    if collection_name not in generated_rels and target_cls not in generated_targets:
+                        code += f'    {collection_name} = relationship("{other_name}Entity", back_populates="{back_populates}", lazy="{lazy}")\n'
+                        generated_rels.add(collection_name)
+                        generated_targets.add(target_cls)
 
         # Generate __repr__ method
         # NOTE: Hardcoded field names REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
@@ -1741,21 +1793,10 @@ ItemSchema = Dict[str, Any]
             ])
 
         # Bug #117 Fix: Add items and total_price to container entities (Cart, Order)
-        # If {Entity}Item exists, the parent entity needs items relationship and total calculation
-        item_entity_name = f"{entity_name}Item"
-        if item_entity_name.lower() in entity_names_lower:
-            # Check if items field already exists
-            has_items_field = any('items:' in line or 'items :' in line for line in response_lines)
-            if not has_items_field:
-                response_lines.append(f"    items: List[{item_entity_name}Response] = []")
-                logger.info(f"📦 Bug #117: Added items field to {entity_name}Response")
+        # REMOVED: This was e-commerce specific logic. DevMatrix should be agnostic.
+        # Relationships and computed fields should be defined in the ApplicationIR/Spec.
+        # If they are missing, the parser/IR needs to be improved, not hardcoded here.
 
-            # Add total_price computed property for container entities
-            has_total_price = any('total_price' in line or 'total_amount' in line for line in response_lines)
-            if not has_total_price:
-                # Add as regular field - will be computed in service layer or ORM
-                response_lines.append("    total_price: float = 0.0")
-                logger.info(f"💰 Bug #117: Added total_price field to {entity_name}Response")
 
         code += '\n'.join(response_lines) + '\n\n'
 
