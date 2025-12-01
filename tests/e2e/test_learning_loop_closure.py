@@ -237,10 +237,14 @@ def test_prompt_enhancement_with_patterns(verifier):
 @pytest.mark.skipif(not CODE_REPAIR_AVAILABLE, reason="CodeRepairAgent not available")
 def test_code_repair_agent_has_repair_recording():
     """Test that CodeRepairAgent has _record_successful_repair method."""
-    agent = CodeRepairAgent()
-
-    assert hasattr(agent, "_record_successful_repair"), \
+    # Check the class has the method without instantiating (requires output_path)
+    assert hasattr(CodeRepairAgent, "_record_successful_repair"), \
         "CodeRepairAgent should have _record_successful_repair method"
+
+    # Verify it's a callable method
+    import inspect
+    assert inspect.isfunction(CodeRepairAgent._record_successful_repair), \
+        "_record_successful_repair should be a method"
 
     print("✅ CodeRepairAgent has repair recording capability")
 
