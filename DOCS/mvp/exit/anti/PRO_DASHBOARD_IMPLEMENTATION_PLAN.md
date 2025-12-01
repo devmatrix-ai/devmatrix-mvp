@@ -2,250 +2,385 @@
 
 **Owner:** Platform/Console
 **Status:** Draft → **REVISED**
-**Version:** 2.0 (File-based architecture - zero flickering)
-**Scope:** Reemplazar los dashboards ad-hoc (CLI roto + stubs en `tests/e2e/`) por un dashboard profesional basado en **archivo + tail**, eliminando el problema de flickering.
+**Version:** 3.0 (Rich Live nativo con `live.console.print()`)
+**Scope:** Dashboard profesional usando capacidades nativas de Rich 14.x
 
 ---
 
-## 🔴 Diagnóstico: Por qué el Plan v1.1 No Funciona
+## 🔍 Descubrimiento Clave (Dic 2025)
 
-| Problema | Evidencia | Impacto |
-|----------|-----------|---------|
-| **Rich Live deshabilitado** | `RICH_PROGRESS = False` en pipeline | Dashboard nunca se usa |
-| **Flickering no resuelto** | "Rich Live display conflicts with print()" | UX inutilizable |
-| **CLI roto** | `ModuleNotFoundError: src.cli.approval_manager` | No se puede probar |
-| **Pipeline usa stubs** | `def update_metrics(**kwargs): pass` | Métricas perdidas |
-| **WebSocket no existe** | Plan asume WS, no hay implementación | Arquitectura fantasma |
-| **APIs faltantes** | No existe `update_learning_stats()` ni `update_repair_status()` | Features no implementables |
+**Rich ya resuelve el problema de flickering nativamente:**
 
-### Root Cause
-El plan v1.1 asumía que Rich Live y prints pueden coexistir. **No pueden**. El pipeline hace ~500 prints durante ejecución, Rich Live los sobrescribe → flickering.
+```python
+# Documentación oficial Rich 14.1.0:
+# "If you print or log to this console, the output will be displayed
+#  ABOVE the live display."
 
----
-
-## ✅ Nuevo Approach: File-Based Dashboard (Opción C)
-
-### Arquitectura
-
-```
-┌─────────────────────┐         ┌──────────────────────┐
-│  Pipeline (E2E)     │         │  Dashboard Viewer    │
-│                     │         │  (Terminal 2)        │
-│  - Fases normales   │         │                      │
-│  - Prints normales  │  JSON   │  tail -f + jq/rich   │
-│  - dashboard.write()├────────►│  OR                  │
-│                     │  file   │  watch + rich format │
-└─────────────────────┘         └──────────────────────┘
-        │                                  │
-        ▼                                  ▼
-   dashboard.jsonl                 Real-time display
-   (append-only)                   (zero flickering)
+with Live(dashboard, refresh_per_second=4) as live:
+    live.console.print("Este texto aparece ARRIBA del dashboard")  # ✅ Sin flickering
 ```
 
-### Ventajas
-
-| Beneficio | Descripción |
-|-----------|-------------|
-| **Zero flickering** | Pipeline y viewer son procesos separados |
-| **Sin refactor masivo** | Pipeline sigue haciendo prints normales |
-| **Decoupled** | Dashboard es un viewer opcional |
-| **CI compatible** | Sin viewer, el archivo se puede analizar post-run |
-| **Debuggable** | `cat dashboard.jsonl` muestra todo el histórico |
+Además, Rich tiene `redirect_stdout=True` (default) que captura `print()` automáticamente.
 
 ---
 
-## Objetivos (Revisados)
+## 🎨 UI Design: Dashboard Minimalista
 
-- **UX desacoplada:** Dashboard viewer en terminal separado, pipeline sin cambios de prints.
-- **Signal completo:** Progreso por fase, métricas clave, salud de infra, learning metrics.
-- **Zero flickering:** Arquitectura file-based elimina conflictos Rich vs print.
-- **Baja fricción:** Un solo archivo JSON Lines, viewer simple con Rich.
-- **CI compatible:** Sin viewer, archivo analizable post-mortem.
+### Principios de Diseño
 
-## No Objetivos
-- ~~WebSocket~~ (eliminado - innecesario para E2E local)
-- UI web nueva
-- Modificar prints existentes del pipeline
+| Principio | Aplicación |
+|-----------|------------|
+| **Focus on NOW** | La fase actual es el hero, el resto es contexto |
+| **Progressive disclosure** | Solo mostrar detalle cuando hay problemas |
+| **Meaningful animation** | Spinners solo en elementos activos |
+| **Color = Signal** | Verde=OK, Amarillo=Warning, Rojo=Error, Azul=Running |
 
----
+### Layout: 3 Zonas
 
-## Requerimientos Funcionales (v2.0)
-
-### Writer (Pipeline Side)
-
-1. **DashboardWriter** - Clase simple que escribe a `dashboard.jsonl`:
-   - `write_phase(name, status, progress, duration_ms)`
-   - `write_metrics(tests_passed, tests_failed, ir_compliance, llm_tokens, llm_cost)`
-   - `write_infra(docker, neo4j, qdrant, redis)`
-   - `write_learning(fix_patterns, anti_patterns, reuse_rate)`
-   - `write_repair(iteration, max_iter, pass_rate, status)`
-   - `write_log(level, message)`
-
-2. **Formato JSON Lines** (append-only):
-
-```json
-{"ts": "2024-01-15T10:30:00", "type": "phase", "name": "Code Generation", "status": "running", "progress": 0.45}
-{"ts": "2024-01-15T10:30:01", "type": "metrics", "tests_passed": 45, "tests_failed": 2, "ir_compliance": 0.98}
-{"ts": "2024-01-15T10:30:02", "type": "repair", "iteration": 2, "max": 3, "pass_rate": 0.85, "status": "ACTIVE"}
-{"ts": "2024-01-15T10:30:03", "type": "log", "level": "info", "message": "Generated 12 files"}
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         ZONA 1: HERO                                │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │  ◐ Code Generation                              Phase 7/13    │  │
+│  │  ████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  45%  2.3s │  │
+│  │  Generating models/inventory.py...                            │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+├─────────────────────────────────────────────────────────────────────┤
+│                       ZONA 2: MÉTRICAS                              │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐   │
+│  │ Tests       │ │ Compliance  │ │ LLM Cost    │ │ Repair      │   │
+│  │ 45/47 ✓     │ │ 98.2%  ━━━━ │ │ $0.12       │ │ ○○○ SKIP    │   │
+│  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘   │
+├─────────────────────────────────────────────────────────────────────┤
+│                        ZONA 3: LOGS                                 │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │ 10:30:02 ✓ Generated 12 files                                 │  │
+│  │ 10:30:01 ✓ IR validated (98.2% compliance)                    │  │
+│  │ 10:30:00   Starting code generation...                        │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Viewer (Separate Terminal)
+---
 
-3. **DashboardViewer** - Rich-based viewer que lee el archivo:
-   - `tail -f` del archivo con parsing
-   - Layout Rich similar al existente
-   - Refresh cada 500ms
-   - Estado calculado desde últimos eventos
+## 📐 Componentes UI Detallados
 
-4. **CLI Command**:
+### ZONA 1: Hero (Fase Actual)
 
-```bash
-# Terminal 1: Run pipeline
-python -m tests.e2e.real_e2e_full_pipeline specs/inventory.md
-
-# Terminal 2: Watch dashboard
-python -m src.console.dashboard_viewer --file logs/runs/current/dashboard.jsonl
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  ◐ Code Generation                                  Phase 7/13  │
+│  ████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  45%  2.3s │
+│  Generating models/inventory.py...                              │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-## Requerimientos No Funcionales (v2.0)
+**Elementos:**
+| Elemento | Tipo | Animación |
+|----------|------|-----------|
+| `◐` | Spinner | Rotación cada 100ms (solo si running) |
+| Barra de progreso | ProgressBar | Smooth fill |
+| `45%` | Texto | Update en cada cambio |
+| `2.3s` | Timer | Tick cada segundo |
+| Subtarea | Texto | Cambia con cada archivo |
 
-- **Zero flickering:** Procesos separados, sin conflicto Rich/print
-- **Append-only:** Archivo solo crece, no se reescribe
-- **JSON Lines:** Una línea = un evento, fácil de parsear
-- **Backwards compatible:** Pipeline funciona sin viewer
+**Estados del Spinner:**
+- `◐ ◓ ◑ ◒` = Running (animado)
+- `✓` = Completed (verde)
+- `✗` = Failed (rojo)
+- `⊘` = Skipped (gris)
+- `⏳` = Pending (estático)
+
+### ZONA 2: Métricas (4 Cards)
+
+```
+┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
+│ Tests       │ │ Compliance  │ │ LLM         │ │ Repair      │
+│ 45/47 ✓     │ │ 98.2%  ━━━━ │ │ $0.12  42K  │ │ ●○○ 1/3     │
+└─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘
+```
+
+**Card 1: Tests**
+```
+Estado Normal:    45/47 ✓     (verde si 100%, amarillo si <100%, rojo si <80%)
+Estado Failed:    43/47 ✗ 4   (rojo, muestra count de failures)
+```
+
+**Card 2: Compliance (IR)**
+```
+Barra visual:  ━━━━━━━━━━━━━━━━━━━━░░░░  98.2%
+Colores:       Verde >=95%, Amarillo >=80%, Rojo <80%
+```
+
+**Card 3: LLM**
+```
+$0.12  42K tokens
+Crece con cada llamada LLM
+```
+
+**Card 4: Repair Loop**
+```
+○○○  SKIP     (gris - no necesitó repair)
+●○○  1/3      (azul - iteración 1)
+●●○  2/3      (amarillo - iteración 2)
+●●●  3/3      (rojo si aún falla, verde si pasó)
+```
+
+### ZONA 3: Logs (Últimos 5)
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│ 10:30:02 ✓ Generated 12 files                                 │
+│ 10:30:01 ✓ IR validated (98.2% compliance)                    │
+│ 10:30:00   Starting code generation...                        │
+│ 10:29:58 ✓ DAG constructed (15 nodes, 23 edges)               │
+│ 10:29:55 ✓ Atomization complete (8 atoms)                     │
+└───────────────────────────────────────────────────────────────┘
+```
+
+**Formato de línea:**
+```
+{timestamp} {icon} {message}
+```
+
+**Iconos por nivel:**
+- `✓` verde = success
+- `⚠` amarillo = warning
+- `✗` rojo = error
+- ` ` (espacio) = info
 
 ---
 
-## Diseño / Arquitectura (v2.0)
+## 🎬 Estados del Dashboard
+
+### Estado: Running Normal
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  ◐ Code Generation                                  Phase 7/13  │
+│  ████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  45%  2.3s │
+│  Generating models/inventory.py...                              │
+├─────────────────────────────────────────────────────────────────┤
+│  Tests       │  Compliance  │  LLM         │  Repair            │
+│  45/47 ✓     │  98.2%  ━━━━ │  $0.12  42K  │  ○○○ SKIP          │
+├─────────────────────────────────────────────────────────────────┤
+│ 10:30:02 ✓ Generated 12 files                                   │
+│ 10:30:01 ✓ IR validated (98.2% compliance)                      │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Estado: Repair Loop Activo
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  ◐ Code Repair                                      Phase 9/13  │
+│  ████████████████████████████████░░░░░░░░░░░░░░░░░░░  67%  8.1s │
+│  Fixing test_inventory_crud.py (2 failures)                     │
+├─────────────────────────────────────────────────────────────────┤
+│  Tests       │  Compliance  │  LLM         │  Repair            │
+│  43/47 ⚠     │  91.5%  ━━━░ │  $0.18  58K  │  ●●○ 2/3           │
+├─────────────────────────────────────────────────────────────────┤
+│ 10:31:15 ⚠ Repair iteration 2: 2 tests still failing           │
+│ 10:31:10 ✓ Fixed: test_create_inventory                        │
+│ 10:31:05 ✓ Fixed: test_list_inventory                          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Estado: Error Crítico
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  ✗ Code Generation                                  Phase 7/13  │
+│  ████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  45% FAILED│
+│  ERROR: Docker container crashed                                │
+├─────────────────────────────────────────────────────────────────┤
+│  Tests       │  Compliance  │  LLM         │  Repair            │
+│  --/--       │  --          │  $0.08  28K  │  ○○○ --            │
+├─────────────────────────────────────────────────────────────────┤
+│ 10:30:15 ✗ Docker container exited with code 137 (OOM)         │
+│ 10:30:14   Attempting recovery...                               │
+│ 10:30:02 ✓ Generated 8 files                                    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Estado: Completado
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  ✓ Pipeline Complete                                    SUCCESS │
+│  ████████████████████████████████████████████████████ 100% 45.2s│
+│  All 13 phases completed successfully                           │
+├─────────────────────────────────────────────────────────────────┤
+│  Tests       │  Compliance  │  LLM         │  Repair            │
+│  47/47 ✓     │  99.8%  ━━━━ │  $0.24  89K  │  ○○○ SKIP          │
+├─────────────────────────────────────────────────────────────────┤
+│ 10:31:45 ✓ Pipeline completed in 45.2s                          │
+│ 10:31:44 ✓ Health verification passed                           │
+│ 10:31:40 ✓ All smoke tests passed (47/47)                       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🛠️ Arquitectura Técnica (v3.0)
+
+### Solución: Rich Live con `live.console.print()`
+
+```python
+from rich.live import Live
+from rich.console import Console
+
+console = Console()
+
+with Live(dashboard.render(), console=console, refresh_per_second=4) as live:
+    # Logs aparecen ARRIBA del dashboard automáticamente
+    live.console.print("[green]✓[/] Starting code generation...")
+
+    # Actualizar dashboard
+    dashboard.update_phase("Code Generation", progress=0.45)
+    live.update(dashboard.render())
+```
 
 ### Componentes
 
-| Componente | Ubicación | Responsabilidad |
-|------------|-----------|-----------------|
-| `DashboardWriter` | `src/console/dashboard_writer.py` | Escribe eventos a JSONL |
-| `DashboardViewer` | `src/console/dashboard_viewer.py` | Lee JSONL y renderiza con Rich |
-| `dashboard.jsonl` | `logs/runs/{run_id}/` | Archivo de eventos (append-only) |
+| Componente | Archivo | Responsabilidad |
+|------------|---------|-----------------|
+| `DashboardState` | `src/console/dashboard_state.py` | Dataclass con estado actual |
+| `DashboardRenderer` | `src/console/dashboard_renderer.py` | Genera Rich renderables |
+| `DashboardManager` | `src/console/dashboard_manager.py` | Wrapper para Live + API |
 
-### Flujo de Datos
+### Flujo
 
-```text
-Pipeline                          Archivo                    Viewer
-────────                          ───────                    ──────
-start_phase("CodeGen")  ──────►  {"type":"phase"...}  ◄────  tail -f
-update_metrics(...)     ──────►  {"type":"metrics"...}       parse JSON
-write_log("info",...)   ──────►  {"type":"log"...}           render Rich
+```
+Pipeline                    DashboardManager                Rich Live
+────────                    ────────────────                ─────────
+start_phase("CodeGen") ──►  state.current_phase = ...  ──►  live.update()
+log("Generated file")  ──►  live.console.print(...)    ──►  Aparece arriba
+update_metrics(...)    ──►  state.metrics = ...        ──►  live.update()
 ```
 
-### Integración en Pipeline
+---
+
+## 📦 API del Dashboard
 
 ```python
-# tests/e2e/real_e2e_full_pipeline.py
+class DashboardManager:
+    """API pública del dashboard."""
 
-from src.console.dashboard_writer import DashboardWriter
+    def __enter__(self) -> "DashboardManager":
+        """Inicia Rich Live."""
 
-# Al inicio del pipeline
-dashboard = DashboardWriter(f"logs/runs/{run_id}/dashboard.jsonl")
+    def __exit__(self, *args):
+        """Cierra Rich Live."""
 
-# En cada fase
-dashboard.write_phase("Code Generation", "running", progress=0.0)
-# ... código existente con prints normales ...
-dashboard.write_phase("Code Generation", "completed", progress=1.0, duration_ms=12345)
+    # === Fases ===
+    def start_phase(self, name: str, total_steps: int = 1):
+        """Marca fase como running."""
 
-# Métricas
-dashboard.write_metrics(tests_passed=45, tests_failed=2, ir_compliance=0.98)
+    def update_progress(self, current: int, message: str = ""):
+        """Actualiza progreso de fase actual."""
+
+    def complete_phase(self):
+        """Marca fase actual como completada."""
+
+    def fail_phase(self, error: str):
+        """Marca fase actual como fallida."""
+
+    # === Métricas ===
+    def update_tests(self, passed: int, total: int):
+        """Actualiza card de tests."""
+
+    def update_compliance(self, percentage: float):
+        """Actualiza card de compliance."""
+
+    def update_llm(self, cost: float, tokens: int):
+        """Actualiza card de LLM."""
+
+    def update_repair(self, iteration: int, max_iter: int = 3, status: str = "running"):
+        """Actualiza card de repair loop."""
+
+    # === Logs ===
+    def log(self, message: str, level: str = "info"):
+        """Agrega log (aparece arriba del dashboard)."""
+
+    def success(self, message: str):
+        """Shortcut para log success."""
+
+    def warning(self, message: str):
+        """Shortcut para log warning."""
+
+    def error(self, message: str):
+        """Shortcut para log error."""
 ```
 
----
-
-## Plan de Trabajo (v2.0)
-
-| # | Task | Effort | Deps | Entregable |
-|---|------|--------|------|------------|
-| 1 | **DashboardWriter** | 2h | - | `src/console/dashboard_writer.py` |
-| 2 | **DashboardViewer** | 4h | 1 | `src/console/dashboard_viewer.py` |
-| 3 | **Integrar en pipeline** | 2h | 1 | Llamadas a `dashboard.write_*()` en E2E |
-| 4 | **Learning metrics** | 1h | 1,3 | `write_learning()` desde singletons |
-| 5 | **Repair loop visibility** | 1h | 1,3 | `write_repair()` desde repair loop |
-| 6 | **CLI command** | 1h | 2 | `python -m src.console.dashboard_viewer` |
-| 7 | **Docs** | 1h | all | README con uso |
-
-**Total: ~12h** (vs ~40h del plan v1.1)
-
----
-
-## Tabla de Seguimiento (v2.0)
-
-| Workstream | Status | Priority | Effort | Notas |
-|------------|--------|----------|--------|-------|
-| DashboardWriter | 🔲 Todo | P0 | 2h | Archivo JSON Lines append-only |
-| DashboardViewer | 🔲 Todo | P0 | 4h | Rich layout, tail -f parsing |
-| Pipeline integration | 🔲 Todo | P0 | 2h | Llamadas en cada fase |
-| Learning metrics | 🔲 Todo | P1 | 1h | Exponer desde singletons |
-| Repair loop visibility | 🔲 Todo | P1 | 1h | Iteration/pass_rate/status |
-| CLI command | 🔲 Todo | P2 | 1h | `--file` argument |
-| Docs | 🔲 Todo | P3 | 1h | README + ejemplos |
-
-Legend: ✅ Done | 🟡 In Progress | 🔲 Todo
-
----
-
-## Riesgos y Mitigaciones (v2.0)
-
-| Riesgo | Mitigación |
-|--------|------------|
-| **Archivo crece mucho** | Rotate per-run, cleanup después de 7 días |
-| **Viewer no encuentra archivo** | Mensaje claro + path suggestion |
-| **JSON malformado** | Try/except en cada línea, skip inválidas |
-| **Latencia viewer** | Buffer de 100 líneas, refresh 500ms |
-
----
-
-## API Payload Contracts (v2.0)
-
-### Event Types
+### Uso en Pipeline
 
 ```python
-# Phase event
-{"ts": "...", "type": "phase", "name": str, "status": str, "progress": float, "duration_ms": int}
+from src.console.dashboard_manager import DashboardManager
 
-# Metrics event
-{"ts": "...", "type": "metrics", "tests_passed": int, "tests_failed": int, "ir_compliance": float, "llm_tokens": int, "llm_cost": float}
+with DashboardManager() as dash:
+    # Fase 1
+    dash.start_phase("Spec Ingestion", total_steps=4)
+    dash.log("Loading spec file...")
+    dash.update_progress(1, "Parsing markdown...")
+    dash.update_progress(2, "Extracting requirements...")
+    dash.success("Spec loaded: 15 requirements found")
+    dash.complete_phase()
 
-# Infra event
-{"ts": "...", "type": "infra", "docker": str, "neo4j": str, "qdrant": str, "redis": str}
+    # Fase 7
+    dash.start_phase("Code Generation", total_steps=12)
+    for i, file in enumerate(files_to_generate):
+        dash.update_progress(i + 1, f"Generating {file}...")
+        generate_file(file)
+        dash.update_llm(cost=0.02 * i, tokens=1500 * i)
+    dash.complete_phase()
 
-# Learning event
-{"ts": "...", "type": "learning", "fix_patterns": int, "anti_patterns": int, "reuse_rate": float, "prevention_rate": float}
+    # Tests
+    dash.update_tests(passed=45, total=47)
+    dash.update_compliance(98.2)
 
-# Repair event
-{"ts": "...", "type": "repair", "iteration": int, "max": int, "pass_rate": float, "status": str, "skip_reason": str|null}
-
-# Log event
-{"ts": "...", "type": "log", "level": str, "message": str}
+    # Repair (si necesario)
+    dash.update_repair(iteration=1, status="running")
+    # ...
+    dash.update_repair(iteration=2, status="completed")
 ```
 
 ---
 
-## Validación / DoD (v2.0)
+## 📋 Plan de Trabajo (v3.0)
 
-- [ ] `python -m py_compile src/console/dashboard_writer.py` pasa
-- [ ] `python -m py_compile src/console/dashboard_viewer.py` pasa
-- [ ] Pipeline escribe a `dashboard.jsonl` durante E2E run
-- [ ] Viewer muestra fases, métricas, logs en tiempo real
-- [ ] Zero flickering en viewer
-- [ ] Sin dependencias nuevas (solo Rich, ya instalado)
-- [ ] Docs con ejemplo de uso
+| # | Task | Effort | Entregable |
+|---|------|--------|------------|
+| 1 | **DashboardState** | 1h | Dataclass con estado |
+| 2 | **DashboardRenderer** | 3h | Genera Rich Layout |
+| 3 | **DashboardManager** | 2h | Wrapper con API |
+| 4 | **Integrar en pipeline** | 2h | Reemplazar prints |
+| 5 | **Tests** | 1h | Unit tests básicos |
+| 6 | **Docs** | 1h | README con ejemplos |
+
+**Total: ~10h**
 
 ---
 
-## Comparativa v1.1 vs v2.0
+## ✅ Validación / DoD
 
-| Aspecto | v1.1 (Rich Live + WS) | v2.0 (File + Viewer) |
-|---------|----------------------|----------------------|
-| **Flickering** | ❌ No resuelto | ✅ Eliminado |
-| **Complejidad** | Alta (WS, callbacks) | Baja (archivo) |
-| **Effort** | ~40h | ~12h |
-| **CI compatible** | ❌ Requiere terminal | ✅ Solo archivo |
-| **Debugging** | Difícil | `cat dashboard.jsonl` |
-| **Arquitectura** | Acoplada | Desacoplada |
+- [ ] Dashboard renderiza correctamente en terminal 80x24
+- [ ] Spinner animado en fase running
+- [ ] Progress bar smooth
+- [ ] Logs aparecen arriba sin flickering
+- [ ] Colores correctos según estado
+- [ ] Funciona con pipeline E2E real
+- [ ] Sin dependencias nuevas
+
+---
+
+## 📊 Comparativa de Versiones
+
+| Aspecto | v1.1 | v2.0 | v3.0 |
+|---------|------|------|------|
+| **Arquitectura** | Rich Live (roto) | File + Viewer | Rich Live (nativo) |
+| **Flickering** | ❌ | ✅ | ✅ |
+| **Procesos** | 1 | 2 | 1 |
+| **Effort** | ~40h | ~12h | ~10h |
+| **Animaciones** | ❌ | ❌ | ✅ |
+| **UX** | Mala | OK | Excelente |
