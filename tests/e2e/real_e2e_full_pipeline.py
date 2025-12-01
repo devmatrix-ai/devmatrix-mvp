@@ -19,6 +19,20 @@ from typing import Dict, Any, List, Optional
 from contextlib import contextmanager
 from io import StringIO
 
+
+class SmokeTestFailedError(Exception):
+    """
+    Raised when smoke test fails after max repair iterations.
+
+    Bug #3 Fix: Pipeline must FAIL (not partial_success) when smoke < 100%
+    after 3 repair cycles. This exception allows learning phase to run
+    before pipeline terminates with failed status.
+    """
+    def __init__(self, pass_rate: float, violations_count: int, message: str = None):
+        self.pass_rate = pass_rate
+        self.violations_count = violations_count
+        super().__init__(message or f"Smoke test failed: {pass_rate:.1%} pass rate, {violations_count} violations")
+
 # Load environment variables from .env file
 from dotenv import load_dotenv
 load_dotenv()  # Load ANTHROPIC_API_KEY and other env vars
