@@ -102,6 +102,7 @@ markers = [
     "contract: Contract tests for API schema validation",
     "security: Security and penetration tests",
     "cognitive: Cognitive architecture tests (Neo4j, Qdrant, CPIE, Pattern Bank)",
+    "learning: Learning system tests (pattern storage, prompt enhancement, cross-session)",
 ]
 
 [tool.coverage.run]

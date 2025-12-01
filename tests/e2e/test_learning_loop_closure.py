@@ -27,7 +27,10 @@ from src.learning.negative_pattern_store import (
     PositiveRepairPattern,
     GenerationAntiPattern,
 )
-from src.learning.prompt_enhancer import PromptEnhancer
+from src.learning.prompt_enhancer import (
+    GenerationPromptEnhancer,
+    enhance_prompt as module_enhance_prompt,
+)
 
 # Code generation imports (for integration check)
 try:
@@ -55,7 +58,7 @@ class LearningLoopVerifier:
         """Initialize learning components."""
         try:
             self.pattern_store = NegativePatternStore()
-            self.prompt_enhancer = PromptEnhancer()
+            self.prompt_enhancer = GenerationPromptEnhancer()
             return True
         except Exception as e:
             print(f"❌ Failed to initialize learning components: {e}")
@@ -66,9 +69,9 @@ class LearningLoopVerifier:
         if not self.pattern_store:
             return {"negative": 0, "positive": 0}
 
-        negative_count = len(self.pattern_store.get_patterns_by_type("syntax_error"))
-        negative_count += len(self.pattern_store.get_patterns_by_type("missing_import"))
-        negative_count += len(self.pattern_store.get_patterns_by_type("type_error"))
+        negative_count = len(self.pattern_store.get_patterns_by_error_type("syntax_error"))
+        negative_count += len(self.pattern_store.get_patterns_by_error_type("import"))
+        negative_count += len(self.pattern_store.get_patterns_by_error_type("type_error"))
 
         positive_patterns = self.pattern_store.get_positive_repairs(limit=100)
         positive_count = len(positive_patterns)
@@ -130,7 +133,8 @@ class LearningLoopVerifier:
         if not self.prompt_enhancer:
             return {"enhanced": False, "patterns_injected": 0}
 
-        enhanced = self.prompt_enhancer.enhance_prompt(base_prompt, context="test")
+        # Use enhance_generic_prompt for general testing
+        enhanced = self.prompt_enhancer.enhance_generic_prompt(base_prompt)
 
         # Check if enhancement added content
         patterns_injected = 0
