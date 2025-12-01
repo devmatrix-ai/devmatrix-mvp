@@ -75,9 +75,32 @@ def repair(self, compliance_report):
 ### Phase 1: PromptEnhancer Integration (P0)
 **Goal**: All LLM prompts enhanced with learned anti-patterns  
 **Effort**: 2-3 hours  
-**Files**: `code_generation_service.py`, `code_repair_agent.py`
+**Files**: `code_generation_service.py`, `code_repair_agent.py`  
+**Status**: ✅ Phase 1.1 COMPLETED | 🔴 Phase 1.2 TODO
 
-#### 1.1 Integrate into CodeGenerationService
+#### 1.1 Integrate into CodeGenerationService ✅ COMPLETED
+**Completed**: 2025-12-01  
+**Verification**: `verify_phase_1_1_integration.py` - ALL TESTS PASSED
+
+**Changes Made**:
+1. Added `self.prompt_enhancer` initialization in `__init__`
+2. Added `self.enable_prompt_enhancement` flag
+3. Enhanced `_build_prompt()` to inject anti-patterns
+4. Added helper methods:
+   - `_extract_entity_name_from_task()`
+   - `_extract_endpoint_pattern_from_task()`
+   - `_extract_schema_name_from_task()`
+5. Added logging: "🎓 Prompt enhanced with N anti-patterns"
+
+**Verification Results**:
+```
+✅ PASS: PromptEnhancer Import
+✅ PASS: PromptEnhancer Singleton
+✅ PASS: CodeGenerationService Integration
+```
+
+**Next**: Run E2E pipeline and verify "🎓 Prompt enhanced" logs appear.
+
 ```python
 # File: src/services/code_generation_service.py
 
@@ -325,12 +348,12 @@ def test_cross_session_learning():
 
 | Phase | Task | Effort | Owner | Status |
 |-------|------|--------|-------|--------|
-| 1.1 | Integrate PromptEnhancer into CodeGenerationService | 2h | Dev | 🔴 TODO |
+| 1.1 | Integrate PromptEnhancer into CodeGenerationService | 2h | Dev | ✅ DONE (2025-12-01) |
 | 1.2 | Integrate PromptEnhancer into CodeRepairAgent | 1h | Dev | 🔴 TODO |
 | 2.1 | Add PositiveRepairPattern to NegativePatternStore | 2h | Dev | 🔴 TODO |
 | 2.2 | Update CodeRepairAgent to record fixes | 2h | Dev | 🔴 TODO |
 | 3.1 | Create learning verification test | 2h | Dev | 🔴 TODO |
-| - | **Total** | **9h** | - | - |
+| - | **Total** | **9h** | - | **1/5 Complete** |
 
 **Estimated Completion**: 1-2 days
 
