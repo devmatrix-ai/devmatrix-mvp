@@ -4019,151 +4019,103 @@ router = APIRouter(
     service = {entity.name}Service(db)
 '''
 
+            # Bug #166: DRY helper for existence check
+            def existence_check(id_param: str) -> str:
+                return f'''    existing = await service.get({id_param})
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"{entity.name} with id {{{id_param}}} not found"
+        )
+'''
+
             if method == 'get':
                 if response_model and 'List[' in response_model:
-                    # List endpoint - use service.list(page, size) which matches Service template
                     body += f'''    result = await service.list(page=1, size=100)
     return result.items
 '''
                 else:
-                    # Single item endpoint
                     id_param = path_params[0] if path_params else 'id'
                     body += f'''    {entity_snake} = await service.get_by_id({id_param})
-
     if not {entity_snake}:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"{entity.name} with id {{{id_param}}} not found"
         )
-
     return {entity_snake}
 '''
+
             elif method == 'post':
-                # Bug #80b Fix: Detect custom operations for POST endpoints
-                # POST can be used for: create (default), checkout, pay, cancel, deactivate, add_item, clear
+                # POST: create (default), checkout, pay, cancel, deactivate, add_item, clear
                 operation = None
                 custom_ops_no_body = ['checkout', 'pay', 'cancel', 'deactivate', 'activate', 'clear']
-                custom_ops_with_body = ['items']  # e.g., POST /carts/{id}/items
-
-                # Bug #82 Fix: Map route path operations to service method names
-                # /clear -> clear_items(), /checkout -> checkout(), etc.
-                operation_method_map = {
-                    'clear': 'clear_items',
-                }
+                custom_ops_with_body = ['items']
+                operation_method_map = {'clear': 'clear_items'}
 
                 for op in custom_ops_no_body:
                     if f'/{op}' in relative_path:
-                        # Use mapped method name if exists, otherwise use operation name
                         operation = operation_method_map.get(op, op)
                         break
 
                 if not operation:
                     for op in custom_ops_with_body:
                         if f'/{op}' in relative_path:
-                            operation = f'add_{op.rstrip("s")}'  # items -> add_item
+                            operation = f'add_{op.rstrip("s")}'
                             break
 
                 if operation:
                     id_param = path_params[0] if path_params else 'id'
-
+                    body += existence_check(id_param)
                     if operation == 'add_item':
-                        # add_item needs request body
-                        # Bug #166 Fix: Check existence first to return proper 404
-                        body += f'''    # Bug #166 Fix: Check existence first to return proper 404
-    existing = await service.get({id_param})
-    if not existing:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"{entity.name} with id {{{id_param}}} not found"
-        )
-
+                        body += f'''
     {entity_snake} = await service.add_item({id_param}, {schema_entity_snake}_data.model_dump() if hasattr({schema_entity_snake}_data, 'model_dump') else {schema_entity_snake}_data)
     return {entity_snake}
 '''
                     else:
-                        # Custom operation without body (checkout, pay, cancel, deactivate, activate)
-                        # Bug #166 Fix: Check existence first to return proper 404
-                        body += f'''    # Bug #166 Fix: Check existence first to return proper 404
-    existing = await service.get({id_param})
-    if not existing:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"{entity.name} with id {{{id_param}}} not found"
-        )
-
+                        body += f'''
     {entity_snake} = await service.{operation}({id_param})
     return {entity_snake}
 '''
                 else:
-                    # Default: standard create operation
-                    # Bug #139 Fix: Use schema_entity_snake for consistent variable names
                     body += f'''    {entity_snake} = await service.create({schema_entity_snake}_data)
     return {entity_snake}
 '''
+
             elif method == 'put':
                 id_param = path_params[0] if path_params else 'id'
-                # Bug #166 Fix: Check existence BEFORE update to return 404 instead of 422
-                # This ensures we return 404 (not found) rather than letting Pydantic
-                # validation errors (422) mask the fact that the resource doesn't exist
-                body += f'''    # Bug #166 Fix: Check existence first to return proper 404
-    existing = await service.get({id_param})
-    if not existing:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"{entity.name} with id {{{id_param}}} not found"
-        )
-
+                body += existence_check(id_param)
+                body += f'''
     {entity_snake} = await service.update({id_param}, {schema_entity_snake}_data)
     return {entity_snake}
 '''
+
             elif method == 'delete':
                 id_param = path_params[0] if path_params else 'id'
                 body += f'''    success = await service.delete({id_param})
-
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"{entity.name} with id {{{id_param}}} not found"
         )
-
     return None
 '''
-            elif method == 'patch':
-                # Bug #73 Fix: Handle PATCH for custom operations like activate/deactivate
-                id_param = path_params[0] if path_params else 'id'
 
-                # Detect operation from path suffix (e.g., /activate, /deactivate)
+            elif method == 'patch':
+                id_param = path_params[0] if path_params else 'id'
                 operation = None
                 if '/activate' in relative_path:
                     operation = 'activate'
                 elif '/deactivate' in relative_path:
                     operation = 'deactivate'
 
+                body += existence_check(id_param)
                 if operation:
-                    # Custom operation: call service.{operation}(id)
-                    # Bug #166 Fix: Check existence first to return proper 404
-                    body += f'''    # Bug #166 Fix: Check existence first to return proper 404
-    existing = await service.get({id_param})
-    if not existing:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"{entity.name} with id {{{id_param}}} not found"
-        )
-
+                    body += f'''
     {entity_snake} = await service.{operation}({id_param})
     return {entity_snake}
 '''
                 else:
-                    # Generic PATCH: call service.update(id, data) - partial update
-                    # Bug #166 Fix: Check existence first to return proper 404
-                    body += f'''    # Bug #166 Fix: Check existence first to return proper 404
-    existing = await service.get({id_param})
-    if not existing:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"{entity.name} with id {{{id_param}}} not found"
-        )
-
+                    body += f'''
     {entity_snake} = await service.update({id_param}, {schema_entity_snake}_data)
     return {entity_snake}
 '''

@@ -1205,9 +1205,47 @@ class CodeRepairAgent:
                 )
             ]
         elif method == 'put':
-            # Bug #71 Fix: return await service.update(id, data)
+            # Bug #71 Fix + Bug #166 Fix: Check existence BEFORE validation
+            # existing = await service.get(id)
+            # if not existing: raise HTTPException(404)
+            # return await service.update(id, data)
             body = [
                 service_assign,
+                # existing = await service.get(id)
+                ast.Assign(
+                    targets=[ast.Name(id='existing', ctx=ast.Store())],
+                    value=ast.Await(
+                        value=ast.Call(
+                            func=ast.Attribute(
+                                value=ast.Name(id='service', ctx=ast.Load()),
+                                attr='get',
+                                ctx=ast.Load()
+                            ),
+                            args=[ast.Name(id='id', ctx=ast.Load())],
+                            keywords=[]
+                        )
+                    )
+                ),
+                # if not existing: raise HTTPException(status_code=404, detail="Not found")
+                ast.If(
+                    test=ast.UnaryOp(
+                        op=ast.Not(),
+                        operand=ast.Name(id='existing', ctx=ast.Load())
+                    ),
+                    body=[
+                        ast.Raise(
+                            exc=ast.Call(
+                                func=ast.Name(id='HTTPException', ctx=ast.Load()),
+                                args=[],
+                                keywords=[
+                                    ast.keyword(arg='status_code', value=ast.Constant(value=404)),
+                                    ast.keyword(arg='detail', value=ast.Constant(value=f'{entity_capitalized} not found'))
+                                ]
+                            )
+                        )
+                    ],
+                    orelse=[]
+                ),
                 ast.Return(
                     value=ast.Await(
                         value=ast.Call(

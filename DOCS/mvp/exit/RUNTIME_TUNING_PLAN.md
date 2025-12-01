@@ -339,3 +339,86 @@ advisor.clear_cache()
 | 3. Anti-patterns Loop | ✅ DONE | #168 | 6h |
 | 4. Demo Prep | ⏳ PENDING | - | 1h |
 
+---
+
+## 🧹 Code Cleanup (2025-12-01)
+
+**Refactored:**
+
+- `code_generation_service.py`: DRY helper `existence_check()` consolidates Bug #166 blocks (~50 lines removed)
+- `code_repair_agent.py`: Added Bug #166 fix to AST-based endpoint generation (PUT method now checks existence)
+
+**Impact:** Fixes now apply to BOTH code paths:
+
+1. Initial code generation (`_generate_route_with_llm`)
+2. On-the-fly repair (`code_repair_agent._generate_endpoint_function_ast`)
+
+---
+
+## 🐛 Bug #169: Seed Data Not Persisting (CRITICAL)
+
+**Status:** 🔴 ACTIVE - Root cause identified
+
+**Problem:** `seed_db.py` logs "Test data seeded successfully" but data is NOT in the database.
+
+**Evidence:**
+```bash
+# Docker logs show success:
+2025-12-01 15:25:58 [info] ✅ Created test Product with ID 00000000-0000-4000-8000-000000000001
+2025-12-01 15:25:58 [info] ✅ Test data seeded successfully
+
+# But database is empty:
+docker exec app_postgres psql -U devmatrix -d app_db -c "SELECT id FROM products WHERE id = '00000000-0000-4000-8000-000000000001';"
+# (0 rows)
+```
+
+**Root Cause Analysis:**
+
+1. **Timing Issue:** The `db-init` container runs `alembic upgrade head && python scripts/seed_db.py`
+2. **Transaction Isolation:** The seed_db.py uses `async with session_maker() as session:` which may not commit properly
+3. **Possible Race Condition:** The app container may start before db-init fully commits
+
+**Workaround Applied:**
+```bash
+# Manual seed execution works:
+docker exec app_app python scripts/seed_db.py
+# Data now persists correctly
+```
+
+**Proposed Fix:**
+
+Option A: Add explicit flush + commit verification:
+```python
+async def seed_test_data():
+    async with session_maker() as session:
+        # ... add entities ...
+        await session.flush()  # Force write to DB
+        await session.commit()
+
+        # Verify data was persisted
+        result = await session.execute(select(ProductEntity).where(ProductEntity.id == UUID("00000000-0000-4000-8000-000000000001")))
+        if not result.scalar_one_or_none():
+            raise RuntimeError("Seed data verification failed!")
+```
+
+Option B: Add retry/wait in docker-compose:
+```yaml
+db-init:
+  command: sh -c "alembic upgrade head && python scripts/seed_db.py && sleep 2"
+```
+
+Option C: Run seed from app container on startup:
+```python
+# In main.py lifespan
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await run_seed_if_needed()  # Check and seed if empty
+    yield
+```
+
+**Impact:** This is the PRIMARY cause of 18+ smoke test failures (all happy_path scenarios that expect existing resources).
+
+**Next Steps:**
+1. [ ] Implement Option A (verification) in seed_db.py template
+2. [ ] Test with fresh Docker build
+3. [ ] Validate smoke test improvement
