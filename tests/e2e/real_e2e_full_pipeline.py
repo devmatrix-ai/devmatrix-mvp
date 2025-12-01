@@ -1427,29 +1427,58 @@ class RealE2ETest:
 
             # Phase 8.5: Runtime Smoke Test (Task 10)
             # Starts app, calls endpoints, catches runtime errors (NameError, TypeError, 500)
+            smoke_test_failed = False
             if RUNTIME_SMOKE_TEST_AVAILABLE:
                 start_phase("Runtime Smoke Test", substeps=1) if PROGRESS_TRACKING_AVAILABLE else None
-                await self._phase_8_5_runtime_smoke_test()
-                complete_phase("Runtime Smoke Test", success=True) if PROGRESS_TRACKING_AVAILABLE else None
+                try:
+                    await self._phase_8_5_runtime_smoke_test()
+                    complete_phase("Runtime Smoke Test", success=True) if PROGRESS_TRACKING_AVAILABLE else None
+                except SmokeTestFailedError as e:
+                    # Bug #3 Fix: Smoke test failed after max repair iterations
+                    # Mark phase as failed but continue to learning phase
+                    smoke_test_failed = True
+                    self.smoke_test_error = e  # Store for final report
+                    complete_phase("Runtime Smoke Test", success=False) if PROGRESS_TRACKING_AVAILABLE else None
+                    print(f"\n  ⚠️ Continuing to Learning phase to save patterns...")
                 display_progress() if PROGRESS_TRACKING_AVAILABLE else None
 
             # Phase 9: Validation (ENHANCED with semantic validation)
-            start_phase("Validation", substeps=3) if PROGRESS_TRACKING_AVAILABLE else None
-            await self._phase_9_validation()
-            complete_phase("Validation", success=True) if PROGRESS_TRACKING_AVAILABLE else None
-            display_progress() if PROGRESS_TRACKING_AVAILABLE else None
+            # Skip if smoke test failed - app is not functional
+            if not smoke_test_failed:
+                start_phase("Validation", substeps=3) if PROGRESS_TRACKING_AVAILABLE else None
+                await self._phase_9_validation()
+                complete_phase("Validation", success=True) if PROGRESS_TRACKING_AVAILABLE else None
+                display_progress() if PROGRESS_TRACKING_AVAILABLE else None
 
-            # Phase 10: Health Verification
-            start_phase("Health Verification", substeps=2) if PROGRESS_TRACKING_AVAILABLE else None
-            await self._phase_10_health_verification()
-            complete_phase("Health Verification", success=True) if PROGRESS_TRACKING_AVAILABLE else None
-            display_progress() if PROGRESS_TRACKING_AVAILABLE else None
+                # Phase 10: Health Verification
+                start_phase("Health Verification", substeps=2) if PROGRESS_TRACKING_AVAILABLE else None
+                await self._phase_10_health_verification()
+                complete_phase("Health Verification", success=True) if PROGRESS_TRACKING_AVAILABLE else None
+                display_progress() if PROGRESS_TRACKING_AVAILABLE else None
+            else:
+                print(f"\n  ⏭️ Skipping Validation and Health Verification (smoke test failed)")
 
-            # Phase 11: Learning
+            # Phase 11: Learning - ALWAYS runs to save patterns for next run
             start_phase("Learning", substeps=2) if PROGRESS_TRACKING_AVAILABLE else None
             await self._phase_11_learning()
             complete_phase("Learning", success=True) if PROGRESS_TRACKING_AVAILABLE else None
             display_progress() if PROGRESS_TRACKING_AVAILABLE else None
+
+            # Bug #3 Fix: After learning, raise exception to fail pipeline
+            if smoke_test_failed:
+                raise self.smoke_test_error
+
+        except SmokeTestFailedError as e:
+            # Bug #3 Fix: Smoke test failure = pipeline failure (after learning ran)
+            print(f"\n❌ Pipeline FAILED: Smoke test did not pass after repair attempts")
+            print(f"   Pass rate: {e.pass_rate:.1%}, Violations: {e.violations_count}")
+            self.metrics_collector.record_error("pipeline", {
+                "error": str(e),
+                "pass_rate": e.pass_rate,
+                "violations": e.violations_count
+            }, critical=True)
+            if PROGRESS_TRACKING_AVAILABLE:
+                add_error("Runtime Smoke Test")
 
         except Exception as e:
             print(f"\n❌ Pipeline error: {e}")
@@ -3601,6 +3630,9 @@ Once running, visit:
                         "violations": len(smoke_result.violations)
                     }, critical=True)
                     print(f"\n  ❌ Phase 8.5 FAILED - Smoke test did not pass after repair")
+                    # Bug #3 Fix: Raise exception to stop pipeline (learning will still run)
+                    pass_rate = smoke_result.endpoints_passed / max(1, smoke_result.endpoints_tested)
+                    raise SmokeTestFailedError(pass_rate, len(smoke_result.violations))
 
                 return
             else:
@@ -3639,6 +3671,9 @@ Once running, visit:
                         "violations": len(smoke_result.violations)
                     }, critical=True)
                     print(f"\n  ❌ Phase 8.5 FAILED - Smoke test did not pass after repair")
+                    # Bug #3 Fix: Raise exception to stop pipeline (learning will still run)
+                    pass_rate = smoke_result.endpoints_passed / max(1, smoke_result.endpoints_tested)
+                    raise SmokeTestFailedError(pass_rate, len(smoke_result.violations))
 
                 return
             else:
@@ -3736,8 +3771,13 @@ Once running, visit:
                     "violations": len(smoke_result.violations)
                 }, critical=True)
                 print(f"\n  ❌ Phase 8.5 FAILED - Smoke test did not pass")
-                return  # Don't call complete_phase - phase is marked FAILED
+                # Bug #3 Fix: Raise exception to stop pipeline (learning will still run)
+                pass_rate = smoke_result.endpoints_passed / max(1, smoke_result.endpoints_tested)
+                raise SmokeTestFailedError(pass_rate, len(smoke_result.violations))
 
+        except SmokeTestFailedError:
+            # Re-raise SmokeTestFailedError - don't catch it here
+            raise
         except Exception as e:
             # Bug #101 Fix: Exceptions in smoke test = critical failure
             print(f"\n  ❌ Smoke test error: {e}")
@@ -3748,7 +3788,7 @@ Once running, visit:
                 "error_type": type(e).__name__
             }, critical=True)
             print(f"\n  ❌ Phase 8.5 FAILED - Docker/smoke test error")
-            return  # Don't call complete_phase - phase is marked FAILED
+            raise SmokeTestFailedError(0.0, 0, f"Docker/smoke test error: {e}")
 
         self.metrics_collector.complete_phase("runtime_smoke_test")
         print(f"  ✅ Phase 8.5 complete - All smoke tests passed")
@@ -4450,6 +4490,9 @@ Once running, visit:
                 "violations": len(smoke_result.violations)
             }, critical=True)
             print(f"\n  ❌ Phase 8.5 FAILED - Smoke test did not pass")
+            # Bug #3 Fix: Raise exception to stop pipeline (learning will still run)
+            pass_rate = smoke_result.endpoints_passed / max(1, smoke_result.endpoints_tested)
+            raise SmokeTestFailedError(pass_rate, len(smoke_result.violations))
         else:
             self.metrics_collector.complete_phase("runtime_smoke_test")
             print(f"  ✅ Phase 8.5 complete - All smoke tests passed")

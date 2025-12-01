@@ -1,8 +1,21 @@
 # 🔧 SMOKE TEST & LEARNING FIX PLAN
 
-**Status**: CRITICAL - Pipeline produces false positives and never learns  
-**Created**: 2025-12-01  
-**Priority**: P0 - Blocking MVP Quality  
+**Status**: IN PROGRESS - 3/7 bugs fixed
+**Created**: 2025-12-01
+**Updated**: 2025-12-01
+**Priority**: P0 - Blocking MVP Quality
+
+## ✅ PROGRESS TRACKER
+
+| Bug | Description | Status | File Modified |
+|-----|-------------|--------|---------------|
+| **1** | avoidance_context never used | ✅ DONE | `code_generation_service.py` |
+| **2** | 404 accepted in health check | ✅ DONE | `runtime_smoke_validator.py` |
+| **3** | Pipeline continues after smoke fail | ✅ DONE | `real_e2e_full_pipeline.py` |
+| **4** | Entity names case mismatch | ⏳ TODO | `negative_pattern_store.py` |
+| **5** | Two smoke tests with different criteria | ⏳ TODO | smoke_runner_v2.py, runtime_smoke_validator.py |
+| **6** | Quality gate OR logic (should be AND) | ⏳ TODO | real_e2e_full_pipeline.py |
+| **7** | smoke_pass_rate missing from report | ⏳ TODO | real_e2e_full_pipeline.py |
 
 ---
 
