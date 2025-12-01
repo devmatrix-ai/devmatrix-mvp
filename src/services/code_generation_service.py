@@ -5563,10 +5563,10 @@ async def seed_test_data():
     """Seed minimal test data for smoke testing.
 
     Bug #143 Fix: Use direct session creation instead of get_db() generator.
-    The generator pattern causes issues when exiting with 'break' - the
-    generator cleanup code tries another commit which can trigger rollback.
+    Bug #169 Fix: Add explicit flush + verification to ensure data persists.
     """
     from src.core.database import _get_session_maker
+    from sqlalchemy import text
 
     logger.info("🌱 Seeding test data...")
 
@@ -5574,8 +5574,22 @@ async def seed_test_data():
     async with session_maker() as session:
         try:
 {seed_code}
+            # Bug #169 Fix: Explicit flush before commit to ensure writes
+            await session.flush()
             await session.commit()
             logger.info("✅ Test data seeded successfully")
+
+            # Bug #169 Fix: Verify data was actually persisted
+            # Use a new session to confirm data is in DB
+            async with session_maker() as verify_session:
+                result = await verify_session.execute(
+                    text("SELECT COUNT(*) FROM products WHERE id = '00000000-0000-4000-8000-000000000001'")
+                )
+                count = result.scalar()
+                if count == 0:
+                    logger.error("❌ CRITICAL: Seed data verification failed - data not in DB!")
+                    raise RuntimeError("Seed data verification failed")
+                logger.info(f"✅ Verified: {{count}} seed record(s) in database")
         except Exception as e:
             await session.rollback()
             # Ignore duplicate key errors (data already exists)
