@@ -698,6 +698,27 @@ def silent_logs():
 
         # Update ALL loggers to suppress output
         for logger_name in logging.root.manager.loggerDict:
+            # Allow AST Learning logs to pass through
+            if "production_code_generators" in logger_name or "pattern_aware_generator" in logger_name:
+                logger_obj = logging.getLogger(logger_name)
+                logger_obj.setLevel(logging.INFO)
+                
+                # Ensure it has a handler pointing to old_stdout
+                has_stdout_handler = False
+                for handler in logger_obj.handlers:
+                    if isinstance(handler, logging.StreamHandler) and handler.stream == old_stdout:
+                        has_stdout_handler = True
+                        break
+                
+                if not has_stdout_handler:
+                    handler = logging.StreamHandler(old_stdout)
+                    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+                    handler.setFormatter(formatter)
+                    logger_obj.addHandler(handler)
+                
+                logger_obj.propagate = False  # Don't propagate to silenced root
+                continue
+
             logger_obj = logging.getLogger(logger_name)
 
             # Update/remove all handlers

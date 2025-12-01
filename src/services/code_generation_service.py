@@ -4023,14 +4023,25 @@ datefmt = %H:%M:%S
                 }
             )
 
-            # Filter to only Python service/workflow files for enhancement
-            # (Skip __init__.py, config files, etc.)
+            # Bug #164 Fix: Expand cognitive pass to ALL code files (not just LLM stratum)
+            # Previously only applied to services/workflows/routes (~6% of files).
+            # Now includes models/, repositories/, validators/ for full learning coverage.
+            # (Skip __init__.py, config files, static infrastructure files)
             enhancement_targets = [
                 {"path": path, "content": content}
                 for path, content in files_dict.items()
                 if path.endswith(".py")
                 and not path.endswith("__init__.py")
-                and ("services/" in path or "workflows/" in path or "routes/" in path)
+                and not path.endswith("conftest.py")
+                and (
+                    "services/" in path
+                    or "workflows/" in path
+                    or "routes/" in path
+                    or "models/" in path        # Bug #164: AST stratum
+                    or "repositories/" in path  # Bug #164: AST stratum
+                    or "validators/" in path    # Bug #164: AST stratum
+                    or "state_machines/" in path  # Bug #164: AST stratum
+                )
             ]
 
             if not enhancement_targets:

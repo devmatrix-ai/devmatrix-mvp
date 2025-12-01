@@ -12,6 +12,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Bug #164 Fix: Import PatternAwareGenerator for AST stratum learning
+try:
+    from src.services.pattern_aware_generator import get_field_overrides_for_entity
+    PATTERN_AWARE_AVAILABLE = True
+except ImportError:
+    PATTERN_AWARE_AVAILABLE = False
+    def get_field_overrides_for_entity(entity_name: str):
+        return {}
+
 # Fix #3: Field name normalization mapping
 # Maps spec/IR field names to standard code field names
 FIELD_NAME_MAPPING = {
@@ -471,6 +480,7 @@ SQLAlchemy ORM Models
 Database entity definitions with proper table names and columns.
 """
 from sqlalchemy import Column, String, Boolean, DateTime, Text, Integer, Numeric, ForeignKey
+from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime, timezone
 import uuid
@@ -501,6 +511,11 @@ from src.core.database import Base
         entity_plural = entity.get('plural', f'{entity_name}s').lower()
         fields = entity.get('fields', [])
 
+        # Bug #164 Fix: Get pattern-aware overrides from learned anti-patterns
+        field_overrides = get_field_overrides_for_entity(entity_name)
+        if field_overrides and PATTERN_AWARE_AVAILABLE:
+            logger.info(f"🎓 AST Learning: {len(field_overrides)} field overrides for {entity_name} from learned patterns")
+
         code += f'''
 class {entity_name}Entity(Base):
     """SQLAlchemy model for {entity_plural} table."""
@@ -513,16 +528,30 @@ class {entity_name}Entity(Base):
         # Generate columns dynamically from entity fields
         # Skip system fields that are added automatically (id, created_at, updated_at)
         for field in fields:
-            field_name = normalize_field_name(field.name)  # Fix #3: normalize field names
+            # Handle both dict and object access for field properties
+            if isinstance(field, dict):
+                f_name = field.get('name', '')
+                f_type = field.get('type', 'str')
+                f_required = field.get('required', False)
+                f_default = field.get('default', None)
+                f_constraints = field.get('constraints', [])
+            else:
+                f_name = getattr(field, 'name', '')
+                f_type = getattr(field, 'type', 'str')
+                f_required = getattr(field, 'required', False)
+                f_default = getattr(field, 'default', None)
+                f_constraints = getattr(field, 'constraints', [])
+
+            field_name = normalize_field_name(f_name)  # Fix #3: normalize field names
 
             # Skip system fields - they are added separately
             if field_name in ['id', 'created_at', 'updated_at']:
                 continue
 
-            field_type = field.type
-            is_required = field.required
-            has_default = field.default is not None
-            constraints = field.constraints
+            field_type = f_type
+            is_required = f_required
+            has_default = f_default is not None
+            constraints = f_constraints
 
             # NEW: Check for immutable enforcement from validation ground truth
             enforcement = _get_enforcement_for_field(entity_name, field_name, validation_ground_truth)
@@ -534,10 +563,23 @@ class {entity_name}Entity(Base):
             # Determine nullable
             nullable = not is_required
 
+            # Bug #164 Fix: Apply learned pattern overrides (e.g., IntegrityError → nullable=True)
+            if field_name in field_overrides:
+                override = field_overrides[field_name]
+                if 'nullable' in override:
+                    nullable = override['nullable']
+                    logger.info(f"🎓 Pattern Override: {entity_name}.{field_name} nullable={nullable} (learned from previous IntegrityError)")
+
             # Handle foreign keys (fields ending with _id)
             if field_name.endswith('_id') and field_type == 'UUID':
+                # Infer parent table name: cart_id -> carts
+                parent_snake = field_name[:-3]
+                # Simple pluralization (add 's') - robust enough for standard naming
+                # Ideally we'd look up the entity plural, but this is a safe heuristic for now
+                parent_table = f"{parent_snake}s"
+                
                 # Foreign key reference
-                code += f'    {field_name} = Column(UUID(as_uuid=True), nullable={nullable})\n'
+                code += f'    {field_name} = Column(UUID(as_uuid=True), ForeignKey("{parent_table}.id"), nullable={nullable})\n'
             else:
                 # Regular column
                 column_def = f'    {field_name} = Column({sql_type}'
@@ -553,20 +595,20 @@ class {entity_name}Entity(Base):
                     column_def += ', unique=True'
 
                 # Add default if exists
-                if has_default and field.default != '...':
+                if has_default and f_default != '...':
                     if field_type == 'datetime':
                         column_def += ', default=lambda: datetime.now(timezone.utc)'
                     elif field_type in ['str', 'string']:
-                        column_def += f', default="{field.default}"'
+                        column_def += f', default="{f_default}"'
                     elif field_type in ['int', 'integer', 'Decimal', 'decimal', 'float']:
-                        column_def += f', default={field.default}'
+                        column_def += f', default={f_default}'
                     elif field_type in ['bool', 'boolean']:
                         # Capitalize boolean strings (true/false → True/False)
-                        if isinstance(field.default, str):
-                            bool_value = 'True' if field.default.lower() == 'true' else 'False'
+                        if isinstance(f_default, str):
+                            bool_value = 'True' if f_default.lower() == 'true' else 'False'
                             column_def += f', default={bool_value}'
                         else:
-                            column_def += f', default={field.default}'
+                            column_def += f', default={f_default}'
 
                 # NEW: Add onupdate=None for immutable fields
                 if is_immutable:
@@ -579,14 +621,106 @@ class {entity_name}Entity(Base):
         # Always add created_at for consistency
         code += '    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))\n'
 
+        # Generate relationships (Forward: Many-to-One)
+        for field in fields:
+            # Handle both dict and object access
+            if isinstance(field, dict):
+                f_name = field.get('name', '')
+                f_type = field.get('type', 'str')
+            else:
+                f_name = getattr(field, 'name', '')
+                f_type = getattr(field, 'type', 'str')
+
+            field_name = normalize_field_name(f_name)
+            if field_name.endswith('_id') and f_type == 'UUID':
+                # Infer parent name: cart_id -> Cart
+                parent_snake = field_name[:-3]
+                parent_name = ''.join(word.capitalize() for word in parent_snake.split('_'))
+                
+                # Check if parent entity exists in the list
+                parent_exists = any(e.get('name') == parent_name for e in entities)
+                if parent_exists:
+                    # Determine back_populates name on the parent
+                    # If we are CartItem, parent is Cart. Back ref on Cart should be 'items'
+                    if entity_name == f"{parent_name}Item":
+                        back_populates = "items"
+                    else:
+                        back_populates = entity_plural # e.g. Customer -> orders
+
+                    # Check for lazy_load override
+                    lazy = "select" # Default
+                    if field_name in field_overrides: # Check override on the FK field
+                        override = field_overrides[field_name]
+                        if 'lazy' in override:
+                            lazy = override['lazy']
+                            logger.info(f"🎓 Pattern Override: {entity_name}.{parent_snake} lazy={lazy} (learned from AttributeError)")
+                    
+                    # Add relationship
+                    # e.g. cart = relationship("CartEntity", back_populates="items", lazy="select")
+                    code += f'    {parent_snake} = relationship("{parent_name}Entity", back_populates="{back_populates}", lazy="{lazy}")\n'
+
+        # Generate relationships (Backward: One-to-Many)
+        # Scan other entities to see if they point to us
+        for other_entity in entities:
+            other_name = other_entity.get('name')
+            if other_name == entity_name:
+                continue
+            
+            other_fields = other_entity.get('fields', [])
+            for f in other_fields:
+                # Handle both dict and object access
+                if isinstance(f, dict):
+                    raw_name = f.get('name', '')
+                else:
+                    raw_name = getattr(f, 'name', '')
+                
+                f_name = normalize_field_name(raw_name)
+                # If other entity has our_id (e.g. CartItem has cart_id)
+                target_fk = f"{entity_name.lower()}_id"
+                # Handle snake_case entity names if needed, but simple lower() covers most
+                # e.g. Cart -> cart_id. Order -> order_id.
+                
+                # Convert entity_name to snake_case for the FK check
+                import re
+                ent_snake = re.sub(r'(?<!^)(?=[A-Z])', '_', entity_name).lower()
+                target_fk_snake = f"{ent_snake}_id"
+
+                if f_name == target_fk or f_name == target_fk_snake:
+                    # Found a child entity!
+                    # Determine collection name
+                    if other_name == f"{entity_name}Item":
+                        collection_name = "items"
+                    else:
+                        collection_name = other_entity.get('plural', f"{other_name}s").lower()
+                    
+                    # Back reference name on the child
+                    # If child is CartItem, it has 'cart' relationship
+                    back_populates = ent_snake
+
+                    # Check for lazy_load override on the collection
+                    lazy = "selectin" # Default for collections (async friendly)
+                    if collection_name in field_overrides:
+                        override = field_overrides[collection_name]
+                        if 'lazy' in override:
+                            lazy = override['lazy']
+                            logger.info(f"🎓 Pattern Override: {entity_name}.{collection_name} lazy={lazy} (learned from AttributeError)")
+                    
+                    code += f'    {collection_name} = relationship("{other_name}Entity", back_populates="{back_populates}", lazy="{lazy}")\n'
+
         # Generate __repr__ method
         # NOTE: Hardcoded field names REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
         # Use first non-system field as display field (no preference for specific names)
         display_field = None
         for field in fields:
+            # Handle both dict and object access
+            if isinstance(field, dict):
+                f_name = field.get('name', '')
+            else:
+                f_name = getattr(field, 'name', '')
+            
             # Skip system fields
-            if field.name not in ['id', 'created_at', 'updated_at']:
-                display_field = field.name
+            if f_name not in ['id', 'created_at', 'updated_at']:
+                display_field = f_name
                 break
 
         if display_field:
@@ -1062,6 +1196,17 @@ ItemSchema = Dict[str, Any]
                 constraints = []
             elif not isinstance(constraints, list):
                 constraints = list(constraints)
+
+            # Bug #164 Fix: Apply learned pattern overrides to Schemas too
+            # If ORM is made nullable OR explicitly optional, Schema should be Optional
+            field_overrides = get_field_overrides_for_entity(entity_name) if PATTERN_AWARE_AVAILABLE else {}
+            if field_name in field_overrides:
+                override = field_overrides[field_name]
+                if ('nullable' in override and override['nullable']) or \
+                   ('optional' in override and override['optional']):
+                    required = False
+                    field_default = None
+                    logger.info(f"🎓 Schema Override: {entity_name}.{field_name} made Optional (learned from patterns)")
 
             # NOTE: Hardening constraint injection REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
             # Constraints now come from validation_constraints parameter only

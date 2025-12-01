@@ -496,6 +496,86 @@ class NegativePatternStore:
             self.logger.warning(f"Failed to increment prevention: {e}")
             return False
 
+    def update_correct_snippet(self, pattern_id: str, correct_code: str) -> bool:
+        """
+        Update the correct_code_snippet for an existing pattern.
+
+        Bug #163 Fix: Called when a repair is successful to backfill
+        the correct solution, closing the learning loop.
+
+        Args:
+            pattern_id: The pattern to update
+            correct_code: The verified correct code snippet
+
+        Returns:
+            True if updated successfully
+        """
+        if not correct_code or not correct_code.strip():
+            return False
+
+        # Update cache
+        if pattern_id in self._cache:
+            self._cache[pattern_id].correct_code_snippet = correct_code
+            self.logger.info(f"📚 Updated cache with correct_code for {pattern_id}")
+
+        if not self._neo4j_available or not self.driver:
+            return True
+
+        try:
+            with self.driver.session() as session:
+                result = session.run("""
+                    MATCH (ap:GenerationAntiPattern {pattern_id: $pattern_id})
+                    SET ap.correct_code_snippet = $correct_code,
+                        ap.times_prevented = ap.times_prevented + 1
+                    RETURN ap.pattern_id as pid
+                """, pattern_id=pattern_id, correct_code=correct_code[:500])
+
+                record = result.single()
+                if record:
+                    self.logger.info(
+                        f"📚 Learning loop closed: Updated pattern {pattern_id} "
+                        f"with correct_code_snippet ({len(correct_code)} chars)"
+                    )
+                    return True
+                else:
+                    self.logger.warning(f"Pattern {pattern_id} not found in Neo4j")
+                    return False
+
+        except Exception as e:
+            self.logger.warning(f"Failed to update correct_snippet: {e}")
+            return False
+
+    def find_pattern_by_error(
+        self,
+        error_type: str,
+        exception_class: str,
+        entity_name: str = "*",
+        endpoint_pattern: str = "*"
+    ) -> Optional[GenerationAntiPattern]:
+        """
+        Find a pattern matching an error signature.
+
+        Bug #163 Fix: Used to look up existing patterns when a repair
+        succeeds, so we can update them with the correct solution.
+
+        Args:
+            error_type: Type of error (database, validation, import, etc.)
+            exception_class: Exception class name
+            entity_name: Entity name or "*" for any
+            endpoint_pattern: Endpoint pattern or "*" for any
+
+        Returns:
+            Matching pattern if found, None otherwise
+        """
+        pattern_id = generate_pattern_id(
+            error_type=error_type,
+            exception_class=exception_class,
+            entity_pattern=entity_name,
+            endpoint_pattern=endpoint_pattern,
+        )
+
+        return self.get(pattern_id)
+
     # =========================================================================
     # Query Operations
     # =========================================================================

@@ -1762,6 +1762,46 @@ class SmokeRepairOrchestrator:
             except Exception as e:
                 logger.warning(f"Pattern adapter recording failed: {e}")
 
+        # Bug #163 Fix: Close the learning loop by updating NegativePatternStore
+        # When a repair is successful, backfill the correct_code_snippet
+        if NEGATIVE_PATTERN_STORE_AVAILABLE and get_negative_pattern_store:
+            try:
+                store = get_negative_pattern_store()
+                for repair in repairs:
+                    if repair.success and repair.new_code:
+                        # Find matching violation to get error context
+                        for violation in violations:
+                            # Match by file path
+                            viol_file = violation.get("file_path", "")
+                            if viol_file and repair.file_path and viol_file in repair.file_path:
+                                # Extract error info for pattern lookup
+                                error_type = violation.get("error_type", "unknown")
+                                exception_class = violation.get("exception_class", "Unknown")
+                                entity_name = violation.get("entity_name", "*")
+                                endpoint = violation.get("endpoint", "*")
+
+                                # Try to find and update the existing pattern
+                                pattern = store.find_pattern_by_error(
+                                    error_type=error_type,
+                                    exception_class=exception_class,
+                                    entity_name=entity_name,
+                                    endpoint_pattern=endpoint
+                                )
+
+                                if pattern:
+                                    updated = store.update_correct_snippet(
+                                        pattern.pattern_id,
+                                        repair.new_code[:500]
+                                    )
+                                    if updated:
+                                        logger.info(
+                                            f"    📚 Learning loop closed: Updated pattern "
+                                            f"{pattern.pattern_id} with correct code"
+                                        )
+                                break  # One repair per violation match
+            except Exception as e:
+                logger.warning(f"NegativePatternStore update failed: {e}")
+
     def _log_summary(self, result: SmokeRepairResult) -> None:
         """Log comprehensive summary of repair cycle."""
         logger.info("\n" + "=" * 60)
