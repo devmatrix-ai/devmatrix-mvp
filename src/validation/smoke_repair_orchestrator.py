@@ -468,34 +468,12 @@ class ErrorClassifier:
                         logger.debug(f"ConstraintGraph: Multi-entity constraint '{c}' → BUSINESS_LOGIC")
                         return True
 
-        # Business logic keywords in error message
-        business_keywords = [
-            'stock', 'inventory', 'insufficient', 'not enough',
-            'status', 'transition', 'state', 'workflow',
-            'must be', 'cannot', 'invalid state', 'not allowed',
-            'already', 'duplicate', 'exists',
-            'empty cart', 'no items', 'cart is empty',
-            'pending', 'payment', 'checkout',
-            'active', 'inactive', 'deactivated',
-        ]
-
-        # Domain action endpoints that involve business logic
-        action_endpoints = [
-            '/checkout', '/pay', '/cancel', '/refund',
-            '/activate', '/deactivate', '/items',
-            '/clear', '/empty', '/transfer',
-        ]
-
-        # Check error message for business logic keywords
-        if any(kw in msg_lower for kw in business_keywords):
-            return True
-
-        # Check if endpoint is a domain action (not simple CRUD)
-        if any(action in endpoint_lower for action in action_endpoints):
-            return True
+        # Domain-agnostic: Use HTTP status code patterns instead of keywords
+        # 422 = Validation failed (business rule), 409 = Conflict (state issue)
+        # These indicate business logic, not schema issues
 
         # Nested resource endpoints often have business logic
-        # e.g., /carts/{id}/items, /orders/{id}/pay
+        # e.g., /{entity}/{id}/{sub_resource} patterns
         if re.search(r'/\{[^}]+\}/[a-z]+', endpoint_lower):
             return True
 

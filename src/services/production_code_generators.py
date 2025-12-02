@@ -644,19 +644,17 @@ def find_workflow_operations(entity_name: str, ir: Any) -> List[Dict[str, Any]]:
                     operation["postcondition_status"] = match.group(1).upper()
                     break
 
-            # Check if operation affects stock
-            if 'stock_constraint' in constraint_types or any(
-                'stock' in (c or '').lower() for c in constraint_types
-            ):
-                operation["affects_stock"] = True
+            # Check if operation has comparison constraints (from IR, not hardcoded keywords)
+            if 'comparison_constraint' in constraint_types or 'invariant' in constraint_types:
+                operation["has_comparison"] = True
 
-            # Fallback: Parse flow steps for status transitions
+            # Parse flow steps for status transitions (using IR step metadata)
             if not operation["precondition_status"] or not operation["postcondition_status"]:
                 for step in flow.steps:
                     action = (step.action or "").lower()
                     condition = (step.condition or "").lower()
 
-                    # Detect precondition from step condition
+                    # Detect precondition from step condition (pattern-based, not domain-specific)
                     if 'status' in condition and not operation["precondition_status"]:
                         match = re.search(r'status\s*[=!<>]+\s*["\']?(\w+)', condition)
                         if match:
@@ -667,10 +665,6 @@ def find_workflow_operations(entity_name: str, ir: Any) -> List[Dict[str, Any]]:
                         match = re.search(r'status\s*[=:]\s*["\']?(\w+)', action)
                         if match:
                             operation["postcondition_status"] = match.group(1).upper()
-
-                    # Detect stock/quantity operations (heuristic keywords)
-                    if any(kw in action for kw in ['stock', 'inventory', 'quantity', 'decrement', 'increment']):
-                        operation["affects_stock"] = True
 
             operations.append(operation)
 

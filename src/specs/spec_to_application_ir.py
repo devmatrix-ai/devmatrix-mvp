@@ -1159,13 +1159,10 @@ Output JSON only, no explanation:"""
         if flow_type == "policy":
             constraints.add("business_logic")
 
-        # Infer from flow name patterns
-        if any(word in flow_name for word in ["checkout", "payment", "order"]):
+        # Infer from flow type (domain-agnostic)
+        # NOTE: Flow names are derived from spec, not hardcoded patterns
+        if flow_type in ["transaction", "multi_step"]:
             constraints.add("workflow_constraint")
-        if any(word in flow_name for word in ["stock", "inventory", "quantity"]):
-            constraints.add("stock_constraint")
-        if any(word in flow_name for word in ["validate", "validation"]):
-            constraints.add("validation_constraint")
 
         # Infer from step actions
         for step in steps:

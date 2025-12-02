@@ -2017,9 +2017,9 @@ class ComplianceValidator:
         if 'foreignkey' in constraint_lower or 'foreign_key' in constraint_lower:
             return True
 
-        # 8. Business logic enforcement (Phase 2.4)
-        # Check for actual business logic code (stock decrement, state transitions)
-        if 'stock' in constraint_lower and ('decrement' in constraint_lower or 'increment' in constraint_lower):
+        # 8. Business logic enforcement (Phase 2.4) - domain-agnostic
+        # Check for actual business logic code (numeric operations, state transitions)
+        if any(op in constraint_lower for op in ['decrement', 'increment', '-=', '+=']) and any(t in constraint_lower for t in ['field', 'value', 'update']):
             return True
 
         # 9. Required constraints (Phase 1)

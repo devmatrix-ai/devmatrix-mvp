@@ -62,10 +62,10 @@ class InvariantInferencer:
     - Quantity/stock field patterns
     """
 
-    # Known patterns for inference (heuristic field name patterns, not entity names)
-    # These detect semantic meaning from field names in any domain
-    QUANTITY_FIELDS = {'stock', 'quantity', 'inventory', 'available', 'count', 'balance', 'amount'}
-    STATUS_FIELDS = {'status', 'state', 'phase', 'stage'}
+    # Field classification from IR type annotations (100% domain-agnostic)
+    # These are type patterns, not domain-specific field names
+    NUMERIC_TYPES = {'int', 'integer', 'float', 'decimal', 'number'}
+    STATUS_TYPES = {'enum', 'status', 'state'}  # Type annotations, not field names
     REFERENCE_PATTERNS = {'_id', 'id', '_ref'}
     
     def __init__(self):

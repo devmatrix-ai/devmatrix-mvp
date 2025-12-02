@@ -315,16 +315,26 @@ class SeedDataAgent:
                 if attr.name == field_name and attr.default_value is not None:
                     return attr.default_value
 
-        # Generic fallbacks by field name pattern
-        field_lower = field_name.lower()
-        if 'status' in field_lower:
-            return "PENDING"
-        if 'active' in field_lower:
-            return True
-        if 'quantity' in field_lower or 'stock' in field_lower:
-            return 10
-        if 'price' in field_lower or 'amount' in field_lower:
-            return 99.99
+        # Type-based fallback (domain-agnostic)
+        # Field type should be inferred from IR, not field name patterns
+        ir_entity = next((e for e in ir.get_entities() if e.name == entity_name), None)
+        if ir_entity:
+            attr = next((a for a in ir_entity.attributes if a.name == field_name), None)
+            if attr:
+                type_lower = (attr.data_type or '').lower()
+                if 'int' in type_lower or 'integer' in type_lower:
+                    return 1
+                if 'float' in type_lower or 'decimal' in type_lower:
+                    return 1.0
+                if 'bool' in type_lower:
+                    return True
+                if 'enum' in type_lower:
+                    # Use first enum value from constraints
+                    for constraint in (attr.constraints or []):
+                        if 'values' in constraint.lower():
+                            values = re.findall(r'[A-Z_]+', constraint)
+                            if values:
+                                return values[0]
 
         return "test_value"
 

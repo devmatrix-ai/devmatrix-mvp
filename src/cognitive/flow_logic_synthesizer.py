@@ -251,24 +251,32 @@ class FlowLogicSynthesizer:
         return []
 
     def _parse_comparison(self, condition: str, entity: str, attribute: str) -> tuple:
-        """Parse comparison from condition string like 'quantity <= product.stock'."""
+        """Parse comparison from condition string (100% domain-agnostic)."""
         import re
 
-        # Default: lhs is entity.attribute, rhs is unknown, op is <=
+        # Default: lhs is entity.attribute, rhs/op extracted from condition
         lhs = {'entity': entity, 'field': attribute, 'role': 'entity'}
-        rhs = {'entity': '', 'field': 'stock', 'role': 'entity'}
+        rhs = {'entity': '', 'field': '', 'role': 'value'}
         op = '<='
 
         if not condition:
             return lhs, rhs, op
 
-        # Look for pattern: field op entity.field
+        # Pattern: field op entity.field (e.g., "quantity <= other.limit")
         match = re.search(r'(\w+)\s*([<>=!]+)\s*(\w+)\.(\w+)', condition)
         if match:
             lhs_field, op_str, rhs_entity, rhs_field = match.groups()
             lhs = {'entity': entity, 'field': lhs_field, 'role': 'entity'}
             rhs = {'entity': rhs_entity, 'field': rhs_field, 'role': 'entity'}
             op = op_str
+        else:
+            # Pattern: field op value (e.g., "count >= 0")
+            match2 = re.search(r'(\w+)\s*([<>=!]+)\s*(\d+)', condition)
+            if match2:
+                lhs_field, op_str, value = match2.groups()
+                lhs = {'entity': entity, 'field': lhs_field, 'role': 'entity'}
+                rhs = {'entity': '', 'field': value, 'role': 'literal'}
+                op = op_str
 
         return lhs, rhs, op
 
@@ -378,23 +386,26 @@ class FlowLogicSynthesizer:
             right=(f"entity:{rhs_entity}", rhs_field)
         )
 
+        # Domain-agnostic message from constraint metadata
+        message = metadata.get('message', getattr(c, 'description', None)) or "Comparison constraint violated"
+
         return GuardSpec(
             expr=expr,
             error_code=422,
-            message="Quantity exceeds available stock",
+            message=message,
             source_constraint_id=getattr(c, 'id', 'unknown'),
             phase="pre"
         )
 
     def _quantity_constraint_guard(self, c: Any) -> Optional[GuardSpec]:
-        """Generate guard for quantity constraint (e.g., qty > 0)."""
+        """Generate guard for numeric field constraint (e.g., field > 0)."""
         metadata = getattr(c, 'metadata', {}) or {}
         entity = metadata.get('entity')
-        field_name = metadata.get('field', 'quantity')
+        field_name = metadata.get('field', '')
         op = metadata.get('op', '>')
         value = metadata.get('value', 0)
 
-        if not entity:
+        if not entity or not field_name:
             return None
 
         expr = ComparisonExpr(
@@ -403,10 +414,13 @@ class FlowLogicSynthesizer:
             right=value
         )
 
+        # Domain-agnostic message from constraint metadata
+        message = metadata.get('message', getattr(c, 'description', None)) or f"Invalid {field_name} value"
+
         return GuardSpec(
             expr=expr,
             error_code=422,
-            message=f"Invalid {field_name} value",
+            message=message,
             source_constraint_id=getattr(c, 'id', 'unknown'),
             phase="pre"
         )

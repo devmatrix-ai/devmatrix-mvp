@@ -4148,9 +4148,14 @@ router = APIRouter(
                     params.append(f'{param}: str')
 
             # Bug #104 Fix: Detect action endpoints BEFORE adding body parameter
-            # Action endpoints (deactivate, clear, checkout, etc.) don't require request body
-            custom_ops_no_body = ['checkout', 'pay', 'cancel', 'deactivate', 'activate', 'clear']
-            is_action_endpoint = any(f'/{op}' in relative_path for op in custom_ops_no_body)
+            # Action endpoints are detected by path structure, not hardcoded names
+            # Pattern: /{entity}/{id}/{action} where action is a single word (not a nested resource)
+            path_parts = relative_path.strip('/').split('/')
+            # Action endpoint = has {id} followed by single word (not another {id} or plural noun)
+            is_action_endpoint = (len(path_parts) >= 3 and
+                                  '{' in path_parts[-2] and
+                                  '{' not in path_parts[-1] and
+                                  not path_parts[-1].endswith('s'))
 
             # Bug #134 Fix: Detect nested resource endpoints (e.g., /{parent}/{parent_id}/items)
             # For these, use the child entity schema ({Parent}ItemCreate) not parent ({Parent}Create)
@@ -4229,22 +4234,21 @@ router = APIRouter(
 '''
 
             elif method == 'post':
-                # POST: create (default), checkout, pay, cancel, deactivate, add_item, clear
+                # POST: create (default) or custom action
+                # Detect operation from path structure (domain-agnostic)
                 operation = None
-                custom_ops_no_body = ['checkout', 'pay', 'cancel', 'deactivate', 'activate', 'clear']
-                custom_ops_with_body = ['items']
-                operation_method_map = {'clear': 'clear_items'}
+                path_segments = relative_path.strip('/').split('/')
 
-                for op in custom_ops_no_body:
-                    if f'/{op}' in relative_path:
-                        operation = operation_method_map.get(op, op)
-                        break
-
-                if not operation:
-                    for op in custom_ops_with_body:
-                        if f'/{op}' in relative_path:
-                            operation = f'add_{op.rstrip("s")}'
-                            break
+                # Pattern: /{entity}/{id}/{action} → action is the operation
+                if len(path_segments) >= 3 and '{' in path_segments[-2]:
+                    action = path_segments[-1]
+                    if '{' not in action:  # Not a path param
+                        if action.endswith('s') and action not in ['status']:
+                            # Plural = nested resource (e.g., /items → add_item)
+                            operation = f'add_{action.rstrip("s")}'
+                        else:
+                            # Singular = action endpoint (e.g., /checkout)
+                            operation = action
 
                 if operation:
                     id_param = path_params[0] if path_params else 'id'
@@ -5858,20 +5862,14 @@ datasources:
                         else:
                             field_assignments.append(f'{attr_name}="test_value"')
                     elif 'int' in data_type_lower or 'integer' in data_type_lower:
-                        if 'quantity' in attr_name.lower() or 'stock' in attr_name.lower():
-                            field_assignments.append(f'{attr_name}=100')
-                        else:
-                            field_assignments.append(f'{attr_name}=1')
+                        # Type-based default (domain-agnostic)
+                        field_assignments.append(f'{attr_name}=1')
                     elif 'float' in data_type_lower or 'decimal' in data_type_lower or 'numeric' in data_type_lower:
-                        if 'price' in attr_name.lower() or 'amount' in attr_name.lower():
-                            field_assignments.append(f'{attr_name}=99.99')
-                        else:
-                            field_assignments.append(f'{attr_name}=1.0')
+                        # Type-based default (domain-agnostic)
+                        field_assignments.append(f'{attr_name}=1.0')
                     elif 'bool' in data_type_lower:
-                        if 'active' in attr_name.lower():
-                            field_assignments.append(f'{attr_name}=True')
-                        else:
-                            field_assignments.append(f'{attr_name}=True')
+                        # Type-based default (domain-agnostic)
+                        field_assignments.append(f'{attr_name}=True')
                     elif 'enum' in data_type_lower:
                         # Domain-agnostic enum handling: Use IR values only
                         # enum_values already extracted above from constraints
@@ -6000,16 +5998,12 @@ datasources:
                         else:
                             field_assignments.append(f'{attr_name}="test_value"')
                     elif 'int' in data_type_lower or 'integer' in data_type_lower:
-                        if 'quantity' in attr_name.lower() or 'stock' in attr_name.lower():
-                            field_assignments.append(f'{attr_name}=100')
-                        else:
-                            field_assignments.append(f'{attr_name}=1')
+                        # Type-based default (domain-agnostic)
+                        field_assignments.append(f'{attr_name}=1')
                     elif 'float' in data_type_lower or 'decimal' in data_type_lower or 'numeric' in data_type_lower:
                         needs_decimal = True
-                        if 'price' in attr_name.lower() or 'amount' in attr_name.lower():
-                            field_assignments.append(f'{attr_name}=Decimal("99.99")')
-                        else:
-                            field_assignments.append(f'{attr_name}=Decimal("1.0")')
+                        # Type-based default (domain-agnostic)
+                        field_assignments.append(f'{attr_name}=Decimal("1.0")')
                     elif 'bool' in data_type_lower:
                         field_assignments.append(f'{attr_name}=True')
                     elif 'enum' in data_type_lower:

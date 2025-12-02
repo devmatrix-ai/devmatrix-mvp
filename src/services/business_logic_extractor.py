@@ -36,15 +36,14 @@ class BusinessLogicExtractor:
     def __init__(self):
         self.client = anthropic.Anthropic()
         self.model = "claude-sonnet-4-5-20250929"  # Sonnet for analysis tasks
-        # Domain-agnostic patterns: detect semantic meaning from field names
+        # Type-based patterns: detect from type annotations, not field names (domain-agnostic)
         self.validation_patterns = {
-            'email': re.compile(r'\bemail\b', re.IGNORECASE),
-            'unique': re.compile(r'\bunique\b|\bdistinct\b', re.IGNORECASE),
-            # Quantity patterns (covers stock, inventory, balance, etc.)
-            'quantity': re.compile(r'\bstock\b|\binventory\b|\bquantity\b|\bavailable\b|\bbalance\b|\bcount\b', re.IGNORECASE),
-            'status': re.compile(r'\bstatus\b|\bstate\b|\bphase\b', re.IGNORECASE),
-            'required': re.compile(r'\brequired\b|\bmandatory\b', re.IGNORECASE),
-            'reference': re.compile(r'_id$|foreign key|references', re.IGNORECASE),
+            'email': re.compile(r'\bemail\b', re.IGNORECASE),  # email type
+            'unique': re.compile(r'\bunique\b|\bdistinct\b', re.IGNORECASE),  # constraint keyword
+            'integer': re.compile(r'\bint\b|\binteger\b|\bnumber\b', re.IGNORECASE),  # numeric types
+            'status': re.compile(r'\benum\b|\bstatus\b|\bstate\b', re.IGNORECASE),  # enum types
+            'required': re.compile(r'\brequired\b|\bmandatory\b', re.IGNORECASE),  # constraint keyword
+            'reference': re.compile(r'_id$|foreign key|references', re.IGNORECASE),  # FK pattern
         }
 
         # Load validation patterns from YAML (Phase 1)
