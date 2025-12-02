@@ -4260,7 +4260,113 @@ router = APIRouter(
     return {entity_snake}
 '''
                 else:
-                    body += f'''    {entity_snake} = await service.create({schema_entity_snake}_data)
+                    # Bug #206: Detect conversion flows (e.g., CheckoutRequest with cart_id → Order)
+                    # A conversion flow occurs ONLY when:
+                    # 1. Request schema is NOT the standard {Entity}Create pattern
+                    # 2. Request schema has FK to another entity (e.g., cart_id in CheckoutRequest)
+                    # 3. The FK entity has items that should be copied to the new entity
+                    #
+                    # NOT a conversion flow:
+                    # - CartCreate with customer_id → just a normal FK reference
+                    # - OrderCreate with customer_id → just a normal FK reference
+                    is_conversion_flow = False
+                    source_entity_name = None
+                    source_fk_field = None
+
+                    if hasattr(ep, 'request_schema') and ep.request_schema:
+                        req_schema = ep.request_schema
+                        schema_name = getattr(req_schema, 'name', '')
+
+                        # Bug #206 Fix: Only detect conversion flow if schema is NOT {Entity}Create
+                        # {Entity}Create schemas have normal FK references, not conversion flows
+                        is_standard_create = schema_name.endswith('Create') and schema_name[:-6] == entity.name
+
+                        if not is_standard_create and hasattr(req_schema, 'fields') and req_schema.fields:
+                            for field in req_schema.fields:
+                                field_name = getattr(field, 'name', '')
+                                # Detect FK pattern: {entity}_id where entity != target entity
+                                if field_name.endswith('_id') and field_name != 'id':
+                                    potential_source = field_name[:-3]  # Remove '_id'
+                                    # Check if this is a different entity (conversion source)
+                                    if potential_source.lower() != entity_snake.lower():
+                                        is_conversion_flow = True
+                                        source_entity_name = potential_source.title()
+                                        source_fk_field = field_name
+                                        break
+
+                    if is_conversion_flow and source_entity_name:
+                        # Bug #206: Generate conversion flow code
+                        # 1. Fetch source entity
+                        # 2. Map fields from source to target
+                        # 3. Create target entity
+                        source_snake = source_entity_name.lower()
+                        body += f'''    # Bug #206: Conversion flow - {source_entity_name} → {entity.name}
+    from src.services.{source_snake}_service import {source_entity_name}Service
+    from src.models.entities import {entity.name}Entity, {entity.name}ItemEntity
+    from src.models.schemas import {entity.name}Create, {entity.name}Response
+
+    # Get source entity
+    source_service = {source_entity_name}Service(db)
+    source_obj = await source_service.get({schema_entity_snake}_data.{source_fk_field})
+    if not source_obj:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"{source_entity_name} not found"
+        )
+
+    # Map fields from source to target (domain-agnostic field mapping)
+    # Common patterns: customer_id, user_id, items, total_amount
+    create_data = {{}}
+
+    # Copy FK fields that exist in both entities
+    if hasattr(source_obj, 'customer_id'):
+        create_data['customer_id'] = source_obj.customer_id
+    elif hasattr(source_obj, 'user_id'):
+        create_data['user_id'] = source_obj.user_id
+
+    # Set default status for new entity
+    create_data['{entity_snake}_status'] = 'PENDING_PAYMENT'
+    create_data['payment_status'] = 'PENDING'
+
+    # Calculate total from items
+    total = 0.0
+    if hasattr(source_obj, 'items') and source_obj.items:
+        for item in source_obj.items:
+            qty = getattr(item, 'quantity', 1)
+            price = getattr(item, 'unit_price', 0) or getattr(item, 'price', 0)
+            total += float(qty) * float(price)
+    create_data['total_amount'] = total
+
+    # Create target entity
+    {entity_snake}_create = {entity.name}Create(**create_data)
+    db_obj = {entity.name}Entity(**{entity_snake}_create.model_dump())
+    db.add(db_obj)
+    await db.flush()
+
+    # Copy items from source to target
+    if hasattr(source_obj, 'items') and source_obj.items:
+        for item in source_obj.items:
+            item_data = {{
+                '{entity_snake}_id': db_obj.id,
+                'product_id': getattr(item, 'product_id', None),
+                'quantity': getattr(item, 'quantity', 1),
+                'unit_price': getattr(item, 'unit_price', 0) or getattr(item, 'price', 0),
+            }}
+            item_obj = {entity.name}ItemEntity(**item_data)
+            db.add(item_obj)
+
+    await db.flush()
+    await db.refresh(db_obj)
+
+    # Mark source as processed (e.g., cart status = CHECKED_OUT)
+    if hasattr(source_obj, '{source_snake}_status'):
+        from src.models.schemas import {source_entity_name}Update
+        await source_service.update({schema_entity_snake}_data.{source_fk_field}, {source_entity_name}Update({source_snake}_status='CHECKED_OUT'))
+
+    return {entity.name}Response.model_validate(db_obj)
+'''
+                    else:
+                        body += f'''    {entity_snake} = await service.create({schema_entity_snake}_data)
     return {entity_snake}
 '''
 
@@ -4285,18 +4391,19 @@ router = APIRouter(
                     child_entity_name = f'{entity.name}Item'
                     child_entity_snake = f'{entity_snake}_item'
 
-                    # Bug #202 Fix: Domain-agnostic - derive FK field from path param name
-                    # e.g., product_id -> product_id, item_id -> item_id
-                    child_fk_field = child_id_param  # Use the path param directly as the FK field
+                    # Bug #205 Fix: The child_id_param (e.g., item_id) is the PRIMARY KEY of the child entity
+                    # NOT a foreign key field. The child entity's PK is always 'id'.
+                    # We filter by: parent FK (e.g., cart_id) AND child PK (id)
+                    # This is domain-agnostic: any nested DELETE uses parent_fk + child.id
 
-                    body += f'''    # Bug #202: Nested resource DELETE - delete item from parent (domain-agnostic)
+                    body += f'''    # Bug #205: Nested resource DELETE - delete item by parent FK + child PK
     from sqlalchemy import delete as sql_delete
     from src.models.entities import {child_entity_name}Entity
 
     result = await db.execute(
         sql_delete({child_entity_name}Entity).where(
             {child_entity_name}Entity.{entity_snake}_id == {parent_id_param},
-            {child_entity_name}Entity.{child_fk_field} == {child_id_param}
+            {child_entity_name}Entity.id == {child_id_param}
         )
     )
 
