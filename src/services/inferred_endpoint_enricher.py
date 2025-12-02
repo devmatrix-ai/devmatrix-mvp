@@ -504,14 +504,11 @@ class InferredEndpointEnricher:
 
             # Extract parent entity from FK (first FK that's not a reference to another item)
             parent_fk = None
-            item_id_field = None
             for fk in fk_attrs:
                 fk_name = fk.name.lower()
                 if 'item' not in fk_name:
                     if parent_fk is None:
                         parent_fk = fk_name  # e.g., {parent}_id
-                    else:
-                        item_id_field = fk_name  # e.g., {ref}_id
 
             if not parent_fk:
                 continue
@@ -520,7 +517,10 @@ class InferredEndpointEnricher:
             parent_singular = parent_fk.replace('_id', '')
             parent_plural = parent_singular + 's'
             item_name = 'item'
-            item_id_field = item_id_field or 'item_id'
+            # Bug #205 Fix (domain-agnostic): For nested DELETE, always use 'item_id' as the child param
+            # This refers to the child entity's PRIMARY KEY, not a reference FK like 'product_id'
+            # The child entity is identified by its own ID, not by a FK to another entity
+            item_id_field = 'item_id'
 
             # Process detected item entity (domain-agnostic detection above)
             # Bug #199 Fix: Generate request_schema from child entity attributes
