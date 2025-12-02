@@ -343,7 +343,9 @@ def find_workflow_operations(entity_name: str, ir: Any) -> List[Dict[str, Any]]:
         - method: HTTP method for endpoint
 
     Bug #109: Derives operations from IR flows instead of hardcoding.
+    Bug #192: Now uses Flow.preconditions/postconditions directly.
     """
+    import re
     operations = []
 
     if not ir or not hasattr(ir, 'behavior_model') or not ir.behavior_model:
@@ -354,8 +356,9 @@ def find_workflow_operations(entity_name: str, ir: Any) -> List[Dict[str, Any]]:
     for flow in ir.behavior_model.flows:
         # Check if flow targets this entity
         flow_name = flow.name.lower() if flow.name else ""
+        primary_entity = (getattr(flow, 'primary_entity', None) or '').lower()
 
-        if entity_lower in flow_name or any(
+        if entity_lower in flow_name or entity_lower == primary_entity or any(
             entity_lower in (step.target_entity or "").lower()
             for step in flow.steps
         ):
@@ -367,28 +370,55 @@ def find_workflow_operations(entity_name: str, ir: Any) -> List[Dict[str, Any]]:
                 "method": "POST"
             }
 
-            # Parse flow steps for status transitions
-            for step in flow.steps:
-                action = (step.action or "").lower()
-                condition = (step.condition or "").lower()
+            # Bug #192: Extract from Flow.preconditions/postconditions first
+            preconditions = getattr(flow, 'preconditions', []) or []
+            postconditions = getattr(flow, 'postconditions', []) or []
+            constraint_types = getattr(flow, 'constraint_types', []) or []
 
-                # Detect precondition from step condition
-                if 'status' in condition:
-                    # Try to extract status value from condition like "status == PENDING"
-                    import re
-                    match = re.search(r'status\s*[=!<>]+\s*["\']?(\w+)', condition)
-                    if match:
-                        operation["precondition_status"] = match.group(1).upper()
+            # Check preconditions for status requirements
+            for precond in preconditions:
+                precond_lower = precond.lower()
+                # Match patterns like "status = 'OPEN'" or "cart.status == OPEN"
+                match = re.search(r'status\s*[=!<>]+\s*["\']?(\w+)', precond_lower)
+                if match:
+                    operation["precondition_status"] = match.group(1).upper()
+                    break
 
-                # Detect postcondition from step action
-                if 'status' in action:
-                    match = re.search(r'status\s*[=:]\s*["\']?(\w+)', action)
-                    if match:
-                        operation["postcondition_status"] = match.group(1).upper()
+            # Check postconditions for status changes
+            for postcond in postconditions:
+                postcond_lower = postcond.lower()
+                match = re.search(r'status\s*[=:→]\s*["\']?(\w+)', postcond_lower)
+                if match:
+                    operation["postcondition_status"] = match.group(1).upper()
+                    break
 
-                # Detect stock operations
-                if 'stock' in action or 'inventory' in action or 'quantity' in action:
-                    operation["affects_stock"] = True
+            # Check if operation affects stock
+            if 'stock_constraint' in constraint_types or any(
+                'stock' in (c or '').lower() for c in constraint_types
+            ):
+                operation["affects_stock"] = True
+
+            # Fallback: Parse flow steps for status transitions
+            if not operation["precondition_status"] or not operation["postcondition_status"]:
+                for step in flow.steps:
+                    action = (step.action or "").lower()
+                    condition = (step.condition or "").lower()
+
+                    # Detect precondition from step condition
+                    if 'status' in condition and not operation["precondition_status"]:
+                        match = re.search(r'status\s*[=!<>]+\s*["\']?(\w+)', condition)
+                        if match:
+                            operation["precondition_status"] = match.group(1).upper()
+
+                    # Detect postcondition from step action
+                    if 'status' in action and not operation["postcondition_status"]:
+                        match = re.search(r'status\s*[=:]\s*["\']?(\w+)', action)
+                        if match:
+                            operation["postcondition_status"] = match.group(1).upper()
+
+                    # Detect stock operations
+                    if 'stock' in action or 'inventory' in action or 'quantity' in action:
+                        operation["affects_stock"] = True
 
             operations.append(operation)
 
@@ -450,6 +480,92 @@ def _extract_operation_name(flow_name: str, entity_name: str) -> str:
     name = re.sub(r'_+', '_', name).strip('_')
 
     return name
+
+
+def _generate_workflow_method_body(
+    entity_name: str,
+    op_name: str,
+    flow_name: str,
+    precondition_status: str,
+    postcondition_status: str,
+    affects_stock: bool,
+    needs_data: bool,
+    status_field_name: str
+) -> str:
+    """
+    Generate method body with real behavior logic.
+
+    Replaces TODO stubs with actual:
+    - Status precondition checks
+    - Stock invariant checks
+    - Status transitions
+    - Proper error handling
+    """
+    entity_lower = entity_name.lower()
+    status_field = status_field_name or 'status'
+
+    # Method signature
+    if needs_data:
+        sig = f'''
+    async def {op_name}(self, id: UUID, data: dict) -> Optional[{entity_name}Response]:'''
+    else:
+        sig = f'''
+    async def {op_name}(self, id: UUID) -> Optional[{entity_name}Response]:'''
+
+    # Docstring
+    doc = f'''
+        """
+        {flow_name} operation for {entity_name}.
+
+        Generated from IR BehaviorModel flow with behavior guards.
+        """'''
+
+    # Get entity
+    get_entity = f'''
+        db_obj = await self.repo.get(id)
+        if not db_obj:
+            raise HTTPException(status_code=404, detail="{entity_name} not found")'''
+
+    # Precondition check
+    precond = ""
+    if precondition_status:
+        precond = f'''
+
+        # Behavior guard: Check precondition status
+        current_status = getattr(db_obj, '{status_field}', None)
+        if current_status != '{precondition_status}':
+            raise HTTPException(
+                status_code=422,
+                detail=f"{entity_name} must be in '{precondition_status}' status, got '{{current_status}}'"
+            )'''
+
+    # Stock check for operations that affect stock
+    stock_check = ""
+    if affects_stock and needs_data:
+        stock_check = f'''
+
+        # Behavior guard: Check stock invariant
+        if 'quantity' in data or 'product_id' in data:
+            await self.validator.check_stock_invariant(db_obj, data.get('quantity', 1))'''
+
+    # Status transition
+    transition = ""
+    if postcondition_status:
+        transition = f'''
+
+        # Apply status transition
+        db_obj.{status_field} = '{postcondition_status}'
+        await self.db.flush()'''
+
+    # Return
+    ret = f'''
+
+        await self.db.refresh(db_obj)
+        logger.info(f"{entity_name} {op_name}: id={{str(id)}}")
+        return {entity_name}Response.model_validate(db_obj)
+'''
+
+    return sig + doc + get_entity + precond + stock_check + transition + ret
 
 
 def get_status_transition_code(
@@ -1927,6 +2043,110 @@ ItemSchema = Dict[str, Any]
     return code.strip()
 
 
+def _generate_behavior_guards(
+    entity_name: str,
+    has_stock: bool,
+    has_status: bool,
+    status_field_name: str,
+    status_values: List[str]
+) -> str:
+    """
+    Generate behavior guard class for entity validation.
+
+    This creates a Validator class that checks:
+    - Stock invariants (for entities with stock/quantity fields)
+    - Status transitions (for entities with status fields)
+    - Create/Update/Delete preconditions
+
+    Returns complete Python class code as string.
+    """
+    entity_lower = entity_name.lower()
+
+    # Build valid transitions map from status values
+    transitions_code = ""
+    if has_status and status_values:
+        # Build transition rules: each status can transition to next ones in sequence
+        # Plus common patterns like any -> CANCELLED
+        transition_lines = []
+        for i, status in enumerate(status_values):
+            next_statuses = []
+            if i + 1 < len(status_values):
+                next_statuses.append(status_values[i + 1])
+            # CANCELLED is usually a terminal from any non-terminal
+            if "CANCEL" not in status.upper() and "CANCELLED" in [s.upper() for s in status_values]:
+                cancelled = next(s for s in status_values if "CANCEL" in s.upper())
+                if cancelled not in next_statuses:
+                    next_statuses.append(cancelled)
+            if next_statuses:
+                transition_lines.append(f'            "{status}": {next_statuses},')
+
+        if transition_lines:
+            transitions_code = "\n".join(transition_lines)
+
+    guards = f'''
+class {entity_name}Validator:
+    """
+    Behavior guards for {entity_name}.
+
+    Generated from BehaviorModelIR invariants and constraints.
+    Validates preconditions before operations.
+    """
+
+    # Valid status transitions
+    VALID_TRANSITIONS = {{
+{transitions_code if transitions_code else '        # No status transitions defined'}
+    }}
+
+    async def check_create_preconditions(self, data) -> None:
+        """Validate preconditions for create operation."""
+        # Extension point: Add entity-specific create validations
+        pass
+
+    async def check_update_preconditions(self, entity, data) -> None:
+        """Validate preconditions for update operation."""
+        data_dict = data.model_dump(exclude_unset=True) if hasattr(data, 'model_dump') else data
+'''
+
+    # Add status transition check if entity has status
+    if has_status and status_field_name:
+        guards += f'''
+        # Check status transition validity
+        if "{status_field_name}" in data_dict:
+            new_status = data_dict["{status_field_name}"]
+            current_status = getattr(entity, "{status_field_name}", None)
+
+            if current_status and current_status in self.VALID_TRANSITIONS:
+                valid_next = self.VALID_TRANSITIONS[current_status]
+                if new_status not in valid_next:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"Cannot transition {entity_name} from '{{current_status}}' to '{{new_status}}'. Valid: {{valid_next}}"
+                    )
+'''
+
+    # Add stock check if entity has stock field
+    if has_stock:
+        guards += f'''
+    async def check_stock_invariant(self, entity, requested_qty: int) -> None:
+        """Validate stock is sufficient."""
+        current_stock = getattr(entity, 'stock', 0) or getattr(entity, 'quantity', 0) or 0
+        if current_stock < requested_qty:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Insufficient stock: {{current_stock}} < {{requested_qty}}"
+            )
+'''
+
+    guards += f'''
+    async def check_delete_preconditions(self, entity) -> None:
+        """Validate preconditions for delete operation."""
+        # Extension point: Add entity-specific delete validations
+        pass
+'''
+
+    return guards
+
+
 def generate_service_method(entity_name: str, attributes: list = None, ir: Any = None, all_entities: list = None) -> str:
     """
     Generate a complete service method without indentation errors.
@@ -2197,45 +2417,21 @@ class {entity_name}Service:
         generated_ops.add(op_name)
         logger.debug(f"Bug #143: Generating {op_name}() method for {entity_name} from flow '{flow_name}'")
 
+        # Get operation metadata for generating proper behavior
+        precondition_status = op.get('precondition_status', '')
+        postcondition_status = op.get('postcondition_status', '')
+        affects_stock = op.get('affects_stock', False)
+
         # Determine if this operation needs a data parameter (e.g., add_item)
         needs_data = 'add' in op_name or 'item' in op_name
 
-        if needs_data:
-            base_service += f'''
-    async def {op_name}(self, id: UUID, data: dict) -> Optional[{entity_name}Response]:
-        """
-        {flow_name} operation for {entity_name}.
-
-        Generated from IR BehaviorModel flow. Bug #143 Fix.
-        """
-        db_obj = await self.repo.get(id)
-        if not db_obj:
-            return None
-
-        # TODO: Implement actual {op_name} logic from IR steps
-        # For now, log and return the entity
-        logger.info(f"{entity_name} {op_name}: id={{str(id)}}, data={{data}}")
-        await self.db.refresh(db_obj)
-        return {entity_name}Response.model_validate(db_obj)
-'''
-        else:
-            base_service += f'''
-    async def {op_name}(self, id: UUID) -> Optional[{entity_name}Response]:
-        """
-        {flow_name} operation for {entity_name}.
-
-        Generated from IR BehaviorModel flow. Bug #143 Fix.
-        """
-        db_obj = await self.repo.get(id)
-        if not db_obj:
-            return None
-
-        # TODO: Implement actual {op_name} logic from IR steps
-        # For now, log and return the entity
-        logger.info(f"{entity_name} {op_name}: id={{str(id)}}")
-        await self.db.refresh(db_obj)
-        return {entity_name}Response.model_validate(db_obj)
-'''
+        # Generate appropriate method based on operation type
+        method_body = _generate_workflow_method_body(
+            entity_name, op_name, flow_name,
+            precondition_status, postcondition_status,
+            affects_stock, needs_data, status_field_name
+        )
+        base_service += method_body
 
     if generated_ops:
         logger.info(f"Bug #143: Generated {len(generated_ops)} custom operations for {entity_name}: {generated_ops}")

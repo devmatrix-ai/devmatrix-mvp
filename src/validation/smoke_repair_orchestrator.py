@@ -121,6 +121,35 @@ except ImportError:
     FailureClassifier = None
     IRRepairMapper = None
 
+# Cognitive Compiler Components (Bug #192 Completion)
+try:
+    from src.validation.validation_routing_matrix import ValidationRoutingMatrix, ValidationLayer
+    from src.validation.runtime_flow_validator import RuntimeFlowValidator
+    from src.validation.constraint_graph import ConstraintGraph
+    from src.validation.ir_backpropagation_engine import IRBackpropagationEngine
+    from src.validation.causal_chain_builder import CausalChainBuilder
+    from src.validation.golden_path_validator import GoldenPathValidator
+    from src.validation.convergence_monitor import ConvergenceMonitor
+    from src.cognitive.flow_logic_synthesizer import FlowLogicSynthesizer
+    from src.cognitive.invariant_inferencer import InvariantInferencer
+    from src.cognitive.ir.icbr import ICBR
+    from src.cognitive.behavior_lowering import BehaviorLoweringProtocol
+    COGNITIVE_COMPILER_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Cognitive compiler components not fully available: {e}")
+    COGNITIVE_COMPILER_AVAILABLE = False
+    ValidationRoutingMatrix = None
+    RuntimeFlowValidator = None
+    ConstraintGraph = None
+    IRBackpropagationEngine = None
+    CausalChainBuilder = None
+    GoldenPathValidator = None
+    ConvergenceMonitor = None
+    FlowLogicSynthesizer = None
+    InvariantInferencer = None
+    ICBR = None
+    BehaviorLoweringProtocol = None
+
 
 class RepairStrategyType(Enum):
     """Types of repair strategies based on error classification."""
@@ -385,6 +414,8 @@ class ErrorClassifier:
         """
         Bug #192: Detect if an error is from business logic vs schema validation.
 
+        Uses ValidationRoutingMatrix when available for precise constraint routing.
+
         Business logic errors are:
         - Stock/inventory constraints (stock_constraint)
         - Workflow state transitions (status_transition, workflow_constraint)
@@ -395,6 +426,19 @@ class ErrorClassifier:
         """
         msg_lower = error_message.lower()
         endpoint_lower = endpoint.lower()
+
+        # Bug #192 Enhancement: Use ValidationRoutingMatrix for precise routing
+        if COGNITIVE_COMPILER_AVAILABLE and ValidationRoutingMatrix:
+            from src.validation.validation_routing_matrix import (
+                detect_constraint_from_error, is_business_logic_constraint
+            )
+            try:
+                constraint_type = detect_constraint_from_error(error_message, endpoint)
+                if constraint_type and is_business_logic_constraint(constraint_type):
+                    logger.debug(f"ValidationRoutingMatrix: '{constraint_type}' → BUSINESS_LOGIC")
+                    return True
+            except Exception:
+                pass  # Fall back to keyword matching
 
         # Business logic keywords in error message
         business_keywords = [
@@ -613,6 +657,32 @@ class SmokeRepairOrchestrator:
         if FIX_PATTERN_LEARNER_AVAILABLE and get_fix_pattern_learner:
             self.fix_pattern_learner = get_fix_pattern_learner()
             logger.info("  ✅ Fix Pattern Learner enabled (cross-session learning)")
+
+        # Cognitive Compiler Components (Bug #192 Completion)
+        self.validation_router: Optional[ValidationRoutingMatrix] = None
+        self.runtime_validator: Optional[RuntimeFlowValidator] = None
+        self.constraint_graph: Optional[ConstraintGraph] = None
+        self.ir_backprop: Optional[IRBackpropagationEngine] = None
+        self.causal_builder: Optional[CausalChainBuilder] = None
+        self.golden_validator: Optional[GoldenPathValidator] = None
+        self.convergence_monitor: Optional[ConvergenceMonitor] = None
+        self.flow_synthesizer: Optional[FlowLogicSynthesizer] = None
+        self.invariant_inferencer: Optional[InvariantInferencer] = None
+
+        if COGNITIVE_COMPILER_AVAILABLE:
+            try:
+                self.validation_router = ValidationRoutingMatrix()
+                self.runtime_validator = RuntimeFlowValidator()
+                self.constraint_graph = ConstraintGraph()
+                self.ir_backprop = IRBackpropagationEngine()
+                self.causal_builder = CausalChainBuilder()
+                self.golden_validator = GoldenPathValidator()
+                self.convergence_monitor = ConvergenceMonitor()
+                self.flow_synthesizer = FlowLogicSynthesizer()
+                self.invariant_inferencer = InvariantInferencer()
+                logger.info("  ✅ Cognitive Compiler components enabled (11 components)")
+            except Exception as e:
+                logger.warning(f"  ⚠️ Cognitive Compiler partial init: {e}")
 
     async def run_smoke_repair_cycle(
         self,

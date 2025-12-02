@@ -35,6 +35,27 @@
 |-----|---------|-------------|
 | ✅ | `smoke_repair_orchestrator.py` | `_fix_business_logic_error` ahora INYECTA código (antes solo loggeaba) |
 | ✅ | `real_e2e_full_pipeline.py` | IR realignment usa SmokeRunnerV2 cuando corresponde (fix NoneType) |
+| ✅ | `production_code_generators.py` | `_generate_behavior_guards()` - Genera clase Validator con guards |
+| ✅ | `production_code_generators.py` | `_generate_workflow_method_body()` - Genera métodos con preconditions reales |
+| ✅ | `production_code_generators.py` | `find_workflow_operations()` - Extrae preconditions/postconditions del IR |
+
+### 🔗 Binding Implementado
+
+**Antes:**
+```
+Endpoint → Service.checkout() → repo.update() → DB
+                   ↓
+        "# TODO: Implement actual logic"
+```
+
+**Después:**
+```
+Endpoint → Service.checkout() → Validator.check_preconditions() → DB
+                   ↓
+        if current_status != 'OPEN':
+            raise HTTPException(422, "Cart must be OPEN")
+        db_obj.status = 'CHECKED_OUT'
+```
 
 ---
 

@@ -147,3 +147,80 @@ LAYER_HANDLERS: Dict[ValidationLayer, HandlerType] = {
     ValidationLayer.BEHAVIOR: HandlerType.GUARD_ENGINE,
 }
 
+
+def detect_constraint_from_error(error_message: str, endpoint: str = "") -> Optional[str]:
+    """
+    Detect constraint type from error message and endpoint.
+
+    Used by smoke_repair_orchestrator to route errors to correct layer.
+    """
+    msg_lower = error_message.lower() if error_message else ""
+    endpoint_lower = endpoint.lower() if endpoint else ""
+
+    # Stock/inventory constraints
+    if any(kw in msg_lower for kw in ['stock', 'inventory', 'insufficient', 'not enough', 'available']):
+        return 'stock_constraint'
+
+    # Quantity constraints
+    if any(kw in msg_lower for kw in ['quantity', 'amount', 'count']):
+        return 'quantity_constraint'
+
+    # Status/workflow constraints
+    if any(kw in msg_lower for kw in ['status', 'transition', 'state', 'workflow']):
+        return 'status_transition'
+
+    # Guard/precondition constraints
+    if any(kw in msg_lower for kw in ['must be', 'cannot', 'not allowed', 'precondition']):
+        return 'guard'
+
+    # Business rule constraints
+    if any(kw in msg_lower for kw in ['already', 'duplicate', 'exists', 'empty']):
+        return 'business_rule'
+
+    # Endpoint-based detection
+    action_patterns = ['/checkout', '/pay', '/cancel', '/items', '/refund']
+    if any(action in endpoint_lower for action in action_patterns):
+        return 'workflow_constraint'
+
+    # Type/format constraints (schema layer)
+    if any(kw in msg_lower for kw in ['type', 'format', 'invalid', 'expected']):
+        return 'type_constraint'
+
+    # Required field constraints
+    if any(kw in msg_lower for kw in ['required', 'missing', 'field']):
+        return 'required_field'
+
+    return None
+
+
+class ValidationRoutingMatrix:
+    """
+    Class-based interface for validation routing.
+
+    Used by SmokeRepairOrchestrator for component initialization.
+    """
+
+    def __init__(self):
+        self.matrix = VALIDATION_ROUTING_MATRIX
+        self.layer_handlers = LAYER_HANDLERS
+
+    def get_layer(self, constraint_type: str) -> ValidationLayer:
+        """Get layer for constraint type."""
+        return get_layer_for_constraint(constraint_type)
+
+    def get_repair_strategy(self, constraint_type: str) -> str:
+        """Get repair strategy for constraint type."""
+        return get_repair_strategy(constraint_type)
+
+    def is_business_logic(self, constraint_type: str) -> bool:
+        """Check if constraint is business logic."""
+        return is_business_logic_constraint(constraint_type)
+
+    def detect_constraint(self, error_message: str, endpoint: str = "") -> Optional[str]:
+        """Detect constraint type from error."""
+        return detect_constraint_from_error(error_message, endpoint)
+
+    def classify_error(self, status_code: int, error_detail: str) -> ValidationLayer:
+        """Classify HTTP error to validation layer."""
+        return classify_error_to_layer(status_code, error_detail)
+
