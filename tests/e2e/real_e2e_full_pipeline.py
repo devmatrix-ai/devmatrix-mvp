@@ -3940,12 +3940,26 @@ Once running, visit:
                     correlator = get_ir_code_correlator()
 
                     # Re-run smoke to get after results
-                    smoke_after = await smoke_validator.validate(self.application_ir)
-                    passed_after = [r for r in smoke_after.results if r.success]
-                    smoke_results_after = {
-                        "violations": smoke_after.violations,
-                        "passed_scenarios": [{"endpoint": f"{r.method} {r.endpoint_path}", "status_code": r.status_code} for r in passed_after]
-                    }
+                    # Bug fix: Use the same validator type used for repair
+                    if use_ir_smoke and hasattr(self, '_ir_smoke_tests_model') and self._ir_smoke_tests_model:
+                        # Use SmokeRunnerV2 for IR-centric
+                        runner = SmokeRunnerV2(self._ir_smoke_tests_model, self._ir_smoke_base_url)
+                        smoke_after_report = await runner.run_all()
+                        passed_after = [r for r in smoke_after_report.results if r.passed]
+                        smoke_results_after = {
+                            "violations": [r.to_dict() for r in smoke_after_report.results if not r.passed],
+                            "passed_scenarios": [{"endpoint": f"{r.method} {r.endpoint}", "status_code": r.status_code} for r in passed_after]
+                        }
+                    elif smoke_validator is not None:
+                        smoke_after = await smoke_validator.validate(self.application_ir)
+                        passed_after = [r for r in smoke_after.results if r.success]
+                        smoke_results_after = {
+                            "violations": smoke_after.violations,
+                            "passed_scenarios": [{"endpoint": f"{r.method} {r.endpoint_path}", "status_code": r.status_code} for r in passed_after]
+                        }
+                    else:
+                        print(f"    ⚠️ No smoke validator available for realignment")
+                        smoke_results_after = {"violations": [], "passed_scenarios": []}
 
                     # Convert RepairFix objects to dicts
                     repairs_dicts = [{

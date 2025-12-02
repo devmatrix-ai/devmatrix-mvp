@@ -75,9 +75,11 @@ PLANNER_USER_PROMPT = """## IR Data (Source of Truth)
 ### Business Rules
 {business_rules_json}
 
-## UUID Rules
-- Seed data UUIDs: 00000000-0000-4000-8000-00000000000X (X = entity index starting from 1)
-- Not-found UUIDs: 99999999-9999-4000-8000-999999999999
+## Pre-assigned UUIDs (USE THESE EXACTLY - DO NOT MODIFY)
+{uuid_assignments}
+
+IMPORTANT: Use the UUIDs above exactly as shown. Do NOT generate your own UUIDs.
+Use the "primary" UUID for normal tests, "delete" UUID for DELETE tests.
 
 ## Output Format
 Generate a JSON object with this exact structure:
@@ -187,11 +189,17 @@ class SmokeTestPlannerAgent:
         endpoints_json = self._format_endpoints(ir)
         business_rules_json = self._format_business_rules(ir)
 
+        # UUID Unification: Generate UUIDs from registry for prompt injection
+        from src.core.uuid_registry import SeedUUIDRegistry
+        uuid_registry = SeedUUIDRegistry.from_ir(ir)
+        uuid_assignments = uuid_registry.to_prompt_json()
+
         # Build prompt
         user_prompt = PLANNER_USER_PROMPT.format(
             entities_json=entities_json,
             endpoints_json=endpoints_json,
-            business_rules_json=business_rules_json
+            business_rules_json=business_rules_json,
+            uuid_assignments=uuid_assignments
         )
 
         full_prompt = f"{PLANNER_SYSTEM_PROMPT}\n\n{user_prompt}"

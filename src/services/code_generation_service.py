@@ -4170,22 +4170,26 @@ router = APIRouter(
                 ).lstrip('_')
 
             # Add request body for POST/PUT/PATCH - but NOT for action endpoints
+            # Bug #201 Fix: Use consistent variable name between signature and body
+            # Always use {entity_snake}_data regardless of schema name
+            body_param_name = f'{schema_entity_snake}_data'
+
             if method == 'post' and not is_action_endpoint:
                 if ir_schema_name:
-                    params.append(f'{ir_schema_snake}_data: {ir_schema_name}')
+                    params.append(f'{body_param_name}: {ir_schema_name}')
                 else:
-                    params.append(f'{schema_entity_snake}_data: {schema_entity_name}Create')
+                    params.append(f'{body_param_name}: {schema_entity_name}Create')
             elif method == 'put':
                 if ir_schema_name:
-                    params.append(f'{ir_schema_snake}_data: {ir_schema_name}')
+                    params.append(f'{body_param_name}: {ir_schema_name}')
                 else:
-                    params.append(f'{schema_entity_snake}_data: {schema_entity_name}Update')
+                    params.append(f'{body_param_name}: {schema_entity_name}Update')
             elif method == 'patch' and not is_action_endpoint:
                 # Bug #104b Fix: PATCH needs body for updates (but not for activate/deactivate actions)
                 if ir_schema_name:
-                    params.append(f'{ir_schema_snake}_data: {ir_schema_name}')
+                    params.append(f'{body_param_name}: {ir_schema_name}')
                 else:
-                    params.append(f'{schema_entity_snake}_data: {schema_entity_name}Update')
+                    params.append(f'{body_param_name}: {schema_entity_name}Update')
 
             params.append('db: AsyncSession = Depends(get_db)')
             params_str = ',\n    '.join(params)
@@ -5562,39 +5566,39 @@ datasources:
         # Bug #94 Fix: Read actual entity attributes from IR instead of hardcoding field names
         seed_blocks = []
 
-        # Predictable UUIDs for smoke testing (by entity index)
-        # This ensures consistent IDs across test runs
-        # Bug #187: Create 2 UUIDs per entity:
-        #   - Primary (..01, ..02, etc.) for GET, PUT, PATCH tests
-        #   - Secondary (..11, ..12, etc.) for DELETE tests (won't break other tests)
-        uuid_base = "00000000-0000-4000-8000-00000000000"
-        uuid_base_delete = "00000000-0000-4000-8000-0000000000"  # For DELETE (2 digits)
-        entity_uuids = {}  # Map entity_name -> (primary_uuid, delete_uuid)
+        # UUID Unification: Use centralized SeedUUIDRegistry for consistent UUIDs
+        from src.core.uuid_registry import SeedUUIDRegistry
+        entity_names = [e.name for e in entities_list]
+        uuid_registry = SeedUUIDRegistry.from_entity_names(entity_names)
+        entity_uuids = uuid_registry.to_dict()  # For backward compatibility
 
-        # First pass: assign UUIDs to all entities
-        logger.info(f"🔍 [SEED_DEBUG] entities_list has {len(entities_list)} entities")
-        for idx, entity in enumerate(entities_list, start=1):
-            primary_uuid = f"{uuid_base}{idx}"
-            delete_uuid = f"{uuid_base_delete}{idx + 10}"  # +10 for delete variants (11, 12, etc.)
-            entity_uuids[entity.name.lower()] = (primary_uuid, delete_uuid)
-            logger.info(f"🔍 [SEED_DEBUG] {idx}. {entity.name.lower()} -> primary={primary_uuid[-4:]}, delete={delete_uuid[-4:]}")
+        logger.info(f"🔍 [SEED_DEBUG] SeedUUIDRegistry initialized with {len(entity_names)} entities")
+        for name, uuids in entity_uuids.items():
+            logger.info(f"🔍 [SEED_DEBUG] {name} -> primary={uuids[0][-4:]}, delete={uuids[1][-4:]}")
 
         # Phase 1: Domain-agnostic join table detection
         # Skip entities with 2+ FK relationships (join tables like CartItem, OrderItem)
+        # Bug #UUID-FIX: Only count many_to_one relationships (FKs pointing OUT from this entity)
+        # NOT one_to_many (which are reverse references TO this entity)
         def is_join_table(entity) -> bool:
-            """Detect join tables by counting FK relationships (domain-agnostic)."""
+            """Detect join tables by counting FK relationships (domain-agnostic).
+
+            A join table has 2+ many_to_one relationships (FKs to parent entities).
+            Example: CartItem has cart_id (many_to_one to Cart) and product_id (many_to_one to Product).
+
+            one_to_many relationships are REVERSE references and should NOT be counted.
+            Example: Product has one_to_many to CartItem (reverse of CartItem.product_id).
+            """
             rels = getattr(entity, 'relationships', []) or []
-            fk_count = sum(1 for r in rels if hasattr(r, 'type') and 'many' in str(r.type).lower())
-            return fk_count >= 2 or 'item' in entity.name.lower()  # Fallback heuristic
+            # Only count many_to_one (FK pointing OUT), not one_to_many (reverse reference)
+            fk_count = sum(1 for r in rels if hasattr(r, 'type') and 'many_to_one' in str(r.type).lower())
+            return fk_count >= 2
 
         skip_entities = {e.name.lower() for e in entities_list if is_join_table(e)}
 
         # Bug #187: Helper to get FK reference UUID (uses primary UUID of referenced entity)
         def get_fk_uuid(ref_entity_name: str) -> str:
-            uuids = entity_uuids.get(ref_entity_name.lower())
-            if not uuids:
-                raise ValueError(f"No UUID found for FK reference '{ref_entity_name}'. entity_uuids keys: {list(entity_uuids.keys())}")
-            return uuids[0] if isinstance(uuids, tuple) else uuids
+            return uuid_registry.get_fk_uuid(ref_entity_name)
 
         for idx, entity in enumerate(entities_list, start=1):
             entity_name = entity.name
@@ -5746,7 +5750,6 @@ datasources:
         item_entities = [e for e in entities_list if e.name.lower() in skip_entities]
         logger.info(f"🔍 [SEED_DEBUG] item_entities (join tables): {[e.name for e in item_entities]}")
         logger.info(f"🔍 [SEED_DEBUG] seed_blocks has {len(seed_blocks)} entries before join tables")
-        item_uuid_counter = 20  # Start at 20 for item entities (21, 22, etc.)
 
         for entity in item_entities:
             entity_name = entity.name
@@ -5762,8 +5765,8 @@ datasources:
 
             # Generate seeds for both primary and delete UUIDs
             for seed_idx in range(2):
-                item_uuid = f"{uuid_base_delete}{item_uuid_counter}"
-                item_uuid_counter += 1
+                # UUID Unification: Use registry for join table UUIDs
+                item_uuid = uuid_registry.get_next_item_uuid()
                 seed_suffix = "" if seed_idx == 0 else "_for_delete"
                 purpose = "for DELETE tests" if seed_idx == 1 else "for smoke testing"
 

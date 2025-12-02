@@ -23,6 +23,7 @@ import httpx
 
 from src.cognitive.ir.application_ir import ApplicationIR
 from src.cognitive.ir.api_model import Endpoint, HttpMethod
+from src.core.uuid_registry import SeedUUIDRegistry
 try:
     # Rich stack trace data class for smoke-driven repair
     from src.validation.smoke_repair_orchestrator import StackTrace
@@ -736,14 +737,15 @@ class RuntimeSmokeTestValidator:
             )
 
     def _substitute_path_params(self, path: str) -> str:
-        """Replace path parameters like {id} with test values (domain-agnostic)."""
-        # Domain-agnostic: Build UUID map from path segments
-        uuid_base = '00000000-0000-4000-8000-0000000000'
-        uuid_generic = '00000000-0000-4000-8000-000000000099'
+        """Replace path parameters like {id} with test values (domain-agnostic).
 
-        # Extract entity from path and generate deterministic UUID
-        def get_entity_uuid(entity_name: str, idx: int = 1) -> str:
-            return f"{uuid_base}{idx:02d}"
+        Bug #192 Fix: Use SeedUUIDRegistry for consistent UUIDs across all components.
+        """
+        # Build entity names from path segments (e.g., /products/{id} -> ["Product"])
+        path_segments = [s.rstrip('s').title() for s in path.split('/') if s and not s.startswith('{')]
+
+        # Use centralized registry
+        registry = SeedUUIDRegistry.from_entity_names(path_segments) if path_segments else None
 
         result = path
 
@@ -751,21 +753,26 @@ class RuntimeSmokeTestValidator:
         import re as re_module
         params = re_module.findall(r'\{(\w+)\}', path)
 
-        # Build entity order from path segments
-        path_segments = [s.rstrip('s') for s in path.split('/') if s and not s.startswith('{')]
-        entity_uuids = {seg: get_entity_uuid(seg, idx + 1) for idx, seg in enumerate(path_segments)}
-
         for param in params:
             if param == 'id':
                 # Use first entity in path
-                if path_segments:
-                    replacement = entity_uuids.get(path_segments[0], uuid_generic)
+                if path_segments and registry:
+                    try:
+                        replacement = registry.get_uuid(path_segments[0], "primary")
+                    except ValueError:
+                        replacement = SeedUUIDRegistry.NOT_FOUND_UUID
                 else:
-                    replacement = uuid_generic
+                    replacement = SeedUUIDRegistry.NOT_FOUND_UUID
             elif param.endswith('_id'):
-                # Extract entity from param name (product_id -> product)
-                entity = param.replace('_id', '')
-                replacement = entity_uuids.get(entity, uuid_generic)
+                # Extract entity from param name (product_id -> Product)
+                entity = param.replace('_id', '').title()
+                if registry and entity in registry:
+                    try:
+                        replacement = registry.get_uuid(entity, "primary")
+                    except ValueError:
+                        replacement = SeedUUIDRegistry.NOT_FOUND_UUID
+                else:
+                    replacement = SeedUUIDRegistry.NOT_FOUND_UUID
             else:
                 # Non-ID parameter
                 replacement = 'test-value'

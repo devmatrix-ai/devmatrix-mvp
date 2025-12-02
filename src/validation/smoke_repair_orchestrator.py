@@ -381,6 +381,54 @@ class ErrorClassifier:
         logger.debug(f"Bug #150: No specific pattern matched for '{endpoint}', defaulting to SERVICE")
         return RepairStrategyType.SERVICE
 
+    def _is_business_logic_error(self, error_message: str, endpoint: str) -> bool:
+        """
+        Bug #192: Detect if an error is from business logic vs schema validation.
+
+        Business logic errors are:
+        - Stock/inventory constraints (stock_constraint)
+        - Workflow state transitions (status_transition, workflow_constraint)
+        - Custom domain rules (e.g., "cart must not be empty")
+
+        These errors happen in SERVICE layer, not in Pydantic schema validation.
+        Repairing them in schemas.py is incorrect - they need service layer fixes.
+        """
+        msg_lower = error_message.lower()
+        endpoint_lower = endpoint.lower()
+
+        # Business logic keywords in error message
+        business_keywords = [
+            'stock', 'inventory', 'insufficient', 'not enough',
+            'status', 'transition', 'state', 'workflow',
+            'must be', 'cannot', 'invalid state', 'not allowed',
+            'already', 'duplicate', 'exists',
+            'empty cart', 'no items', 'cart is empty',
+            'pending', 'payment', 'checkout',
+            'active', 'inactive', 'deactivated',
+        ]
+
+        # Domain action endpoints that involve business logic
+        action_endpoints = [
+            '/checkout', '/pay', '/cancel', '/refund',
+            '/activate', '/deactivate', '/items',
+            '/clear', '/empty', '/transfer',
+        ]
+
+        # Check error message for business logic keywords
+        if any(kw in msg_lower for kw in business_keywords):
+            return True
+
+        # Check if endpoint is a domain action (not simple CRUD)
+        if any(action in endpoint_lower for action in action_endpoints):
+            return True
+
+        # Nested resource endpoints often have business logic
+        # e.g., /carts/{id}/items, /orders/{id}/pay
+        if re.search(r'/\{[^}]+\}/[a-z]+', endpoint_lower):
+            return True
+
+        return False
+
     def classify_violations(
         self,
         violations: List[Dict[str, Any]],
@@ -428,7 +476,26 @@ class ErrorClassifier:
             if status_code == 404:
                 strategy_type = RepairStrategyType.ROUTE
             elif status_code == 422:
-                strategy_type = RepairStrategyType.VALIDATION
+                # Bug #192: Detect business logic 422s vs schema validation 422s
+                # Business logic 422s come from service layer, not Pydantic validation
+                if self._is_business_logic_error(error_message, endpoint):
+                    strategy_type = RepairStrategyType.SERVICE
+                    logger.debug(f"Bug #192: 422 from business logic on {endpoint} → SERVICE")
+                else:
+                    strategy_type = RepairStrategyType.VALIDATION
+            elif status_code == 500:
+                # Bug #192: 500 on workflow endpoints should go to SERVICE
+                if self._is_business_logic_error(error_message, endpoint):
+                    strategy_type = RepairStrategyType.SERVICE
+                    logger.debug(f"Bug #192: 500 from business logic on {endpoint} → SERVICE")
+                elif stack_trace_obj and stack_trace_obj.exception_class:
+                    strategy_type = self.log_parser.classify_error(
+                        stack_trace_obj.exception_class,
+                        stack_trace_obj.file_path,
+                        stack_trace_obj.exception_message
+                    )
+                else:
+                    strategy_type = self._infer_strategy_from_endpoint(endpoint, error_message)
             elif stack_trace_obj and stack_trace_obj.exception_class:
                 # Bug #145: Pass file_path and error_message for SERVICE detection
                 strategy_type = self.log_parser.classify_error(
@@ -620,6 +687,32 @@ class SmokeRepairOrchestrator:
                 convergence_detected = True
                 iterations.append(iteration)
                 break
+
+            # Bug #192: Check for non-convergent loops (same violations repeating)
+            if i >= 2:
+                current_violation_set = frozenset(
+                    (v.get('endpoint', ''), v.get('status_code', v.get('actual_status', 0)))
+                    for v in violations
+                )
+                prev_violation_set = getattr(self, '_prev_violation_set', frozenset())
+                prev_prev_violation_set = getattr(self, '_prev_prev_violation_set', frozenset())
+
+                # If same violations appear for 3 consecutive iterations, we're in a loop
+                if current_violation_set == prev_violation_set == prev_prev_violation_set and len(current_violation_set) > 0:
+                    logger.warning(f"    ⚠️ Bug #192: Non-convergent loop detected! Same {len(current_violation_set)} violations for 3 iterations")
+                    logger.warning(f"    ⚠️ These violations may require manual intervention or are business logic issues")
+                    convergence_detected = True
+                    iterations.append(iteration)
+                    break
+
+                self._prev_prev_violation_set = prev_violation_set
+                self._prev_violation_set = current_violation_set
+            elif i == 0:
+                self._prev_violation_set = frozenset(
+                    (v.get('endpoint', ''), v.get('status_code', v.get('actual_status', 0)))
+                    for v in violations
+                )
+                self._prev_prev_violation_set = frozenset()
 
             # 6. Parse server logs for stack traces
             stack_traces = []
@@ -1596,21 +1689,46 @@ class SmokeRepairOrchestrator:
         application_ir
     ) -> Optional[RepairFix]:
         """
-        Bug #145: Fix missing service methods.
+        Bug #145: Fix service-layer errors (missing methods + business logic).
 
-        When routes call service.method() but the method doesn't exist,
-        generate the missing method using IR workflow definitions.
+        Bug #192: Extended to handle business logic constraints:
+        - Stock validation errors → Add stock check to service method
+        - Status transition errors → Add state validation to service
+        - Workflow constraint errors → Add precondition checks
 
-        Bug #158 Fix: Extract service name from exception message first,
-        then fallback to endpoint parsing. This ensures the method is
-        generated in the correct service file.
+        These are NOT schema validation errors - they happen in flow logic.
         """
+        import re
+
+        entity_name = self._extract_entity_from_endpoint(violation.endpoint)
+        if not entity_name:
+            return None
+
+        # Find service file
+        service_file = app_path / "src" / "services" / f"{entity_name.lower()}_service.py"
+        if not service_file.exists():
+            service_file = app_path / "src" / "services" / f"{entity_name.lower()}s_service.py"
+            if not service_file.exists():
+                # Try looking for flow methods file
+                service_file = app_path / "src" / "services" / f"{entity_name.lower()}_flow_methods.py"
+                if not service_file.exists():
+                    logger.warning(f"    ⚠️ SERVICE: No service file found for {entity_name}")
+                    return None
+
+        content = service_file.read_text()
+        error_message = violation.error_message.lower() if violation.error_message else ""
+
+        # Bug #192: Handle business logic errors (not just missing methods)
+        fix_result = await self._fix_business_logic_error(
+            violation, error_message, content, service_file, app_path, application_ir
+        )
+        if fix_result:
+            return fix_result
+
+        # Original logic: Handle missing methods
         if not trace:
             return None
 
-        # Extract missing method name from error message
-        # Pattern: "'XxxService' object has no attribute 'method_name'"
-        import re
         method_match = re.search(
             r"has no attribute ['\"](\w+)['\"]",
             trace.exception_message,
@@ -1713,6 +1831,215 @@ class SmokeRepairOrchestrator:
             new_code=method_code[:200],
             success=True
         )
+
+    async def _fix_business_logic_error(
+        self,
+        violation: SmokeViolation,
+        error_message: str,
+        content: str,
+        service_file: Path,
+        app_path: Path,
+        application_ir
+    ) -> Optional[RepairFix]:
+        """
+        Bug #192: Fix business logic errors in service layer.
+
+        Handles:
+        - Stock/inventory validation (422 from stock constraint)
+        - Status/state transitions (422/500 from workflow constraint)
+        - Relationship validation (422 from foreign key logic)
+        - Custom business rules (422 from domain invariants)
+
+        Returns RepairFix if fixed, None to continue to other strategies.
+        """
+        import re
+
+        entity_name = self._extract_entity_from_endpoint(violation.endpoint)
+        if not entity_name:
+            return None
+
+        # Identify the type of business logic error
+        fix_type = None
+        fix_code = None
+
+        # Stock constraint errors
+        if any(kw in error_message for kw in ['stock', 'inventory', 'insufficient', 'quantity']):
+            fix_type = "stock_validation"
+            # Find the method that needs stock validation
+            method_name = self._infer_method_from_endpoint(violation.endpoint)
+            if method_name and f"def {method_name}" in content:
+                # Add stock validation before the database operation
+                fix_code = self._generate_stock_validation_code(entity_name, method_name)
+                logger.info(f"    🔧 SERVICE: Adding stock validation to {method_name}")
+
+        # Status transition errors
+        elif any(kw in error_message for kw in ['status', 'transition', 'state', 'pending', 'cancelled']):
+            fix_type = "status_transition"
+            method_name = self._infer_method_from_endpoint(violation.endpoint)
+            if method_name and f"def {method_name}" in content:
+                fix_code = self._generate_status_check_code(entity_name, method_name)
+                logger.info(f"    🔧 SERVICE: Adding status validation to {method_name}")
+
+        # Empty cart/collection errors
+        elif any(kw in error_message for kw in ['empty', 'no items', 'cart is empty']):
+            fix_type = "empty_collection_check"
+            method_name = self._infer_method_from_endpoint(violation.endpoint)
+            if method_name:
+                fix_code = self._generate_empty_check_code(entity_name, method_name)
+                logger.info(f"    🔧 SERVICE: Adding empty collection check to {method_name}")
+
+        # Relationship/existence validation errors
+        elif any(kw in error_message for kw in ['not found', 'does not exist', 'invalid']):
+            fix_type = "relationship_validation"
+            method_name = self._infer_method_from_endpoint(violation.endpoint)
+            if method_name:
+                fix_code = self._generate_existence_check_code(entity_name, method_name)
+                logger.info(f"    🔧 SERVICE: Adding existence validation to {method_name}")
+
+        if not fix_code:
+            return None
+
+        # Bug #192 Fix: Actually inject the validation code into the method
+        method_name = self._infer_method_from_endpoint(violation.endpoint)
+        if not method_name:
+            return None
+
+        # Find the method in the file and inject the validation code
+        import re
+
+        # Pattern to find method definition (async or sync)
+        method_patterns = [
+            rf'(async\s+def\s+{method_name}\s*\([^)]*\)[^:]*:)',
+            rf'(def\s+{method_name}\s*\([^)]*\)[^:]*:)',
+        ]
+
+        method_match = None
+        for pattern in method_patterns:
+            method_match = re.search(pattern, content, re.IGNORECASE)
+            if method_match:
+                break
+
+        if not method_match:
+            logger.warning(f"    ⚠️ SERVICE: Could not find method '{method_name}' to inject validation")
+            return None
+
+        # Find insertion point (after method docstring if any, or right after def line)
+        method_start = method_match.end()
+        remaining_content = content[method_start:]
+
+        # Skip any docstring
+        docstring_patterns = [
+            r'^\s*"""[^"]*?"""',  # Single line docstring
+            r'^\s*""".*?"""',      # Multi-line docstring (non-greedy)
+            r"^\s*'''[^']*?'''",   # Single quotes
+        ]
+
+        insertion_offset = 0
+        for doc_pattern in docstring_patterns:
+            doc_match = re.match(doc_pattern, remaining_content, re.DOTALL)
+            if doc_match:
+                insertion_offset = doc_match.end()
+                break
+
+        # Insert the validation code
+        insertion_point = method_start + insertion_offset
+        new_content = (
+            content[:insertion_point] +
+            '\n' + fix_code +
+            content[insertion_point:]
+        )
+
+        # Write the fixed content back
+        service_file.write_text(new_content)
+
+        logger.info(f"    ✅ SERVICE: Injected {fix_type} into {method_name} in {service_file.name}")
+
+        return RepairFix(
+            file_path=str(service_file),
+            fix_type=f"service_{fix_type}",
+            description=f"Injected {fix_type} into {method_name}",
+            old_code="",
+            new_code=fix_code[:200] if fix_code else "",
+            success=True
+        )
+
+    def _infer_method_from_endpoint(self, endpoint: str) -> Optional[str]:
+        """Infer service method name from endpoint pattern."""
+        endpoint_lower = endpoint.lower()
+
+        # Common action patterns
+        if '/checkout' in endpoint_lower:
+            return 'checkout'
+        elif '/pay' in endpoint_lower:
+            return 'pay'
+        elif '/cancel' in endpoint_lower:
+            return 'cancel'
+        elif '/items' in endpoint_lower and 'POST' in endpoint:
+            return 'add_item'
+        elif '/items' in endpoint_lower and 'PUT' in endpoint:
+            return 'update_item'
+        elif '/items' in endpoint_lower and 'DELETE' in endpoint:
+            return 'remove_item'
+        elif '/clear' in endpoint_lower or '/empty' in endpoint_lower:
+            return 'clear'
+        elif '/activate' in endpoint_lower:
+            return 'activate'
+        elif '/deactivate' in endpoint_lower:
+            return 'deactivate'
+
+        # Extract from path
+        parts = endpoint.split('/')
+        for part in reversed(parts):
+            if part and not part.startswith('{') and part not in ['api', 'v1']:
+                return part.lower()
+
+        return None
+
+    def _generate_stock_validation_code(self, entity_name: str, method_name: str) -> str:
+        """Generate stock validation code snippet."""
+        return f'''
+        # Bug #192: Stock validation
+        if product.stock < quantity:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Insufficient stock: requested {{quantity}}, available {{product.stock}}"
+            )
+'''
+
+    def _generate_status_check_code(self, entity_name: str, method_name: str) -> str:
+        """Generate status transition validation code."""
+        return f'''
+        # Bug #192: Status transition validation
+        valid_transitions = {{"pending": ["paid", "cancelled"], "paid": [], "cancelled": []}}
+        if new_status not in valid_transitions.get({entity_name.lower()}.status, []):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid status transition from {{{entity_name.lower()}.status}} to {{new_status}}"
+            )
+'''
+
+    def _generate_empty_check_code(self, entity_name: str, method_name: str) -> str:
+        """Generate empty collection check code."""
+        return f'''
+        # Bug #192: Empty collection check
+        if not {entity_name.lower()}.items or len({entity_name.lower()}.items) == 0:
+            raise HTTPException(
+                status_code=422,
+                detail="{entity_name} has no items"
+            )
+'''
+
+    def _generate_existence_check_code(self, entity_name: str, method_name: str) -> str:
+        """Generate existence validation code."""
+        return f'''
+        # Bug #192: Existence validation
+        entity = await self.repository.get_by_id(entity_id, db)
+        if not entity:
+            raise HTTPException(
+                status_code=404,
+                detail=f"{entity_name} not found"
+            )
+'''
 
     def _generate_service_method(
         self,

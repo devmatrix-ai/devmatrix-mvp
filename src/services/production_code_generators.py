@@ -1999,15 +1999,24 @@ def generate_service_method(entity_name: str, attributes: list = None, ir: Any =
     entity_snake = re.sub(r'(?<!^)(?=[A-Z])', '_', entity_name).lower()
     plural = f"{entity_snake}s"
 
+    # Determine which guards to generate based on entity type
+    has_stock = any(_get_field_value(f, 'name', '').lower() in ('stock', 'quantity', 'inventory') for f in attributes)
+    has_status = status_field_name and status_field_name != "status"  # Real status field found
+
+    # Build behavior guards section
+    behavior_guards = _generate_behavior_guards(entity_name, has_stock, has_status, status_field_name, status_values)
+
     base_service = f'''"""
 FastAPI Service for {entity_name}
 
 Business logic and data access patterns.
+Includes RuntimeFlowValidator guards for business logic enforcement.
 """
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 import logging
+from fastapi import HTTPException
 
 from src.models.schemas import {entity_name}Create, {entity_name}Update, {entity_name}Response, {entity_name}List
 from src.repositories.{entity_snake}_repository import {entity_name}Repository
@@ -2015,17 +2024,21 @@ from src.models.entities import {entity_name}Entity
 
 logger = logging.getLogger(__name__)
 
+{behavior_guards}
 
 class {entity_name}Service:
-    """Business logic for {entity_name}."""
+    """Business logic for {entity_name} with behavior guards."""
 
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repo = {entity_name}Repository(db)
+        self.validator = {entity_name}Validator()
 
     async def create(self, data: {entity_name}Create) -> {entity_name}Response:
-        """Create a new {entity_name.lower()}."""
-        # Bug #142 Fix: Pass Pydantic model directly - repository handles model_dump()
+        """Create a new {entity_name.lower()} with precondition checks."""
+        # Behavior guard: validate create preconditions
+        await self.validator.check_create_preconditions(data)
+
         db_obj = await self.repo.create(data)
         return {entity_name}Response.model_validate(db_obj)
 
@@ -2055,15 +2068,29 @@ class {entity_name}Service:
         )
 
     async def update(self, id: UUID, data: {entity_name}Update) -> Optional[{entity_name}Response]:
-        """Update {entity_name.lower()}."""
-        # Bug #142 Fix: Pass Pydantic model directly - repository handles model_dump()
+        """Update {entity_name.lower()} with transition validation."""
+        # Get current state for transition validation
+        db_obj = await self.repo.get(id)
+        if not db_obj:
+            return None
+
+        # Behavior guard: validate update/transition
+        await self.validator.check_update_preconditions(db_obj, data)
+
         db_obj = await self.repo.update(id, data)
         if db_obj:
             return {entity_name}Response.model_validate(db_obj)
         return None
 
     async def delete(self, id: UUID) -> bool:
-        """Delete {entity_name.lower()}."""
+        """Delete {entity_name.lower()} with guard check."""
+        db_obj = await self.repo.get(id)
+        if not db_obj:
+            raise HTTPException(status_code=404, detail="{entity_name} not found")
+
+        # Behavior guard: validate delete is allowed
+        await self.validator.check_delete_preconditions(db_obj)
+
         return await self.repo.delete(id)
 '''
 

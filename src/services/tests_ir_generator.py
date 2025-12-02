@@ -28,6 +28,7 @@ from src.cognitive.ir.tests_model import (
     TestPriority,
     ExpectedOutcome,
 )
+from src.core.uuid_registry import SeedUUIDRegistry
 from src.cognitive.ir.api_model import Endpoint, HttpMethod
 from src.cognitive.ir.domain_model import Entity, DataType
 
@@ -44,13 +45,14 @@ class TestsIRGenerator:
 
     # Default test values by data type
     # Bug #144: UUIDs must use seed-compatible format (4000-8000 pattern)
+    # Bug #192: Use SeedUUIDRegistry.NOT_FOUND_UUID for consistency
     DEFAULT_VALUES = {
         DataType.STRING: "test_string",
         DataType.INTEGER: 1,
         DataType.FLOAT: 1.0,
         DataType.BOOLEAN: True,
         DataType.DATETIME: "2025-01-01T00:00:00Z",
-        DataType.UUID: "00000000-0000-4000-8000-000000000099",  # Seed-compatible fallback
+        DataType.UUID: SeedUUIDRegistry.NOT_FOUND_UUID,  # Centralized not-found UUID
         DataType.JSON: {},
         DataType.ENUM: None,  # Will use first enum value
     }
@@ -158,7 +160,7 @@ class TestsIRGenerator:
         if constraints.get("format") == "email":
             return "test@example.com"
         elif constraints.get("format") == "uuid":
-            return "00000000-0000-4000-8000-000000000099"
+            return SeedUUIDRegistry.NOT_FOUND_UUID
 
         return None
 
@@ -173,25 +175,33 @@ class TestsIRGenerator:
                 self._entity_map[entity.name.lower() + 's'] = entity
 
     def _build_entity_uuid_map(self) -> Dict[str, str]:
-        """Phase 1.2: Build entity → UUID map dynamically from IR.
+        """Phase 1.2: Build entity → UUID map using centralized SeedUUIDRegistry.
 
-        Domain-agnostic: No hardcoded entity names.
-        UUIDs are deterministic based on entity order for reproducibility.
+        Bug #192 Fix: Use SeedUUIDRegistry for consistent UUIDs across:
+        - tests_ir_generator.py (this file)
+        - code_generation_service.py (seed_db.py generation)
+        - smoke_runner_v2.py (test execution)
         """
-        uuid_map = {}
         entities = self.app_ir.get_entities()
+        entity_names = [e.name for e in entities]
 
-        for idx, entity in enumerate(entities, start=1):
-            # Generate deterministic UUID: 00000000-0000-4000-8000-00000000000X
-            uuid_val = f"00000000-0000-4000-8000-{idx:012d}"
+        # Use centralized registry
+        registry = SeedUUIDRegistry.from_entity_names(entity_names)
+
+        uuid_map = {}
+        for entity in entities:
             entity_name = entity.name.lower()
-            uuid_map[entity_name] = uuid_val
+            try:
+                uuid_val = registry.get_uuid(entity.name, "primary")
+                uuid_map[entity_name] = uuid_val
 
-            # Also map singular/plural variants
-            if entity_name.endswith('s'):
-                uuid_map[entity_name[:-1]] = uuid_val
-            else:
-                uuid_map[entity_name + 's'] = uuid_val
+                # Also map singular/plural variants
+                if entity_name.endswith('s'):
+                    uuid_map[entity_name[:-1]] = uuid_val
+                else:
+                    uuid_map[entity_name + 's'] = uuid_val
+            except ValueError:
+                pass  # Entity not in registry
 
         return uuid_map
 
@@ -599,8 +609,8 @@ class TestsIRGenerator:
             for entity, uuid_val in seed_uuids.items():
                 if entity.lower() in field_lower:
                     return uuid_val
-            # Fallback to a valid generic UUID for unknown FK fields
-            return "00000000-0000-4000-8000-000000000099"
+            # Bug #192: Use centralized NOT_FOUND_UUID for unknown FK fields
+            return SeedUUIDRegistry.NOT_FOUND_UUID
 
         return "test"
 

@@ -24,6 +24,7 @@ from src.cognitive.ir.tests_model import (
     TestPriority,
     ExpectedOutcome,
 )
+from src.core.uuid_registry import SeedUUIDRegistry
 
 # Bug #9: Silence httpx verbose logging - only show errors
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -193,53 +194,61 @@ class SmokeRunnerV2:
         """
         Build seed UUIDs from IR entities (domain-agnostic).
 
-        Phase 1: Generates deterministic UUIDs based on entity order in IR.
-        This replaces hardcoded entity name mappings.
+        Bug #192 Fix: Use centralized SeedUUIDRegistry for consistency with seed_db.py.
+        This ensures smoke tests use the same UUIDs that were seeded.
 
         Args:
-            is_delete: If True, return delete variant UUIDs (offset by 10)
+            is_delete: If True, return delete variant UUIDs
 
         Returns:
             Dict mapping entity name (lowercase) to UUID string
         """
-        uuid_base = "00000000-0000-4000-8000-0000000000"
-        offset = 10 if is_delete else 0
-        item_offset = 20 if not is_delete else 21  # Item entities start at 20/21
+        # Get entity names from TestsModelIR seed_entities
+        entity_names = []
+        if hasattr(self.tests_model, 'seed_entities') and self.tests_model.seed_entities:
+            entity_names = [seed.entity_name for seed in self.tests_model.seed_entities]
 
-        seed_uuids = {}
-        item_counter = 0
+        # Fallback: Extract entity names from scenarios if no seed_entities
+        if not entity_names:
+            seen = set()
+            scenarios = []
+            if hasattr(self.tests_model, 'get_all_scenarios'):
+                scenarios = self.tests_model.get_all_scenarios()
+            elif hasattr(self.tests_model, 'endpoint_suites'):
+                for suite in self.tests_model.endpoint_suites:
+                    scenarios.append(suite.happy_path)
+                    scenarios.extend(suite.edge_cases)
+                    scenarios.extend(suite.error_cases)
 
-        # Get entities from TestsModelIR seed_scenarios
-        if hasattr(self.tests_model, 'seed_scenarios'):
-            for idx, seed in enumerate(self.tests_model.seed_scenarios, start=1):
-                entity_name = seed.entity_name.lower()
-                # Detect join tables (entities ending with 'item')
-                if 'item' in entity_name:
-                    uuid_num = item_offset + item_counter
-                    item_counter += 1
-                else:
-                    uuid_num = idx + offset
-                seed_uuids[entity_name] = f"{uuid_base}{uuid_num:02d}"
-
-        # Fallback: Extract from scenarios if no seed_scenarios
-        if not seed_uuids and hasattr(self.tests_model, 'scenarios'):
-            seen_entities = set()
-            idx = 1
-            for scenario in self.tests_model.scenarios:
+            for scenario in scenarios:
                 entity = self._derive_entity_from_path(scenario.endpoint_path)
-                if entity and entity not in seen_entities:
-                    seen_entities.add(entity)
-                    if 'item' in entity:
-                        uuid_num = item_offset + item_counter
-                        item_counter += 1
-                    else:
-                        uuid_num = idx + offset
-                        idx += 1
-                    seed_uuids[entity] = f"{uuid_base}{uuid_num:02d}"
+                if entity and entity not in seen:
+                    seen.add(entity)
+                    # Convert to PascalCase for registry
+                    entity_names.append(entity.title().replace('_', ''))
 
-        # Add 'item' alias for generic item references
+        # Use centralized registry (same as code_generation_service.py)
+        registry = SeedUUIDRegistry.from_entity_names(entity_names)
+        variant = "delete" if is_delete else "primary"
+
+        # Build flat dict for compatibility with existing code
+        seed_uuids = {}
+        for entity_name in entity_names:
+            entity_key = entity_name.lower()
+            try:
+                seed_uuids[entity_key] = registry.get_uuid(entity_name, variant)
+            except ValueError:
+                pass  # Entity not in registry, skip
+
+        # Add 'item' alias for generic item references (first item entity found)
         if 'item' not in seed_uuids:
-            seed_uuids['item'] = f"{uuid_base}{item_offset:02d}"
+            for key in seed_uuids:
+                if 'item' in key:
+                    seed_uuids['item'] = seed_uuids[key]
+                    break
+            # Bug #192: Fallback to centralized join table start UUID
+            if 'item' not in seed_uuids:
+                seed_uuids['item'] = f"{SeedUUIDRegistry.UUID_BASE_DELETE}20"
 
         return seed_uuids
 
@@ -289,9 +298,12 @@ class SmokeRunnerV2:
                 if is_item_subpath and param_name.endswith('_id') and param_name != 'id':
                     # Use primary UUID for the referenced parent entity
                     parent_entity = param_name.replace('_id', '')
-                    param_value = seed_uuids_primary.get(parent_entity, seed_uuids_primary.get(list(seed_uuids_primary.keys())[0] if seed_uuids_primary else 'unknown', '00000000-0000-4000-8000-000000000001'))
+                    first_key = list(seed_uuids_primary.keys())[0] if seed_uuids_primary else None
+                    fallback = seed_uuids_primary.get(first_key, f"{SeedUUIDRegistry.UUID_BASE}1") if first_key else f"{SeedUUIDRegistry.UUID_BASE}1"
+                    param_value = seed_uuids_primary.get(parent_entity, fallback)
                 else:
-                    param_value = seed_uuids.get(entity_type, '00000000-0000-4000-8000-000000000099')
+                    # Bug #192: Use centralized NOT_FOUND_UUID for unknown entities
+                    param_value = seed_uuids.get(entity_type, SeedUUIDRegistry.NOT_FOUND_UUID)
             # Bug #137: Do NOT convert zero UUIDs - they're intentional for _not_found tests
             path = path.replace(f"{{{param_name}}}", str(param_value))
 

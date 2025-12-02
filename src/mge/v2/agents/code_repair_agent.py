@@ -717,10 +717,13 @@ class CodeRepairAgent:
 
             if constraint_type in business_logic_constraints:
                 logger.info(
-                    f"Bug #45: Constraint '{constraint_type}' is business logic, "
-                    f"handled at application layer (not schema): {validation_str}"
+                    f"Bug #192: Constraint '{constraint_type}' is business logic, "
+                    f"NOT a schema issue - should be routed to SERVICE repair: {validation_str}"
                 )
-                return True  # Acknowledge but don't modify schema
+                # Bug #192 Fix: Return False to indicate this was NOT fixed in schema
+                # This allows smoke_repair_orchestrator to route to SERVICE strategy
+                # Previously returned True which caused non-convergent repair loops
+                return False  # NOT handled here - needs SERVICE layer repair
             if constraint_type in semantic_mapping:
                 mapped = semantic_mapping[constraint_type]
                 new_constraint_type = mapped[0]
