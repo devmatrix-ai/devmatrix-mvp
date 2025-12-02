@@ -3620,10 +3620,20 @@ Once running, visit:
         if ENDPOINT_PRE_VALIDATOR_AVAILABLE and EndpointPreValidator:
             await self._pre_validate_endpoints()
 
-        # TestsIR: Try IR-centric deterministic smoke test first (no LLM, 100% coverage)
-        use_ir_smoke = TESTS_IR_AVAILABLE and os.environ.get("USE_IR_SMOKE_TEST", "1") == "1"
+        # COMPILER MODE: IR-centric smoke test is REQUIRED (no fallbacks)
+        if not TESTS_IR_AVAILABLE:
+            print("  ❌ TestsIR system not available")
+            print("  ⛔ COMPILER MODE: TestsIR is required - cannot fall back to LLM")
+            raise RuntimeError("TestsIR system not available. Fix imports before retrying.")
 
-        if use_ir_smoke:
+        use_ir_smoke = os.environ.get("USE_IR_SMOKE_TEST", "1") == "1"
+        if not use_ir_smoke:
+            print("  ⚠️ IR smoke test disabled by env var USE_IR_SMOKE_TEST=0")
+            print("  ⛔ COMPILER MODE: Skipping smoke test (explicit disable)")
+            self.metrics_collector.complete_phase("runtime_smoke_test")
+            return
+
+        if True:  # COMPILER MODE: Always use IR smoke test
             print("  🎯 Using IR-Centric Smoke Test (TestsIR - deterministic)")
             smoke_result = await self._run_ir_smoke_test()
             if smoke_result is not None:
@@ -3655,162 +3665,19 @@ Once running, visit:
 
                 return
             else:
-                print("  ⚠️ IR smoke test failed, falling back to LLM orchestrator")
-
-        # Bug #107: Try LLM-driven orchestrator as fallback
-        use_llm_orchestrator = SMOKE_TEST_ORCHESTRATOR_AVAILABLE and os.environ.get("USE_LLM_SMOKE_TEST", "1") == "1"
-
-        if use_llm_orchestrator:
-            print("  🧠 Using LLM-Driven Smoke Test (Bug #107)")
-            smoke_result = await self._run_llm_smoke_test()
-            if smoke_result is not None:
-                self._process_smoke_result(smoke_result)
-
-                # Bug Fix: Call repair loop when LLM smoke test fails
-                if not smoke_result.passed and smoke_result.violations:
-                    print(f"\n  🔧 Starting Smoke-Driven Repair Loop ({len(smoke_result.violations)} violations)")
-
-                    smoke_validator = RuntimeSmokeTestValidator(
-                        app_dir=self.output_path,
-                        port=8002,
-                        startup_timeout=180.0,
-                        request_timeout=10.0,
-                        enforce_docker=self._docker_enforcement_enabled(),
-                    )
-
-                    await self._attempt_runtime_repair(
-                        smoke_result.violations,
-                        smoke_validator,
-                        smoke_result=smoke_result
-                    )
-
-                    self.metrics_collector.record_error("runtime_smoke_test", {
-                        "error": "Smoke test failed after repair attempts",
-                        "endpoints_failed": smoke_result.endpoints_failed,
-                        "violations": len(smoke_result.violations)
-                    }, critical=True)
-                    print(f"\n  ❌ Phase 8.5 FAILED - Smoke test did not pass after repair")
-                    # Bug #3 Fix: Raise exception to stop pipeline (learning will still run)
-                    pass_rate = smoke_result.endpoints_passed / max(1, smoke_result.endpoints_tested)
-                    raise SmokeTestFailedError(pass_rate, len(smoke_result.violations))
-
-                return
-            else:
-                print("  ⚠️ LLM smoke test failed, falling back to basic validator")
-
-        try:
-            # Initialize smoke test validator (fallback)
-            # Bug #87 Fix: Use port 8002 to match Docker's exposed port in docker-compose.yml
-            # Bug #90 Fix: Increase startup_timeout to 180s for Docker build + migrations + seed
-            smoke_validator = RuntimeSmokeTestValidator(
-                app_dir=self.output_path,
-                port=8002,  # Docker exposes 8000 -> 8002 in docker-compose.yml
-                startup_timeout=180.0,  # Docker needs time: build + postgres + migrations + seed + uvicorn
-                request_timeout=10.0,
-                enforce_docker=self._docker_enforcement_enabled(),
-            )
-
-            print(f"  🔍 Starting smoke test against {self.output_path}")
-            print(f"  📍 Test URL: http://127.0.0.1:8002")
-
-            self.metrics_collector.add_checkpoint("runtime_smoke_test", "CP-8.5.1: Starting smoke test", {
-                "app_dir": str(self.output_path),
-                "port": 8002
-            })
-
-            # Run smoke tests
-            smoke_result: SmokeTestResult = await smoke_validator.validate(self.application_ir)
-
-            # Report results
-            print(f"\n  📊 Smoke Test Results:")
-            print(f"    - Endpoints tested: {smoke_result.endpoints_tested}")
-            print(f"    - Passed: {smoke_result.endpoints_passed}")
-            print(f"    - Failed: {smoke_result.endpoints_failed}")
-            print(f"    - Server startup: {smoke_result.server_startup_time_ms:.0f}ms")
-            print(f"    - Total time: {smoke_result.total_time_ms:.0f}ms")
-
-            if smoke_result.passed:
-                print(f"  ✅ All smoke tests PASSED!")
-            else:
-                print(f"  ⚠️ {smoke_result.endpoints_failed} endpoints failed smoke test")
-
-                # Show failures
-                for violation in smoke_result.violations[:5]:  # Limit to 5
-                    # Bug #89b: Use .get() to handle violations without 'endpoint' (e.g., ServerStartupError)
-                    endpoint = violation.get('endpoint', 'N/A')
-                    error_type = violation.get('error_type', 'Unknown')
-                    error_msg = violation.get('error_message', 'No details')[:100]
-                    print(f"    ❌ {endpoint}: {error_type}")
-                    print(f"       {error_msg}")
-
-                if len(smoke_result.violations) > 5:
-                    print(f"    ... and {len(smoke_result.violations) - 5} more")
-
-                # Task 10.7: Attempt to repair runtime violations with Smoke-Driven Repair
-                await self._attempt_runtime_repair(
-                    smoke_result.violations,
-                    smoke_validator,
-                    smoke_result=smoke_result  # Pass full result for server logs
-                )
-
-            # Save smoke test results
-            smoke_results_path = self.output_path / "smoke_test_results.json"
-            with open(smoke_results_path, 'w') as f:
-                import json
-                json.dump({
-                    "passed": smoke_result.passed,
-                    "endpoints_tested": smoke_result.endpoints_tested,
-                    "endpoints_passed": smoke_result.endpoints_passed,
-                    "endpoints_failed": smoke_result.endpoints_failed,
-                    "violations": smoke_result.violations,
-                    "total_time_ms": smoke_result.total_time_ms,
-                    "server_startup_time_ms": smoke_result.server_startup_time_ms
-                }, f, indent=2)
-            print(f"  💾 Smoke test results saved: {smoke_results_path}")
-
-            self.metrics_collector.add_checkpoint("runtime_smoke_test", "CP-8.5.2: Smoke test complete", {
-                "passed": smoke_result.passed,
-                "endpoints_tested": smoke_result.endpoints_tested,
-                "endpoints_passed": smoke_result.endpoints_passed,
-                "endpoints_failed": smoke_result.endpoints_failed,
-                "violations_count": len(smoke_result.violations),
-                "total_time_ms": smoke_result.total_time_ms
-            })
-
-            # Track for progress display
-            if PROGRESS_TRACKING_AVAILABLE:
-                add_item("Runtime Smoke Test", "Endpoints", smoke_result.endpoints_passed, smoke_result.endpoints_tested)
-
-            # Bug #101 Fix: Track smoke test result for pipeline failure detection
-            # If smoke test failed (after repair attempts), mark phase as FAILED
-            if not smoke_result.passed:
+                # COMPILER MODE: No fallbacks - IR smoke test must work or pipeline fails
+                print("  ❌ IR smoke test infrastructure failed (Docker/TestsIR)")
+                print("  ⛔ COMPILER MODE: No LLM fallback - fix the infrastructure issue")
                 self.metrics_collector.record_error("runtime_smoke_test", {
-                    "error": "Smoke test failed after repair attempts",
-                    "endpoints_failed": smoke_result.endpoints_failed,
-                    "violations": len(smoke_result.violations)
+                    "error": "IR smoke test infrastructure failed - no fallback",
+                    "reason": "Docker or TestsIR system not available"
                 }, critical=True)
-                print(f"\n  ❌ Phase 8.5 FAILED - Smoke test did not pass")
-                # Bug #3 Fix: Raise exception to stop pipeline (learning will still run)
-                pass_rate = smoke_result.endpoints_passed / max(1, smoke_result.endpoints_tested)
-                raise SmokeTestFailedError(pass_rate, len(smoke_result.violations))
+                raise RuntimeError("IR smoke test infrastructure failed. Fix Docker/TestsIR before retrying.")
 
-        except SmokeTestFailedError:
-            # Re-raise SmokeTestFailedError - don't catch it here
-            raise
-        except Exception as e:
-            # Bug #101 Fix: Exceptions in smoke test = critical failure
-            print(f"\n  ❌ Smoke test error: {e}")
-            import traceback
-            traceback.print_exc()
-            self.metrics_collector.record_error("runtime_smoke_test", {
-                "error": str(e),
-                "error_type": type(e).__name__
-            }, critical=True)
-            print(f"\n  ❌ Phase 8.5 FAILED - Docker/smoke test error")
-            raise SmokeTestFailedError(0.0, 0, f"Docker/smoke test error: {e}")
-
-        self.metrics_collector.complete_phase("runtime_smoke_test")
-        print(f"  ✅ Phase 8.5 complete - All smoke tests passed")
+        # NOTE: Legacy RuntimeSmokeTestValidator fallback REMOVED (Compiler Mode)
+        # All smoke tests now go through IR-centric SmokeRunnerV2
+        # If we reach here, something is wrong with the control flow
+        raise RuntimeError("Unreachable code - IR smoke test should have returned or raised")
 
     async def _attempt_runtime_repair(
         self,

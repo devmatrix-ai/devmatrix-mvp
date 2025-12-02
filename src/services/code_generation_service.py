@@ -5399,9 +5399,8 @@ CMD alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port 8000
         prometheus_port = 9091  # 9090 is often occupied
         grafana_port = 3002  # 3001 is occupied
 
-        return f'''version: '3.8'
-
-services:
+        # Note: 'version' attribute removed - obsolete in Docker Compose v2+
+        return f'''services:
   # Bug #85 + #99: DB init service runs Alembic migrations + seeds test data
   db-init:
     build:

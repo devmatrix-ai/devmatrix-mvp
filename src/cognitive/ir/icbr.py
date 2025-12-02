@@ -9,7 +9,7 @@ Key guarantees:
 - All preconditions/postconditions/guards are canonicalized
 - No LLM involvement in lowering (pure transformation)
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Dict, Any, Optional, Tuple, Set
 from enum import Enum
 import hashlib
@@ -90,9 +90,13 @@ class AtomicOperation:
     operation_id: str
     operation_type: OperationType
     entity: str
-    field: Optional[str] = None
+    target_field: Optional[str] = None
     value: Optional[Any] = None
-    guards: List[str] = field(default_factory=list)  # guard_ids that must pass
+    guard_ids: Optional[List[str]] = None  # guard_ids that must pass
+
+    def __post_init__(self) -> None:
+        if self.guard_ids is None:
+            self.guard_ids = []
 
 
 @dataclass
@@ -102,8 +106,14 @@ class StateTransition:
     entity: str
     from_state: str
     to_state: str
-    guards: List[str] = field(default_factory=list)
-    effects: List[str] = field(default_factory=list)  # operation_ids to execute
+    guard_ids: Optional[List[str]] = None
+    effect_ids: Optional[List[str]] = None  # operation_ids to execute
+
+    def __post_init__(self) -> None:
+        if self.guard_ids is None:
+            self.guard_ids = []
+        if self.effect_ids is None:
+            self.effect_ids = []
 
 
 @dataclass
@@ -120,20 +130,34 @@ class CanonicalInvariant:
 class ICBR:
     """
     Intermediate Canonical Behavior Representation.
-    
+
     This is the deterministic lowering of BehaviorModelIR to
     a form that can be directly translated to code.
     """
     # Core elements
-    predicates: Dict[str, CanonicalPredicate] = field(default_factory=dict)
-    guards: Dict[str, CanonicalGuard] = field(default_factory=dict)
-    operations: Dict[str, AtomicOperation] = field(default_factory=dict)
-    transitions: Dict[str, StateTransition] = field(default_factory=dict)
-    invariants: Dict[str, CanonicalInvariant] = field(default_factory=dict)
-    
+    predicates: Optional[Dict[str, CanonicalPredicate]] = None
+    guards: Optional[Dict[str, CanonicalGuard]] = None
+    operations: Optional[Dict[str, AtomicOperation]] = None
+    transitions: Optional[Dict[str, StateTransition]] = None
+    invariants: Optional[Dict[str, CanonicalInvariant]] = None
+
     # Metadata
-    source_flows: List[str] = field(default_factory=list)  # Flow IDs this came from
+    source_flows: Optional[List[str]] = None
     version: str = "1.0.0"
+
+    def __post_init__(self) -> None:
+        if self.predicates is None:
+            self.predicates = {}
+        if self.guards is None:
+            self.guards = {}
+        if self.operations is None:
+            self.operations = {}
+        if self.transitions is None:
+            self.transitions = {}
+        if self.invariants is None:
+            self.invariants = {}
+        if self.source_flows is None:
+            self.source_flows = []
     
     def get_guards_for_entity(self, entity: str) -> List[CanonicalGuard]:
         """Get all guards that apply to an entity."""

@@ -11,7 +11,7 @@ Layers:
 - behavior: GuardEngine (preconditions, invariants)
 """
 from enum import Enum
-from typing import Dict, Tuple, Optional, List
+from typing import Dict, Optional, List
 from dataclasses import dataclass
 import logging
 

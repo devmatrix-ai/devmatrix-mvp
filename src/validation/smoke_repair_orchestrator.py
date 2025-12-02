@@ -123,7 +123,7 @@ except ImportError:
 
 # Cognitive Compiler Components (Bug #192 Completion)
 try:
-    from src.validation.validation_routing_matrix import ValidationRoutingMatrix, ValidationLayer
+    from src.validation.validation_routing_matrix import ValidationRoutingMatrix
     from src.validation.runtime_flow_validator import RuntimeFlowValidator
     from src.validation.constraint_graph import ConstraintGraph
     from src.validation.ir_backpropagation_engine import IRBackpropagationEngine
@@ -352,8 +352,26 @@ class ServerLogParser:
 class ErrorClassifier:
     """Classifies smoke test errors by type for targeted repair."""
 
-    def __init__(self, log_parser: Optional[ServerLogParser] = None):
+    def __init__(self, log_parser: Optional[ServerLogParser] = None, constraint_graph: Optional[Any] = None):
         self.log_parser = log_parser or ServerLogParser()
+        self.constraint_graph = constraint_graph  # Optional: for multi-entity constraint detection
+
+    def _extract_entity_from_endpoint(self, endpoint: str) -> Optional[str]:
+        """Extract entity name from endpoint path."""
+        # "POST /products" -> "Product"
+        # "PATCH /products/{id}/deactivate" -> "Product"
+        parts = endpoint.split()
+        if len(parts) < 2:
+            return None
+
+        path = parts[1]
+        for segment in path.split('/'):
+            if segment and not segment.startswith('{') and segment not in ['api', 'v1', 'v2']:
+                # Convert plural to singular and capitalize
+                entity = segment.rstrip('s').capitalize()
+                return entity
+
+        return None
 
     def _infer_strategy_from_endpoint(
         self, endpoint: str, error_message: str
@@ -439,6 +457,16 @@ class ErrorClassifier:
                     return True
             except Exception:
                 pass  # Fall back to keyword matching
+
+        # Use ConstraintGraph for multi-entity constraint detection
+        if self.constraint_graph:
+            entity = self._extract_entity_from_endpoint(endpoint)
+            if entity:
+                constraints = self.constraint_graph.find_constraints_for_entity(entity)
+                for c in constraints:
+                    if self.constraint_graph.is_multi_entity_constraint(c):
+                        logger.debug(f"ConstraintGraph: Multi-entity constraint '{c}' → BUSINESS_LOGIC")
+                        return True
 
         # Business logic keywords in error message
         business_keywords = [
@@ -680,6 +708,8 @@ class SmokeRepairOrchestrator:
                 self.convergence_monitor = ConvergenceMonitor()
                 self.flow_synthesizer = FlowLogicSynthesizer()
                 self.invariant_inferencer = InvariantInferencer()
+                # Update error_classifier with constraint_graph reference
+                self.error_classifier.constraint_graph = self.constraint_graph
                 logger.info("  ✅ Cognitive Compiler components enabled (11 components)")
             except Exception as e:
                 logger.warning(f"  ⚠️ Cognitive Compiler partial init: {e}")
@@ -710,12 +740,37 @@ class SmokeRepairOrchestrator:
 
         logger.info(f"🔄 Starting Smoke-Repair Cycle (max {self.config.max_iterations} iterations)")
 
+        # Pre-cycle: Infer invariants from IR (Cognitive Compiler)
+        inferred_invariants = []
+        if self.invariant_inferencer and application_ir:
+            try:
+                inferred_invariants = self.invariant_inferencer.infer_from_ir(application_ir)
+                if inferred_invariants:
+                    logger.info(f"  🧠 Inferred {len(inferred_invariants)} invariants from IR")
+                    for inv in inferred_invariants[:3]:
+                        logger.debug(f"    - {inv.invariant_type.value}: {inv.description}")
+            except Exception as e:
+                logger.debug(f"Invariant inference skipped: {e}")
+
         for i in range(self.config.max_iterations):
             iter_start = time.time()
             logger.info(f"\n  📍 Iteration {i + 1}/{self.config.max_iterations}")
 
             # 1. Take snapshot before repair (for potential rollback)
             self._take_snapshot(i, app_path)
+
+            # 1.5 Golden Path Validation (fail-fast on critical workflows)
+            if i == 0 and self.golden_validator:
+                try:
+                    self.golden_validator.register_ecommerce_paths()
+                    golden_results = await self.golden_validator.validate_all()
+                    failed_golden = [r for r in golden_results if r.status.value == 'failed']
+                    if failed_golden:
+                        logger.warning(f"    ⚠️ {len(failed_golden)} golden paths failed - prioritizing repair")
+                        for r in failed_golden[:3]:
+                            logger.warning(f"      - {r.path.name}: failed at step {r.failed_step.name if r.failed_step else '?'}")
+                except Exception as e:
+                    logger.debug(f"Golden path validation skipped: {e}")
 
             # 2. Run smoke test with log capture
             smoke_result = await self._run_smoke_test(app_path, application_ir, capture_logs)
@@ -758,31 +813,46 @@ class SmokeRepairOrchestrator:
                 iterations.append(iteration)
                 break
 
-            # Bug #192: Check for non-convergent loops (same violations repeating)
-            if i >= 2:
-                current_violation_set = frozenset(
-                    (v.get('endpoint', ''), v.get('status_code', v.get('actual_status', 0)))
+            # Bug #192: Use ConvergenceMonitor for precise loop detection
+            if self.convergence_monitor:
+                violation_keys = [
+                    f"{v.get('endpoint', '')}:{v.get('status_code', v.get('actual_status', 0))}"
                     for v in violations
-                )
-                prev_violation_set = getattr(self, '_prev_violation_set', frozenset())
-                prev_prev_violation_set = getattr(self, '_prev_prev_violation_set', frozenset())
+                ]
+                conv_result = self.convergence_monitor.check_convergence(violation_keys, i)
 
-                # If same violations appear for 3 consecutive iterations, we're in a loop
-                if current_violation_set == prev_violation_set == prev_prev_violation_set and len(current_violation_set) > 0:
-                    logger.warning(f"    ⚠️ Bug #192: Non-convergent loop detected! Same {len(current_violation_set)} violations for 3 iterations")
-                    logger.warning(f"    ⚠️ These violations may require manual intervention or are business logic issues")
+                if conv_result.status.value in ('non_convergent', 'cycle_detected', 'limit_reached'):
+                    logger.warning(f"    ⚠️ ConvergenceMonitor: {conv_result.status.value}")
+                    logger.warning(f"    ⚠️ Reason: {conv_result.reason}")
+                    if conv_result.problematic_constraints:
+                        logger.warning(f"    ⚠️ Problematic: {conv_result.problematic_constraints[:5]}")
                     convergence_detected = True
                     iterations.append(iteration)
                     break
+            else:
+                # Fallback: inline loop detection
+                if i >= 2:
+                    current_violation_set = frozenset(
+                        (v.get('endpoint', ''), v.get('status_code', v.get('actual_status', 0)))
+                        for v in violations
+                    )
+                    prev_violation_set = getattr(self, '_prev_violation_set', frozenset())
+                    prev_prev_violation_set = getattr(self, '_prev_prev_violation_set', frozenset())
 
-                self._prev_prev_violation_set = prev_violation_set
-                self._prev_violation_set = current_violation_set
-            elif i == 0:
-                self._prev_violation_set = frozenset(
-                    (v.get('endpoint', ''), v.get('status_code', v.get('actual_status', 0)))
-                    for v in violations
-                )
-                self._prev_prev_violation_set = frozenset()
+                    if current_violation_set == prev_violation_set == prev_prev_violation_set and len(current_violation_set) > 0:
+                        logger.warning(f"    ⚠️ Non-convergent loop detected!")
+                        convergence_detected = True
+                        iterations.append(iteration)
+                        break
+
+                    self._prev_prev_violation_set = prev_violation_set
+                    self._prev_violation_set = current_violation_set
+                elif i == 0:
+                    self._prev_violation_set = frozenset(
+                        (v.get('endpoint', ''), v.get('status_code', v.get('actual_status', 0)))
+                        for v in violations
+                    )
+                    self._prev_prev_violation_set = frozenset()
 
             # 6. Parse server logs for stack traces
             stack_traces = []
@@ -1015,7 +1085,20 @@ class SmokeRepairOrchestrator:
 
                     # Phase 2: Get causal chain for better repair targeting
                     causal_chain = None
-                    if self.causal_attributor:
+                    # Try CausalChainBuilder first (Cognitive Compiler component)
+                    if self.causal_builder:
+                        try:
+                            causal_chain = self.causal_builder.build_chain(
+                                status_code=violation.actual_status,
+                                error_detail=violation.error_message or "",
+                                endpoint=violation.endpoint,
+                                entity=self._extract_entity_from_endpoint(violation.endpoint)
+                            )
+                        except Exception as e:
+                            logger.debug(f"CausalChainBuilder failed: {e}")
+
+                    # Fallback to LightweightCausalAttributor
+                    if not causal_chain and self.causal_attributor:
                         matching_trace = self._find_matching_trace(violation, stack_traces)
                         trace_text = matching_trace.full_trace if matching_trace else None
                         causal_chain = self.causal_attributor.attribute_failure(
@@ -1047,6 +1130,17 @@ class SmokeRepairOrchestrator:
                                 triggered_by=violation.endpoint,
                                 result="pending"
                             ))
+                            # IR Backpropagation: Update IR with repair
+                            if self.ir_backprop:
+                                try:
+                                    self.ir_backprop.map_failure_to_ir_node(
+                                        status_code=violation.actual_status,
+                                        error_detail=violation.error_message or "",
+                                        endpoint=violation.endpoint,
+                                        entity=self._extract_entity_from_endpoint(violation.endpoint)
+                                    )
+                                except Exception as e:
+                                    logger.debug(f"IR backprop skipped: {e}")
                 except Exception as e:
                     logger.error(f"Repair failed for {violation.endpoint}: {e}")
 
@@ -1966,6 +2060,20 @@ class SmokeRepairOrchestrator:
                 fix_code = self._generate_existence_check_code(entity_name, method_name)
                 logger.info(f"    🔧 SERVICE: Adding existence validation to {method_name}")
 
+        # Try FlowLogicSynthesizer for IR-grounded code generation
+        if not fix_code and self.flow_synthesizer:
+            try:
+                from src.cognitive.ir.icbr import ICBR
+                # Create minimal ICBR for this constraint
+                icbr = ICBR()
+                synthesized = self.flow_synthesizer.synthesize(icbr)
+                if synthesized.guards:
+                    fix_code = list(synthesized.guards.values())[0]
+                    fix_type = "flow_synthesized_guard"
+                    logger.info(f"    🔧 SERVICE: Using FlowLogicSynthesizer for {entity_name}")
+            except Exception as e:
+                logger.debug(f"FlowLogicSynthesizer skipped: {e}")
+
         if not fix_code:
             return None
 
@@ -2118,66 +2226,142 @@ class SmokeRepairOrchestrator:
         workflow_def=None
     ) -> str:
         """
-        Generate a service method implementation.
+        Generate a service method implementation with behavior logic.
 
         Uses workflow definition from IR when available, otherwise generates
-        a generic async method stub.
+        domain-agnostic behavior patterns.
         """
         entity_lower = entity_name.lower()
 
-        # Common method patterns - domain agnostic
+        # Extract workflow info if available
+        precondition_status = None
+        postcondition_status = None
+        if workflow_def:
+            precondition_status = getattr(workflow_def, 'precondition_status', None)
+            postcondition_status = getattr(workflow_def, 'postcondition_status', None)
+
+        # Common method patterns with behavior logic
         if 'add' in method_name or 'item' in method_name:
-            # Add item to collection pattern
+            # Add item to collection pattern - requires OPEN/ACTIVE status
+            precond = precondition_status or 'OPEN'
             return f'''
     async def {method_name}(self, {entity_lower}_id: UUID, item_data: dict, db: AsyncSession) -> Any:
-        """Add item - auto-generated by smoke repair."""
+        """Add item - generated with behavior guards by Cognitive Compiler."""
         entity = await self.repository.get_by_id({entity_lower}_id, db)
         if not entity:
-            raise ValueError(f"{entity_name} not found")
-        # TODO: Implement business logic from workflow
+            raise HTTPException(status_code=404, detail="{entity_name} not found")
+
+        # Behavior guard: Check status allows item addition
+        current_status = getattr(entity, 'status', None)
+        if current_status and current_status != '{precond}':
+            raise HTTPException(status_code=422, detail="{entity_name} must be {precond} to add items")
+
+        # Apply item addition logic
+        if hasattr(entity, 'items'):
+            entity.items.append(item_data)
+        db.add(entity)
+        await db.commit()
+        await db.refresh(entity)
         return entity
 '''
-        elif 'checkout' in method_name or 'create' in method_name or 'convert' in method_name:
-            # Domain-agnostic: State transition pattern (checkout, create, convert, process)
+        elif 'checkout' in method_name or 'process' in method_name or 'complete' in method_name:
+            # State transition: OPEN -> COMPLETED
+            precond = precondition_status or 'OPEN'
+            postcond = postcondition_status or 'COMPLETED'
             return f'''
     async def {method_name}(self, {entity_lower}_id: UUID, db: AsyncSession) -> Any:
-        """State transition - auto-generated by smoke repair."""
+        """State transition - generated with behavior guards by Cognitive Compiler."""
         entity = await self.repository.get_by_id({entity_lower}_id, db)
         if not entity:
-            raise ValueError(f"{entity_name} not found")
-        # TODO: Implement state transition logic from IR workflow
+            raise HTTPException(status_code=404, detail="{entity_name} not found")
+
+        # Behavior guard: Check precondition status
+        current_status = getattr(entity, 'status', None)
+        if current_status != '{precond}':
+            raise HTTPException(status_code=422, detail="{entity_name} must be {precond} to {method_name}")
+
+        # Apply state transition
+        entity.status = '{postcond}'
+        db.add(entity)
+        await db.commit()
+        await db.refresh(entity)
         return entity
 '''
         elif 'pay' in method_name:
-            # Payment pattern
+            # Payment pattern: PENDING_PAYMENT -> PAID
+            precond = precondition_status or 'PENDING_PAYMENT'
+            postcond = postcondition_status or 'PAID'
             return f'''
     async def {method_name}(self, {entity_lower}_id: UUID, payment_data: dict, db: AsyncSession) -> Any:
-        """Process payment - auto-generated by smoke repair."""
+        """Process payment - generated with behavior guards by Cognitive Compiler."""
         entity = await self.repository.get_by_id({entity_lower}_id, db)
         if not entity:
-            raise ValueError(f"{entity_name} not found")
-        # TODO: Implement payment processing logic
+            raise HTTPException(status_code=404, detail="{entity_name} not found")
+
+        # Behavior guard: Check payment is expected
+        current_status = getattr(entity, 'status', None)
+        if current_status != '{precond}':
+            raise HTTPException(status_code=422, detail="{entity_name} must be {precond} to process payment")
+
+        # Validate payment data
+        if not payment_data or not payment_data.get('amount'):
+            raise HTTPException(status_code=422, detail="Payment amount required")
+
+        # Apply payment and transition
+        entity.status = '{postcond}'
+        db.add(entity)
+        await db.commit()
+        await db.refresh(entity)
         return entity
 '''
         elif 'cancel' in method_name:
-            # Cancellation pattern
+            # Cancellation pattern: any non-terminal -> CANCELLED
+            postcond = postcondition_status or 'CANCELLED'
             return f'''
     async def {method_name}(self, {entity_lower}_id: UUID, db: AsyncSession) -> Any:
-        """Cancel operation - auto-generated by smoke repair."""
+        """Cancel operation - generated with behavior guards by Cognitive Compiler."""
         entity = await self.repository.get_by_id({entity_lower}_id, db)
         if not entity:
-            raise ValueError(f"{entity_name} not found")
-        # TODO: Implement cancellation logic
+            raise HTTPException(status_code=404, detail="{entity_name} not found")
+
+        # Behavior guard: Check cancellation is allowed
+        current_status = getattr(entity, 'status', None)
+        terminal_states = ['COMPLETED', 'CANCELLED', 'PAID', 'DELIVERED']
+        if current_status in terminal_states:
+            raise HTTPException(status_code=422, detail="{entity_name} in terminal state cannot be cancelled")
+
+        # Apply cancellation
+        entity.status = '{postcond}'
+        db.add(entity)
+        await db.commit()
+        await db.refresh(entity)
+        return entity
+'''
+        elif 'create' in method_name or 'convert' in method_name:
+            # Create/convert pattern: creates new entity or transforms
+            postcond = postcondition_status or 'CREATED'
+            return f'''
+    async def {method_name}(self, {entity_lower}_id: UUID, db: AsyncSession) -> Any:
+        """Create/convert - generated with behavior guards by Cognitive Compiler."""
+        entity = await self.repository.get_by_id({entity_lower}_id, db)
+        if not entity:
+            raise HTTPException(status_code=404, detail="{entity_name} not found")
+
+        # Apply creation/conversion
+        entity.status = '{postcond}'
+        db.add(entity)
+        await db.commit()
+        await db.refresh(entity)
         return entity
 '''
         else:
-            # Generic method
+            # Generic method with existence check
             return f'''
     async def {method_name}(self, {entity_lower}_id: UUID, db: AsyncSession, **kwargs) -> Any:
-        """Auto-generated method stub by smoke repair."""
+        """Generic operation - generated by Cognitive Compiler."""
         entity = await self.repository.get_by_id({entity_lower}_id, db)
         if not entity:
-            raise ValueError(f"{entity_name} not found")
+            raise HTTPException(status_code=404, detail="{entity_name} not found")
         return entity
 '''
 
