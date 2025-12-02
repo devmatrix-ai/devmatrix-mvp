@@ -2,12 +2,13 @@
 Invariant Inferencer - Infers derived invariants from domain model.
 
 A cognitive compiler MUST infer implicit rules that aren't explicit in specs:
-- Stock conservation: cart.add_item(qty) → product.stock -= qty
-- Status implication: order.complete() → payment.approved = True
-- Cascade effects: order.cancel() → restore_stock()
-- Referential integrity: cart.product_id → product.exists()
+- Quantity conservation: {container}.add_item(qty) → {resource}.{quantity_field} -= qty
+- Status implication: {entity}.complete() → {related}.{status_field} = 'approved'
+- Cascade effects: {entity}.cancel() → restore_quantities()
+- Referential integrity: {child}.{parent}_id → {parent}.exists()
 
 This closes the gap for multi-entity constraint handling.
+Domain-agnostic: All entity/field names derived from IR.
 """
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Tuple, Set
@@ -35,8 +36,8 @@ class CanonicalInvariant:
     description: str
     source_entity: str
     target_entity: Optional[str] = None
-    trigger: Optional[str] = None  # e.g., "add_item", "complete"
-    effect: Optional[str] = None   # e.g., "stock -= qty", "payment.approved = True"
+    trigger: Optional[str] = None  # e.g., "add_item", "complete" (from IR flows)
+    effect: Optional[str] = None   # e.g., "{quantity_field} -= qty" (from IR fields)
     confidence: float = 1.0
 
 
@@ -52,17 +53,19 @@ class Implication:
 class InvariantInferencer:
     """
     Infers derived invariants from domain model and flows.
-    
+    Domain-agnostic: Uses IR field patterns, not hardcoded entity names.
+
     Analyzes:
     - Entity relationships (foreign keys, references)
     - Flow preconditions/postconditions
     - Status field patterns
     - Quantity/stock field patterns
     """
-    
-    # Known patterns for inference
-    STOCK_FIELDS = {'stock', 'quantity', 'inventory', 'available', 'count'}
-    STATUS_FIELDS = {'status', 'state', 'phase'}
+
+    # Known patterns for inference (heuristic field name patterns, not entity names)
+    # These detect semantic meaning from field names in any domain
+    QUANTITY_FIELDS = {'stock', 'quantity', 'inventory', 'available', 'count', 'balance', 'amount'}
+    STATUS_FIELDS = {'status', 'state', 'phase', 'stage'}
     REFERENCE_PATTERNS = {'_id', 'id', '_ref'}
     
     def __init__(self):
@@ -100,8 +103,8 @@ class InvariantInferencer:
         for fld in fields:
             field_name = getattr(fld, 'name', str(fld)).lower()
             
-            # Stock conservation inference
-            if any(stock in field_name for stock in self.STOCK_FIELDS):
+            # Quantity conservation inference (domain-agnostic)
+            if any(qty_pattern in field_name for qty_pattern in self.QUANTITY_FIELDS):
                 self._counter += 1
                 self.inferred.append(CanonicalInvariant(
                     invariant_id=f"inv:{self._counter}",

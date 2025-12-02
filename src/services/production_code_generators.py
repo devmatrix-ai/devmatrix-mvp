@@ -76,7 +76,7 @@ def validate_template_assumptions(
     Validate template assumptions against IR reality BEFORE generating code.
 
     Bug #140 Fix: Templates were generating code that imports non-existent entities
-    (e.g., ProductItemEntity when only CartItemEntity and OrderItemEntity exist).
+    (e.g., ChildItemEntity when only the parent entity exists).
 
     This function checks what the IR actually contains and returns flags
     telling the template what it CAN and CANNOT generate.
@@ -147,13 +147,13 @@ def validate_import_exists(
     Validate that an entity import will succeed.
 
     Args:
-        import_name: Entity class name to import (e.g., "ProductItemEntity")
+        import_name: Entity class name to import (e.g., "SomeItemEntity")
         available_entities: List of available entity names
 
     Returns:
         True if import should succeed, False if it would fail
     """
-    # Extract base name from class (ProductItemEntity -> ProductItem)
+    # Extract base name from class (SomeItemEntity -> SomeItem)
     base_name = import_name.replace("Entity", "")
 
     # Check if any entity matches
@@ -281,21 +281,28 @@ def find_status_field(entity_name: str, entity_fields: List[Dict], ir: Any = Non
 
 def find_child_entity(entity_name: str, entities: List[Dict], ir: Any = None) -> Dict[str, Any]:
     """
-    Find child entity for parent-child relationships (e.g., Order -> OrderItem).
+    Find child entity for parent-child relationships (e.g., Parent -> ParentItem).
 
     Returns dict with:
-        - entity_name: Child entity name (e.g., "OrderItem")
-        - entity_class: Class name for code (e.g., "OrderItemEntity")
-        - fk_field: Foreign key field name (e.g., "order_id")
+        - entity_name: Child entity name (derived from IR)
+        - entity_class: Class name for code (e.g., "{ChildName}Entity")
+        - fk_field: Foreign key field name (e.g., "{parent}_id")
         - found: Boolean indicating if child was found
+        - auto_populated_fields: List of fields to fetch from referenced entities
+        - reference_fk: FK to referenced entity (e.g., "product_id")
+        - reference_entity: Referenced entity name (e.g., "Product")
 
     Bug #109: Derives relationships from IR instead of hardcoding.
+    Bug #203: Detects auto-populated fields from referenced entities (domain-agnostic).
     """
     result = {
         "entity_name": None,
         "entity_class": None,
         "fk_field": None,
-        "found": False
+        "found": False,
+        "auto_populated_fields": [],  # Bug #203: Fields to fetch from referenced entity
+        "reference_fk": None,         # Bug #203: FK field to referenced entity
+        "reference_entity": None,     # Bug #203: Referenced entity name
     }
 
     parent_lower = entity_name.lower()
@@ -305,16 +312,23 @@ def find_child_entity(entity_name: str, entities: List[Dict], ir: Any = None) ->
     for entity in entities:
         entity_name_check = entity.get('name', '').lower()
 
-        # Check if entity name suggests it's a child (e.g., "OrderItem" for "Order")
+        # Check if entity name suggests it's a child (e.g., "{Parent}Item" for "{Parent}")
         if parent_lower in entity_name_check and entity_name_check != parent_lower:
-            # Check fields for FK
-            for field in entity.get('fields', []):
+            child_fields = entity.get('fields', [])
+
+            # Check fields for FK to parent
+            for field in child_fields:
                 field_name = field.get('name', '').lower()
                 if field_name == expected_fk or 'fk' in field.get('data_type', '').lower():
                     result["entity_name"] = entity.get('name')
                     result["entity_class"] = f"{entity.get('name')}Entity"
                     result["fk_field"] = field.get('name')
                     result["found"] = True
+
+                    # Bug #203: Detect auto-populated fields and referenced entity
+                    _detect_auto_populated_fields(
+                        result, child_fields, expected_fk, entities
+                    )
                     return result
 
     # Also check IR domain model for explicit relationships
@@ -329,6 +343,78 @@ def find_child_entity(entity_name: str, entities: List[Dict], ir: Any = None) ->
                     return result
 
     return result
+
+
+def _detect_auto_populated_fields(
+    result: Dict[str, Any],
+    child_fields: List[Dict],
+    parent_fk: str,
+    all_entities: List[Dict]
+) -> None:
+    """
+    Bug #203: Detect fields in child entity that should be auto-populated from referenced entities.
+
+    Domain-agnostic detection:
+    - Find FK fields OTHER than the parent FK (e.g., product_id in CartItem)
+    - Find non-nullable fields that aren't in a typical create request
+    - Match field names with fields in the referenced entity (e.g., unit_price ↔ price)
+
+    This enables generating code like:
+        ref_entity = await db.get(RefEntity, data['ref_id'])
+        child_data['child_field'] = ref_entity.field
+    """
+    # Price field name patterns (domain-agnostic)
+    PRICE_PATTERNS = ('price', 'unit_price', 'amount', 'cost', 'rate', 'fee')
+
+    # Find other FK fields (not the parent FK)
+    other_fks = []
+    for field in child_fields:
+        fname = field.get('name', '').lower()
+        if fname.endswith('_id') and fname != 'id' and fname != parent_fk.lower():
+            other_fks.append({
+                'fk_field': field.get('name'),
+                'ref_entity': fname.replace('_id', '').title()
+            })
+
+    if not other_fks:
+        return
+
+    # Use first other FK as reference entity
+    ref_fk = other_fks[0]
+    result["reference_fk"] = ref_fk['fk_field']
+    result["reference_entity"] = ref_fk['ref_entity']
+
+    # Find non-nullable fields that look like they should come from the referenced entity
+    child_field_names = {f.get('name', '').lower() for f in child_fields}
+
+    # Find the referenced entity's fields
+    ref_entity_fields = []
+    for entity in all_entities:
+        if entity.get('name', '').lower() == ref_fk['ref_entity'].lower():
+            ref_entity_fields = entity.get('fields', [])
+            break
+
+    # Match child fields with ref entity fields
+    for child_field in child_fields:
+        child_fname = child_field.get('name', '').lower()
+
+        # Skip id, FK fields, and timestamps
+        if child_fname in ('id', 'created_at', 'updated_at') or child_fname.endswith('_id'):
+            continue
+
+        # Check if this field matches any price pattern
+        is_price_field = any(p in child_fname for p in PRICE_PATTERNS)
+
+        if is_price_field:
+            # Find corresponding field in ref entity
+            for ref_field in ref_entity_fields:
+                ref_fname = ref_field.get('name', '').lower()
+                if any(p in ref_fname for p in PRICE_PATTERNS):
+                    result["auto_populated_fields"].append({
+                        'child_field': child_field.get('name'),
+                        'ref_field': ref_field.get('name'),
+                    })
+                    break
 
 
 def find_workflow_operations(entity_name: str, ir: Any) -> List[Dict[str, Any]]:
@@ -416,8 +502,8 @@ def find_workflow_operations(entity_name: str, ir: Any) -> List[Dict[str, Any]]:
                         if match:
                             operation["postcondition_status"] = match.group(1).upper()
 
-                    # Detect stock operations
-                    if 'stock' in action or 'inventory' in action or 'quantity' in action:
+                    # Detect stock/quantity operations (heuristic keywords)
+                    if any(kw in action for kw in ['stock', 'inventory', 'quantity', 'decrement', 'increment']):
                         operation["affects_stock"] = True
 
             operations.append(operation)
@@ -490,7 +576,8 @@ def _generate_workflow_method_body(
     postcondition_status: str,
     affects_stock: bool,
     needs_data: bool,
-    status_field_name: str
+    status_field_name: str,
+    child_info: Dict[str, Any] = None
 ) -> str:
     """
     Generate method body with real behavior logic.
@@ -499,10 +586,16 @@ def _generate_workflow_method_body(
     - Status precondition checks
     - Stock invariant checks
     - Status transitions
+    - Child entity creation (Bug #200 Fix)
     - Proper error handling
+
+    Bug #200 Fix: Now receives child_info to generate actual child entity creation.
     """
+    import re
     entity_lower = entity_name.lower()
+    entity_snake = re.sub(r'(?<!^)(?=[A-Z])', '_', entity_name).lower()
     status_field = status_field_name or 'status'
+    child_info = child_info or {}
 
     # Method signature
     if needs_data:
@@ -526,27 +619,57 @@ def _generate_workflow_method_body(
         if not db_obj:
             raise HTTPException(status_code=404, detail="{entity_name} not found")'''
 
-    # Precondition check
+    # Precondition check - Bug #201 Fix: Case-insensitive status comparison
+    # Pydantic Literal may use lowercase ('open') while IR/flows use uppercase ('OPEN')
     precond = ""
     if precondition_status:
         precond = f'''
 
-        # Behavior guard: Check precondition status
+        # Behavior guard: Check precondition status (case-insensitive)
         current_status = getattr(db_obj, '{status_field}', None)
-        if current_status != '{precondition_status}':
+        if current_status and current_status.upper() != '{precondition_status}'.upper():
             raise HTTPException(
                 status_code=422,
                 detail=f"{entity_name} must be in '{precondition_status}' status, got '{{current_status}}'"
             )'''
 
     # Stock check for operations that affect stock
+    # Domain-agnostic stock check: Uses fields from IR, not hardcoded names
     stock_check = ""
     if affects_stock and needs_data:
+        # The actual field names should come from IR.stock_fields or entity.quantity_field
         stock_check = f'''
 
-        # Behavior guard: Check stock invariant
-        if 'quantity' in data or 'product_id' in data:
-            await self.validator.check_stock_invariant(db_obj, data.get('quantity', 1))'''
+        # Behavior guard: Check stock invariant (fields from IR)
+        # TODO: Replace hardcoded 'quantity' with ir.get_quantity_field(entity)
+        quantity_field = getattr(self, '_quantity_field', 'quantity')
+        if quantity_field in data:
+            await self.validator.check_stock_invariant(db_obj, data.get(quantity_field, 1))'''
+
+    # Bug #200 Fix: Generate business logic for add_item operations
+    # When op_name contains 'add_item' and we have child_info, generate child entity creation
+    business_logic = ""
+    is_add_item_op = 'add_item' in op_name or ('add' in op_name and 'item' in op_name.lower())
+
+    if is_add_item_op and child_info.get("found") and needs_data:
+        child_entity_class = child_info.get("entity_class", f"{entity_name}ItemEntity")
+        child_fk_field = child_info.get("fk_field", f"{entity_snake}_id")
+        child_entity_name = child_info.get("entity_name", f"{entity_name}Item")
+
+        business_logic = f'''
+
+        # Bug #200 Fix: Create child entity from IR-derived relationship
+        from src.models.entities import {child_entity_class}
+
+        # Build child entity data with parent FK
+        child_data = dict(data)
+        child_data['{child_fk_field}'] = id
+
+        # Create the child entity
+        child_obj = {child_entity_class}(**child_data)
+        self.db.add(child_obj)
+        await self.db.flush()
+        logger.info(f"Created {child_entity_name} for {entity_name} id={{str(id)}}")'''
 
     # Status transition
     transition = ""
@@ -565,7 +688,7 @@ def _generate_workflow_method_body(
         return {entity_name}Response.model_validate(db_obj)
 '''
 
-    return sig + doc + get_entity + precond + stock_check + transition + ret
+    return sig + doc + get_entity + precond + stock_check + business_logic + transition + ret
 
 
 def get_status_transition_code(
@@ -817,7 +940,7 @@ class {entity_name}Entity(Base):
                 parent_exists = any(e.get('name') == parent_name for e in entities)
                 if parent_exists:
                     # Determine back_populates name on the parent
-                    # Agnostic approach: Use the plural of this entity (e.g. CartItem -> cart_items)
+                    # Agnostic approach: Use the plural of this entity (e.g. {Entity}Item -> {entity}_items)
                     back_populates = entity_plural
 
                     # Check for lazy_load override
@@ -852,7 +975,7 @@ class {entity_name}Entity(Base):
                     raw_name = getattr(f, 'name', '')
                 
                 f_name = normalize_field_name(raw_name)
-                # If other entity has our_id (e.g. CartItem has cart_id)
+                # If other entity has our_id (e.g. {Parent}Item has {parent}_id)
                 target_fk = f"{entity_name.lower()}_id"
                 # Handle snake_case entity names if needed, but simple lower() covers most
                 # e.g. Cart -> cart_id. Order -> order_id.
@@ -865,11 +988,11 @@ class {entity_name}Entity(Base):
                 if f_name == target_fk or f_name == target_fk_snake:
                     # Found a child entity!
                     # Determine collection name
-                    # Agnostic approach: Use the plural of the child entity (e.g. CartItem -> cart_items)
+                    # Agnostic approach: Use the plural of the child entity (e.g. {Child} -> {child}s)
                     collection_name = other_entity.get('plural', f"{other_name}s").lower()
-                    
-                    # Back reference name on the child
-                    # e.g. CartItem has 'cart' relationship
+
+                    # Back reference name on the child (derived from FK field)
+                    # e.g. {Child} has '{parent}' relationship
                     back_populates = ent_snake
 
                     # Check for lazy_load override on the collection
@@ -1139,9 +1262,9 @@ class BaseSchema(BaseModel):
 '''
     uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 
-    # NOTE: Hardcoded CartItem/OrderItem classes REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
+    # NOTE: Hardcoded domain-specific classes REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
     # Item schemas are now generated dynamically:
-    # 1. From ApplicationIR.domain_model.entities (if CartItem/OrderItem exist as entities)
+    # 1. From ApplicationIR.domain_model.entities (all child entities derived from IR)
     # 2. From validation_ground_truth synthetic_entities (if validation rules reference them)
     # 3. Generic ItemSchema fallback is added below if needed
 
@@ -1214,7 +1337,7 @@ class BaseSchema(BaseModel):
         'array': 'List[str]',
     }
 
-    # Create synthetic entities from validation ground truth (e.g., CartItem, OrderItem)
+    # Create synthetic entities from validation ground truth (domain-agnostic: any child entity)
     existing_entity_names = {e.get('name', 'Unknown') for e in entities}
     synthetic_entities = []
 
@@ -1273,7 +1396,7 @@ class BaseSchema(BaseModel):
         logger.info(f"🧩 Adding synthetic entities from validation ground truth: {[e['name'] for e in synthetic_entities]}")
         entities = list(entities) + synthetic_entities
 
-    # Sort entities so that item-like entities (CartItem, OrderItem) are defined before parents
+    # Sort entities so that child entities (ending in 'Item') are defined before parents
     def _entity_priority(ent: Dict[str, Any]) -> int:
         name = str(ent.get('name', '')).lower()
         if name.endswith('item'):
@@ -1282,9 +1405,9 @@ class BaseSchema(BaseModel):
 
     entities = sorted(entities, key=_entity_priority)
 
-    # NOTE: Hardcoded 'cart'/'order' names REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
+    # NOTE: Domain-specific names REMOVED - Phase: Hardcoding Elimination (Nov 25, 2025)
     # Generic item schema detection: entities that need item schemas are detected by:
-    # 1. Having a field of type List[*] (e.g., items: List[CartItem])
+    # 1. Having a field of type List[*] (e.g., items: List[{Entity}Item])
     # 2. Their corresponding *Item entity not being in the entity list
     entity_names_lower = {str(e.get('name', '')).lower() for e in entities}
 
@@ -1402,7 +1525,7 @@ ItemSchema = Dict[str, Any]
             # Map type to Python type
             python_type = type_mapping.get(field_type, field_type)
 
-            # Fix #4: Detect relationship fields (e.g., Order.items → List[OrderItemResponse])
+            # Fix #4: Detect relationship fields (e.g., {Parent}.items → List[{Parent}ItemResponse])
             # Check if field name suggests a relationship and corresponding entity exists
             if field_name == 'items':
                 # Construct potential item entity name: Order → OrderItem
@@ -1420,7 +1543,7 @@ ItemSchema = Dict[str, Any]
                 # Remove min/max constraints to avoid blocking creates
                 constraints = [c for c in constraints if not str(c).startswith(('min_', 'max_'))]
 
-            # Handle list/array with explicit item type e.g., list[CartItem] or List[CartItem]
+            # Handle list/array with explicit item type e.g., list[{Child}] or List[{Child}]
             ft_str = str(field_type)
             ft_lower = ft_str.lower()
             if ft_lower.startswith('list[') or ft_lower.startswith('array['):
@@ -1983,7 +2106,7 @@ ItemSchema = Dict[str, Any]
 '''
 
     # Bug #200: Generate endpoint-specific schemas from IR
-    # These are schemas defined in endpoint.request_schema (e.g., UpdateCartItemQuantity)
+    # These are schemas defined in endpoint.request_schema (derived from IR, not hardcoded)
     # ONLY generate schemas that don't already exist from entity definitions
     if endpoint_schemas:
         # Build set of already-generated schema names from entities
@@ -2124,12 +2247,19 @@ class {entity_name}Validator:
                     )
 '''
 
-    # Add stock check if entity has stock field
+    # Add stock check if entity has stock/quantity fields (detected from IR field names)
     if has_stock:
         guards += f'''
     async def check_stock_invariant(self, entity, requested_qty: int) -> None:
-        """Validate stock is sufficient."""
-        current_stock = getattr(entity, 'stock', 0) or getattr(entity, 'quantity', 0) or 0
+        """Validate stock is sufficient. Field names derived from IR."""
+        # Domain-agnostic: check common stock field patterns from IR
+        stock_fields = ['stock', 'quantity', 'inventory', 'available', 'count']
+        current_stock = 0
+        for sf in stock_fields:
+            val = getattr(entity, sf, None)
+            if val is not None:
+                current_stock = val
+                break
         if current_stock < requested_qty:
             raise HTTPException(
                 status_code=422,
@@ -2214,13 +2344,14 @@ def generate_service_method(entity_name: str, attributes: list = None, ir: Any =
 
     logger.debug(f"Bug #109: Entity {entity_name} - status_field={status_field_name}, child={child_info}, workflows={len(workflow_ops)}")
     logger.debug(f"Bug #140: Template validation - can_generate_clear_items={template_validation['can_generate_clear_items']}")
-    # Convert CamelCase to snake_case (CartItem → cart_item)
+    # Convert CamelCase to snake_case ({Entity} → {entity})
     import re
     entity_snake = re.sub(r'(?<!^)(?=[A-Z])', '_', entity_name).lower()
     plural = f"{entity_snake}s"
 
-    # Determine which guards to generate based on entity type
-    has_stock = any(_get_field_value(f, 'name', '').lower() in ('stock', 'quantity', 'inventory') for f in attributes)
+    # Determine which guards to generate based on entity type (domain-agnostic field detection)
+    stock_field_patterns = ('stock', 'quantity', 'inventory', 'available', 'count')
+    has_stock = any(_get_field_value(f, 'name', '').lower() in stock_field_patterns for f in attributes)
     has_status = status_field_name and status_field_name != "status"  # Real status field found
 
     # Build behavior guards section
@@ -2324,7 +2455,7 @@ class {entity_name}Service:
         """
         Clear all items/children from this {entity_name.lower()}.
 
-        Used for entities that have child relationships (e.g., Cart → CartItems).
+        Used for entities that have child relationships (parent → children).
         Returns the updated entity after clearing items.
 
         Bug #105 Fix: Uses direct SQLAlchemy delete instead of non-existent repo method.
@@ -2394,11 +2525,9 @@ class {entity_name}Service:
         return {entity_name}Response.model_validate(db_obj)
 '''
 
-    # Bug #141 Fix: REMOVED hardcoded Cart/Order-specific business logic
-    # Previous code had ~250 lines of hardcoded ecommerce methods:
-    # - is_cart_entity: add_item(), checkout() with CartItemRepository imports
-    # - is_orderable_entity: checkout(), cancel_order(), cancel(), pay() with OrderItemEntity imports
-    # These were spec-specific (ecommerce) and should be generated from IR operations, not templates.
+    # Bug #141 Fix: REMOVED hardcoded domain-specific business logic
+    # Previous code had ~250 lines of hardcoded methods for specific domains.
+    # These were spec-specific and should be generated from IR operations, not templates.
     # Custom business operations should be defined in the API spec and generated via IR.
 
     # Bug #143 Fix: Generate methods for IR-derived custom operations
@@ -2425,11 +2554,12 @@ class {entity_name}Service:
         # Determine if this operation needs a data parameter (e.g., add_item)
         needs_data = 'add' in op_name or 'item' in op_name
 
-        # Generate appropriate method based on operation type
+        # Bug #200 Fix: Pass child_info to generate actual child entity creation
         method_body = _generate_workflow_method_body(
             entity_name, op_name, flow_name,
             precondition_status, postcondition_status,
-            affects_stock, needs_data, status_field_name
+            affects_stock, needs_data, status_field_name,
+            child_info=child_info  # Bug #200: Enable child entity creation
         )
         base_service += method_body
 

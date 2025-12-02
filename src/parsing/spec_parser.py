@@ -1372,7 +1372,7 @@ For each validation like "Stock >= 0" or "Quantity > 0":
 - "ID is UUID" → constraint: uuid_format (keyword, no value)
 
 ## Step 3: Determine which ENTITY has this FIELD
-Look at the spec to find which entity (Product, Customer, Cart, etc.) has this field.
+Look at the spec to find which entity has this field.
 IMPORTANT: Don't confuse similar field names across different entities!
 
 ## Step 4: Generate validation entry
@@ -1390,11 +1390,11 @@ Create one validation entry with:
 ❌ WRONG: constraint: gt=stock (using field name as value)
 ✅ RIGHT: constraint: gt=0 (using number as value)
 
-❌ WRONG: entity: CartItem, field: stock, constraint: ge=0 (wrong entity - stock is in Product, not CartItem!)
-✅ RIGHT: entity: Product, field: stock, constraint: ge=0
+❌ WRONG: entity: {ChildItem}, field: stock, constraint: ge=0 (wrong entity - stock is in {Resource}, not {ChildItem}!)
+✅ RIGHT: entity: {Resource}, field: stock, constraint: ge=0
 
-❌ WRONG: entity: Product, field: quantity, constraint: gt=0 (wrong entity - quantity is in CartItem/OrderItem, not Product!)
-✅ RIGHT: entity: CartItem, field: quantity, constraint: gt=0
+❌ WRONG: entity: {Resource}, field: quantity, constraint: gt=0 (wrong entity - quantity is in {ChildItem}, not {Resource}!)
+✅ RIGHT: entity: {ChildItem}, field: quantity, constraint: gt=0
 
 # VALIDATION TYPES TO GENERATE:
 
@@ -1453,66 +1453,69 @@ Before writing "constraint: X", ask yourself:
 
 Example showing CORRECT constraint mapping:
 ```yaml
+# NOTE: These are EXAMPLE entity/field names for LLM guidance.
+# The actual entity/field names come from the spec being parsed.
+# The compiler is domain-agnostic - it works with ANY domain.
 validation_count: 8
 
 validations:
   # Example 1: "Price > 0" → constraint MUST be gt=0 (the number), NOT gt=price (field name)
-  V1_product_price:
-    entity: Product
+  V1_entity_price:
+    entity: {Entity}
     field: price
     constraint: gt=0
-    description: Product price must be greater than 0
+    description: Entity price must be greater than 0
 
   # Example 2: "Stock >= 0" → constraint MUST be ge=0 (the number), NOT ge=stock or ge=quantity
-  V2_product_stock:
-    entity: Product
+  V2_entity_stock:
+    entity: {Entity}
     field: stock
     constraint: ge=0
-    description: Product stock must be non-negative
+    description: Entity stock must be non-negative
 
-  # Example 3: "Cart item quantity > 0" → entity is CartItem (where quantity field exists), NOT Product
-  V3_cartitem_quantity:
-    entity: CartItem
+  # Example 3: "Item quantity > 0" → entity is {Child}Item (where quantity field exists), NOT {Parent}
+  V3_childitem_quantity:
+    entity: {Child}Item
     field: quantity
     constraint: gt=0
-    description: Cart item quantity must be greater than 0
+    description: Item quantity must be greater than 0
 
   # Example 4: "Email format" → constraint is keyword email_format, NO value needed
-  V4_customer_email_format:
-    entity: Customer
+  V4_entity_email_format:
+    entity: {Entity}
     field: email
     constraint: email_format
-    description: Customer email must be valid email format
+    description: Entity email must be valid email format
 
   # Example 5: All ID fields need UUID format (implicit validation)
-  V5_product_id:
-    entity: Product
+  V5_entity_id:
+    entity: {Entity}
     field: id
     constraint: uuid_format
-    description: Product ID must be valid UUID
+    description: Entity ID must be valid UUID
 
   # Example 6: Non-nullable fields need required constraint (implicit validation)
-  V6_product_name:
-    entity: Product
+  V6_entity_name:
+    entity: {Entity}
     field: name
     constraint: required
-    description: Product name is required
+    description: Entity name is required
 
   # Example 7: Email fields need BOTH email_format AND required (two separate validations)
-  V7_customer_email_required:
-    entity: Customer
+  V7_entity_email_required:
+    entity: {Entity}
     field: email
     constraint: required
-    description: Customer email is required
+    description: Entity email is required
 
   # Example 8: Status fields with fixed values need enum constraint WITH VALUES
-  # If spec says: status: enum ["PENDING_PAYMENT", "PAID", "CANCELLED"]
-  # Then extract the values and write: constraint: enum=PENDING_PAYMENT,PAID,CANCELLED
-  V8_order_status:
-    entity: Order
+  # If spec says: status: enum ["PENDING", "ACTIVE", "CLOSED"]
+  # Then extract the values and write: constraint: enum=PENDING,ACTIVE,CLOSED
+  V8_entity_status:
+    entity: {Entity}
     field: status
-    constraint: enum=PENDING_PAYMENT,PAID,CANCELLED
-    description: Order status must be PENDING_PAYMENT, PAID, or CANCELLED
+    constraint: enum=PENDING,ACTIVE,CLOSED
+    description: Entity status must be PENDING, ACTIVE, or CLOSED
 ```
 
 CRITICAL YAML FORMATTING RULES:

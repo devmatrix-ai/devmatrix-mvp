@@ -47,35 +47,36 @@ class Flow(BaseModel):
     # =========================================================================
     # IRFlow Extension Fields (for Cognitive Code Generation)
     # All optional for backwards compatibility
+    # Domain-agnostic: All entity/field names derived from IR at runtime
     # =========================================================================
 
-    # Unique identifier for the flow (e.g., "add_item_to_cart")
+    # Unique identifier for the flow (e.g., "add_item_to_{container}")
     flow_id: Optional[str] = None
 
-    # Primary entity this flow operates on (e.g., "Cart")
+    # Primary entity this flow operates on (derived from IR)
     primary_entity: Optional[str] = None
 
-    # All entities involved in this flow (e.g., ["Cart", "Product", "CartItem"])
+    # All entities involved in this flow (derived from IR relationships)
     entities_involved: List[str] = Field(default_factory=list)
 
     # Constraint types applied (e.g., ["stock_constraint", "workflow_constraint"])
     constraint_types: List[str] = Field(default_factory=list)
 
     # Preconditions that must be true before flow executes
-    # e.g., ["cart.status == 'open'", "product.exists", "quantity > 0"]
+    # e.g., ["{entity}.status == 'active'", "{ref}.exists", "quantity > 0"]
     preconditions: List[str] = Field(default_factory=list)
 
     # Postconditions that must be true after flow executes
-    # e.g., ["cart_item.added", "product.stock.decreased"]
+    # e.g., ["{child}.added", "{entity}.{quantity_field}.decreased"]
     postconditions: List[str] = Field(default_factory=list)
 
-    # API endpoint this flow implements (e.g., "POST /carts/{id}/items")
+    # API endpoint this flow implements (e.g., "POST /{resources}/{id}/items")
     endpoint: Optional[str] = None
 
-    # Function name in generated code (e.g., "add_item_to_cart")
+    # Function name in generated code (e.g., "add_item_to_{entity}")
     implementation_name: Optional[str] = None
 
-    # File where this flow is implemented (e.g., "src/services/cart_service.py")
+    # File where this flow is implemented (e.g., "src/services/{entity}_service.py")
     implementation_file: Optional[str] = None
 
     # Version for cache invalidation

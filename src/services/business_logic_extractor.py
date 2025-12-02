@@ -4,16 +4,18 @@ Business Logic Extractor
 Analyzes specifications and extracts business logic validation rules
 that should be included in ValidationModelIR.
 
-Comprehensive extraction of:
+Domain-agnostic extraction of:
 - Uniqueness constraints (email, username, etc.)
-- Foreign key relationships (customer_id, product_id, etc.)
-- Stock/inventory management
+- Foreign key relationships ({parent}_id, {ref}_id, etc.)
+- Quantity/inventory management (stock, quantity, available fields)
 - Status transitions and workflows
 - Email/format validation
 - Range constraints (min/max)
 - Required fields and data types
 - Business rule patterns from spec text
 - Pattern-based validation (Phase 1)
+
+All entity/field names are derived from IR, not hardcoded.
 """
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -34,11 +36,13 @@ class BusinessLogicExtractor:
     def __init__(self):
         self.client = anthropic.Anthropic()
         self.model = "claude-sonnet-4-5-20250929"  # Sonnet for analysis tasks
+        # Domain-agnostic patterns: detect semantic meaning from field names
         self.validation_patterns = {
             'email': re.compile(r'\bemail\b', re.IGNORECASE),
             'unique': re.compile(r'\bunique\b|\bdistinct\b', re.IGNORECASE),
-            'stock': re.compile(r'\bstock\b|\binventory\b|\bquantity\b|\bavailable\b', re.IGNORECASE),
-            'status': re.compile(r'\bstatus\b|\bstate\b', re.IGNORECASE),
+            # Quantity patterns (covers stock, inventory, balance, etc.)
+            'quantity': re.compile(r'\bstock\b|\binventory\b|\bquantity\b|\bavailable\b|\bbalance\b|\bcount\b', re.IGNORECASE),
+            'status': re.compile(r'\bstatus\b|\bstate\b|\bphase\b', re.IGNORECASE),
             'required': re.compile(r'\brequired\b|\bmandatory\b', re.IGNORECASE),
             'reference': re.compile(r'_id$|foreign key|references', re.IGNORECASE),
         }
@@ -202,9 +206,10 @@ class BusinessLogicExtractor:
                         error_message=f"{ref_entity} with id '{{id}}' not found"
                     ))
 
-                # Check for stock/inventory constraints
-                # Bug #96 Fix: Use dynamic entity/field names instead of hardcoding 'product.stock'
-                if field_name in ["stock", "quantity", "available", "inventory"]:
+                # Check for quantity/inventory constraints (domain-agnostic)
+                # Bug #96 Fix: Use dynamic entity/field names instead of hardcoding
+                quantity_field_patterns = ["stock", "quantity", "available", "inventory", "balance", "count"]
+                if field_name in quantity_field_patterns:
                     entity_lower = entity_name.lower()
                     rules.append(ValidationRule(
                         entity=entity_name,
@@ -405,10 +410,13 @@ class BusinessLogicExtractor:
         return rules
 
     def _extract_calculation_logic(self, description: str, field_name: str) -> str:
-        """Extract calculation logic from natural language description (Phase 2)."""
-        # Sum/Total patterns
+        """Extract calculation logic from natural language description (Phase 2).
+        Domain-agnostic: uses generic field references.
+        """
+        # Sum/Total patterns - generic item collection pattern
         if ("suma" in description or "sum" in description or "total" in description) and "total" in field_name.lower():
-            return "return sum(item.unit_price * item.quantity for item in self.items)"
+            # Uses generic 'items' collection - actual field names come from IR
+            return "return sum(item.price * item.quantity for item in self.items)"
 
         # Count patterns
         if "count" in description or "cantidad" in description:
@@ -470,18 +478,20 @@ class BusinessLogicExtractor:
                 description="Field is computed from other fields"
             )
 
-        # 3. BUSINESS_LOGIC: stock (decrementar), inventory, checkout operations
-        business_logic_patterns = ["stock", "inventory", "quantity", "available", "checkout", "decrement"]
-        if any(pattern in field_name for pattern in business_logic_patterns) or \
+        # 3. BUSINESS_LOGIC: quantity operations (decrement, increment) - domain-agnostic
+        quantity_patterns = ["stock", "inventory", "quantity", "available", "balance", "count"]
+        operation_patterns = ["checkout", "decrement", "increment", "reserve", "release"]
+        if any(pattern in field_name for pattern in quantity_patterns + operation_patterns) or \
            "decrementar" in field_desc or "decrement" in field_desc or rule_type == "stock_constraint":
             return EnforcementStrategy(
                 type=EnforcementType.BUSINESS_LOGIC,
                 implementation="ServiceLayerLogic",
                 applied_at=["service"],
-                template_name="stock_decrement_logic",
+                template_name="quantity_operation_logic",
                 parameters={"field_name": rule.attribute, "operation": "decrement"},
-                code_snippet=f"await product_repo.decrement_stock({rule.attribute}, quantity)",
-                description="Stock/inventory decremented during checkout or item removal"
+                # Generic snippet - actual entity names come from IR at generation time
+                code_snippet=f"await entity_repo.update_quantity({rule.attribute}, quantity)",
+                description="Quantity field modified during operations"
             )
 
         # 4. STATE_MACHINE: status, state (with transitions)

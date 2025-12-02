@@ -2240,10 +2240,10 @@ class SmokeRepairOrchestrator:
             precondition_status = getattr(workflow_def, 'precondition_status', None)
             postcondition_status = getattr(workflow_def, 'postcondition_status', None)
 
-        # Common method patterns with behavior logic
+        # Common method patterns with behavior logic (domain-agnostic)
         if 'add' in method_name or 'item' in method_name:
-            # Add item to collection pattern - requires OPEN/ACTIVE status
-            precond = precondition_status or 'OPEN'
+            # Add item to collection pattern - requires ACTIVE status (generic)
+            precond = precondition_status or 'ACTIVE'
             return f'''
     async def {method_name}(self, {entity_lower}_id: UUID, item_data: dict, db: AsyncSession) -> Any:
         """Add item - generated with behavior guards by Cognitive Compiler."""
@@ -2265,9 +2265,9 @@ class SmokeRepairOrchestrator:
         return entity
 '''
         elif 'checkout' in method_name or 'process' in method_name or 'complete' in method_name:
-            # State transition: OPEN -> COMPLETED
-            precond = precondition_status or 'OPEN'
-            postcond = postcondition_status or 'COMPLETED'
+            # State transition pattern - derive from IR or use sensible defaults
+            precond = precondition_status or 'ACTIVE'  # Generic active state
+            postcond = postcondition_status or 'COMPLETED'  # Generic completed state
             return f'''
     async def {method_name}(self, {entity_lower}_id: UUID, db: AsyncSession) -> Any:
         """State transition - generated with behavior guards by Cognitive Compiler."""
@@ -2288,9 +2288,9 @@ class SmokeRepairOrchestrator:
         return entity
 '''
         elif 'pay' in method_name:
-            # Payment pattern: PENDING_PAYMENT -> PAID
-            precond = precondition_status or 'PENDING_PAYMENT'
-            postcond = postcondition_status or 'PAID'
+            # Payment pattern - derive states from IR or use generic pattern
+            precond = precondition_status or 'PENDING'  # Generic pending state
+            postcond = postcondition_status or 'PAID'  # Payment complete state
             return f'''
     async def {method_name}(self, {entity_lower}_id: UUID, payment_data: dict, db: AsyncSession) -> Any:
         """Process payment - generated with behavior guards by Cognitive Compiler."""
@@ -2324,9 +2324,10 @@ class SmokeRepairOrchestrator:
         if not entity:
             raise HTTPException(status_code=404, detail="{entity_name} not found")
 
-        # Behavior guard: Check cancellation is allowed
+        # Behavior guard: Check cancellation is allowed (domain-agnostic terminal states)
         current_status = getattr(entity, 'status', None)
-        terminal_states = ['COMPLETED', 'CANCELLED', 'PAID', 'DELIVERED']
+        # Terminal states should come from IR.status_field.terminal_values
+        terminal_states = ['COMPLETED', 'CANCELLED', 'CLOSED', 'DONE', 'FINISHED']
         if current_status in terminal_states:
             raise HTTPException(status_code=422, detail="{entity_name} in terminal state cannot be cancelled")
 

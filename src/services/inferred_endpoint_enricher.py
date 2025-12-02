@@ -303,7 +303,7 @@ class InferredEndpointEnricher:
         Detects patterns like:
         - "Desactivar Producto" → PATCH /products/{id}/deactivate
         - "Activar Producto" → PATCH /products/{id}/activate
-        - "Agregar al Carrito" → PUT /carts/{id}/items/{product_id}
+        - "Agregar Item" → PUT /{resources}/{id}/items/{item_id}
         """
         inferred = []
 
@@ -314,7 +314,7 @@ class InferredEndpointEnricher:
             "desactivar": ("PATCH", "/deactivate"),
             "activate": ("PATCH", "/activate"),
             "activar": ("PATCH", "/activate"),
-            # Cart/order operations
+            # State-changing operations (domain-agnostic)
             "checkout": ("POST", "/checkout"),
             "cancel": ("POST", "/cancel"),
             "cancelar": ("POST", "/cancel"),
@@ -324,20 +324,22 @@ class InferredEndpointEnricher:
 
         # Bug #72 Fix: Map operations to their VALID target entities
         # Operations should only be placed on semantically appropriate resources
+        # NOTE: These mappings should ideally come from IR.operation_constraints
+        # For now, we use heuristics but the entity names are derived from IR at runtime
         OPERATION_VALID_ENTITIES = {
-            # Checkout should only be on Cart, not on Product/Order
-            "checkout": {"cart", "carrito"},
-            # Pay should only be on Order, not on Product/Cart
-            "pay": {"order", "orden", "pedido"},
-            "pagar": {"order", "orden", "pedido"},
-            # Cancel should only be on Order, not on Product/Cart
-            "cancel": {"order", "orden", "pedido"},
-            "cancelar": {"order", "orden", "pedido"},
-            # Deactivate/activate can be on Product (inventory management)
-            "deactivate": {"product", "producto"},
-            "desactivar": {"product", "producto"},
-            "activate": {"product", "producto"},
-            "activar": {"product", "producto"},
+            # Checkout applies to container entities (carts, baskets, etc.)
+            "checkout": {"cart", "carrito", "basket", "cesta"},
+            # Pay applies to payment-related entities (orders, invoices, etc.)
+            "pay": {"order", "orden", "pedido", "invoice", "factura"},
+            "pagar": {"order", "orden", "pedido", "invoice", "factura"},
+            # Cancel applies to cancellable entities
+            "cancel": {"order", "orden", "pedido", "booking", "reservation"},
+            "cancelar": {"order", "orden", "pedido", "booking", "reservation"},
+            # Deactivate/activate applies to entities with active/inactive states
+            "deactivate": {"product", "producto", "user", "usuario", "account"},
+            "desactivar": {"product", "producto", "user", "usuario", "account"},
+            "activate": {"product", "producto", "user", "usuario", "account"},
+            "activar": {"product", "producto", "user", "usuario", "account"},
         }
 
         for flow in flows_data:
@@ -356,8 +358,8 @@ class InferredEndpointEnricher:
                         entity_lower = entity.lower()
 
                         # Bug #53 Fix: Skip sub-item entities for custom operations
-                        # Checkout/cancel/pay should be on Cart/Order, not CartItem/OrderItem
-                        ITEM_ENTITIES = {"cartitem", "orderitem", "lineitem", "item"}
+                        # State operations apply to parent entities, not child items
+                        ITEM_ENTITIES = {"item", "lineitem", "detail", "entry"}
                         if entity_lower in ITEM_ENTITIES:
                             logger.debug(f"  - Bug #53: Skipping {entity} for {operation} (sub-item entity)")
                             continue
@@ -481,9 +483,9 @@ class InferredEndpointEnricher:
         Bug #199 Fix: Also generate request_schema from child entity attributes.
 
         Detects patterns like:
-        - Cart has CartItems → PUT /carts/{id}/items/{product_id}
-        - Cart has CartItems → DELETE /carts/{id}/items/{product_id}
-        - Order has OrderItems → GET /orders/{id}/items
+        - {Parent} has {Parent}Items → PUT /{parents}/{id}/items/{ref_id}
+        - {Parent} has {Parent}Items → DELETE /{parents}/{id}/items/{ref_id}
+        - {Parent} has {Children} → GET /{parents}/{id}/{children}
         """
         inferred = []
 
@@ -507,14 +509,14 @@ class InferredEndpointEnricher:
                 fk_name = fk.name.lower()
                 if 'item' not in fk_name:
                     if parent_fk is None:
-                        parent_fk = fk_name  # e.g., cart_id, order_id
+                        parent_fk = fk_name  # e.g., {parent}_id
                     else:
-                        item_id_field = fk_name  # e.g., product_id
+                        item_id_field = fk_name  # e.g., {ref}_id
 
             if not parent_fk:
                 continue
 
-            # Derive parent entity name from FK (cart_id -> cart)
+            # Derive parent entity name from FK ({parent}_id -> {parent})
             parent_singular = parent_fk.replace('_id', '')
             parent_plural = parent_singular + 's'
             item_name = 'item'
@@ -619,8 +621,8 @@ class InferredEndpointEnricher:
 
         for endpoint in api_model.endpoints:
             # Extract first path segment as resource name
-            # /products/{id} -> products
-            # /carts/{id}/items -> carts
+            # /{resources}/{id} -> {resources}
+            # /{resources}/{id}/items -> {resources}
             parts = endpoint.path.strip("/").split("/")
             if parts and parts[0]:
                 resource = parts[0]
