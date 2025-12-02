@@ -404,11 +404,20 @@ class SmokeRunnerV2:
                     # Bug #205 Fix: For nested paths like /carts/{cart_id}/items/{item_id}
                     # - cart_id → "cart" entity UUID
                     # - item_id → "item" entity UUID (which is "cartitem" or "orderitem")
+                    # Bug #218 Fix: Derive specific item entity from path prefix
+                    # /orders/{id}/items/{item_id} → orderitem
+                    # /carts/{id}/items/{item_id} → cartitem
                     is_item_param = param_name == 'item_id'
                     if is_item_param:
-                        # item_id refers to the item entity (cartitem, orderitem, etc.)
-                        # The 'item' key in seed_uuids points to the correct item UUID
-                        param_value = seed_uuids.get('item', SeedUUIDRegistry.NOT_FOUND_UUID)
+                        # Derive parent entity from path to get correct item type
+                        # Path like /orders/{id}/items/{item_id} → parent is "order" → item is "orderitem"
+                        path_parts = scenario.endpoint_path.strip('/').split('/')
+                        if len(path_parts) >= 1:
+                            parent_entity = path_parts[0].rstrip('s')  # orders → order, carts → cart
+                            item_entity_key = f"{parent_entity}item"
+                            param_value = seed_uuids.get(item_entity_key, seed_uuids.get('item', SeedUUIDRegistry.NOT_FOUND_UUID))
+                        else:
+                            param_value = seed_uuids.get('item', SeedUUIDRegistry.NOT_FOUND_UUID)
                     else:
                         # Regular entity lookup
                         param_value = seed_uuids.get(entity_type, SeedUUIDRegistry.NOT_FOUND_UUID)
