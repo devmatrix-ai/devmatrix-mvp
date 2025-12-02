@@ -845,30 +845,17 @@ class RuntimeSmokeTestValidator:
                 entity = part.rstrip('s')  # products -> product
                 break
 
-        # Domain-agnostic payload generation based on field patterns
-        # Phase 1: Generate payloads from common field patterns, not entity names
+        # 100% domain-agnostic: only use endpoint.request_schema if available
         payload = {}
 
-        # Common field patterns (domain-agnostic)
-        if entity:
-            entity_lower = entity.lower()
-            # Name-like entities
-            payload['name'] = f'Test {entity.title()}'
+        if endpoint.request_schema and hasattr(endpoint.request_schema, 'fields'):
+            for field in endpoint.request_schema.fields:
+                field_name = getattr(field, 'name', '')
+                field_type = getattr(field, 'data_type', 'string')
+                if field_name and not field_name.endswith('_id'):
+                    payload[field_name] = self._generate_value_for_type(str(field_type))
 
-            # Check for common field patterns by entity name heuristics
-            if 'item' in entity_lower:
-                # Item-like entities need parent FK and quantity
-                payload = {
-                    'quantity': 1
-                }
-            elif any(word in entity_lower for word in ['user', 'person', 'member', 'account']):
-                # User-like entities
-                payload = {
-                    'email': 'test@example.com',
-                    'full_name': 'Test User'
-                }
-
-        # If no specific pattern matched, use generic payload
+        # Fallback: minimal generic payload
         if not payload:
             payload = {'name': 'Test'}
 

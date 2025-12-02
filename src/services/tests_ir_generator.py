@@ -293,39 +293,15 @@ class TestsIRGenerator:
     def _get_default_value(self, data_type: DataType, field_name: str, entity_name: str = "") -> Any:
         """Get appropriate default value for field.
 
-        Phase 1.2: PRIORITY ORDER (domain-agnostic first):
-        1. IR constraints (ValidationModelIR) - fully agnostic
-        2. Field name heuristics (email, name, etc.) - semi-agnostic
-        3. Type defaults - fully agnostic
+        100% domain-agnostic: Uses only IR constraints and type information.
         """
-        # Phase 1.2: Try IR constraints FIRST (domain-agnostic)
+        # Try IR constraints FIRST (domain-agnostic)
         if entity_name:
             constraint_value = self._get_value_from_constraints(entity_name, field_name, data_type)
             if constraint_value is not None:
                 return constraint_value
 
-        field_lower = field_name.lower()
-
-        # Field name heuristics (semi-agnostic - common patterns)
-        if 'email' in field_lower:
-            return "test@example.com"
-        if 'name' in field_lower and 'full' in field_lower:
-            return "Test User"
-        if 'name' in field_lower:
-            return "Test Name"
-        if 'price' in field_lower or 'amount' in field_lower:
-            return 99.99
-        if 'quantity' in field_lower or 'count' in field_lower or 'stock' in field_lower:
-            return 10  # Sufficient stock for operations
-        if 'description' in field_lower:
-            return "Test description"
-        if 'is_active' in field_lower or 'active' == field_lower:
-            return True
-
-        # For status fields without IR constraints, use generic valid value
-        if 'status' in field_lower:
-            return "PENDING"  # Generic initial state
-
+        # Type-based defaults only (domain-agnostic)
         return self.DEFAULT_VALUES.get(data_type, "test")
 
     def _get_generator(self, data_type: DataType, field_name: str) -> Optional[str]:
@@ -618,8 +594,8 @@ class TestsIRGenerator:
                     invalid_body[field.name] = min_val - 1  # Below minimum
                     return invalid_body
 
-                # Common patterns: price, quantity, stock, amount should be positive
-                if any(kw in field_name for kw in ['price', 'quantity', 'stock', 'amount', 'count']):
+                # For numeric fields, test with negative value (domain-agnostic)
+                if field.data_type and field.data_type.lower() in ['int', 'integer', 'float', 'decimal', 'number']:
                     invalid_body[field.name] = -1  # Negative value
                     return invalid_body
 

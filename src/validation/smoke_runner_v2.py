@@ -171,6 +171,21 @@ class SmokeRunnerV2:
         """Get scenarios ordered by priority."""
         scenarios = self.tests_model.get_smoke_scenarios()
 
+        # Bug #207: Deduplicate DELETE scenarios from flow_suites
+        # Each unique (endpoint_path, method=DELETE) should only run ONCE
+        # because they all share the same seed UUID and first one deletes it.
+        seen_deletes = set()
+        deduplicated = []
+        for s in scenarios:
+            if s.http_method.upper() == "DELETE":
+                key = s.endpoint_path
+                if key in seen_deletes:
+                    # Skip duplicate DELETE - already executed
+                    continue
+                seen_deletes.add(key)
+            deduplicated.append(s)
+        scenarios = deduplicated
+
         # Filter by priority if specified
         if priority_filter:
             scenarios = [s for s in scenarios if s.priority in priority_filter]
@@ -257,6 +272,72 @@ class SmokeRunnerV2:
 
         return seed_uuids
 
+    def _is_flow_scenario(self, scenario: TestScenarioIR) -> bool:
+        """Check if scenario comes from a flow_suite (pattern: 'F##: ...')."""
+        import re
+        return bool(re.match(r'^F\d+:', scenario.name))
+
+    async def _create_entity_for_flow_delete(
+        self,
+        client: httpx.AsyncClient,
+        scenario: TestScenarioIR,
+    ) -> Optional[str]:
+        """
+        For flow DELETE scenarios, create entity via POST first.
+        Returns the created entity's UUID, or None if creation failed.
+        """
+        # Derive POST endpoint from DELETE endpoint
+        # DELETE /carts/{id} → POST /carts
+        # DELETE /carts/{cart_id}/items/{item_id} → POST /carts/{cart_id}/items
+        import re
+        delete_path = scenario.endpoint_path
+
+        # Remove the last {id} or {xxx_id} segment
+        post_path = re.sub(r'/\{[^}]+\}$', '', delete_path)
+        if not post_path or post_path == delete_path:
+            return None
+
+        # Build minimal payload from IR schema
+        entity_type = self._derive_entity_from_path(post_path)
+        payload = self._build_minimal_create_payload(entity_type)
+
+        # For nested paths, we need parent UUID
+        # e.g., POST /carts/{cart_id}/items needs cart_id
+        seed_uuids = self._build_seed_uuids(is_delete=False)
+        actual_path = post_path
+        for match in re.finditer(r'\{(\w+)\}', post_path):
+            param_name = match.group(1)
+            entity_key = param_name.replace('_id', '').lower()
+            uuid_val = seed_uuids.get(entity_key, seed_uuids.get('item', SeedUUIDRegistry.NOT_FOUND_UUID))
+            actual_path = actual_path.replace(f'{{{param_name}}}', uuid_val)
+
+        try:
+            response = await client.post(actual_path, json=payload)
+            if response.status_code in (200, 201):
+                data = response.json()
+                # Extract ID from response (try common patterns)
+                created_id = data.get('id') or data.get('uuid') or data.get('_id')
+                if created_id:
+                    return str(created_id)
+        except Exception:
+            pass
+
+        return None
+
+    def _build_minimal_create_payload(self, entity_type: str) -> Dict[str, Any]:
+        """Build minimal valid payload for creating an entity."""
+        # Domain-agnostic: use IR schemas if available
+        for endpoint in self.tests_model.endpoint_suites:
+            if endpoint.http_method.upper() == 'POST':
+                entity_from_path = self._derive_entity_from_path(endpoint.endpoint_path)
+                if entity_from_path == entity_type:
+                    # Use the happy_path request_body as template
+                    if endpoint.happy_path.request_body:
+                        return dict(endpoint.happy_path.request_body)
+
+        # Fallback: generic payload
+        return {"name": f"Flow Test {entity_type}"}
+
     async def _execute_scenario(
         self,
         client: httpx.AsyncClient,
@@ -274,6 +355,11 @@ class SmokeRunnerV2:
         is_delete = scenario.http_method.upper() == "DELETE"
         seed_uuids = seed_uuids_delete if is_delete else seed_uuids_primary
 
+        # Bug #A.2: Flow DELETE scenarios create their own entity first
+        flow_created_id: Optional[str] = None
+        if is_delete and self._is_flow_scenario(scenario):
+            flow_created_id = await self._create_entity_for_flow_delete(client, scenario)
+
         path = scenario.endpoint_path
 
         # Bug #191: Auto-detect missing path params from endpoint_path
@@ -289,28 +375,31 @@ class SmokeRunnerV2:
         for param_name, param_value in effective_path_params.items():
             # Handle placeholder values (e.g., {{seed_id}})
             if isinstance(param_value, str) and param_value.startswith("{{"):
-                # Bug #137 Fix: Derive entity type from param name OR path context
-                if param_name == 'id':
-                    # Generic {id} - derive from path (e.g., /products/{id} -> product)
-                    entity_type = self._derive_entity_from_path(scenario.endpoint_path)
+                # Bug #A.2: If flow DELETE created its own entity, use that ID
+                # for the main entity param (id or entity_id matching the path)
+                if flow_created_id and param_name in ('id', f'{self._derive_entity_from_path(scenario.endpoint_path)}_id'):
+                    param_value = flow_created_id
                 else:
-                    # Specific param name (e.g., product_id -> product)
-                    entity_type = param_name.replace('_id', '').lower()
+                    # Bug #137 Fix: Derive entity type from param name OR path context
+                    if param_name == 'id':
+                        # Generic {id} - derive from path (e.g., /products/{id} -> product)
+                        entity_type = self._derive_entity_from_path(scenario.endpoint_path)
+                    else:
+                        # Specific param name (e.g., product_id -> product)
+                        entity_type = param_name.replace('_id', '').lower()
 
-                # Domain-agnostic: For item subresource paths, use correct parent UUID
-                # Bug #205: DELETE tests need delete variant of parent entity
-                is_item_subpath = '/items/' in scenario.endpoint_path
-                if is_item_subpath and param_name.endswith('_id') and param_name != 'id':
-                    # Use correct UUID variant for the parent entity
-                    parent_entity = param_name.replace('_id', '')
-                    # Bug #205: For DELETE, use delete variant of parent
-                    parent_uuids = seed_uuids_delete if is_delete else seed_uuids_primary
-                    first_key = list(parent_uuids.keys())[0] if parent_uuids else None
-                    fallback = parent_uuids.get(first_key, f"{SeedUUIDRegistry.UUID_BASE}1") if first_key else f"{SeedUUIDRegistry.UUID_BASE}1"
-                    param_value = parent_uuids.get(parent_entity, fallback)
-                else:
-                    # Bug #192: Use centralized NOT_FOUND_UUID for unknown entities
-                    param_value = seed_uuids.get(entity_type, SeedUUIDRegistry.NOT_FOUND_UUID)
+                    # Domain-agnostic: Resolve UUID from seed_uuids
+                    # Bug #205 Fix: For nested paths like /carts/{cart_id}/items/{item_id}
+                    # - cart_id → "cart" entity UUID
+                    # - item_id → "item" entity UUID (which is "cartitem" or "orderitem")
+                    is_item_param = param_name == 'item_id'
+                    if is_item_param:
+                        # item_id refers to the item entity (cartitem, orderitem, etc.)
+                        # The 'item' key in seed_uuids points to the correct item UUID
+                        param_value = seed_uuids.get('item', SeedUUIDRegistry.NOT_FOUND_UUID)
+                    else:
+                        # Regular entity lookup
+                        param_value = seed_uuids.get(entity_type, SeedUUIDRegistry.NOT_FOUND_UUID)
             # Bug #137: Do NOT convert zero UUIDs - they're intentional for _not_found tests
             path = path.replace(f"{{{param_name}}}", str(param_value))
 

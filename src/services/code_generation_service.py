@@ -4334,22 +4334,28 @@ router = APIRouter(
     if hasattr({entity.name}Entity, status_field):
         create_data[status_field] = 'PENDING'
 
-    # Calculate total from items if both exist
+    # Calculate total from items if both exist (domain-agnostic)
+    # Uses IR-provided computed_field metadata or skips
     if hasattr(source_obj, 'items') and source_obj.items:
-        total = 0.0
+        # Look for numeric fields on item and multiply first two found
         for item in source_obj.items:
-            # Detect numeric fields dynamically
-            qty = 1
-            price = 0
+            numeric_vals = []
             for attr in dir(item):
-                if 'quantity' in attr.lower() or 'qty' in attr.lower():
-                    qty = getattr(item, attr, 1)
-                if 'price' in attr.lower() or 'amount' in attr.lower():
-                    price = getattr(item, attr, 0)
-            total += float(qty) * float(price)
-        # Set total if field exists
-        if hasattr({entity.name}Entity, 'total_amount'):
-            create_data['total_amount'] = total
+                if not attr.startswith('_') and not callable(getattr(item, attr, None)):
+                    val = getattr(item, attr, None)
+                    if isinstance(val, (int, float)) and val > 0:
+                        numeric_vals.append(val)
+                    if len(numeric_vals) >= 2:
+                        break
+            # If item has at least 2 numeric fields, assume qty * price pattern
+            if len(numeric_vals) >= 2:
+                total = sum(numeric_vals[0] * numeric_vals[1] for item in source_obj.items)
+                # Set on any computed field that exists
+                for attr in ['total', 'total_amount', 'amount', 'subtotal']:
+                    if hasattr({entity.name}Entity, attr):
+                        create_data[attr] = total
+                        break
+                break
 
     # Create target entity
     {entity_snake}_create = {entity.name}Create(**create_data)

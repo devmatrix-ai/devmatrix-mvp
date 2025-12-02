@@ -36,33 +36,33 @@ DevMatrix es un **Cognitive Compiler**. NUNCA debe "conocer" dominios específic
 
 ### Alta Prioridad (afectan generación de código)
 
-| Archivo | Línea | Pattern | Impacto | Solución Propuesta |
-|---------|-------|---------|---------|-------------------|
-| `business_logic_extractor.py` | 44 | `'stock', 'inventory', 'quantity', 'balance'` regex | Extracción de lógica | Usar IR constraint types |
-| `validation_code_generator.py` | 181 | `'quantity', 1` hardcoded | Generación de validación | Leer de IR |
-| `production_code_generators.py` | 533 | `PRICE_PATTERNS = ('price', ...)` | Snapshot detection | Usar IR attribute metadata |
-| ~~`production_code_generators.py`~~ | ~~805~~ | ~~`'quantity'` default field~~ | ~~Guard generation~~ | ✅ ARREGLADO en flow_logic_synthesizer |
-| `tests_ir_generator.py` | 316-318 | `'price', 'quantity', 'stock'` | Test data generation | Type-based from IR |
-| `tests_ir_generator.py` | 622 | `['price', 'quantity', 'stock', ...]` | Numeric field detection | IR type annotation |
-| `code_generation_service.py` | 4345-4347 | `'quantity', 'price'` | Line item detection | IR attribute metadata |
+| Archivo | Línea | Pattern | Estado |
+|---------|-------|---------|--------|
+| ~~`business_logic_extractor.py`~~ | ~~44~~ | ~~`'stock', 'inventory', 'quantity'`~~ | ✅ ARREGLADO → Type-based |
+| ~~`validation_code_generator.py`~~ | ~~181~~ | ~~`'quantity', 1` hardcoded~~ | ✅ ARREGLADO → Generic comparison |
+| ~~`production_code_generators.py`~~ | ~~533~~ | ~~`PRICE_PATTERNS = ('price', ...)`~~ | ✅ ARREGLADO → Type-based (numeric_types) |
+| ~~`production_code_generators.py`~~ | ~~805~~ | ~~`'quantity'` default field~~ | ✅ ARREGLADO en flow_logic_synthesizer |
+| ~~`tests_ir_generator.py`~~ | ~~316-318~~ | ~~`'price', 'quantity', 'stock'`~~ | ✅ ARREGLADO → IR constraints only |
+| ~~`tests_ir_generator.py`~~ | ~~622~~ | ~~`['price', 'quantity', 'stock', ...]`~~ | ✅ ARREGLADO → Type-based |
+| ~~`code_generation_service.py`~~ | ~~4345-4347~~ | ~~`'quantity', 'price'`~~ | ✅ ARREGLADO → Numeric field detection |
 
 ### Media Prioridad (afectan clasificación)
 
-| Archivo | Línea | Pattern | Impacto | Solución Propuesta |
-|---------|-------|---------|---------|-------------------|
-| `smoke_repair_orchestrator.py` | 2136 | `return 'checkout'` | Default operation | Extraer de path/IR |
-| `smoke_repair_orchestrator.py` | 2310 | `'checkout', 'process', 'complete'` | Operation detection | Path structure |
-| `smoke_repair_orchestrator.py` | 2350 | `payment_data.get('amount')` | Payment validation | IR field detection |
-| `compliance_validator.py` | 1949 | `['clear', 'cancel', 'checkout']` | Action detection | Path structure |
+| Archivo | Línea | Pattern | Estado |
+|---------|-------|---------|--------|
+| ~~`smoke_repair_orchestrator.py`~~ | ~~2136~~ | ~~`return 'checkout'`~~ | ✅ ARREGLADO → Path structure |
+| ~~`smoke_repair_orchestrator.py`~~ | ~~2310~~ | ~~`'checkout', 'process', 'complete'`~~ | ✅ ARREGLADO → 100% IR-driven |
+| ~~`smoke_repair_orchestrator.py`~~ | ~~2350~~ | ~~`payment_data.get('amount')`~~ | ✅ ELIMINADO → Solo IR |
+| ~~`compliance_validator.py`~~ | ~~1949~~ | ~~`['clear', 'cancel', 'checkout']`~~ | ✅ Ya arreglado → PARAM logic |
 
 ### Baja Prioridad (patterns lingüísticos genéricos)
 
-| Archivo | Línea | Pattern | Justificación |
-|---------|-------|---------|---------------|
-| `anti_pattern_advisor.py` | 256 | `['checkout', 'activate', ...]` | Detecta TIPO de operación (state transition), no dominio |
-| `pattern_bank.py` | 781-783 | `'checkout': 'state_transition'` | Mapeo semántico de verbo → pattern type |
-| `multi_pass_planner.py` | 1454 | `['checkout', 'submit', 'process', ...]` | Verbos que indican transición de estado |
-| `runtime_smoke_validator.py` | 862 | `'quantity': 1` | Test data generation (low risk) |
+| Archivo | Línea | Pattern | Estado |
+|---------|-------|---------|--------|
+| `anti_pattern_advisor.py` | 256 | `['checkout', 'activate', ...]` | ℹ️ OK - Detecta TIPO de operación (verbo → pattern) |
+| `pattern_bank.py` | 781-783 | `'checkout': 'state_transition'` | ℹ️ OK - Mapeo semántico de verbo → pattern type |
+| `multi_pass_planner.py` | 1454 | `['checkout', 'submit', 'process', ...]` | ℹ️ OK - Verbos que indican transición de estado |
+| ~~`runtime_smoke_validator.py`~~ | ~~862~~ | ~~`'quantity': 1`~~ | ✅ ARREGLADO → Schema-based |
 
 ---
 
@@ -75,4 +75,3 @@ DevMatrix es un **Cognitive Compiler**. NUNCA debe "conocer" dominios específic
 3. **Ejemplos en docstrings**: OK para documentación, no afectan runtime.
 
 4. **`src/models/entities.py`**: `ProductEntity` es un ejemplo/demo, no código usado en generación.
-

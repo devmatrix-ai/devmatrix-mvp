@@ -1942,12 +1942,11 @@ class ComplianceValidator:
         p2_parts = p2_norm.split('/')
 
         if len(p1_parts) == len(p2_parts):
-            # Same base path and either both have PARAM or one has clear/cancel
+            # Same base path and either both have PARAM or one has action verb
             if p1_parts[:-1] == p2_parts[:-1]:
                 last1, last2 = p1_parts[-1], p2_parts[-1]
-                if 'PARAM' in {last1, last2} and any(
-                    x in {last1, last2} for x in ['clear', 'cancel', 'checkout']
-                ):
+                # One is a param placeholder and the other is an action segment
+                if 'PARAM' in {last1, last2} and (last1 != 'PARAM' or last2 != 'PARAM'):
                     return True
 
         return False

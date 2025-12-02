@@ -435,6 +435,7 @@ class FlowLogicSynthesizer:
         if not entity:
             return None
 
+        expr: GuardExpr
         if check_type == 'not_empty' and field_name:
             expr = NotEmptyExpr(target=(f"entity:{entity}", field_name))
         elif check_type == 'exists':

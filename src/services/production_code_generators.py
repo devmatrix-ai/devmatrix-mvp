@@ -529,9 +529,6 @@ def _detect_auto_populated_fields(
         ref_entity = await db.get(RefEntity, data['ref_id'])
         child_data['child_field'] = ref_entity.field
     """
-    # Price field name patterns (domain-agnostic)
-    PRICE_PATTERNS = ('price', 'unit_price', 'amount', 'cost', 'rate', 'fee')
-
     # Find other FK fields (not the parent FK)
     other_fks = []
     for field in child_fields:
@@ -550,9 +547,6 @@ def _detect_auto_populated_fields(
     result["reference_fk"] = ref_fk['fk_field']
     result["reference_entity"] = ref_fk['ref_entity']
 
-    # Find non-nullable fields that look like they should come from the referenced entity
-    child_field_names = {f.get('name', '').lower() for f in child_fields}
-
     # Find the referenced entity's fields
     ref_entity_fields = []
     for entity in all_entities:
@@ -560,22 +554,26 @@ def _detect_auto_populated_fields(
             ref_entity_fields = entity.get('fields', [])
             break
 
-    # Match child fields with ref entity fields
+    # Match child fields with ref entity fields by TYPE (domain-agnostic)
+    # Look for numeric fields (float, decimal) that exist in both child and ref
+    numeric_types = {'float', 'decimal', 'number', 'money', 'currency'}
+
     for child_field in child_fields:
         child_fname = child_field.get('name', '').lower()
+        child_type = child_field.get('type', '').lower()
 
         # Skip id, FK fields, and timestamps
         if child_fname in ('id', 'created_at', 'updated_at') or child_fname.endswith('_id'):
             continue
 
-        # Check if this field matches any price pattern
-        is_price_field = any(p in child_fname for p in PRICE_PATTERNS)
+        # Check if this is a numeric field by type
+        is_numeric = any(t in child_type for t in numeric_types)
 
-        if is_price_field:
-            # Find corresponding field in ref entity
+        if is_numeric:
+            # Find corresponding numeric field in ref entity
             for ref_field in ref_entity_fields:
-                ref_fname = ref_field.get('name', '').lower()
-                if any(p in ref_fname for p in PRICE_PATTERNS):
+                ref_type = ref_field.get('type', '').lower()
+                if any(t in ref_type for t in numeric_types):
                     result["auto_populated_fields"].append({
                         'child_field': child_field.get('name'),
                         'ref_field': ref_field.get('name'),

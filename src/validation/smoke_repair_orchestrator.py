@@ -2128,34 +2128,31 @@ class SmokeRepairOrchestrator:
         )
 
     def _infer_method_from_endpoint(self, endpoint: str) -> Optional[str]:
-        """Infer service method name from endpoint pattern."""
-        endpoint_lower = endpoint.lower()
+        """Infer service method name from endpoint pattern (domain-agnostic).
 
-        # Common action patterns
-        if '/checkout' in endpoint_lower:
-            return 'checkout'
-        elif '/pay' in endpoint_lower:
-            return 'pay'
-        elif '/cancel' in endpoint_lower:
-            return 'cancel'
-        elif '/items' in endpoint_lower and 'POST' in endpoint:
-            return 'add_item'
-        elif '/items' in endpoint_lower and 'PUT' in endpoint:
-            return 'update_item'
-        elif '/items' in endpoint_lower and 'DELETE' in endpoint:
-            return 'remove_item'
-        elif '/clear' in endpoint_lower or '/empty' in endpoint_lower:
-            return 'clear'
-        elif '/activate' in endpoint_lower:
-            return 'activate'
-        elif '/deactivate' in endpoint_lower:
-            return 'deactivate'
+        Uses path structure, not domain-specific keywords.
+        """
+        # Extract method and path
+        parts = endpoint.split()
+        http_method = parts[0] if len(parts) > 1 else 'GET'
+        path = parts[-1] if parts else endpoint
 
-        # Extract from path
-        parts = endpoint.split('/')
-        for part in reversed(parts):
-            if part and not part.startswith('{') and part not in ['api', 'v1']:
-                return part.lower()
+        path_parts = [p for p in path.lower().split('/') if p and not p.startswith('{') and p not in ['api', 'v1', 'v2']]
+
+        if not path_parts:
+            return None
+
+        # Last non-param segment is usually the action
+        action = path_parts[-1] if path_parts else None
+
+        # For nested paths like /entities/{id}/items, use last segment
+        if action:
+            # If path has nested resource, combine with HTTP method
+            if http_method == 'POST' and len(path_parts) > 1:
+                return f"add_{action}" if action != path_parts[0] else action
+            elif http_method == 'DELETE' and len(path_parts) > 1:
+                return f"remove_{action}" if action != path_parts[0] else action
+            return action
 
         return None
 
@@ -2271,138 +2268,56 @@ class SmokeRepairOrchestrator:
         """
         Generate a service method implementation with behavior logic.
 
-        Uses workflow definition from IR when available, otherwise generates
-        domain-agnostic behavior patterns.
+        100% IR-driven: Uses workflow_def from IR. No heuristics.
+        If no IR, generates minimal generic method.
         """
         entity_lower = entity_name.lower()
 
-        # Extract workflow info if available
-        precondition_status = None
-        postcondition_status = None
+        # ONLY use IR - no heuristics
         if workflow_def:
-            precondition_status = getattr(workflow_def, 'precondition_status', None)
-            postcondition_status = getattr(workflow_def, 'postcondition_status', None)
+            precond = getattr(workflow_def, 'precondition_status', None)
+            postcond = getattr(workflow_def, 'postcondition_status', None)
+            terminal_states = getattr(workflow_def, 'terminal_states', [])
 
-        # Common method patterns with behavior logic (domain-agnostic)
-        if 'add' in method_name or 'item' in method_name:
-            # Add item to collection pattern - requires ACTIVE status (generic)
-            precond = precondition_status or 'ACTIVE'
-            return f'''
-    async def {method_name}(self, {entity_lower}_id: UUID, item_data: dict, db: AsyncSession) -> Any:
-        """Add item - generated with behavior guards by Cognitive Compiler."""
-        entity = await self.repository.get_by_id({entity_lower}_id, db)
-        if not entity:
-            raise HTTPException(status_code=404, detail="{entity_name} not found")
-
-        # Behavior guard: Check status allows item addition
+            # IR-driven state transition
+            if precond or postcond:
+                guards = []
+                if precond:
+                    guards.append(f'''
+        # IR guard: precondition from workflow_def
         current_status = getattr(entity, 'status', None)
         if current_status and current_status != '{precond}':
-            raise HTTPException(status_code=422, detail="{entity_name} must be {precond} to add items")
+            raise HTTPException(status_code=422, detail="{entity_name} must be {precond} to {method_name}")''')
 
-        # Apply item addition logic
-        if hasattr(entity, 'items'):
-            entity.items.append(item_data)
-        db.add(entity)
-        await db.commit()
-        await db.refresh(entity)
-        return entity
-'''
-        elif 'checkout' in method_name or 'process' in method_name or 'complete' in method_name:
-            # State transition pattern - derive from IR or use sensible defaults
-            precond = precondition_status or 'ACTIVE'  # Generic active state
-            postcond = postcondition_status or 'COMPLETED'  # Generic completed state
-            return f'''
-    async def {method_name}(self, {entity_lower}_id: UUID, db: AsyncSession) -> Any:
-        """State transition - generated with behavior guards by Cognitive Compiler."""
-        entity = await self.repository.get_by_id({entity_lower}_id, db)
-        if not entity:
-            raise HTTPException(status_code=404, detail="{entity_name} not found")
+                if terminal_states:
+                    states_str = repr(terminal_states)
+                    guards.append(f'''
+        # IR guard: terminal states from workflow_def
+        if getattr(entity, 'status', None) in {states_str}:
+            raise HTTPException(status_code=422, detail="{entity_name} in terminal state")''')
 
-        # Behavior guard: Check precondition status
-        current_status = getattr(entity, 'status', None)
-        if current_status != '{precond}':
-            raise HTTPException(status_code=422, detail="{entity_name} must be {precond} to {method_name}")
+                transition = ""
+                if postcond:
+                    transition = f"\n        entity.status = '{postcond}'"
 
-        # Apply state transition
-        entity.status = '{postcond}'
-        db.add(entity)
-        await db.commit()
-        await db.refresh(entity)
-        return entity
-'''
-        elif 'pay' in method_name:
-            # Payment pattern - derive states from IR or use generic pattern
-            precond = precondition_status or 'PENDING'  # Generic pending state
-            postcond = postcondition_status or 'PAID'  # Payment complete state
-            return f'''
-    async def {method_name}(self, {entity_lower}_id: UUID, payment_data: dict, db: AsyncSession) -> Any:
-        """Process payment - generated with behavior guards by Cognitive Compiler."""
-        entity = await self.repository.get_by_id({entity_lower}_id, db)
-        if not entity:
-            raise HTTPException(status_code=404, detail="{entity_name} not found")
-
-        # Behavior guard: Check payment is expected
-        current_status = getattr(entity, 'status', None)
-        if current_status != '{precond}':
-            raise HTTPException(status_code=422, detail="{entity_name} must be {precond} to process payment")
-
-        # Validate payment data
-        if not payment_data or not payment_data.get('amount'):
-            raise HTTPException(status_code=422, detail="Payment amount required")
-
-        # Apply payment and transition
-        entity.status = '{postcond}'
-        db.add(entity)
-        await db.commit()
-        await db.refresh(entity)
-        return entity
-'''
-        elif 'cancel' in method_name:
-            # Cancellation pattern: any non-terminal -> CANCELLED
-            postcond = postcondition_status or 'CANCELLED'
-            return f'''
-    async def {method_name}(self, {entity_lower}_id: UUID, db: AsyncSession) -> Any:
-        """Cancel operation - generated with behavior guards by Cognitive Compiler."""
-        entity = await self.repository.get_by_id({entity_lower}_id, db)
-        if not entity:
-            raise HTTPException(status_code=404, detail="{entity_name} not found")
-
-        # Behavior guard: Check cancellation is allowed (domain-agnostic terminal states)
-        current_status = getattr(entity, 'status', None)
-        # Terminal states should come from IR.status_field.terminal_values
-        terminal_states = ['COMPLETED', 'CANCELLED', 'CLOSED', 'DONE', 'FINISHED']
-        if current_status in terminal_states:
-            raise HTTPException(status_code=422, detail="{entity_name} in terminal state cannot be cancelled")
-
-        # Apply cancellation
-        entity.status = '{postcond}'
-        db.add(entity)
-        await db.commit()
-        await db.refresh(entity)
-        return entity
-'''
-        elif 'create' in method_name or 'convert' in method_name:
-            # Create/convert pattern: creates new entity or transforms
-            postcond = postcondition_status or 'CREATED'
-            return f'''
-    async def {method_name}(self, {entity_lower}_id: UUID, db: AsyncSession) -> Any:
-        """Create/convert - generated with behavior guards by Cognitive Compiler."""
-        entity = await self.repository.get_by_id({entity_lower}_id, db)
-        if not entity:
-            raise HTTPException(status_code=404, detail="{entity_name} not found")
-
-        # Apply creation/conversion
-        entity.status = '{postcond}'
-        db.add(entity)
-        await db.commit()
-        await db.refresh(entity)
-        return entity
-'''
-        else:
-            # Generic method with existence check
-            return f'''
+                guards_code = "".join(guards)
+                return f'''
     async def {method_name}(self, {entity_lower}_id: UUID, db: AsyncSession, **kwargs) -> Any:
-        """Generic operation - generated by Cognitive Compiler."""
+        """IR-driven operation - generated from workflow_def by Cognitive Compiler."""
+        entity = await self.repository.get_by_id({entity_lower}_id, db)
+        if not entity:
+            raise HTTPException(status_code=404, detail="{entity_name} not found")
+{guards_code}{transition}
+        db.add(entity)
+        await db.commit()
+        await db.refresh(entity)
+        return entity
+'''
+
+        # No IR: generic method without assumptions
+        return f'''
+    async def {method_name}(self, {entity_lower}_id: UUID, db: AsyncSession, **kwargs) -> Any:
+        """Generic operation - no workflow_def in IR."""
         entity = await self.repository.get_by_id({entity_lower}_id, db)
         if not entity:
             raise HTTPException(status_code=404, detail="{entity_name} not found")

@@ -203,27 +203,38 @@ def _generate_workflow_method_body(entity_name, operation, flow_guards, ...):
 ### A. Fixes Inmediatos (Ortogonales a FlowLogicSynthesizer)
 
 #### A.1 Schema Generator - PUT Validation
-- [ ] Endurecer UpdateSchemas con `gt`/`ge` para campos numéricos
-- **Archivo**: `src/services/production_code_generators.py`
+- [x] Endurecer UpdateSchemas con `gt`/`ge` para campos numéricos
+- **Archivo**: `src/services/production_code_generators.py` (líneas 1836-1870, 2209-2230)
+- **Estado**: ✅ Ya implementado - constraints se preservan en UpdateSchemas
 
 #### A.2 TestsModelIR - DELETE Test Ordering
 - [ ] Cada DELETE crea su propia entidad (POST → DELETE)
-- **Archivo**: `src/cognitive/ir/tests_model_ir.py`
+- **Archivo**: `src/services/tests_ir_generator.py`
+- **Estado**: 🔄 Pendiente - DELETE tests usan UUIDs separados pero múltiples DELETE del mismo tipo fallan
 
 #### A.3 Nested DELETE - Bug #205
 - [ ] Verificar query usa PK del child
+- **Estado**: 🔄 Pendiente - DELETE /carts/{id}/items/{item_id} retorna 404
 
 ### B. FlowLogicSynthesizer (Nuevo)
 
-- [ ] Crear `src/cognitive/guard_ir.py` con modelo de expresiones
-- [ ] Crear `src/cognitive/flow_logic_synthesizer.py` agnóstico
-- [ ] Definir contrato de `constraint.metadata` en IR
-- [ ] Integrar con CodeGenerationService (varmap + traducción)
+- [x] Crear `src/cognitive/guard_ir.py` con modelo de expresiones
+- [x] Crear `src/cognitive/flow_logic_synthesizer.py` agnóstico
+- [x] Definir contrato de `constraint.metadata` en IR
+- [x] Integrar con CodeGenerationService (varmap + traducción)
+- **Estado**: ✅ Implementado en `src/services/production_code_generators.py` líneas 82-183
 
 ### C. Validación Final
 
-- [ ] E2E → 100% smoke tests
+- [ ] E2E → 100% smoke tests (actual: 93.3% - 70/75)
 - [ ] Sin regresiones
+
+### D. Fallos Actuales (5 escenarios)
+
+1. `DELETE /carts/{cart_id}/items/{item_id}` - 404 (item no seeded)
+2. `POST /orders` (checkout) - 422 (validation error)
+3. `DELETE /orders/{id}/items/{item_id}` - 404 (item no seeded)
+4. `DELETE /carts/{id}` x2 - 404 (cart ya eliminado por test anterior)
 
 ---
 
