@@ -656,15 +656,45 @@ def _generate_workflow_method_body(
         child_fk_field = child_info.get("fk_field", f"{entity_snake}_id")
         child_entity_name = child_info.get("entity_name", f"{entity_name}Item")
 
+        # Bug #203: Get auto-populated fields from referenced entity
+        auto_fields = child_info.get("auto_populated_fields", [])
+        ref_fk = child_info.get("reference_fk")
+        ref_entity = child_info.get("reference_entity")
+
+        # Build the fetch-from-reference code if needed
+        fetch_ref_code = ""
+        auto_populate_code = ""
+
+        if auto_fields and ref_fk and ref_entity:
+            ref_entity_class = f"{ref_entity}Entity"
+            fetch_ref_code = f'''
+        # Bug #203 Fix: Fetch referenced entity for auto-populated fields
+        from src.models.entities import {ref_entity_class}
+        from sqlalchemy import select
+        ref_id = data.get('{ref_fk}')
+        if not ref_id:
+            raise HTTPException(status_code=422, detail="Missing {ref_fk}")
+        ref_stmt = select({ref_entity_class}).where({ref_entity_class}.id == ref_id)
+        ref_result = await self.db.execute(ref_stmt)
+        ref_obj = ref_result.scalar_one_or_none()
+        if not ref_obj:
+            raise HTTPException(status_code=422, detail="{ref_entity} not found")
+'''
+            # Generate auto-populate assignments
+            for af in auto_fields:
+                child_field = af.get('child_field')
+                ref_field = af.get('ref_field')
+                auto_populate_code += f"        child_data['{child_field}'] = ref_obj.{ref_field}\n"
+
         business_logic = f'''
 
         # Bug #200 Fix: Create child entity from IR-derived relationship
         from src.models.entities import {child_entity_class}
-
+{fetch_ref_code}
         # Build child entity data with parent FK
         child_data = dict(data)
         child_data['{child_fk_field}'] = id
-
+{auto_populate_code}
         # Create the child entity
         child_obj = {child_entity_class}(**child_data)
         self.db.add(child_obj)
