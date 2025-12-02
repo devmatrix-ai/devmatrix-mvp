@@ -2364,38 +2364,48 @@ ItemSchema = Dict[str, Any]
 
 def _generate_behavior_guards(
     entity_name: str,
-    has_stock: bool,
     has_status: bool,
     status_field_name: str,
-    status_values: List[str]
+    status_values: List[str],
+    flow_guards: Any = None
 ) -> str:
     """
-    Generate behavior guard class for entity validation.
+    Generate behavior guard class for entity validation (100% domain-agnostic).
 
     This creates a Validator class that checks:
-    - Stock invariants (for entities with stock/quantity fields)
-    - Status transitions (for entities with status fields)
+    - Status transitions (derived from IR status_values)
+    - FlowLogicSynthesizer guards (derived from IR constraints)
     - Create/Update/Delete preconditions
+
+    NO hardcoded domain logic (no 'stock', 'product_id', etc.)
+    ALL guards come from IR via FlowLogicSynthesizer.
+
+    Args:
+        entity_name: Name of the entity
+        has_status: Whether entity has status field (from IR)
+        status_field_name: Name of the status field (from IR)
+        status_values: List of valid status values (from IR)
+        flow_guards: Optional FlowGuards from FlowLogicSynthesizer
 
     Returns complete Python class code as string.
     """
+    import re
     entity_lower = entity_name.lower()
+    entity_snake = re.sub(r'(?<!^)(?=[A-Z])', '_', entity_name).lower()
 
-    # Build valid transitions map from status values
+    # Build valid transitions map from status values (derived from IR, not hardcoded)
     transitions_code = ""
     if has_status and status_values:
-        # Build transition rules: each status can transition to next ones in sequence
-        # Plus common patterns like any -> CANCELLED
         transition_lines = []
         for i, status in enumerate(status_values):
             next_statuses = []
             if i + 1 < len(status_values):
                 next_statuses.append(status_values[i + 1])
-            # CANCELLED is usually a terminal from any non-terminal
-            if "CANCEL" not in status.upper() and "CANCELLED" in [s.upper() for s in status_values]:
-                cancelled = next(s for s in status_values if "CANCEL" in s.upper())
-                if cancelled not in next_statuses:
-                    next_statuses.append(cancelled)
+            # Allow transition to terminal states (any state with CANCEL/COMPLETE/DONE pattern)
+            for s in status_values:
+                if s != status and any(term in s.upper() for term in ["CANCEL", "COMPLETE", "DONE", "CLOSED"]):
+                    if s not in next_statuses:
+                        next_statuses.append(s)
             if next_statuses:
                 transition_lines.append(f'            "{status}": {next_statuses},')
 
@@ -2407,18 +2417,17 @@ class {entity_name}Validator:
     """
     Behavior guards for {entity_name}.
 
-    Generated from BehaviorModelIR invariants and constraints.
-    Validates preconditions before operations.
+    Generated from IR constraints via FlowLogicSynthesizer.
+    100% domain-agnostic - no hardcoded field names.
     """
 
-    # Valid status transitions
+    # Valid status transitions (derived from IR)
     VALID_TRANSITIONS = {{
-{transitions_code if transitions_code else '        # No status transitions defined'}
+{transitions_code if transitions_code else '        # No status transitions in IR'}
     }}
 
     async def check_create_preconditions(self, data) -> None:
         """Validate preconditions for create operation."""
-        # Extension point: Add entity-specific create validations
         pass
 
     async def check_update_preconditions(self, entity, data) -> None:
@@ -2426,10 +2435,10 @@ class {entity_name}Validator:
         data_dict = data.model_dump(exclude_unset=True) if hasattr(data, 'model_dump') else data
 '''
 
-    # Add status transition check if entity has status
+    # Add status transition check if entity has status (from IR)
     if has_status and status_field_name:
         guards += f'''
-        # Check status transition validity
+        # Status transition check (field name from IR: {status_field_name})
         if "{status_field_name}" in data_dict:
             new_status = data_dict["{status_field_name}"]
             current_status = getattr(entity, "{status_field_name}", None)
@@ -2439,34 +2448,41 @@ class {entity_name}Validator:
                 if new_status not in valid_next:
                     raise HTTPException(
                         status_code=422,
-                        detail=f"Cannot transition {entity_name} from '{{current_status}}' to '{{new_status}}'. Valid: {{valid_next}}"
+                        detail=f"Cannot transition from '{{current_status}}' to '{{new_status}}'. Valid: {{valid_next}}"
                     )
 '''
 
-    # Add stock check if entity has stock/quantity fields (detected from IR field names)
-    if has_stock:
-        guards += f'''
-    async def check_stock_invariant(self, entity, requested_qty: int) -> None:
-        """Validate stock is sufficient. Field names derived from IR."""
-        # Domain-agnostic: check common stock field patterns from IR
-        stock_fields = ['stock', 'quantity', 'inventory', 'available', 'count']
-        current_stock = 0
-        for sf in stock_fields:
-            val = getattr(entity, sf, None)
-            if val is not None:
-                current_stock = val
-                break
-        if current_stock < requested_qty:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Insufficient stock: {{current_stock}} < {{requested_qty}}"
-            )
+    # =========================================================
+    # Inject FlowLogicSynthesizer guards (100% from IR)
+    # =========================================================
+    if flow_guards and GUARD_IR_AVAILABLE:
+        varmap = {
+            f"entity:{entity_name}": "entity",
+            f"entity:{entity_lower}": "entity",
+            "input": "data",
+        }
+
+        # Pre-guards
+        pre_guards_code = generate_flow_guards_code(flow_guards, varmap, "pre", "        ")
+        if pre_guards_code:
+            guards += f'''
+    async def check_flow_guards(self, entity) -> None:
+        """Validate guards derived from IR via FlowLogicSynthesizer."""
+{pre_guards_code}
+'''
+
+        # Invariant guards
+        invariant_code = generate_flow_guards_code(flow_guards, varmap, "invariants", "        ")
+        if invariant_code:
+            guards += f'''
+    async def check_invariants(self, entity) -> None:
+        """Check invariants derived from IR."""
+{invariant_code}
 '''
 
     guards += f'''
     async def check_delete_preconditions(self, entity) -> None:
         """Validate preconditions for delete operation."""
-        # Extension point: Add entity-specific delete validations
         pass
 '''
 
@@ -2545,13 +2561,38 @@ def generate_service_method(entity_name: str, attributes: list = None, ir: Any =
     entity_snake = re.sub(r'(?<!^)(?=[A-Z])', '_', entity_name).lower()
     plural = f"{entity_snake}s"
 
-    # Determine which guards to generate based on entity type (domain-agnostic field detection)
-    stock_field_patterns = ('stock', 'quantity', 'inventory', 'available', 'count')
-    has_stock = any(_get_field_value(f, 'name', '').lower() in stock_field_patterns for f in attributes)
-    has_status = status_field_name and status_field_name != "status"  # Real status field found
+    # Status detection from IR - no hardcoded field patterns
+    has_status = status_field_name and status_field_name != "status"
 
-    # Build behavior guards section
-    behavior_guards = _generate_behavior_guards(entity_name, has_stock, has_status, status_field_name, status_values)
+    # =========================================================
+    # FlowLogicSynthesizer Integration (100% Domain-Agnostic)
+    # ALL guards come from IR via FlowLogicSynthesizer
+    # NO hardcoded patterns like 'stock', 'quantity', 'product_id'
+    # =========================================================
+    flow_guards = None
+    if ir and GUARD_IR_AVAILABLE:
+        try:
+            from src.cognitive.flow_logic_synthesizer import FlowLogicSynthesizer
+            synthesizer = FlowLogicSynthesizer()
+            all_guards = synthesizer.synthesize_for_app(ir)
+
+            # Get guards for this entity (check specific operations and "*" wildcard)
+            flow_guards = all_guards.get((entity_name, "*"))
+            if not flow_guards:
+                # Try lowercase entity name
+                flow_guards = all_guards.get((entity_name.lower(), "*"))
+
+            if flow_guards:
+                logger.info(f"FlowLogicSynthesizer: Found {len(flow_guards.pre)} pre-guards, "
+                           f"{len(flow_guards.post)} post-guards for {entity_name}")
+        except Exception as e:
+            logger.debug(f"FlowLogicSynthesizer: Could not synthesize guards for {entity_name}: {e}")
+
+    # Build behavior guards section (100% from IR via FlowLogicSynthesizer)
+    behavior_guards = _generate_behavior_guards(
+        entity_name, has_status, status_field_name, status_values,
+        flow_guards=flow_guards
+    )
 
     base_service = f'''"""
 FastAPI Service for {entity_name}

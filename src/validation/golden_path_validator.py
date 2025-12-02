@@ -80,50 +80,56 @@ class GoldenPathValidator:
         self.paths[path.path_id] = path
         logger.info(f"Registered golden path: {path.name}")
     
-    def register_ecommerce_paths(self):
-        """Register standard e-commerce golden paths."""
-        # Path 1: Full purchase flow
-        self.register_path(GoldenPath(
-            path_id="ecommerce:purchase",
-            name="Full Purchase Flow",
-            description="Product → Cart → Checkout → Payment → Complete",
-            priority=1,
-            steps=[
-                GoldenStep(1, "Create Product", "POST", "/products", 201, 
-                          {"name": "Test", "price": 10.0, "stock": 100}),
-                GoldenStep(2, "Create Cart", "POST", "/carts", 201),
-                GoldenStep(3, "Add to Cart", "POST", "/carts/{cart_id}/items", 201,
-                          {"product_id": "{product_id}", "quantity": 1}),
-                GoldenStep(4, "Checkout", "POST", "/carts/{cart_id}/checkout", 200),
-                GoldenStep(5, "Create Order", "POST", "/orders", 201),
-            ]
-        ))
-        
-        # Path 2: Cart management
-        self.register_path(GoldenPath(
-            path_id="ecommerce:cart",
-            name="Cart Management",
-            description="Create → Add → Remove → Clear",
-            priority=2,
-            steps=[
-                GoldenStep(1, "Create Cart", "POST", "/carts", 201),
-                GoldenStep(2, "Add Item", "POST", "/carts/{cart_id}/items", 201,
-                          {"product_id": "{product_id}", "quantity": 2}),
-                GoldenStep(3, "Remove Item", "DELETE", "/carts/{cart_id}/items/{item_id}", 204),
-            ]
-        ))
-        
-        # Path 3: Order cancellation
-        self.register_path(GoldenPath(
-            path_id="ecommerce:cancel",
-            name="Order Cancellation",
-            description="Create Order → Cancel",
-            priority=2,
-            steps=[
-                GoldenStep(1, "Create Order", "POST", "/orders", 201),
-                GoldenStep(2, "Cancel Order", "PUT", "/orders/{order_id}/cancel", 200),
-            ]
-        ))
+    def register_paths_from_ir(self, ir: Any):
+        """
+        Register golden paths from ApplicationIR flows.
+
+        100% domain-agnostic - paths are derived from IR, not hardcoded.
+        """
+        if not ir:
+            logger.warning("No IR provided for golden path registration")
+            return
+
+        try:
+            # Extract flows from BehaviorModelIR
+            behavior_ir = getattr(ir, 'behavior_model_ir', None)
+            if not behavior_ir:
+                return
+
+            flows = getattr(behavior_ir, 'flows', [])
+            for i, flow in enumerate(flows):
+                flow_name = getattr(flow, 'name', f'flow_{i}')
+                flow_id = getattr(flow, 'id', flow_name)
+
+                # Build steps from flow operations
+                steps = []
+                operations = getattr(flow, 'operations', [])
+                for j, op in enumerate(operations):
+                    op_name = getattr(op, 'name', f'step_{j}')
+                    method = getattr(op, 'method', 'POST')
+                    endpoint = getattr(op, 'endpoint', f'/{flow_name}')
+                    expected_status = getattr(op, 'expected_status', 200 if method == 'GET' else 201)
+                    body = getattr(op, 'body', None)
+
+                    steps.append(GoldenStep(
+                        order=j + 1,
+                        name=op_name,
+                        method=method,
+                        endpoint=endpoint,
+                        expected_status=expected_status,
+                        body=body
+                    ))
+
+                if steps:
+                    self.register_path(GoldenPath(
+                        path_id=f"ir:{flow_id}",
+                        name=flow_name,
+                        description=getattr(flow, 'description', ''),
+                        priority=i + 1,
+                        steps=steps
+                    ))
+        except Exception as e:
+            logger.error(f"Failed to register paths from IR: {e}")
     
     async def validate_path(self, path: GoldenPath) -> GoldenPathResult:
         """Validate a single golden path."""

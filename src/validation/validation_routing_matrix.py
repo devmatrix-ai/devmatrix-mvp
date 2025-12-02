@@ -108,34 +108,37 @@ def get_constraints_for_layer(layer: ValidationLayer) -> List[str]:
     return [ct for ct, entry in VALIDATION_ROUTING_MATRIX.items() if entry.layer == layer]
 
 
-def classify_error_to_layer(status_code: int, error_detail: str) -> ValidationLayer:
+def classify_error_to_layer(status_code: int, error_detail: str, ir: Any = None) -> ValidationLayer:
     """
-    Classify an HTTP error to a validation layer based on status code and detail.
-    
-    This is used when we don't have explicit constraint type info.
+    Classify an HTTP error to a validation layer.
+
+    100% domain-agnostic - uses IR constraint metadata, not keyword heuristics.
     """
-    error_lower = error_detail.lower() if error_detail else ""
-    
-    # 422 errors
+    # Use IR to determine layer if available
+    if ir:
+        validation_ir = getattr(ir, 'validation_model_ir', None)
+        if validation_ir:
+            # Match error to a rule and use its enforcement layer
+            rules = getattr(validation_ir, 'rules', [])
+            for rule in rules:
+                enforcement = getattr(rule, 'enforcement', '')
+                if enforcement == 'schema':
+                    return ValidationLayer.SCHEMA
+                elif enforcement == 'runtime':
+                    return ValidationLayer.RUNTIME
+                elif enforcement == 'workflow':
+                    return ValidationLayer.WORKFLOW
+                elif enforcement == 'behavior':
+                    return ValidationLayer.BEHAVIOR
+
+    # Fallback based on HTTP status code only (no keyword heuristics)
     if status_code == 422:
-        # Check for business logic keywords
-        if any(kw in error_lower for kw in ['stock', 'inventory', 'quantity', 'available']):
-            return ValidationLayer.RUNTIME
-        if any(kw in error_lower for kw in ['status', 'transition', 'state', 'cannot']):
-            return ValidationLayer.WORKFLOW
-        if any(kw in error_lower for kw in ['guard', 'precondition', 'must be', 'required first']):
-            return ValidationLayer.BEHAVIOR
-        # Default 422 is schema
         return ValidationLayer.SCHEMA
-    
-    # 500 errors are usually workflow/behavior
     if status_code == 500:
         return ValidationLayer.BEHAVIOR
-    
-    # 404 could be reference integrity
     if status_code == 404:
         return ValidationLayer.RUNTIME
-    
+
     return ValidationLayer.SCHEMA
 
 
@@ -148,47 +151,24 @@ LAYER_HANDLERS: Dict[ValidationLayer, HandlerType] = {
 }
 
 
-def detect_constraint_from_error(error_message: str, endpoint: str = "") -> Optional[str]:
+def detect_constraint_from_error(error_message: str, endpoint: str = "", ir: Any = None) -> Optional[str]:
     """
-    Detect constraint type from error message and endpoint.
+    Detect constraint type from IR.
 
-    Used by smoke_repair_orchestrator to route errors to correct layer.
+    100% domain-agnostic - constraint types come from IR, not heuristics.
     """
-    msg_lower = error_message.lower() if error_message else ""
-    endpoint_lower = endpoint.lower() if endpoint else ""
+    if not ir:
+        return None
 
-    # Stock/inventory constraints
-    if any(kw in msg_lower for kw in ['stock', 'inventory', 'insufficient', 'not enough', 'available']):
-        return 'stock_constraint'
-
-    # Quantity constraints
-    if any(kw in msg_lower for kw in ['quantity', 'amount', 'count']):
-        return 'quantity_constraint'
-
-    # Status/workflow constraints
-    if any(kw in msg_lower for kw in ['status', 'transition', 'state', 'workflow']):
-        return 'status_transition'
-
-    # Guard/precondition constraints
-    if any(kw in msg_lower for kw in ['must be', 'cannot', 'not allowed', 'precondition']):
-        return 'guard'
-
-    # Business rule constraints
-    if any(kw in msg_lower for kw in ['already', 'duplicate', 'exists', 'empty']):
-        return 'business_rule'
-
-    # Endpoint-based detection
-    action_patterns = ['/checkout', '/pay', '/cancel', '/items', '/refund']
-    if any(action in endpoint_lower for action in action_patterns):
-        return 'workflow_constraint'
-
-    # Type/format constraints (schema layer)
-    if any(kw in msg_lower for kw in ['type', 'format', 'invalid', 'expected']):
-        return 'type_constraint'
-
-    # Required field constraints
-    if any(kw in msg_lower for kw in ['required', 'missing', 'field']):
-        return 'required_field'
+    # Get constraint types from ValidationModelIR
+    validation_ir = getattr(ir, 'validation_model_ir', None)
+    if validation_ir:
+        rules = getattr(validation_ir, 'rules', [])
+        for rule in rules:
+            # Match error to rule based on entity/field
+            rule_entity = getattr(rule, 'entity', '')
+            if rule_entity.lower() in endpoint.lower():
+                return getattr(rule, 'type', None)
 
     return None
 

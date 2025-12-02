@@ -75,47 +75,67 @@ class RuntimeFlowValidator:
             for from_status, to_statuses in transitions.items()
         }
     
-    async def check_stock_invariant(
-        self, 
-        product_id: str, 
-        requested_quantity: int,
-        db: Any
+    async def check_comparison_constraint(
+        self,
+        entity: Any,
+        entity_type: str,
+        lhs_field: str,
+        rhs_value: Any,
+        operator: str = "<="
     ) -> ValidationResult:
-        """Check if stock is sufficient for requested quantity."""
+        """
+        Check a comparison constraint between entity field and value.
+
+        100% domain-agnostic - field names come from IR.
+        Example: check if entity.quantity <= some_value
+        """
         try:
-            # Get product from DB
-            product = await db.get("Product", product_id)
-            if not product:
+            lhs_value = getattr(entity, lhs_field, None)
+            if lhs_value is None:
                 return ValidationResult(
                     status=ValidationResultStatus.INVALID,
-                    message=f"Product {product_id} not found",
-                    constraint_type="stock_constraint",
-                    entity="Product"
+                    message=f"Field '{lhs_field}' not found on {entity_type}",
+                    constraint_type="comparison_constraint",
+                    entity=entity_type
                 )
-            
-            current_stock = getattr(product, 'stock', 0)
-            if current_stock < requested_quantity:
+
+            # Evaluate comparison
+            passed = False
+            if operator == "<=":
+                passed = lhs_value <= rhs_value
+            elif operator == "<":
+                passed = lhs_value < rhs_value
+            elif operator == ">=":
+                passed = lhs_value >= rhs_value
+            elif operator == ">":
+                passed = lhs_value > rhs_value
+            elif operator == "==":
+                passed = lhs_value == rhs_value
+            elif operator == "!=":
+                passed = lhs_value != rhs_value
+
+            if not passed:
                 return ValidationResult(
                     status=ValidationResultStatus.INVALID,
-                    message=f"Insufficient stock: {current_stock} < {requested_quantity}",
-                    constraint_type="stock_constraint",
-                    entity="Product",
-                    field="stock",
-                    expected=requested_quantity,
-                    actual=current_stock
+                    message=f"Constraint failed: {lhs_field}({lhs_value}) {operator} {rhs_value}",
+                    constraint_type="comparison_constraint",
+                    entity=entity_type,
+                    field=lhs_field,
+                    expected=rhs_value,
+                    actual=lhs_value
                 )
-            
+
             return ValidationResult(
                 status=ValidationResultStatus.VALID,
-                message="Stock sufficient",
-                constraint_type="stock_constraint"
+                message="Constraint passed",
+                constraint_type="comparison_constraint"
             )
         except Exception as e:
-            logger.error(f"Stock check error: {e}")
+            logger.error(f"Comparison check error: {e}")
             return ValidationResult(
                 status=ValidationResultStatus.INVALID,
                 message=str(e),
-                constraint_type="stock_constraint"
+                constraint_type="comparison_constraint"
             )
     
     async def check_status_transition(

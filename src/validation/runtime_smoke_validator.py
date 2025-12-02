@@ -801,45 +801,34 @@ class RuntimeSmokeTestValidator:
         return payload
 
     def _generate_field_value(self, field_name: str, field_type: str) -> Any:
-        """Generate appropriate test value based on field name and type."""
-        field_lower = field_name.lower()
+        """
+        Generate test value based on field type from IR.
+
+        100% domain-agnostic - uses only type information, no field name heuristics.
+        """
         type_lower = field_type.lower()
 
-        # Name-based inference (most reliable)
-        if 'email' in field_lower:
-            return 'test@example.com'
-        if 'id' in field_lower and 'uuid' in type_lower:
+        # Type-based generation only (domain-agnostic)
+        if 'uuid' in type_lower:
             return '00000000-0000-0000-0000-000000000001'
-        if 'id' in field_lower:
-            return 'test-id-123'
-        if 'name' in field_lower:
-            return 'Test Name'
-        if 'description' in field_lower:
-            return 'Test description'
-        if 'price' in field_lower or 'amount' in field_lower or 'cost' in field_lower:
-            return 99.99
-        if 'quantity' in field_lower or 'stock' in field_lower or 'count' in field_lower:
-            return 10
-        if 'status' in field_lower:
-            return 'active'
-        if 'date' in field_lower or 'time' in field_lower:
-            return '2025-01-01T00:00:00Z'
-        if 'url' in field_lower or 'link' in field_lower:
-            return 'https://example.com'
-        if 'is_' in field_lower or 'has_' in field_lower:
-            return True
-
-        # Type-based defaults
-        if 'int' in type_lower:
+        if 'int' in type_lower or 'integer' in type_lower:
             return 1
         if 'float' in type_lower or 'decimal' in type_lower or 'number' in type_lower:
             return 1.0
-        if 'bool' in type_lower:
+        if 'bool' in type_lower or 'boolean' in type_lower:
             return True
         if 'list' in type_lower or 'array' in type_lower:
             return []
         if 'dict' in type_lower or 'object' in type_lower:
             return {}
+        if 'date' in type_lower:
+            return '2025-01-01'
+        if 'datetime' in type_lower or 'timestamp' in type_lower:
+            return '2025-01-01T00:00:00Z'
+        if 'email' in type_lower:
+            return 'test@example.com'
+        if 'url' in type_lower or 'uri' in type_lower:
+            return 'https://example.com'
 
         # Default to string
         return 'test_value'

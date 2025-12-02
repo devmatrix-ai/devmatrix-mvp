@@ -7,15 +7,21 @@ All it sees are entities, fields, and constraint metadata from the IR.
 
 The output is Guard IR (GuardSpec, FlowGuards) which is then translated
 to concrete Python by CodeGenerationService using a varmap.
+
+Architecture:
+    IR (constraints) → FlowLogicSynthesizer → Guard IR → CodeGenerationService → Python
+
+The synthesizer ONLY produces abstract expressions (GuardExpr).
+It NEVER generates Python code - that's CodeGenerationService's job.
 """
 
 import logging
-from typing import Dict, Optional, Any, List
+from typing import Dict, Optional, Any, List, Set
 
 from .guard_ir import (
     GuardSpec, FlowGuards, FlowKey,
-    ComparisonExpr, MembershipExpr, ExistsExpr, NotEmptyExpr,
-    GuardExpr
+    ComparisonExpr, MembershipExpr, ExistsExpr, NotEmptyExpr, LogicalExpr,
+    GuardExpr, make_entity_ref, make_input_ref
 )
 
 logger = logging.getLogger(__name__)
@@ -45,6 +51,11 @@ class FlowLogicSynthesizer:
         """
         Synthesize guards for all flows in an ApplicationIR.
 
+        This is the main entry point. It:
+        1. Extracts constraints from ValidationModelIR (status_transition, stock_constraint, etc.)
+        2. Extracts constraints from BehaviorModelIR flows
+        3. Synthesizes Guard IR for each (entity, operation) pair
+
         Args:
             app_ir: The ApplicationIR containing behavior flows and constraints
 
@@ -52,31 +63,214 @@ class FlowLogicSynthesizer:
             Dictionary mapping (entity_name, operation_name) to FlowGuards
         """
         guards_by_flow: Dict[FlowKey, FlowGuards] = {}
+        entities_seen: Set[str] = set()
 
-        # Get behavior model if available
+        # =========================================================
+        # 1. Extract guards from ValidationModelIR rules
+        # =========================================================
+        validation_model = getattr(app_ir, 'validation_model', None)
+        if validation_model:
+            rules = getattr(validation_model, 'rules', []) or []
+            guards_from_validation = self._synthesize_from_validation_rules(rules)
+            for key, flow_guards in guards_from_validation.items():
+                guards_by_flow[key] = flow_guards
+                entities_seen.add(key[0])
+            logger.info(f"FlowLogicSynthesizer: Extracted guards for {len(guards_from_validation)} flows from ValidationModelIR")
+
+        # =========================================================
+        # 2. Extract guards from BehaviorModelIR flows
+        # =========================================================
         behavior = getattr(app_ir, 'behavior', None)
-        if not behavior:
-            logger.debug("No behavior model in IR, returning empty guards")
-            return guards_by_flow
+        if behavior:
+            flows = getattr(behavior, 'flows', []) or []
+            for flow in flows:
+                entity_name = getattr(flow, 'entity_name', None) or getattr(flow, 'entity', None)
+                operation_name = getattr(flow, 'operation_name', None) or getattr(flow, 'name', None)
 
-        # Get flows from behavior
-        flows = getattr(behavior, 'flows', []) or []
+                if not entity_name or not operation_name:
+                    continue
 
-        for flow in flows:
-            entity_name = getattr(flow, 'entity_name', None) or getattr(flow, 'entity', None)
-            operation_name = getattr(flow, 'operation_name', None) or getattr(flow, 'name', None)
+                key: FlowKey = (entity_name, operation_name)
+                flow_guards = self._build_guards_for_flow(app_ir, flow)
 
-            if not entity_name or not operation_name:
-                continue
+                # Merge with existing guards from validation
+                if key in guards_by_flow:
+                    existing = guards_by_flow[key]
+                    guards_by_flow[key] = FlowGuards(
+                        pre=existing.pre + flow_guards.pre,
+                        post=existing.post + flow_guards.post,
+                        invariants=existing.invariants + flow_guards.invariants
+                    )
+                else:
+                    guards_by_flow[key] = flow_guards
 
-            key: FlowKey = (entity_name, operation_name)
-            guards_by_flow[key] = self._build_guards_for_flow(app_ir, flow)
+                entities_seen.add(entity_name)
 
-            if guards_by_flow[key].pre or guards_by_flow[key].post:
-                logger.info(f"Synthesized {len(guards_by_flow[key].pre)} pre-guards, "
-                           f"{len(guards_by_flow[key].post)} post-guards for {key}")
+        # =========================================================
+        # 3. Log synthesis summary
+        # =========================================================
+        total_pre = sum(len(fg.pre) for fg in guards_by_flow.values())
+        total_post = sum(len(fg.post) for fg in guards_by_flow.values())
+        total_invariants = sum(len(fg.invariants) for fg in guards_by_flow.values())
+        logger.info(f"FlowLogicSynthesizer: Synthesized {total_pre} pre-guards, "
+                   f"{total_post} post-guards, {total_invariants} invariants "
+                   f"for {len(guards_by_flow)} flows across {len(entities_seen)} entities")
 
         return guards_by_flow
+
+    def _synthesize_from_validation_rules(self, rules: List[Any]) -> Dict[FlowKey, FlowGuards]:
+        """
+        Synthesize guards from ValidationModelIR rules.
+
+        This extracts status_transition, stock_constraint, workflow_constraint, and custom
+        rules and converts them to Guard IR.
+        """
+        guards_by_entity: Dict[str, FlowGuards] = {}
+
+        for rule in rules:
+            rule_type = getattr(rule, 'type', None)
+            if not rule_type:
+                continue
+
+            # Get entity name from rule
+            entity = getattr(rule, 'entity', None)
+            if not entity:
+                continue
+
+            # Convert ValidationType enum to string if needed
+            type_str = rule_type.value if hasattr(rule_type, 'value') else str(rule_type)
+
+            # Only process business logic constraints
+            if type_str not in ('status_transition', 'stock_constraint', 'workflow_constraint', 'custom'):
+                continue
+
+            # Build constraint metadata from rule
+            constraint = self._rule_to_constraint(rule, type_str)
+            if not constraint:
+                continue
+
+            guard = self._constraint_to_guard(None, constraint)
+            if not guard:
+                continue
+
+            # Add to entity's guards
+            if entity not in guards_by_entity:
+                guards_by_entity[entity] = FlowGuards(pre=[], post=[], invariants=[])
+
+            if guard.phase == "pre":
+                guards_by_entity[entity].pre.append(guard)
+            elif guard.phase == "post":
+                guards_by_entity[entity].post.append(guard)
+            else:
+                guards_by_entity[entity].invariants.append(guard)
+
+        # Convert to FlowKey format - use "*" for operation to apply to all operations
+        result: Dict[FlowKey, FlowGuards] = {}
+        for entity, flow_guards in guards_by_entity.items():
+            # These guards apply to updates/transitions
+            result[(entity, "*")] = flow_guards
+
+        return result
+
+    def _rule_to_constraint(self, rule: Any, type_str: str) -> Optional[Any]:
+        """Convert a ValidationRule to a constraint-like object for processing."""
+        from dataclasses import dataclass
+
+        @dataclass
+        class ConstraintAdapter:
+            type: str
+            id: str
+            metadata: Dict[str, Any]
+            description: str = ""
+
+        entity = getattr(rule, 'entity', '')
+        attribute = getattr(rule, 'attribute', '')
+        condition = getattr(rule, 'condition', '')
+        error_message = getattr(rule, 'error_message', '')
+
+        metadata: Dict[str, Any] = {}
+
+        if type_str == 'status_transition':
+            # Parse condition like "status in [PENDING, PAID]" or extract from attribute
+            metadata = {
+                'entity': entity,
+                'field': attribute if attribute else 'status',
+                'allowed_from': self._parse_allowed_values(condition),
+                'allowed_to': []
+            }
+        elif type_str == 'stock_constraint':
+            # Parse stock constraint - look for pattern like "quantity <= stock"
+            lhs, rhs, op = self._parse_comparison(condition, entity, attribute)
+            metadata = {
+                'lhs': lhs,
+                'rhs': rhs,
+                'op': op
+            }
+        elif type_str == 'workflow_constraint':
+            # Parse workflow constraint
+            metadata = {
+                'entity': entity,
+                'field': attribute,
+                'check': 'not_empty' if 'not empty' in condition.lower() else 'exists',
+                'message': error_message or condition
+            }
+        elif type_str == 'custom':
+            # Parse custom constraint
+            metadata = {
+                'entity': entity,
+                'field': attribute,
+                'pattern': condition,
+                'description': error_message or condition
+            }
+
+        return ConstraintAdapter(
+            type=type_str,
+            id=f"{entity}.{attribute}.{type_str}",
+            metadata=metadata,
+            description=error_message or condition
+        )
+
+    def _parse_allowed_values(self, condition: str) -> List[str]:
+        """Parse allowed values from condition string like 'status in [PENDING, PAID]'."""
+        if not condition:
+            return []
+
+        # Look for [value1, value2] pattern
+        import re
+        match = re.search(r'\[([^\]]+)\]', condition)
+        if match:
+            values = [v.strip().strip("'\"") for v in match.group(1).split(',')]
+            return values
+
+        # Look for "in (value1, value2)" pattern
+        match = re.search(r'in\s*\(([^)]+)\)', condition, re.IGNORECASE)
+        if match:
+            values = [v.strip().strip("'\"") for v in match.group(1).split(',')]
+            return values
+
+        return []
+
+    def _parse_comparison(self, condition: str, entity: str, attribute: str) -> tuple:
+        """Parse comparison from condition string like 'quantity <= product.stock'."""
+        import re
+
+        # Default: lhs is entity.attribute, rhs is unknown, op is <=
+        lhs = {'entity': entity, 'field': attribute, 'role': 'entity'}
+        rhs = {'entity': '', 'field': 'stock', 'role': 'entity'}
+        op = '<='
+
+        if not condition:
+            return lhs, rhs, op
+
+        # Look for pattern: field op entity.field
+        match = re.search(r'(\w+)\s*([<>=!]+)\s*(\w+)\.(\w+)', condition)
+        if match:
+            lhs_field, op_str, rhs_entity, rhs_field = match.groups()
+            lhs = {'entity': entity, 'field': lhs_field, 'role': 'entity'}
+            rhs = {'entity': rhs_entity, 'field': rhs_field, 'role': 'entity'}
+            op = op_str
+
+        return lhs, rhs, op
 
     def _build_guards_for_flow(self, app_ir: Any, flow: Any) -> FlowGuards:
         """Build guards for a single flow from its constraints."""

@@ -4314,28 +4314,38 @@ router = APIRouter(
             detail=f"{source_entity_name} not found"
         )
 
-    # Map fields from source to target (domain-agnostic field mapping)
-    # Common patterns: customer_id, user_id, items, total_amount
+    # Map fields from source to target (100% domain-agnostic)
+    # Copy ALL matching FK fields dynamically
     create_data = {{}}
 
-    # Copy FK fields that exist in both entities
-    if hasattr(source_obj, 'customer_id'):
-        create_data['customer_id'] = source_obj.customer_id
-    elif hasattr(source_obj, 'user_id'):
-        create_data['user_id'] = source_obj.user_id
+    # Copy FK fields that exist on source (detect dynamically)
+    for attr in dir(source_obj):
+        if attr.endswith('_id') and not attr.startswith('_'):
+            val = getattr(source_obj, attr, None)
+            if val is not None:
+                create_data[attr] = val
 
-    # Set default status for new entity
-    create_data['{entity_snake}_status'] = 'PENDING_PAYMENT'
-    create_data['payment_status'] = 'PENDING'
+    # Set initial status if entity has status field (from IR)
+    status_field = '{entity_snake}_status'
+    if hasattr({entity.name}Entity, status_field):
+        create_data[status_field] = 'PENDING'
 
-    # Calculate total from items
-    total = 0.0
+    # Calculate total from items if both exist
     if hasattr(source_obj, 'items') and source_obj.items:
+        total = 0.0
         for item in source_obj.items:
-            qty = getattr(item, 'quantity', 1)
-            price = getattr(item, 'unit_price', 0) or getattr(item, 'price', 0)
+            # Detect numeric fields dynamically
+            qty = 1
+            price = 0
+            for attr in dir(item):
+                if 'quantity' in attr.lower() or 'qty' in attr.lower():
+                    qty = getattr(item, attr, 1)
+                if 'price' in attr.lower() or 'amount' in attr.lower():
+                    price = getattr(item, attr, 0)
             total += float(qty) * float(price)
-    create_data['total_amount'] = total
+        # Set total if field exists
+        if hasattr({entity.name}Entity, 'total_amount'):
+            create_data['total_amount'] = total
 
     # Create target entity
     {entity_snake}_create = {entity.name}Create(**create_data)
@@ -4343,25 +4353,27 @@ router = APIRouter(
     db.add(db_obj)
     await db.flush()
 
-    # Copy items from source to target
+    # Copy items from source to target (dynamic field mapping)
     if hasattr(source_obj, 'items') and source_obj.items:
         for item in source_obj.items:
-            item_data = {{
-                '{entity_snake}_id': db_obj.id,
-                'product_id': getattr(item, 'product_id', None),
-                'quantity': getattr(item, 'quantity', 1),
-                'unit_price': getattr(item, 'unit_price', 0) or getattr(item, 'price', 0),
-            }}
+            item_data = {{'{entity_snake}_id': db_obj.id}}
+            # Copy all non-private attributes from item
+            for attr in dir(item):
+                if not attr.startswith('_') and attr != 'id':
+                    val = getattr(item, attr, None)
+                    if val is not None and not callable(val):
+                        item_data[attr] = val
             item_obj = {entity.name}ItemEntity(**item_data)
             db.add(item_obj)
 
     await db.flush()
     await db.refresh(db_obj)
 
-    # Mark source as processed (e.g., cart status = CHECKED_OUT)
-    if hasattr(source_obj, '{source_snake}_status'):
+    # Mark source as processed (detect status field dynamically)
+    source_status_field = '{source_snake}_status'
+    if hasattr(source_obj, source_status_field):
         from src.models.schemas import {source_entity_name}Update
-        await source_service.update({schema_entity_snake}_data.{source_fk_field}, {source_entity_name}Update({source_snake}_status='CHECKED_OUT'))
+        await source_service.update({schema_entity_snake}_data.{source_fk_field}, {source_entity_name}Update(**{{source_status_field: 'PROCESSED'}}))
 
     return {entity.name}Response.model_validate(db_obj)
 '''

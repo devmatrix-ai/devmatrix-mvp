@@ -118,17 +118,19 @@ class IRBackpropagationEngine:
         confidence = 0.0
         constraint_type = None
         
-        error_lower = error_detail.lower() if error_detail else ""
-        
-        # Infer constraint type from error
-        if 'stock' in error_lower or 'inventory' in error_lower:
-            constraint_type = 'stock_constraint'
-        elif 'status' in error_lower or 'transition' in error_lower:
-            constraint_type = 'status_transition'
-        elif 'not found' in error_lower:
-            constraint_type = 'existence'
-        elif status_code == 422:
-            constraint_type = 'validation'
+        # Infer constraint type from IR (100% domain-agnostic)
+        constraint_type = 'validation'  # default
+
+        # Look up constraint type from ValidationModelIR
+        if entity and hasattr(self, '_ir') and self._ir:
+            validation_ir = getattr(self._ir, 'validation_model_ir', None)
+            if validation_ir:
+                rules = getattr(validation_ir, 'rules', [])
+                for rule in rules:
+                    rule_entity = getattr(rule, 'entity', '')
+                    if rule_entity.lower() == entity.lower():
+                        constraint_type = getattr(rule, 'type', 'validation')
+                        break
         
         # Try to find matching flow
         if entity and entity in self._entity_index:
@@ -158,27 +160,30 @@ class IRBackpropagationEngine:
         """Generate a repair intent from a violation causality."""
         if not causality.ir_node:
             return None
-        
+
         intent_id = f"intent:{causality.violation_id}"
-        
-        # Determine repair type based on constraint
+
+        # Determine repair type based on constraint type (from IR, not hardcoded)
+        constraint_type = causality.inferred_constraint_type
         repair_type = "validation_add"
-        if causality.inferred_constraint_type == 'stock_constraint':
+
+        # Map constraint types to repair types (generic, not domain-specific)
+        if constraint_type in ['comparison', 'guard', 'invariant']:
             repair_type = "guard_add"
-        elif causality.inferred_constraint_type == 'status_transition':
+        elif constraint_type in ['status_transition', 'workflow']:
             repair_type = "transition_add"
-        
+
         return RepairIntent(
             intent_id=intent_id,
             ir_node=causality.ir_node,
             repair_type=repair_type,
             description=f"Add {repair_type} for {causality.ir_node.node_id}"
         )
-    
+
     def backpropagate_fix(self, intent: RepairIntent) -> Dict[str, Any]:
         """
         Backpropagate a fix to update the IR.
-        
+
         Returns the IR modifications to apply.
         """
         modifications = {
@@ -187,18 +192,19 @@ class IRBackpropagationEngine:
             'repair_type': intent.repair_type,
             'updates': {}
         }
-        
+
+        # Generic repair types (no domain-specific keywords)
         if intent.repair_type == 'guard_add':
             modifications['updates']['add_guard'] = {
                 'name': f"guard_for_{intent.ir_node.node_id}",
-                'type': 'stock_check'
+                'type': 'comparison'  # generic
             }
         elif intent.repair_type == 'transition_add':
             modifications['updates']['add_transition'] = {
                 'from': '*',
                 'to': '*'
             }
-        
+
         logger.info(f"Backpropagating fix to IR: {modifications}")
         return modifications
 

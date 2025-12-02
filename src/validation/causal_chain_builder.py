@@ -123,25 +123,20 @@ class CausalChainBuilder:
         entity: Optional[str],
         ir_path: Optional[str]
     ) -> CauseNode:
-        """Analyze error to determine cause type."""
-        error_lower = error_detail.lower() if error_detail else ""
-        
+        """Analyze error to determine cause type from IR."""
         cause_type = CauseType.UNKNOWN
         description = error_detail
-        
-        # Determine cause type from error patterns
-        if 'stock' in error_lower or 'inventory' in error_lower or 'quantity' in error_lower:
-            cause_type = CauseType.MISSING_GUARD
-            description = "Stock/quantity guard missing or insufficient"
-        elif 'status' in error_lower or 'transition' in error_lower or 'cannot' in error_lower:
-            cause_type = CauseType.INVALID_TRANSITION
-            description = "Invalid status transition attempted"
-        elif 'not found' in error_lower or '404' in str(status_code):
-            cause_type = CauseType.REFERENCE_MISSING
-            description = "Referenced entity not found"
-        elif ir_path:
+
+        # Determine cause type from IR constraint metadata (100% domain-agnostic)
+        if ir_path:
             cause_type = CauseType.IR_CONSTRAINT
             description = f"IR constraint at {ir_path}"
+        elif status_code == 404:
+            cause_type = CauseType.REFERENCE_MISSING
+            description = "Referenced entity not found"
+        elif status_code == 422:
+            cause_type = CauseType.MISSING_GUARD
+            description = "Validation guard failed"
         
         return CauseNode(
             node_id=f"cause:{self._counter}",

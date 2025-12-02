@@ -279,8 +279,18 @@ def _generate_workflow_method_body(entity_name, operation, flow_guards, ...):
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │ 1. Parse flow preconditions/postconditions              │   │
 │  │ 2. Map to ValidationRoutingMatrix layer                 │   │
-│  │ 3. Generate Python guard code                           │   │
+│  │ 3. Generate Guard IR (GuardExpr) - NOT Python code      │   │
 │  │ 4. Build ConstraintGraph for cascade detection          │   │
+│  └─────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│               CodeGenerationService (Adaptador)                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ 1. Recibe Guard IR + varmap del stack (FastAPI)         │   │
+│  │ 2. Traduce GuardExpr → Python concreto                  │   │
+│  │ 3. Inyecta guards en métodos de servicio                │   │
 │  └─────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -291,7 +301,7 @@ def _generate_workflow_method_body(entity_name, operation, flow_guards, ...):
 │  │ async def checkout(self, cart_id: UUID) -> Order:        │   │
 │  │     cart = await self.cart_repo.get(cart_id)             │   │
 │  │                                                          │   │
-│  │     # Pre-guards (from preconditions)                    │   │
+│  │     # Pre-guards (from Guard IR)                         │   │
 │  │     if cart.status != "OPEN":                            │   │
 │  │         raise HTTPException(422, "Cart not open")        │   │
 │  │     if len(cart.items) == 0:                             │   │
@@ -300,9 +310,93 @@ def _generate_workflow_method_body(entity_name, operation, flow_guards, ...):
 │  │     # Business logic                                     │   │
 │  │     order = await self._create_order_from_cart(cart)     │   │
 │  │                                                          │   │
-│  │     # Post-guards (from postconditions)                  │   │
+│  │     # Post-guards (transitions)                          │   │
 │  │     cart.status = "CHECKED_OUT"                          │   │
 │  │     return order                                         │   │
 │  └─────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## 📋 Contrato Explícito de constraint.metadata
+
+> **Clave para que FlowLogicSynthesizer sea agnóstico**: no inventa nada,
+> solo traduce estructuras normalizadas que vienen del extractor de constraints.
+
+### status_transition
+```json
+{
+  "type": "status_transition",
+  "entity": "Order",
+  "field": "order_status",
+  "allowed_from": ["PENDING_PAYMENT"],
+  "allowed_to": ["PAID", "CANCELLED"]
+}
+```
+
+### stock_constraint
+```json
+{
+  "type": "stock_constraint",
+  "lhs": {"entity": "CartItem", "field": "quantity", "role": "entity"},
+  "rhs": {"entity": "Product", "field": "stock", "role": "entity"},
+  "op": "<="
+}
+```
+
+### workflow_constraint
+```json
+{
+  "type": "workflow_constraint",
+  "flow_id": "checkout",
+  "expr_kind": "min_length",
+  "target": {"entity": "Cart", "field": "items", "role": "entity"},
+  "min": 1
+}
+```
+
+### custom (fallback genérico)
+```json
+{
+  "type": "custom",
+  "entity": "Order",
+  "field": "total_amount",
+  "pattern": ">= 0",
+  "description": "Total must be non-negative"
+}
+```
+
+---
+
+## 🛠️ Helpers para Refs (guard_ir.py)
+
+```python
+def make_entity_ref(entity: str, field: str) -> EntityRef:
+    """Crea referencia a campo de entidad"""
+    return (f"entity:{entity}", field)
+
+def make_input_ref(field: str) -> ContextRef:
+    """Crea referencia a campo de input/payload"""
+    return ("input", field)
+```
+
+---
+
+## 🚀 Implementación Progresiva
+
+### Paso 1: guard_ir.py + interfaces mínimas
+- Modelo de expresiones (ya definido)
+- Helpers `make_entity_ref`, `make_input_ref`
+
+### Paso 2: FlowLogicSynthesizer v0 (solo status_transition)
+- Primera versión mínima
+- Prueba E2E: IR → ConstraintGraph → Guard IR → Codegen
+
+### Paso 3: Extender con stock_constraint y workflow_constraint
+- Agregar `_stock_constraint_guard()`
+- Agregar `_workflow_guard()`
+
+### Paso 4: Adaptador en CodeGenerationService
+- `_ref_to_python(ref, varmap)` centralizado
+- Bucle de inyección de guards en service methods

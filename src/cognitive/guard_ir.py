@@ -147,3 +147,48 @@ class FlowGuards:
 # Examples: ("X", "create"), ("Y", "update"), ("Z", "transition_status")
 FlowKey = Tuple[str, str]
 
+
+# =============================================================================
+# Helper Functions - Create refs in a consistent way
+# =============================================================================
+
+def make_entity_ref(entity: str, field: str) -> EntityRef:
+    """
+    Create a reference to an entity's field.
+
+    Args:
+        entity: Entity name (e.g., "Order", "Cart")
+        field: Field name (e.g., "status", "quantity")
+
+    Returns:
+        EntityRef tuple ("entity:Order", "status")
+    """
+    return (f"entity:{entity}", field)
+
+
+def make_input_ref(field: str) -> ContextRef:
+    """
+    Create a reference to an input/payload field.
+
+    Args:
+        field: Field name in the input payload
+
+    Returns:
+        ContextRef tuple ("input", "quantity")
+    """
+    return ("input", field)
+
+
+def make_context_ref(context: str, field: str) -> ContextRef:
+    """
+    Create a reference to a context field.
+
+    Args:
+        context: Context role (e.g., "current_user", "session")
+        field: Field name
+
+    Returns:
+        ContextRef tuple
+    """
+    return (context, field)
+

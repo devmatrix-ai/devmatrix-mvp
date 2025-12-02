@@ -2022,26 +2022,34 @@ class SmokeRepairOrchestrator:
         if not entity_name:
             return None
 
-        # Identify the type of business logic error
+        # Identify constraint type from error (domain-agnostic pattern matching)
         fix_type = None
         fix_code = None
 
-        # Stock constraint errors
-        if any(kw in error_message for kw in ['stock', 'inventory', 'insufficient', 'quantity']):
-            fix_type = "stock_validation"
-            # Find the method that needs stock validation
+        # Use IR constraints if available, not hardcoded keywords
+        constraint_info = self._extract_constraint_from_error(error_message, violation)
+
+        # Comparison constraint errors (e.g., "value > limit")
+        if constraint_info and constraint_info.get('type') == 'comparison':
+            fix_type = "comparison_constraint"
             method_name = self._infer_method_from_endpoint(violation.endpoint)
             if method_name and f"def {method_name}" in content:
-                # Add stock validation before the database operation
-                fix_code = self._generate_stock_validation_code(entity_name, method_name)
-                logger.info(f"    🔧 SERVICE: Adding stock validation to {method_name}")
+                fix_code = self._generate_constraint_validation_code(
+                    entity_name, 'comparison', constraint_info.get('metadata', {})
+                )
+                logger.info(f"    🔧 SERVICE: Adding constraint validation to {method_name}")
 
         # Status transition errors
-        elif any(kw in error_message for kw in ['status', 'transition', 'state', 'pending', 'cancelled']):
+        elif constraint_info and constraint_info.get('type') == 'status_transition':
             fix_type = "status_transition"
             method_name = self._infer_method_from_endpoint(violation.endpoint)
             if method_name and f"def {method_name}" in content:
-                fix_code = self._generate_status_check_code(entity_name, method_name)
+                metadata = constraint_info.get('metadata', {})
+                fix_code = self._generate_status_transition_code(
+                    entity_name,
+                    metadata.get('status_field', 'status'),
+                    metadata.get('transitions', {})
+                )
                 logger.info(f"    🔧 SERVICE: Adding status validation to {method_name}")
 
         # Empty cart/collection errors
@@ -2173,26 +2181,83 @@ class SmokeRepairOrchestrator:
 
         return None
 
-    def _generate_stock_validation_code(self, entity_name: str, method_name: str) -> str:
-        """Generate stock validation code snippet."""
+    def _extract_constraint_from_error(self, error_message: str, violation: Any) -> Optional[Dict[str, Any]]:
+        """
+        Extract constraint info from error message and violation.
+
+        Returns dict with 'type' and 'metadata' if constraint found.
+        100% domain-agnostic - uses IR metadata, not hardcoded patterns.
+        """
+        # Try to get constraint info from violation metadata
+        if hasattr(violation, 'constraint_info') and violation.constraint_info:
+            return violation.constraint_info
+
+        # Try to get from IR if available
+        if hasattr(self, 'ir') and self.ir:
+            # Look up constraint in ValidationModelIR
+            validation_ir = getattr(self.ir, 'validation_model_ir', None)
+            if validation_ir:
+                rules = getattr(validation_ir, 'rules', [])
+                for rule in rules:
+                    rule_type = getattr(rule, 'type', '')
+                    if rule_type in ['comparison', 'status_transition', 'membership']:
+                        return {
+                            'type': rule_type,
+                            'metadata': {
+                                'entity': getattr(rule, 'entity', ''),
+                                'field': getattr(rule, 'attribute', ''),
+                                'condition': getattr(rule, 'condition', ''),
+                            }
+                        }
+
+        # Fallback: infer from error message patterns (still domain-agnostic)
+        error_lower = error_message.lower()
+        if 'transition' in error_lower or 'status' in error_lower:
+            return {'type': 'status_transition', 'metadata': {}}
+        if any(op in error_message for op in ['<', '>', '<=', '>=', '!=']):
+            return {'type': 'comparison', 'metadata': {}}
+
+        return None
+
+    def _generate_constraint_validation_code(self, entity_name: str, constraint_type: str, metadata: dict) -> str:
+        """
+        Generate constraint validation code from IR metadata.
+
+        100% domain-agnostic - field names come from constraint metadata.
+        """
+        lhs_entity = metadata.get('lhs_entity', entity_name)
+        lhs_field = metadata.get('lhs_field', 'value')
+        rhs_entity = metadata.get('rhs_entity', '')
+        rhs_field = metadata.get('rhs_field', 'limit')
+        operator = metadata.get('operator', '<=')
+
+        lhs_var = lhs_entity.lower()
+        rhs_expr = f"{rhs_entity.lower()}.{rhs_field}" if rhs_entity else rhs_field
+
         return f'''
-        # Bug #192: Stock validation
-        if product.stock < quantity:
+        # Constraint validation from IR: {constraint_type}
+        if not ({lhs_var}.{lhs_field} {operator} {rhs_expr}):
             raise HTTPException(
                 status_code=422,
-                detail=f"Insufficient stock: requested {{quantity}}, available {{product.stock}}"
+                detail=f"Constraint failed: {lhs_field} {operator} {rhs_field}"
             )
 '''
 
-    def _generate_status_check_code(self, entity_name: str, method_name: str) -> str:
-        """Generate status transition validation code."""
+    def _generate_status_transition_code(self, entity_name: str, status_field: str, transitions: dict) -> str:
+        """
+        Generate status transition validation code from IR.
+
+        100% domain-agnostic - status field and transitions from IR.
+        """
+        entity_var = entity_name.lower()
         return f'''
-        # Bug #192: Status transition validation
-        valid_transitions = {{"pending": ["paid", "cancelled"], "paid": [], "cancelled": []}}
-        if new_status not in valid_transitions.get({entity_name.lower()}.status, []):
+        # Status transition validation from IR
+        valid_transitions = {transitions}
+        current = getattr({entity_var}, "{status_field}", None)
+        if new_status not in valid_transitions.get(current, []):
             raise HTTPException(
                 status_code=422,
-                detail=f"Invalid status transition from {{{entity_name.lower()}.status}} to {{new_status}}"
+                detail=f"Invalid status transition from {{current}} to {{new_status}}"
             )
 '''
 
