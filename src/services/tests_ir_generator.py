@@ -518,6 +518,8 @@ class TestsIRGenerator:
 
         # 422 validation error for POST/PUT with invalid body
         if endpoint.method in [HttpMethod.POST, HttpMethod.PUT] and endpoint.request_schema:
+            # Generate invalid body that will trigger validation error
+            invalid_body = self._generate_invalid_request_body(endpoint)
             error_cases.append(TestScenarioIR(
                 name=f"{endpoint.operation_id}_validation_error",
                 description="Test with invalid request body",
@@ -526,7 +528,7 @@ class TestsIRGenerator:
                 operation_id=endpoint.operation_id,
                 test_type=TestType.SMOKE,
                 priority=TestPriority.MEDIUM,
-                request_body={},  # Empty body should fail validation
+                request_body=invalid_body,
                 expected_outcome=ExpectedOutcome.VALIDATION_ERROR,
                 expected_status_code=422,
                 assertions=[TestAssertion(
@@ -577,6 +579,71 @@ class TestsIRGenerator:
                 body[field.name] = self._get_field_value(field.type, field.name)
 
         return body
+
+    def _generate_invalid_request_body(self, endpoint: Endpoint) -> Dict[str, Any]:
+        """Generate invalid request body that will trigger 422 validation error.
+
+        Strategy (domain-agnostic):
+        1. For POST: omit required fields OR send wrong types
+        2. For PUT/PATCH: send invalid values for numeric fields (negative when ge=0)
+
+        Uses IR constraints to determine what values are invalid.
+        """
+        if not endpoint.request_schema:
+            return {}
+
+        # For POST, empty body usually fails if there are required fields
+        if endpoint.method == HttpMethod.POST:
+            has_required = any(f.required for f in endpoint.request_schema.fields)
+            if has_required:
+                return {}  # Empty body fails required field validation
+
+        # For PUT/PATCH, we need to send invalid values
+        # Find a numeric field and send a negative value
+        invalid_body = {}
+        for field in endpoint.request_schema.fields:
+            field_type = field.type.lower() if field.type else ""
+            field_name = field.name.lower() if field.name else ""
+
+            # Look for numeric fields that likely have ge=0 or gt=0 constraints
+            if field_type in ['integer', 'int', 'float', 'number', 'decimal']:
+                # Check if this field has range constraints in IR
+                entity_name = self._infer_entity_from_endpoint(endpoint)
+                key = f"{entity_name}.{field.name}"
+                constraints = self._constraint_cache.get(key, {})
+
+                # If field has min constraint, send value below it
+                if "min" in constraints:
+                    min_val = constraints["min"]
+                    invalid_body[field.name] = min_val - 1  # Below minimum
+                    return invalid_body
+
+                # Common patterns: price, quantity, stock, amount should be positive
+                if any(kw in field_name for kw in ['price', 'quantity', 'stock', 'amount', 'count']):
+                    invalid_body[field.name] = -1  # Negative value
+                    return invalid_body
+
+        # Fallback: send wrong type for first field
+        if endpoint.request_schema.fields:
+            first_field = endpoint.request_schema.fields[0]
+            invalid_body[first_field.name] = {"invalid": "type"}  # Object instead of expected type
+
+        return invalid_body
+
+    def _infer_entity_from_endpoint(self, endpoint: Endpoint) -> str:
+        """Infer entity name from endpoint path (domain-agnostic)."""
+        # Extract from path like /products/{id} -> Product
+        path_parts = endpoint.path.strip('/').split('/')
+        if path_parts:
+            # First segment is usually the entity plural
+            entity_plural = path_parts[0]
+            # Convert to singular (simple heuristic)
+            if entity_plural.endswith('ies'):
+                return entity_plural[:-3] + 'y'
+            elif entity_plural.endswith('s'):
+                return entity_plural[:-1]
+            return entity_plural
+        return ""
 
     def _get_field_value(self, field_type: str, field_name: str) -> Any:
         """Get test value for a schema field.

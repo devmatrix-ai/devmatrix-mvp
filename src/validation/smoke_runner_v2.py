@@ -246,9 +246,14 @@ class SmokeRunnerV2:
                 if 'item' in key:
                     seed_uuids['item'] = seed_uuids[key]
                     break
-            # Bug #192: Fallback to centralized join table start UUID
+            # Bug #205: Use correct UUID for item based on variant
+            # Primary items: 20, 22 (CartItem, OrderItem)
+            # Delete items: 21, 23 (CartItem for delete, OrderItem for delete)
             if 'item' not in seed_uuids:
-                seed_uuids['item'] = f"{SeedUUIDRegistry.UUID_BASE_DELETE}20"
+                if is_delete:
+                    seed_uuids['item'] = f"{SeedUUIDRegistry.UUID_BASE_DELETE}21"  # CartItem for delete
+                else:
+                    seed_uuids['item'] = f"{SeedUUIDRegistry.UUID_BASE_DELETE}20"  # CartItem primary
 
         return seed_uuids
 
@@ -292,15 +297,17 @@ class SmokeRunnerV2:
                     # Specific param name (e.g., product_id -> product)
                     entity_type = param_name.replace('_id', '').lower()
 
-                # Domain-agnostic: For item subresource paths, use PRIMARY parent UUID
-                # Item entities reference primary parent entity, not delete variant
+                # Domain-agnostic: For item subresource paths, use correct parent UUID
+                # Bug #205: DELETE tests need delete variant of parent entity
                 is_item_subpath = '/items/' in scenario.endpoint_path
                 if is_item_subpath and param_name.endswith('_id') and param_name != 'id':
-                    # Use primary UUID for the referenced parent entity
+                    # Use correct UUID variant for the parent entity
                     parent_entity = param_name.replace('_id', '')
-                    first_key = list(seed_uuids_primary.keys())[0] if seed_uuids_primary else None
-                    fallback = seed_uuids_primary.get(first_key, f"{SeedUUIDRegistry.UUID_BASE}1") if first_key else f"{SeedUUIDRegistry.UUID_BASE}1"
-                    param_value = seed_uuids_primary.get(parent_entity, fallback)
+                    # Bug #205: For DELETE, use delete variant of parent
+                    parent_uuids = seed_uuids_delete if is_delete else seed_uuids_primary
+                    first_key = list(parent_uuids.keys())[0] if parent_uuids else None
+                    fallback = parent_uuids.get(first_key, f"{SeedUUIDRegistry.UUID_BASE}1") if first_key else f"{SeedUUIDRegistry.UUID_BASE}1"
+                    param_value = parent_uuids.get(parent_entity, fallback)
                 else:
                     # Bug #192: Use centralized NOT_FOUND_UUID for unknown entities
                     param_value = seed_uuids.get(entity_type, SeedUUIDRegistry.NOT_FOUND_UUID)

@@ -21,6 +21,172 @@ except ImportError:
     def get_field_overrides_for_entity(entity_name: str):
         return {}
 
+# =============================================================================
+# Guard IR → Python Adapter (Domain-Agnostic)
+# =============================================================================
+# This section translates abstract Guard IR expressions to concrete Python code.
+# The varmap provides the mapping from abstract refs to actual variable names.
+
+try:
+    from src.cognitive.guard_ir import (
+        GuardSpec, FlowGuards, FlowKey,
+        ComparisonExpr, MembershipExpr, ExistsExpr, NotEmptyExpr, LogicalExpr,
+        GuardExpr
+    )
+    GUARD_IR_AVAILABLE = True
+except ImportError:
+    GUARD_IR_AVAILABLE = False
+
+
+def _ref_to_python(ref: tuple, varmap: Dict[str, str]) -> str:
+    """
+    Translate an abstract ref to a Python expression using varmap.
+
+    Args:
+        ref: Tuple like ("entity:Order", "status") or ("input", "quantity")
+        varmap: Mapping from abstract refs to Python variable names
+
+    Returns:
+        Python expression string, e.g., "order.status" or "payload.quantity"
+    """
+    if not isinstance(ref, tuple) or len(ref) != 2:
+        return str(ref)
+
+    entity_or_ctx, field = ref
+
+    # Check exact match first
+    if ref in varmap:
+        return varmap[ref]
+
+    # Check entity prefix match
+    if entity_or_ctx in varmap:
+        base = varmap[entity_or_ctx]
+        return f"{base}.{field}"
+
+    # Fallback: extract entity name and use snake_case
+    if entity_or_ctx.startswith("entity:"):
+        entity_name = entity_or_ctx[7:]  # Remove "entity:" prefix
+        import re
+        snake = re.sub(r'(?<!^)(?=[A-Z])', '_', entity_name).lower()
+        return f"{snake}.{field}"
+
+    if entity_or_ctx == "input":
+        return f"payload.{field}"
+
+    if entity_or_ctx == "context":
+        return f"context.{field}"
+
+    return f"{entity_or_ctx}.{field}"
+
+
+def _python_expr_from_guard_expr(expr, varmap: Dict[str, str]) -> str:
+    """
+    Translate a GuardExpr to a Python condition string.
+
+    Args:
+        expr: A GuardExpr (ComparisonExpr, MembershipExpr, etc.)
+        varmap: Variable name mappings
+
+    Returns:
+        Python condition string
+    """
+    if not GUARD_IR_AVAILABLE:
+        return "True"
+
+    if isinstance(expr, ComparisonExpr):
+        left = _ref_to_python(expr.left, varmap)
+        if isinstance(expr.right, tuple):
+            right = _ref_to_python(expr.right, varmap)
+        else:
+            right = repr(expr.right)
+        return f"{left} {expr.op} {right}"
+
+    if isinstance(expr, MembershipExpr):
+        left = _ref_to_python(expr.left, varmap)
+        values = ", ".join(repr(v) for v in expr.right)
+        op_str = "in" if expr.op == "in" else "not in"
+        return f"{left} {op_str} [{values}]"
+
+    if isinstance(expr, ExistsExpr):
+        target = _ref_to_python(expr.target, varmap)
+        return f"{target} is not None"
+
+    if isinstance(expr, NotEmptyExpr):
+        target = _ref_to_python(expr.target, varmap)
+        return f"len({target}) > 0"
+
+    if isinstance(expr, LogicalExpr):
+        sub_exprs = [_python_expr_from_guard_expr(op, varmap) for op in expr.operands]
+        joiner = " and " if expr.op == "and" else " or "
+        return f"({joiner.join(sub_exprs)})"
+
+    return "True"
+
+
+def generate_guard_code(guard: "GuardSpec", varmap: Dict[str, str], indent: str = "        ") -> str:
+    """
+    Generate Python guard check code from a GuardSpec.
+
+    Args:
+        guard: The GuardSpec containing the expression and error info
+        varmap: Variable name mappings
+        indent: Indentation string for generated code
+
+    Returns:
+        Python code for the guard check
+    """
+    if not GUARD_IR_AVAILABLE:
+        return ""
+
+    condition = _python_expr_from_guard_expr(guard.expr, varmap)
+
+    # Generate if statement with HTTPException
+    code = f'''{indent}# Guard: {guard.source_constraint_id}
+{indent}if not ({condition}):
+{indent}    raise HTTPException(
+{indent}        status_code={guard.error_code},
+{indent}        detail="{guard.message}"
+{indent}    )
+'''
+    return code
+
+
+def generate_flow_guards_code(
+    flow_guards: "FlowGuards",
+    varmap: Dict[str, str],
+    phase: str = "pre",
+    indent: str = "        "
+) -> str:
+    """
+    Generate all guard checks for a flow phase.
+
+    Args:
+        flow_guards: FlowGuards containing pre/post/invariant guards
+        varmap: Variable name mappings
+        phase: "pre", "post", or "invariant"
+        indent: Indentation string
+
+    Returns:
+        Combined Python code for all guards in the phase
+    """
+    if not GUARD_IR_AVAILABLE:
+        return ""
+
+    guards_list = getattr(flow_guards, phase, []) or []
+    if not guards_list:
+        return ""
+
+    code_parts = [f"{indent}# {phase.upper()} guards from FlowLogicSynthesizer"]
+    for guard in guards_list:
+        code_parts.append(generate_guard_code(guard, varmap, indent))
+
+    return "\n".join(code_parts)
+
+
+# =============================================================================
+# End Guard IR Adapter
+# =============================================================================
+
 # Fix #3: Field name normalization mapping
 # Maps spec/IR field names to standard code field names
 FIELD_NAME_MAPPING = {

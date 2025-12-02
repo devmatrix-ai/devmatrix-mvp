@@ -1,141 +1,262 @@
 # FlowLogicSynthesizer - Plan para 100% Pass Rate
 
-**Fecha**: 2025-12-02  
-**Estado Actual**: 92.0% (69/75 tests)  
+**Fecha**: 2025-12-02 (Actualizado - Arquitectura Agnóstica)
+**Estado Actual**: 92.0% (69/75 tests)
 **Objetivo**: 100% (75/75 tests)
 
 ---
 
-## 📊 Estado Actual del Pipeline
+## 🎯 Principio Fundamental: Domain-Agnostic
 
-### Componentes Cognitivos Existentes (100% Wired)
-
-| Componente | Ubicación | Estado | Uso |
-|------------|-----------|--------|-----|
-| ConstraintGraph | `src/validation/constraint_graph.py` | ✅ Implementado | Bipartite graph constraint↔entity |
-| IRBackpropagation | `src/validation/ir_backpropagation_engine.py` | ✅ Implementado | Violation → IR node mapping |
-| ValidationRoutingMatrix | `src/validation/validation_routing_matrix.py` | ✅ Implementado | Routes constraints to layers |
-
-### Resultado E2E Run #010 (2025-12-02)
-
-```
-Pass Rate: 92.0% (69/75)
-Duration: 4.9 minutes
-Files Generated: 96
-Stratum: TEMPLATE 33%, AST 60.4%, LLM 6.2%
-```
+> **FlowLogicSynthesizer NUNCA puede "saber" que existe Cart, Order, Product.**
+> Solo razona sobre IR genérico: entidades, campos, constraints, roles.
 
 ---
 
-## 🔴 6 Fallas Restantes
+## 🏗️ Arquitectura de 2 Capas
 
-| # | Endpoint | Expected | Got | Categoría | Root Cause |
-|---|----------|----------|-----|-----------|------------|
-| 1 | PUT /products/{id} | 422 | 200 | VALIDATION | Schema no rechaza datos inválidos |
-| 2 | DELETE /carts/{cart_id}/items/{item_id} | 204 | 404 | NESTED_DELETE | Query no encuentra item |
-| 3 | PUT /orders/{id}/items/{product_id} | 422 | 200 | VALIDATION | Schema no rechaza datos inválidos |
-| 4 | DELETE /orders/{id}/items/{product_id} | 204 | 404 | NESTED_DELETE | Query no encuentra item |
-| 5 | DELETE /products/{id} | 204 | 404 | TEST_ORDER | Producto ya eliminado |
-| 6 | DELETE /products/{id} | 204 | 404 | TEST_ORDER | Producto ya eliminado |
+| Capa | Responsabilidad | Input | Output |
+|------|-----------------|-------|--------|
+| **FlowLogicSynthesizer** | Sintetiza constraints → Guard IR | `ApplicationIR`, `ConstraintGraph` | `Dict[FlowKey, FlowGuards]` con `GuardExpr` |
+| **CodeGenerationService** | Traduce Guard IR → Python | `FlowGuards` + `varmap` | Código Python (FastAPI) |
 
-### Categorías de Fallas
+### Separación de Concerns
 
-- **VALIDATION (2)**: PUT endpoints devuelven 200 cuando deberían devolver 422 para datos inválidos
-- **NESTED_DELETE (2)**: DELETE nested no encuentra el item por query incorrecta
-- **TEST_ORDER (2)**: Test ordering issue - productos eliminados por tests anteriores
+| Componente | Responsabilidad | Constraints |
+|------------|-----------------|-------------|
+| **FlowLogicSynthesizer** | Comportamiento/flujo (Guard IR genérico) | `status_transition`, `workflow_constraint`, `stock_constraint`, `custom` |
+| **Schema Generator** | Estructura/tipos (Pydantic) | `format`, `range`, `presence`, `uniqueness` |
+| **TestsModelIR** | Orden de tests | IDs únicos por escenario |
 
 ---
 
-## 🎯 Solución: FlowLogicSynthesizer
-
-### Qué Es
-
-FlowLogicSynthesizer es el componente que traduce las **constraints del IR** a **guards en el código generado**.
-
-```
-IR Flow Definition → FlowLogicSynthesizer → Service Method with Guards
-```
-
-### Responsabilidades
-
-1. **Leer del IR**:
-   - `preconditions`: Guards que deben cumplirse ANTES de ejecutar
-   - `postconditions`: Invariantes que deben cumplirse DESPUÉS
-   - `invariants`: Condiciones que SIEMPRE deben ser true
-   - `transitions`: Cambios de estado válidos
-
-2. **Generar Guards Sintéticos**:
-   ```python
-   # Ejemplo: stock_constraint
-   if quantity > product.stock:
-       raise HTTPException(422, "Insufficient stock")
-   
-   # Ejemplo: status_transition
-   if cart.status != "OPEN":
-       raise HTTPException(422, "Cart is not open")
-   
-   # Ejemplo: workflow_constraint
-   if len(cart.items) == 0:
-       raise HTTPException(422, "Cart is empty")
-   ```
-
-3. **Inyectar en Services**:
-   - Pre-guards antes de la operación
-   - Post-guards después de la operación
-   - Calculated fields (e.g., `total_amount = sum(...)`)
-
----
-
-## 🔧 Plan de Implementación
-
-### Fase 1: Arreglar VALIDATION (PUT 422→200)
-
-**Problema**: Los schemas de update no validan datos inválidos.
-
-**Solución**: Agregar validators al schema generator que detecten campos inválidos.
+## 📊 Guard IR Genérico (No Python, No Nombres Concretos)
 
 ```python
-# En code_generation_service.py - _generate_schema_code()
+# src/cognitive/guard_ir.py
 
-# Para ProductUpdate:
-# Si price < 0 o stock < 0 → ValidationError → 422
-class ProductUpdate(BaseModel):
-    price: Optional[float] = Field(None, ge=0.01)
-    stock: Optional[int] = Field(None, ge=0)
+from dataclasses import dataclass
+from typing import Literal, Union, Tuple
+
+# Referencias abstractas - NO variables Python
+EntityRef = Tuple[str, str]   # ("entity:Order", "status")
+ContextRef = Tuple[str, str]  # ("input", "quantity")
+Ref = Union[EntityRef, ContextRef]
+
+@dataclass
+class ComparisonExpr:
+    """Comparación entre dos referencias o ref vs literal"""
+    left: Ref                  # ej: ("entity:CartItem", "quantity")
+    op: Literal["<", "<=", "==", "!=", ">=", ">"]
+    right: Union[Ref, float, int, str]  # otra ref o literal
+
+@dataclass
+class MembershipExpr:
+    """Pertenencia a conjunto de valores"""
+    left: Ref                  # ej: ("entity:Order", "status")
+    op: Literal["in", "not in"]
+    right: list[str]           # ej: ["PENDING", "PAID"]
+
+@dataclass
+class ExistsExpr:
+    """Existencia de entidad relacionada"""
+    target: Ref                # ej: ("entity:Product", "id")
+    kind: Literal["entity", "relation"]
+
+GuardExpr = Union[ComparisonExpr, MembershipExpr, ExistsExpr]
+
+@dataclass
+class GuardSpec:
+    expr: GuardExpr
+    error_code: int              # 422 / 404 / 409
+    message: str
+    source_constraint_id: str    # trazabilidad al IR
+    phase: Literal["pre", "post", "invariant"]
+
+@dataclass
+class FlowGuards:
+    pre: list[GuardSpec]
+    post: list[GuardSpec]
+    invariants: list[GuardSpec]
 ```
 
-**Archivos a Modificar**:
-- `src/services/code_generation_service.py`: `_generate_schema_code()`
-
-### Fase 2: Arreglar NESTED_DELETE (204→404)
-
-**Problema**: La query busca por FK en lugar de PK.
-
-**Fix Aplicado (Bug #205)**: Ya cambiamos a usar `Entity.id` en lugar del path param.
-
-**Verificar**: La query debe ser:
-```python
-# Correcto
-stmt = select(CartItemEntity).where(CartItemEntity.id == item_id)
-
-# NO esto (incorrecto)
-stmt = select(CartItemEntity).where(CartItemEntity.cart_id == cart_id, CartItemEntity.item_id == item_id)
-```
-
-**Diagnóstico**: Revisar el código generado en la app para confirmar.
-
-### Fase 3: Arreglar TEST_ORDER (204→404)
-
-**Problema**: Smoke test ejecuta múltiples DELETE sobre el mismo producto.
-
-**Solución**: El TestsModelIR debe generar IDs únicos por escenario.
-
-**Archivo a Revisar**:
-- `src/cognitive/ir/tests_model_ir.py`
+**Clave**: Aquí NO existen variables Python. Solo referencias a entidades/campos del IR.
 
 ---
 
-## 🏗️ Arquitectura de Integración
+## 🔧 FlowLogicSynthesizer (100% Agnóstico)
+
+```python
+# src/cognitive/flow_logic_synthesizer.py
+
+FlowKey = Tuple[str, str]  # (entity_name, operation_name)
+
+class FlowLogicSynthesizer:
+    def __init__(self, constraint_graph, routing_matrix):
+        self._graph = constraint_graph
+        self._routing = routing_matrix
+
+    def synthesize_for_app(self, app_ir) -> Dict[FlowKey, FlowGuards]:
+        guards_by_flow: Dict[FlowKey, FlowGuards] = {}
+        for flow in app_ir.behavior.flows:
+            key = (flow.entity_name, flow.operation_name)
+            guards_by_flow[key] = self._build_guards_for_flow(app_ir, flow)
+        return guards_by_flow
+
+    def _build_guards_for_flow(self, app_ir, flow) -> FlowGuards:
+        pre, post, invariants = [], [], []
+        constraints = self._graph.get_constraints_for_flow(flow.id)
+
+        for c in constraints:
+            layer = self._routing.get_layer_for_constraint(c.type)
+            if layer not in ("WORKFLOW", "BEHAVIOR", "RUNTIME"):
+                continue
+            g = self._constraint_to_guard(flow, c)
+            if g:
+                {"pre": pre, "post": post, "invariant": invariants}[g.phase].append(g)
+
+        return FlowGuards(pre=pre, post=post, invariants=invariants)
+```
+
+### Constraint → Guard (Sin Lógica de Dominio)
+
+```python
+def _constraint_to_guard(self, flow, constraint) -> GuardSpec | None:
+    t = constraint.type
+    if t == "status_transition":
+        return self._status_transition_guard(constraint)
+    if t == "stock_constraint":
+        return self._stock_constraint_guard(constraint)
+    if t == "workflow_constraint":
+        return self._workflow_guard(constraint)
+    if t == "custom":
+        return self._custom_guard(constraint)
+    return None
+
+def _status_transition_guard(self, c) -> GuardSpec:
+    # metadata: {"entity": "X", "field": "status", "allowed_from": ["A", "B"]}
+    expr = MembershipExpr(
+        left=("entity:" + c.metadata["entity"], c.metadata["field"]),
+        op="in",
+        right=c.metadata.get("allowed_from", [])
+    )
+    return GuardSpec(expr=expr, error_code=422,
+                     message="Invalid status transition",
+                     source_constraint_id=c.id, phase="pre")
+
+def _stock_constraint_guard(self, c) -> GuardSpec:
+    # metadata: {"lhs": {"entity": "X", "field": "qty"},
+    #            "rhs": {"entity": "Y", "field": "stock"}, "op": "<="}
+    expr = ComparisonExpr(
+        left=("entity:" + c.metadata["lhs"]["entity"], c.metadata["lhs"]["field"]),
+        op=c.metadata.get("op", "<="),
+        right=("entity:" + c.metadata["rhs"]["entity"], c.metadata["rhs"]["field"])
+    )
+    return GuardSpec(expr=expr, error_code=422,
+                     message="Business rule violated",
+                     source_constraint_id=c.id, phase="pre")
+```
+
+---
+
+## � CodeGenerationService como Adaptador
+
+El generador es el **único** que sabe cómo se llaman las variables en el stack:
+
+```python
+# En code_generation_service.py
+
+def _python_expr_from_guard_expr(expr: GuardExpr, varmap: Dict[str, str]) -> str:
+    """Traduce GuardExpr → código Python usando varmap"""
+    # varmap: {"entity:Order": "order", ("input", "qty"): "payload.quantity"}
+
+    if isinstance(expr, ComparisonExpr):
+        left = _ref_to_python(expr.left, varmap)
+        right = _ref_to_python(expr.right, varmap) if isinstance(expr.right, tuple) else repr(expr.right)
+        return f"{left} {expr.op} {right}"
+
+    if isinstance(expr, MembershipExpr):
+        left = _ref_to_python(expr.left, varmap)
+        values = ", ".join(repr(v) for v in expr.right)
+        return f"{left} {'in' if expr.op == 'in' else 'not in'} [{values}]"
+
+    if isinstance(expr, ExistsExpr):
+        return f"{_ref_to_python(expr.target, varmap)} is not None"
+
+def _generate_workflow_method_body(entity_name, operation, flow_guards, ...):
+    varmap = {
+        f"entity:{entity_name}": entity_snake,
+        ("input", "..."): "payload...."
+    }
+    guards = flow_guards.get((entity_name, operation), FlowGuards([], [], []))
+
+    for g in guards.pre:
+        cond = _python_expr_from_guard_expr(g.expr, varmap)
+        lines.append(f"    if not ({cond}):")
+        lines.append(f"        raise HTTPException({g.error_code}, {g.message!r})")
+```
+
+---
+
+## ✅ Checklist de Implementación
+
+### A. Fixes Inmediatos (Ortogonales a FlowLogicSynthesizer)
+
+#### A.1 Schema Generator - PUT Validation
+- [ ] Endurecer UpdateSchemas con `gt`/`ge` para campos numéricos
+- **Archivo**: `src/services/production_code_generators.py`
+
+#### A.2 TestsModelIR - DELETE Test Ordering
+- [ ] Cada DELETE crea su propia entidad (POST → DELETE)
+- **Archivo**: `src/cognitive/ir/tests_model_ir.py`
+
+#### A.3 Nested DELETE - Bug #205
+- [ ] Verificar query usa PK del child
+
+### B. FlowLogicSynthesizer (Nuevo)
+
+- [ ] Crear `src/cognitive/guard_ir.py` con modelo de expresiones
+- [ ] Crear `src/cognitive/flow_logic_synthesizer.py` agnóstico
+- [ ] Definir contrato de `constraint.metadata` en IR
+- [ ] Integrar con CodeGenerationService (varmap + traducción)
+
+### C. Validación Final
+
+- [ ] E2E → 100% smoke tests
+- [ ] Sin regresiones
+
+---
+
+## 📈 Métricas de Éxito
+
+| Métrica | Actual | Target |
+|---------|--------|--------|
+| Pass Rate | 92.0% | 100% |
+| Violations | 6 | 0 |
+| Repair Cycles | 3 | 0 |
+
+---
+
+## 📋 Historial de Bugs
+
+| Bug | Descripción | Estado |
+|-----|-------------|--------|
+| #205 | DELETE nested usaba FK en lugar de PK | ✅ Fixed |
+| #206 | Conversion flow se activaba para {Entity}Create | ✅ Fixed |
+| #207 | PUT validation no rechaza datos inválidos | 🔄 Pendiente |
+| #208 | Test ordering causa DELETE 404 | 🔄 Pendiente |
+
+---
+
+## 🔗 Referencias
+
+- `src/validation/constraint_graph.py`: ConstraintGraph
+- `src/validation/ir_backpropagation_engine.py`: IRBackpropagation
+- `src/validation/validation_routing_matrix.py`: ValidationRoutingMatrix
+
+---
+
+## 📚 Diagrama de Flujo (Arquitectura Agnóstica)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -185,66 +306,3 @@ stmt = select(CartItemEntity).where(CartItemEntity.cart_id == cart_id, CartItemE
 │  └─────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
 ```
-
----
-
-## 📝 Constraint Type Mapping
-
-| IR Constraint | Python Guard | Layer |
-|---------------|--------------|-------|
-| `stock_constraint` | `if qty > product.stock: raise 422` | RUNTIME |
-| `status_transition` | `if entity.status not in allowed: raise 422` | WORKFLOW |
-| `workflow_constraint` | `if not precondition: raise 422` | BEHAVIOR |
-| `custom` | Parsed from description | BEHAVIOR |
-| `relationship` | `if not exists: raise 404` | RUNTIME |
-| `uniqueness` | DB constraint + catch IntegrityError | SCHEMA |
-| `format` | Pydantic Field validator | SCHEMA |
-| `range` | Pydantic Field(ge=X, le=Y) | SCHEMA |
-| `presence` | Pydantic Field(required=True) | SCHEMA |
-
----
-
-## ✅ Checklist de Implementación
-
-### Inmediato (Para 100%)
-
-- [ ] **Fix #1**: PUT validation - agregar validators a UpdateSchemas
-- [ ] **Fix #2**: Verificar DELETE nested usa PK correcto
-- [ ] **Fix #3**: TestsModelIR usa IDs únicos por scenario
-
-### FlowLogicSynthesizer (Componente Nuevo)
-
-- [ ] Crear `src/cognitive/flow_logic_synthesizer.py`
-- [ ] Parsear preconditions/postconditions del BehaviorModelIR
-- [ ] Generar código Python para guards
-- [ ] Integrar con `_generate_service_methods()` en code_generation_service.py
-- [ ] Usar ValidationRoutingMatrix para routing
-- [ ] Usar ConstraintGraph para cascade detection
-
-### Integración
-
-- [ ] Wire FlowLogicSynthesizer en `generate_from_application_ir()`
-- [ ] Agregar tests unitarios
-- [ ] Ejecutar E2E y verificar 100%
-
----
-
-## 📈 Métricas de Éxito
-
-| Métrica | Actual | Target |
-|---------|--------|--------|
-| Pass Rate | 92.0% | 100% |
-| Violations | 6 | 0 |
-| Repair Cycles | 3 | 0 |
-| Compliance | 99.9% | 100% |
-
----
-
-## 🔗 Referencias
-
-- Bug #205: DELETE nested fixed (usar PK)
-- Bug #206: Conversion flow detection fixed (no activar para {Entity}Create)
-- `src/validation/constraint_graph.py`: ConstraintGraph
-- `src/validation/ir_backpropagation_engine.py`: IRBackpropagation
-- `src/validation/validation_routing_matrix.py`: ValidationRoutingMatrix
-
