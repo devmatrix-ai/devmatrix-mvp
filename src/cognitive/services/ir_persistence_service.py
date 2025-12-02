@@ -570,6 +570,6 @@ class IRPersistenceService:
                     scenario_id=scenario_id,
                     name=scenario.name or "",
                     description=scenario.description or "",
-                    type=scenario.type.value if hasattr(scenario.type, 'value') else str(scenario.type),
+                    type=scenario.test_type.value if hasattr(scenario.test_type, 'value') else str(scenario.test_type),
                     priority=scenario.priority.value if hasattr(scenario.priority, 'value') else str(scenario.priority),
                 )

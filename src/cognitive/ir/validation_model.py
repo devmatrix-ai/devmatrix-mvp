@@ -66,3 +66,56 @@ class TestCase(BaseModel):
 class ValidationModelIR(BaseModel):
     rules: List[ValidationRule] = Field(default_factory=list)
     test_cases: List[TestCase] = Field(default_factory=list)
+
+    def get_fk_relationships(self) -> List[Dict[str, str]]:
+        """
+        Extract FK relationships from RELATIONSHIP validation rules.
+
+        Returns list of dicts with:
+        - child_entity: Entity that has the FK
+        - child_field: Field name of the FK (e.g., customer_id)
+        - parent_entity: Entity being referenced
+
+        This enables domain-agnostic seed ordering without hardcoding entity names.
+        """
+        relationships = []
+        for rule in self.rules:
+            if rule.type == ValidationType.RELATIONSHIP:
+                # Parse condition to extract parent entity
+                # Conditions like: "references Customer", "must exist in Product"
+                parent = None
+                condition = rule.condition or ""
+                condition_lower = condition.lower()
+
+                # Try to extract parent entity from condition
+                if "references " in condition_lower:
+                    # "references Customer" -> Customer
+                    parts = condition.split("references ")
+                    if len(parts) > 1:
+                        parent = parts[1].strip().split()[0].strip(".,")
+                elif "exist in " in condition_lower:
+                    # "must exist in Product" -> Product
+                    parts = condition.split("exist in ")
+                    if len(parts) > 1:
+                        parent = parts[1].strip().split()[0].strip(".,")
+                elif "_id" in rule.attribute:
+                    # Infer from field name: customer_id -> Customer
+                    field_base = rule.attribute.replace("_id", "")
+                    parent = field_base.title()
+
+                if parent:
+                    relationships.append({
+                        "child_entity": rule.entity,
+                        "child_field": rule.attribute,
+                        "parent_entity": parent
+                    })
+
+        return relationships
+
+    def get_entity_constraints(self, entity_name: str) -> List[ValidationRule]:
+        """Get all validation rules for a specific entity."""
+        return [r for r in self.rules if r.entity == entity_name]
+
+    def get_field_constraints(self, entity_name: str, field_name: str) -> List[ValidationRule]:
+        """Get all validation rules for a specific field."""
+        return [r for r in self.rules if r.entity == entity_name and r.attribute == field_name]

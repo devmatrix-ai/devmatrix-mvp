@@ -19,11 +19,13 @@ from src.cognitive.ir.api_model import (
     APIParameter,
     ParameterLocation,
     InferenceSource,
+    APISchema,
+    APISchemaField,
 )
 
 # Avoid circular imports
 if TYPE_CHECKING:
-    from src.cognitive.ir.domain_model import DomainModelIR
+    from src.cognitive.ir.domain_model import DomainModelIR, Entity
 
 logger = logging.getLogger(__name__)
 
@@ -399,6 +401,76 @@ class InferredEndpointEnricher:
 
         return inferred
 
+    def _build_request_schema_from_entity(
+        self,
+        entity: 'Entity',
+        parent_singular: str
+    ) -> Optional[APISchema]:
+        """
+        Bug #199 Fix: Build request schema from child entity attributes.
+
+        Extracts updatable fields from the entity, excluding:
+        - Primary keys (id)
+        - Foreign keys (parent_id, product_id) - these come from path params
+        - Auto-generated fields (created_at, updated_at)
+
+        Returns None if no updatable fields are found.
+        """
+        # Fields to exclude from request schema (domain-agnostic patterns)
+        # Exclude: id, timestamps, parent FK, and any FK ending with _id
+        exclude_patterns = {
+            'id', 'created_at', 'updated_at', 'created_by', 'updated_by',
+            f'{parent_singular}_id',
+        }
+        # Also exclude any FK field (pattern: *_id for foreign keys)
+        fk_exclude = lambda name: name.endswith('_id') and name != 'id'
+
+        schema_fields = []
+        for attr in entity.attributes:
+            attr_lower = attr.name.lower()
+
+            # Skip excluded fields (domain-agnostic)
+            if attr_lower in exclude_patterns:
+                continue
+            if fk_exclude(attr_lower):
+                continue
+            if attr.is_primary_key:
+                continue
+
+            # Map domain DataType to schema type string
+            type_mapping = {
+                'uuid': 'uuid',
+                'string': 'string',
+                'integer': 'integer',
+                'float': 'float',
+                'decimal': 'float',
+                'boolean': 'boolean',
+                'datetime': 'datetime',
+                'date': 'date',
+                'text': 'string',
+                'enum': 'string',
+            }
+            field_type = type_mapping.get(attr.data_type.value.lower(), 'string')
+
+            schema_fields.append(APISchemaField(
+                name=attr.name,
+                type=field_type,
+                required=not attr.is_nullable,
+                description=attr.description,
+            ))
+
+        if not schema_fields:
+            # No updatable fields, return empty schema (still allows {} body)
+            return APISchema(
+                name=f"{entity.name}Update",
+                fields=[],
+            )
+
+        return APISchema(
+            name=f"{entity.name}Update",
+            fields=schema_fields,
+        )
+
     def _infer_nested_resource_endpoints(
         self,
         domain_model: 'DomainModelIR',
@@ -406,6 +478,7 @@ class InferredEndpointEnricher:
     ) -> List[Endpoint]:
         """
         Bug #47 Fix: Infer nested resource endpoints from entity relationships.
+        Bug #199 Fix: Also generate request_schema from child entity attributes.
 
         Detects patterns like:
         - Cart has CartItems → PUT /carts/{id}/items/{product_id}
@@ -414,95 +487,120 @@ class InferredEndpointEnricher:
         """
         inferred = []
 
-        # Patterns for nested resources
-        NESTED_PATTERNS = {
-            "cartitem": ("cart", "carts", "item", "product_id"),
-            "orderitem": ("order", "orders", "item", "product_id"),
-        }
+        # Domain-agnostic: Detect nested resources from entity relationships
+        # Instead of hardcoded patterns, derive from entity naming + FK relationships
 
         for entity in domain_model.entities:
             entity_lower = entity.name.lower()
 
-            # Check if this is a child entity (CartItem, OrderItem)
-            for child_pattern, (parent_singular, parent_plural, item_name, item_id_field) in NESTED_PATTERNS.items():
-                if child_pattern in entity_lower:
-                    # Infer: PUT /parents/{id}/items/{item_id}
-                    # Bug #80c Fix: Use proper f-string escaping - was double "}}" causing malformed paths
-                    add_path = f"/{parent_plural}/{{id}}/{item_name}s/{{{item_id_field}}}"
-                    add_normalized = self._normalize_path(add_path)
+            # Detect join/item entities: entities ending with 'item' or having 2+ FK relationships
+            is_item_entity = 'item' in entity_lower
+            fk_attrs = [a for a in entity.attributes if a.name.lower().endswith('_id') and a.name.lower() != 'id']
 
-                    if ("PUT", add_normalized) not in existing:
-                        endpoint = Endpoint(
-                            path=add_path,
-                            method=HttpMethod.PUT,
-                            operation_id=f"add_{item_name}_to_{parent_singular}",
-                            summary=f"Add item to {parent_singular}",
-                            description=f"Add/update item in {parent_singular} (nested resource)",
-                            parameters=[
-                                APIParameter(
-                                    name="id",
-                                    location=ParameterLocation.PATH,
-                                    data_type="string",
-                                    required=True,
-                                    description=f"The {parent_singular} ID",
-                                ),
-                                APIParameter(
-                                    name=item_id_field,
-                                    location=ParameterLocation.PATH,
-                                    data_type="string",
-                                    required=True,
-                                    description=f"The {item_name} ID",
-                                ),
-                            ],
-                            tags=[parent_plural],
-                            auth_required=True,
-                            inferred=True,
-                            inference_source=InferenceSource.CRUD_BEST_PRACTICE,
-                            inference_reason=f"Nested resource endpoint for {entity.name}",
-                        )
-                        inferred.append(endpoint)
-                        existing.add(("PUT", add_normalized))
-                        self._inferred_count += 1
-                        logger.debug(f"  + Inferred nested: PUT {add_path}")
+            if not is_item_entity and len(fk_attrs) < 2:
+                continue
 
-                    # Infer: DELETE /parents/{id}/items/{item_id}
-                    # Bug #80c Fix: Use proper f-string escaping - was double "}}" causing malformed paths
-                    delete_path = f"/{parent_plural}/{{id}}/{item_name}s/{{{item_id_field}}}"
-                    delete_normalized = self._normalize_path(delete_path)
+            # Extract parent entity from FK (first FK that's not a reference to another item)
+            parent_fk = None
+            item_id_field = None
+            for fk in fk_attrs:
+                fk_name = fk.name.lower()
+                if 'item' not in fk_name:
+                    if parent_fk is None:
+                        parent_fk = fk_name  # e.g., cart_id, order_id
+                    else:
+                        item_id_field = fk_name  # e.g., product_id
 
-                    if ("DELETE", delete_normalized) not in existing:
-                        endpoint = Endpoint(
-                            path=delete_path,
-                            method=HttpMethod.DELETE,
-                            operation_id=f"remove_{item_name}_from_{parent_singular}",
-                            summary=f"Remove item from {parent_singular}",
-                            description=f"Remove item from {parent_singular} (nested resource)",
-                            parameters=[
-                                APIParameter(
-                                    name="id",
-                                    location=ParameterLocation.PATH,
-                                    data_type="string",
-                                    required=True,
-                                    description=f"The {parent_singular} ID",
-                                ),
-                                APIParameter(
-                                    name=item_id_field,
-                                    location=ParameterLocation.PATH,
-                                    data_type="string",
-                                    required=True,
-                                    description=f"The {item_name} ID",
-                                ),
-                            ],
-                            tags=[parent_plural],
-                            auth_required=True,
-                            inferred=True,
-                            inference_source=InferenceSource.CRUD_BEST_PRACTICE,
-                            inference_reason=f"Nested resource endpoint for {entity.name}",
-                        )
-                        inferred.append(endpoint)
-                        existing.add(("DELETE", delete_normalized))
-                        self._inferred_count += 1
-                        logger.debug(f"  + Inferred nested: DELETE {delete_path}")
+            if not parent_fk:
+                continue
+
+            # Derive parent entity name from FK (cart_id -> cart)
+            parent_singular = parent_fk.replace('_id', '')
+            parent_plural = parent_singular + 's'
+            item_name = 'item'
+            item_id_field = item_id_field or 'item_id'
+
+            # Process detected item entity (domain-agnostic detection above)
+            # Bug #199 Fix: Generate request_schema from child entity attributes
+            # Exclude FK fields (they come from path params) and auto-generated fields
+            request_schema = self._build_request_schema_from_entity(entity, parent_singular)
+
+            # Infer: PUT /parents/{id}/items/{item_id}
+            add_path = f"/{parent_plural}/{{id}}/{item_name}s/{{{item_id_field}}}"
+            add_normalized = self._normalize_path(add_path)
+
+            if ("PUT", add_normalized) not in existing:
+                endpoint = Endpoint(
+                    path=add_path,
+                    method=HttpMethod.PUT,
+                    operation_id=f"add_{item_name}_to_{parent_singular}",
+                    summary=f"Add item to {parent_singular}",
+                    description=f"Add/update item in {parent_singular} (nested resource)",
+                    parameters=[
+                        APIParameter(
+                            name="id",
+                            location=ParameterLocation.PATH,
+                            data_type="string",
+                            required=True,
+                            description=f"The {parent_singular} ID",
+                        ),
+                        APIParameter(
+                            name=item_id_field,
+                            location=ParameterLocation.PATH,
+                            data_type="string",
+                            required=True,
+                            description=f"The {item_name} ID",
+                        ),
+                    ],
+                    request_schema=request_schema,  # Bug #199 Fix
+                    tags=[parent_plural],
+                    auth_required=True,
+                    inferred=True,
+                    inference_source=InferenceSource.CRUD_BEST_PRACTICE,
+                    inference_reason=f"Nested resource endpoint for {entity.name}",
+                )
+                inferred.append(endpoint)
+                existing.add(("PUT", add_normalized))
+                self._inferred_count += 1
+                logger.debug(f"  + Inferred nested: PUT {add_path} (with schema: {request_schema.name if request_schema else 'None'})")
+
+            # Infer: DELETE /parents/{id}/items/{item_id}
+            delete_path = f"/{parent_plural}/{{id}}/{item_name}s/{{{item_id_field}}}"
+            delete_normalized = self._normalize_path(delete_path)
+
+            if ("DELETE", delete_normalized) not in existing:
+                endpoint = Endpoint(
+                    path=delete_path,
+                    method=HttpMethod.DELETE,
+                    operation_id=f"remove_{item_name}_from_{parent_singular}",
+                    summary=f"Remove item from {parent_singular}",
+                    description=f"Remove item from {parent_singular} (nested resource)",
+                    parameters=[
+                        APIParameter(
+                            name="id",
+                            location=ParameterLocation.PATH,
+                            data_type="string",
+                            required=True,
+                            description=f"The {parent_singular} ID",
+                        ),
+                        APIParameter(
+                            name=item_id_field,
+                            location=ParameterLocation.PATH,
+                            data_type="string",
+                            required=True,
+                            description=f"The {item_name} ID",
+                        ),
+                    ],
+                    tags=[parent_plural],
+                    auth_required=True,
+                    inferred=True,
+                    inference_source=InferenceSource.CRUD_BEST_PRACTICE,
+                    inference_reason=f"Nested resource endpoint for {entity.name}",
+                )
+                inferred.append(endpoint)
+                existing.add(("DELETE", delete_normalized))
+                self._inferred_count += 1
+                logger.debug(f"  + Inferred nested: DELETE {delete_path}")
 
         return inferred
 

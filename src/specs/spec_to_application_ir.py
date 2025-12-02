@@ -60,8 +60,21 @@ from src.cognitive.ir.validation_model import (
     ValidationRule,
     ValidationModelIR,
 )
+from src.cognitive.ir.tests_model import TestsModelIR
 from src.utils.constraint_helpers import normalize_constraints
 from src.state.redis_manager import RedisManager
+
+# Logger must be defined before conditional imports that may use it
+logger = logging.getLogger(__name__)
+
+# TestsIRGenerator: Auto-generates TestsModelIR from full ApplicationIR
+# Uses DomainModelIR, APIModelIR, BehaviorModelIR, and ValidationModelIR
+try:
+    from src.services.tests_ir_generator import generate_tests_ir
+    TESTS_IR_GENERATOR_AVAILABLE = True
+except ImportError:
+    TESTS_IR_GENERATOR_AVAILABLE = False
+    logger.debug("TestsIRGenerator not available - TestsModelIR will be empty")
 
 # Neo4j persistence (Sprint 7)
 try:
@@ -73,7 +86,148 @@ except ImportError:
 # Feature flag for Neo4j persistence
 USE_NEO4J_CACHE = os.getenv("USE_NEO4J_CACHE", "false").lower() == "true"
 
-logger = logging.getLogger(__name__)
+
+# =========================================================================
+# Bug #I3 Fix: LLM Output Validation Schema
+# Validates JSON structure before building ApplicationIR
+# =========================================================================
+from pydantic import BaseModel, Field, validator
+from typing import List, Dict
+
+
+class LLMAttributeSchema(BaseModel):
+    """Validates attribute structure from LLM output."""
+    name: str
+    data_type: str = "string"
+    is_primary_key: bool = False
+    is_nullable: bool = False
+    is_unique: bool = False
+    default_value: Optional[Any] = None
+    description: Optional[str] = None
+    constraints: Dict[str, Any] = Field(default_factory=dict)
+
+
+class LLMRelationshipSchema(BaseModel):
+    """Validates relationship structure from LLM output."""
+    target_entity: str
+    type: str = "many_to_one"
+    field_name: Optional[str] = None
+    back_populates: Optional[str] = None
+
+
+class LLMEntitySchema(BaseModel):
+    """Validates entity structure from LLM output."""
+    name: str
+    description: Optional[str] = None
+    is_aggregate_root: bool = False
+    attributes: List[LLMAttributeSchema] = Field(default_factory=list)
+    relationships: List[LLMRelationshipSchema] = Field(default_factory=list)
+
+
+class LLMParameterSchema(BaseModel):
+    """Validates parameter structure from LLM output."""
+    name: str
+    location: str = "query"
+    data_type: str = "string"
+    required: bool = False
+    description: Optional[str] = None
+
+
+class LLMEndpointSchema(BaseModel):
+    """Validates endpoint structure from LLM output."""
+    path: str
+    method: str
+    operation_id: Optional[str] = None
+    summary: Optional[str] = None
+    description: Optional[str] = None
+    auth_required: bool = True
+    tags: List[str] = Field(default_factory=list)
+    parameters: List[LLMParameterSchema] = Field(default_factory=list)
+    request_schema: Optional[Dict[str, Any]] = None
+    response_schema: Optional[Dict[str, Any]] = None
+
+
+class LLMStepSchema(BaseModel):
+    """Validates step structure from LLM output."""
+    order: int = 0
+    description: str = ""
+    action: str = ""
+    target_entity: Optional[str] = None
+    condition: Optional[str] = None
+
+
+class LLMFlowSchema(BaseModel):
+    """Validates flow structure from LLM output."""
+    name: str
+    type: str = "workflow"
+    trigger: str = ""
+    description: Optional[str] = None
+    target_entities: List[str] = Field(default_factory=list)
+    steps: List[LLMStepSchema] = Field(default_factory=list)
+
+
+class LLMValidationRuleSchema(BaseModel):
+    """Validates validation rule structure from LLM output."""
+    entity: str
+    attribute: Optional[str] = None
+    type: str
+    condition: str
+    error_message: Optional[str] = None
+
+
+class LLMOutputSchema(BaseModel):
+    """
+    Validates complete LLM output structure.
+
+    Bug #I3 Fix: Ensures LLM output has required fields before building IR.
+    Missing fields get defaults; invalid fields raise ValidationError.
+    """
+    app_name: str = "Application"
+    app_description: str = ""
+    entities: List[LLMEntitySchema] = Field(default_factory=list)
+    endpoints: List[LLMEndpointSchema] = Field(default_factory=list)
+    flows: List[LLMFlowSchema] = Field(default_factory=list)
+    validation_rules: List[LLMValidationRuleSchema] = Field(default_factory=list)
+    entity_dependencies: List[Dict[str, str]] = Field(default_factory=list)
+
+    @validator('entities')
+    def validate_entities_not_empty(cls, v):
+        if not v:
+            logger.warning("⚠️ LLM returned no entities - spec may be malformed")
+        return v
+
+    @validator('endpoints')
+    def validate_endpoints_not_empty(cls, v):
+        if not v:
+            logger.warning("⚠️ LLM returned no endpoints - spec may be malformed")
+        return v
+
+
+def _validate_llm_output(ir_data: dict) -> dict:
+    """
+    Bug #I3 Fix: Validate and normalize LLM output.
+
+    Converts raw dict to Pydantic model and back to dict.
+    This ensures:
+    1. Required fields are present (with defaults if missing)
+    2. Types are correct
+    3. Nested structures are valid
+
+    Returns:
+        Validated and normalized dict
+
+    Raises:
+        RuntimeError if validation fails completely
+    """
+    try:
+        validated = LLMOutputSchema(**ir_data)
+        # Convert back to dict, which now has all defaults filled in
+        return validated.model_dump()
+    except Exception as e:
+        logger.error(f"❌ LLM output validation failed: {e}")
+        # Log what we got for debugging
+        logger.debug(f"Raw ir_data keys: {ir_data.keys() if isinstance(ir_data, dict) else 'NOT A DICT'}")
+        raise RuntimeError(f"LLM output validation failed: {e}")
 
 
 # Bug #16 Fix: Spanish→English translation dictionary for flow names
@@ -176,20 +330,31 @@ class SpecToApplicationIR:
     """
 
     CACHE_DIR = Path(".devmatrix/ir_cache")  # Filesystem fallback
-    LLM_MODEL = "claude-sonnet-4-5-20250929"  # Sonnet 4.5 - balanced speed/quality for spec extraction
+    # Bug #I5 Fix: Configurable LLM model via env var
+    DEFAULT_LLM_MODEL = "claude-sonnet-4-5-20250929"  # Sonnet 4.5 - balanced speed/quality
 
-    def __init__(self, cache_dir: Optional[Path] = None, use_neo4j: Optional[bool] = None):
+    def __init__(
+        self,
+        cache_dir: Optional[Path] = None,
+        use_neo4j: Optional[bool] = None,
+        llm_model: Optional[str] = None
+    ):
         """Initialize the converter with Redis as primary cache.
 
         Args:
             cache_dir: Optional custom cache directory
             use_neo4j: Enable Neo4j persistence (default: from USE_NEO4J_CACHE env var)
+            llm_model: LLM model to use (default: from DEVMATRIX_LLM_MODEL env var or DEFAULT_LLM_MODEL)
         """
         if ANTHROPIC_AVAILABLE:
             self.client = AsyncAnthropic()
         else:
             self.client = None
             logger.warning("Anthropic not available - LLM extraction disabled")
+
+        # Bug #I5 Fix: Configurable LLM model
+        self.llm_model = llm_model or os.getenv("DEVMATRIX_LLM_MODEL", self.DEFAULT_LLM_MODEL)
+        logger.info(f"🤖 Using LLM model: {self.llm_model}")
 
         # Filesystem cache as fallback (cold start, debugging)
         self.CACHE_DIR = cache_dir or self.CACHE_DIR
@@ -360,6 +525,13 @@ class SpecToApplicationIR:
         except (IndexError, AttributeError) as e:
             logger.error(f"❌ Response parsing failed: {e}")
             raise RuntimeError(f"Invalid response structure from LLM: {e}")
+
+        # Bug #I3 Fix: Validate LLM output structure before building IR
+        ir_data = _validate_llm_output(ir_data)
+        logger.info(
+            f"✅ LLM output validated: {len(ir_data.get('entities', []))} entities, "
+            f"{len(ir_data.get('endpoints', []))} endpoints"
+        )
 
         return self._build_application_ir(ir_data, spec_path)
 
@@ -558,27 +730,43 @@ SPECIFICATION:
 
 Output JSON only, no explanation:"""
 
-    async def _generate_with_streaming(self, prompt: str) -> str:
-        """Stream LLM response for large specs to avoid 10-min timeout."""
-        response_text = ""
+    async def _generate_with_streaming(self, prompt: str, max_retries: int = 3) -> str:
+        """Stream LLM response for large specs to avoid 10-min timeout.
 
-        try:
-            async with self.client.messages.stream(
-                model=self.LLM_MODEL,
-                max_tokens=32000,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0
-            ) as stream:
-                async for text in stream.text_stream:
-                    response_text += text
-                    if len(response_text) % 10000 == 0:
-                        logger.debug(f"  📊 Streamed {len(response_text)} chars...")
-        except Exception as e:
-            logger.error(f"❌ Streaming failed: {e}")
-            raise
+        Bug #I6 Fix: Added retry logic with exponential backoff.
+        """
+        import asyncio
 
-        logger.info(f"✅ Streaming complete: {len(response_text)} chars")
-        return response_text
+        last_error = None
+        for attempt in range(max_retries):
+            response_text = ""
+            try:
+                async with self.client.messages.stream(
+                    model=self.llm_model,  # Bug #I5 Fix: Use configurable model
+                    max_tokens=32000,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0
+                ) as stream:
+                    async for text in stream.text_stream:
+                        response_text += text
+                        if len(response_text) % 10000 == 0:
+                            logger.debug(f"  📊 Streamed {len(response_text)} chars...")
+
+                logger.info(f"✅ Streaming complete: {len(response_text)} chars")
+                return response_text
+
+            except Exception as e:
+                last_error = e
+                wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                logger.warning(
+                    f"⚠️ LLM attempt {attempt + 1}/{max_retries} failed: {e}. "
+                    f"Retrying in {wait_time}s..."
+                )
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(wait_time)
+
+        logger.error(f"❌ All {max_retries} LLM attempts failed")
+        raise last_error or RuntimeError("LLM streaming failed after all retries")
 
     def _extract_json(self, response: str) -> str:
         """Extract JSON from LLM response, handling markdown code blocks."""
@@ -772,12 +960,13 @@ Output JSON only, no explanation:"""
         validation_model = ValidationModelIR(rules=validation_rules)
 
         # Build BehaviorModelIR from extracted flows
-        behavior_model = self._build_behavior_model(ir_data)
+        # Bug #I2 Fix: Pass api_model for endpoint inference
+        behavior_model = self._build_behavior_model(ir_data, api_model)
 
-        # Build ApplicationIR
+        # Build ApplicationIR (without tests_model first - we need the full IR to generate it)
         app_name = ir_data.get("app_name", Path(spec_path).stem)
 
-        return ApplicationIR(
+        app_ir = ApplicationIR(
             name=app_name,
             description=ir_data.get("app_description", f"Generated from {spec_path}"),
             domain_model=domain_model,
@@ -788,14 +977,40 @@ Output JSON only, no explanation:"""
             phase_status={"spec_extraction": "complete"},
         )
 
-    def _build_behavior_model(self, ir_data: dict) -> BehaviorModelIR:
-        """Build BehaviorModelIR from extracted flows and entity dependencies."""
+        # Bug #I1 Fix: Auto-generate TestsModelIR from full ApplicationIR
+        # Uses: DomainModelIR → SeedEntityIR, APIModelIR → EndpointTestSuite,
+        #       BehaviorModelIR → FlowTestSuite, ValidationModelIR → edge cases
+        if TESTS_IR_GENERATOR_AVAILABLE:
+            try:
+                tests_model = generate_tests_ir(app_ir)
+                app_ir.tests_model = tests_model
+                logger.info(
+                    f"✅ TestsModelIR auto-generated: "
+                    f"{len(tests_model.seed_entities)} seeds, "
+                    f"{len(tests_model.endpoint_suites)} endpoint suites, "
+                    f"{len(tests_model.flow_suites)} flow suites"
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ TestsModelIR generation failed: {e}")
+                # Continue with empty tests_model - not blocking
+        else:
+            logger.warning("⚠️ TestsIRGenerator not available - TestsModelIR empty")
+
+        return app_ir
+
+    def _build_behavior_model(self, ir_data: dict, api_model: Optional[APIModelIR] = None) -> BehaviorModelIR:
+        """Build BehaviorModelIR from extracted flows and entity dependencies.
+
+        Bug #I2 Fix: Populate IRFlow extension fields for cognitive code generation.
+        """
         flows = []
         invariants = []
 
         # Process flows from LLM extraction
         for flow_data in ir_data.get("flows", []):
             steps = []
+            entities_from_steps = set()
+
             for step_data in flow_data.get("steps", []):
                 step = Step(
                     order=step_data.get("order", 0),
@@ -805,10 +1020,40 @@ Output JSON only, no explanation:"""
                     condition=step_data.get("condition"),
                 )
                 steps.append(step)
+                # Collect entities from steps
+                if step.target_entity:
+                    entities_from_steps.add(step.target_entity)
 
             # Bug #16 Fix: Translate flow name from Spanish to English
             raw_name = flow_data.get("name", "Unknown")
             translated_name = _translate_to_english(raw_name)
+
+            # Bug #I2 Fix: Generate flow_id from name
+            flow_id = translated_name.lower().replace(" ", "_").replace("-", "_").replace(":", "")
+            # Remove common prefixes like "f1_", "f2_" etc
+            import re
+            flow_id = re.sub(r'^f\d+_', '', flow_id)
+
+            # Bug #I2 Fix: Extract primary entity (first in target_entities or first in steps)
+            target_entities = flow_data.get("target_entities", [])
+            primary_entity = target_entities[0] if target_entities else None
+            if not primary_entity and entities_from_steps:
+                primary_entity = sorted(entities_from_steps)[0]
+
+            # Bug #I2 Fix: Combine entities from target_entities and steps
+            all_entities = list(set(target_entities) | entities_from_steps)
+
+            # Bug #I2 Fix: Infer endpoint from flow name and primary entity
+            endpoint = self._infer_endpoint_from_flow(flow_id, primary_entity, api_model)
+
+            # Bug #I2 Fix: Generate implementation name
+            impl_name = flow_id.replace("_flow", "").replace("flow_", "")
+
+            # Bug #I2 Fix: Infer constraint types from flow type and steps
+            constraint_types = self._infer_constraint_types(flow_data, steps)
+
+            # Bug #I2 Fix: Extract preconditions from trigger and steps
+            preconditions = self._extract_preconditions(flow_data, steps)
 
             flow = Flow(
                 name=translated_name,
@@ -816,6 +1061,14 @@ Output JSON only, no explanation:"""
                 trigger=flow_data.get("trigger", ""),
                 steps=steps,
                 description=flow_data.get("description"),
+                # IRFlow extension fields (Bug #I2)
+                flow_id=flow_id,
+                primary_entity=primary_entity,
+                entities_involved=all_entities,
+                constraint_types=constraint_types,
+                preconditions=preconditions,
+                endpoint=endpoint,
+                implementation_name=impl_name,
             )
             flows.append(flow)
 
@@ -839,6 +1092,107 @@ Output JSON only, no explanation:"""
             "event_handler": FlowType.EVENT_HANDLER,
         }
         return type_map.get(type_str.lower(), FlowType.WORKFLOW)
+
+    # =========================================================================
+    # Bug #I2 Fix: IRFlow Helper Methods
+    # =========================================================================
+
+    def _infer_endpoint_from_flow(
+        self,
+        flow_id: str,
+        primary_entity: Optional[str],
+        api_model: Optional[APIModelIR]
+    ) -> Optional[str]:
+        """Infer API endpoint from flow name and primary entity.
+
+        Matches flow_id patterns to endpoints:
+        - add_item_to_cart → POST /carts/{id}/items
+        - checkout → POST /orders/{id}/checkout
+        - create_order → POST /orders
+        """
+        if not api_model or not primary_entity:
+            return None
+
+        entity_lower = primary_entity.lower()
+        flow_lower = flow_id.lower()
+
+        # Common action patterns
+        action_method_map = {
+            "create": "POST",
+            "add": "POST",
+            "checkout": "POST",
+            "cancel": "POST",
+            "process": "POST",
+            "update": "PUT",
+            "delete": "DELETE",
+            "get": "GET",
+            "list": "GET",
+        }
+
+        # Try to match endpoint by flow pattern
+        for endpoint in api_model.endpoints:
+            path_lower = endpoint.path.lower()
+            method = endpoint.method.value
+
+            # Check if entity is in path
+            if entity_lower not in path_lower and f"{entity_lower}s" not in path_lower:
+                continue
+
+            # Match action in flow_id to HTTP method
+            for action, expected_method in action_method_map.items():
+                if action in flow_lower and method == expected_method:
+                    # Found a match
+                    return f"{method} {endpoint.path}"
+
+        return None
+
+    def _infer_constraint_types(self, flow_data: dict, steps: list) -> list[str]:
+        """Infer constraint types from flow data and steps."""
+        constraints = set()
+
+        flow_type = flow_data.get("type", "").lower()
+        flow_name = flow_data.get("name", "").lower()
+
+        # Infer from flow type
+        if flow_type == "state_transition":
+            constraints.add("status_transition")
+        if flow_type == "policy":
+            constraints.add("business_logic")
+
+        # Infer from flow name patterns
+        if any(word in flow_name for word in ["checkout", "payment", "order"]):
+            constraints.add("workflow_constraint")
+        if any(word in flow_name for word in ["stock", "inventory", "quantity"]):
+            constraints.add("stock_constraint")
+        if any(word in flow_name for word in ["validate", "validation"]):
+            constraints.add("validation_constraint")
+
+        # Infer from step actions
+        for step in steps:
+            action = step.action.lower() if step.action else ""
+            if action == "validate":
+                constraints.add("validation_constraint")
+            if "status" in (step.description or "").lower():
+                constraints.add("status_transition")
+
+        return list(constraints)
+
+    def _extract_preconditions(self, flow_data: dict, steps: list) -> list[str]:
+        """Extract preconditions from flow trigger and first steps."""
+        preconditions = []
+
+        trigger = flow_data.get("trigger", "")
+        if trigger:
+            # Convert trigger to precondition format
+            preconditions.append(f"trigger: {trigger}")
+
+        # First step with condition is a precondition
+        for step in steps:
+            if step.condition:
+                preconditions.append(step.condition)
+                break  # Only take first condition as precondition
+
+        return preconditions
 
     def _extract_implicit_rules(self, entity_name: str, attr: Attribute) -> list[ValidationRule]:
         """Extract implicit validation rules from attribute constraints."""
@@ -1022,15 +1376,27 @@ Output JSON only, no explanation:"""
 
         When IR extraction/validation code changes, the cache should be invalidated
         even if the spec content hasn't changed.
+
+        Bug #I8 Fix: Expanded list of files that affect IR generation.
         """
         files_to_hash = [
+            # IR Models
             "src/cognitive/ir/api_model.py",
+            "src/cognitive/ir/domain_model.py",
+            "src/cognitive/ir/behavior_model.py",
+            "src/cognitive/ir/validation_model.py",
+            "src/cognitive/ir/tests_model.py",
+            "src/cognitive/ir/infrastructure_model.py",
+            "src/cognitive/ir/application_ir.py",
+            # IR Builders/Generators
             "src/cognitive/ir/ir_builder.py",
-            "src/services/business_logic_extractor.py",
-            "src/validation/compliance_validator.py",
             "src/specs/spec_to_application_ir.py",
-            # Bug #56 Fix: Include enricher for cache invalidation when custom ops logic changes
+            "src/services/tests_ir_generator.py",
+            # Enrichers and Extractors
+            "src/services/business_logic_extractor.py",
             "src/services/inferred_endpoint_enricher.py",
+            # Validators
+            "src/validation/compliance_validator.py",
         ]
         combined = ""
         for f in files_to_hash:

@@ -66,9 +66,103 @@ class TestsIRGenerator:
     def __init__(self, app_ir: ApplicationIR):
         self.app_ir = app_ir
         self._entity_map: Dict[str, Entity] = {}
+        self._constraint_cache: Dict[str, Dict[str, Any]] = {}  # Phase 1.2: Cache field constraints
         self._build_entity_map()
+        self._build_constraint_cache()  # Phase 1.2: Build constraint lookup
 
-    def _build_entity_map(self):
+    def _build_constraint_cache(self):
+        """Phase 1.2: Build cache of field constraints from ValidationModelIR.
+
+        This enables domain-agnostic value generation based on:
+        - min/max values for RANGE constraints
+        - enum values for STATUS_TRANSITION constraints
+        - format patterns for FORMAT constraints
+        """
+        if not self.app_ir.validation_model:
+            return
+
+        for rule in self.app_ir.validation_model.rules:
+            key = f"{rule.entity}.{rule.attribute}"
+            if key not in self._constraint_cache:
+                self._constraint_cache[key] = {}
+
+            # Extract constraint info based on type
+            from src.cognitive.ir.validation_model import ValidationType
+
+            if rule.type == ValidationType.RANGE:
+                # Parse "min: X, max: Y" or "ge=X" patterns
+                condition = rule.condition or ""
+                if "min" in condition.lower():
+                    try:
+                        min_val = float(re.search(r'min[:\s=]*(\d+\.?\d*)', condition, re.I).group(1))
+                        self._constraint_cache[key]["min"] = min_val
+                    except:
+                        pass
+                if "max" in condition.lower():
+                    try:
+                        max_val = float(re.search(r'max[:\s=]*(\d+\.?\d*)', condition, re.I).group(1))
+                        self._constraint_cache[key]["max"] = max_val
+                    except:
+                        pass
+                if "ge=" in condition or ">=" in condition:
+                    try:
+                        ge_val = float(re.search(r'(?:ge=|>=)\s*(\d+\.?\d*)', condition).group(1))
+                        self._constraint_cache[key]["min"] = ge_val
+                    except:
+                        pass
+
+            elif rule.type == ValidationType.STATUS_TRANSITION:
+                # Parse "one of: X, Y, Z" pattern
+                condition = rule.condition or ""
+                if "one of" in condition.lower():
+                    values = re.findall(r'[A-Z_]+', condition.split("one of")[-1])
+                    if values:
+                        self._constraint_cache[key]["enum_values"] = values
+                        self._constraint_cache[key]["default_value"] = values[0]  # First is usually initial state
+
+            elif rule.type == ValidationType.FORMAT:
+                # Store format type
+                condition = rule.condition or ""
+                if "email" in condition.lower():
+                    self._constraint_cache[key]["format"] = "email"
+                elif "uuid" in condition.lower():
+                    self._constraint_cache[key]["format"] = "uuid"
+
+            elif rule.type == ValidationType.PRESENCE:
+                self._constraint_cache[key]["required"] = True
+
+    def _get_value_from_constraints(self, entity_name: str, field_name: str, data_type: DataType) -> Optional[Any]:
+        """Phase 1.2: Get valid value based on IR constraints.
+
+        Returns None if no constraints found (fallback to default).
+        """
+        key = f"{entity_name}.{field_name}"
+        constraints = self._constraint_cache.get(key, {})
+
+        if not constraints:
+            return None
+
+        # Enum/status values
+        if "default_value" in constraints:
+            return constraints["default_value"]
+
+        # Range constraints - generate valid value
+        if "min" in constraints:
+            min_val = constraints["min"]
+            if data_type == DataType.INTEGER:
+                return int(min_val) + 1  # min + 1 to be safely valid
+            elif data_type == DataType.FLOAT:
+                return float(min_val) + 0.01
+
+        # Format constraints
+        if constraints.get("format") == "email":
+            return "test@example.com"
+        elif constraints.get("format") == "uuid":
+            return "00000000-0000-4000-8000-000000000099"
+
+        return None
+
+    def _build_entity_map(self) -> None:
         """Build lookup map for entities."""
         for entity in self.app_ir.get_entities():
             self._entity_map[entity.name.lower()] = entity
@@ -77,6 +171,29 @@ class TestsIRGenerator:
                 self._entity_map[entity.name.lower()[:-1]] = entity
             else:
                 self._entity_map[entity.name.lower() + 's'] = entity
+
+    def _build_entity_uuid_map(self) -> Dict[str, str]:
+        """Phase 1.2: Build entity → UUID map dynamically from IR.
+
+        Domain-agnostic: No hardcoded entity names.
+        UUIDs are deterministic based on entity order for reproducibility.
+        """
+        uuid_map = {}
+        entities = self.app_ir.get_entities()
+
+        for idx, entity in enumerate(entities, start=1):
+            # Generate deterministic UUID: 00000000-0000-4000-8000-00000000000X
+            uuid_val = f"00000000-0000-4000-8000-{idx:012d}"
+            entity_name = entity.name.lower()
+            uuid_map[entity_name] = uuid_val
+
+            # Also map singular/plural variants
+            if entity_name.endswith('s'):
+                uuid_map[entity_name[:-1]] = uuid_val
+            else:
+                uuid_map[entity_name + 's'] = uuid_val
+
+        return uuid_map
 
     def generate(self) -> TestsModelIR:
         """Generate complete TestsModelIR from ApplicationIR."""
@@ -166,37 +283,38 @@ class TestsIRGenerator:
     def _get_default_value(self, data_type: DataType, field_name: str, entity_name: str = "") -> Any:
         """Get appropriate default value for field.
 
-        Bug #167 Fix: Use business-appropriate status values based on entity type.
-        - Orders/Carts need "pending" status for checkout operations
-        - Products need "active" status for availability
-        - Users need "active" status for authentication
+        Phase 1.2: PRIORITY ORDER (domain-agnostic first):
+        1. IR constraints (ValidationModelIR) - fully agnostic
+        2. Field name heuristics (email, name, etc.) - semi-agnostic
+        3. Type defaults - fully agnostic
         """
-        field_lower = field_name.lower()
-        entity_lower = entity_name.lower() if entity_name else ""
+        # Phase 1.2: Try IR constraints FIRST (domain-agnostic)
+        if entity_name:
+            constraint_value = self._get_value_from_constraints(entity_name, field_name, data_type)
+            if constraint_value is not None:
+                return constraint_value
 
-        # Special cases by field name
+        field_lower = field_name.lower()
+
+        # Field name heuristics (semi-agnostic - common patterns)
         if 'email' in field_lower:
             return "test@example.com"
+        if 'name' in field_lower and 'full' in field_lower:
+            return "Test User"
         if 'name' in field_lower:
             return "Test Name"
-        if 'price' in field_lower:
+        if 'price' in field_lower or 'amount' in field_lower:
             return 99.99
-        if 'quantity' in field_lower or 'count' in field_lower:
-            return 1
+        if 'quantity' in field_lower or 'count' in field_lower or 'stock' in field_lower:
+            return 10  # Sufficient stock for operations
         if 'description' in field_lower:
             return "Test description"
-
-        # Bug #167: Business-appropriate status values
-        if 'status' in field_lower:
-            # Orders and Carts need "pending" for checkout/payment operations
-            if entity_lower in ['order', 'cart', 'basket', 'checkout']:
-                return "pending"
-            # Products, Users, Customers need "active" for availability
-            return "active"
-
-        # Bug #167: is_active should be True for most entities
-        if field_lower == 'is_active':
+        if 'is_active' in field_lower or 'active' == field_lower:
             return True
+
+        # For status fields without IR constraints, use generic valid value
+        if 'status' in field_lower:
+            return "PENDING"  # Generic initial state
 
         return self.DEFAULT_VALUES.get(data_type, "test")
 
@@ -327,6 +445,13 @@ class TestsIRGenerator:
         """Generate edge case tests for endpoint."""
         edge_cases = []
 
+        # Bug #191 Fix: Build path params for edge cases (same as happy_path)
+        # Path params are REQUIRED even for edge cases - only query params are optional
+        path_params = {}
+        for param in endpoint.parameters:
+            if param.location.value == "path":
+                path_params[param.name] = self._get_param_value(param.data_type, param.name)
+
         # Empty query params test for GET with optional params
         if endpoint.method == HttpMethod.GET:
             optional_params = [p for p in endpoint.parameters if not p.required]
@@ -339,6 +464,7 @@ class TestsIRGenerator:
                     operation_id=endpoint.operation_id,
                     test_type=TestType.SMOKE,
                     priority=TestPriority.LOW,
+                    path_params=path_params,  # Bug #191: Include required path params
                     expected_outcome=ExpectedOutcome.SUCCESS,
                     expected_status_code=200,
                     requires_auth=endpoint.auth_required,
@@ -353,6 +479,13 @@ class TestsIRGenerator:
         # 404 test for endpoints with path params
         path_params = [p for p in endpoint.parameters if p.location.value == "path"]
         if path_params and endpoint.method != HttpMethod.POST:
+            # Bug #186 Fix: PUT/PATCH need valid request_body to avoid 422 before 404
+            # FastAPI validates body BEFORE executing the handler, so we need a valid body
+            # to get past validation and reach the existence check that returns 404
+            request_body_for_404 = None
+            if endpoint.method in [HttpMethod.PUT, HttpMethod.PATCH] and endpoint.request_schema:
+                request_body_for_404 = self._generate_request_body(endpoint)
+
             error_cases.append(TestScenarioIR(
                 name=f"{endpoint.operation_id}_not_found",
                 description="Test with non-existent resource ID",
@@ -362,6 +495,7 @@ class TestsIRGenerator:
                 test_type=TestType.SMOKE,
                 priority=TestPriority.MEDIUM,
                 path_params={p.name: "00000000-0000-0000-0000-000000000000" for p in path_params},
+                request_body=request_body_for_404,  # Bug #186: Include body for PUT/PATCH
                 expected_outcome=ExpectedOutcome.CLIENT_ERROR,
                 expected_status_code=404,
                 assertions=[TestAssertion(
@@ -457,19 +591,13 @@ class TestsIRGenerator:
         if type_lower in ['boolean', 'bool']:
             return True
         if type_lower == 'uuid':
-            # Bug #144: Use seed-compatible UUIDs based on field name
-            # These must match the UUIDs in seed_db.py and smoke_runner_v2.py
-            seed_uuids = {
-                'product': '00000000-0000-4000-8000-000000000001',
-                'customer': '00000000-0000-4000-8000-000000000002',
-                'cart': '00000000-0000-4000-8000-000000000003',
-                'order': '00000000-0000-4000-8000-000000000005',
-                'item': '00000000-0000-4000-8000-000000000006',
-                'user': '00000000-0000-4000-8000-000000000002',
-            }
+            # Phase 1.2: Domain-agnostic UUID generation from IR
+            # Build UUID map dynamically from entities in IR
+            seed_uuids = self._build_entity_uuid_map()
+
             # Derive entity type from field name (e.g., customer_id -> customer)
             for entity, uuid_val in seed_uuids.items():
-                if entity in field_lower:
+                if entity.lower() in field_lower:
                     return uuid_val
             # Fallback to a valid generic UUID for unknown FK fields
             return "00000000-0000-4000-8000-000000000099"

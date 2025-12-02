@@ -804,15 +804,22 @@ class MultiPassPlanner:
             >>> entity = planner._extract_entity(req)
             >>> # "product"
         """
-        # Simple heuristic: look for known entities
+        # Domain-agnostic entity extraction from requirement description
         text = req.description.lower()
 
-        # Known e-commerce entities (can be extended)
-        entities = ['product', 'customer', 'cart', 'order', 'payment']
+        # Extract entities dynamically from IR if available
+        if hasattr(self, 'application_ir') and self.application_ir:
+            for entity in self.application_ir.domain_model.entities:
+                if entity.name.lower() in text:
+                    return entity.name.lower()
 
-        for entity in entities:
-            if entity in text:
-                return entity
+        # Fallback: Extract noun patterns (words before common verbs)
+        import re
+        # Look for patterns like "create X", "list X", "update X"
+        pattern = r'(?:create|list|get|update|delete|add|remove)\s+(\w+)'
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1).rstrip('s')  # Remove plural 's'
 
         return 'unknown'
 
@@ -1354,8 +1361,19 @@ class MultiPassPlanner:
         """
         violations = []
 
+        # Domain-agnostic: Extract entities from IR or from requirements themselves
+        entities_to_check = set()
+        if hasattr(self, 'application_ir') and self.application_ir:
+            entities_to_check = {e.name.lower() for e in self.application_ir.domain_model.entities}
+        else:
+            # Fallback: extract entities from requirement descriptions
+            for req in requirements:
+                extracted = self._extract_entity(req)
+                if extracted != 'unknown':
+                    entities_to_check.add(extracted)
+
         # Check each entity
-        for entity in ['product', 'customer', 'cart', 'order']:
+        for entity in entities_to_check:
             # Find create and read/update/delete operations for this entity
             create_req = None
             other_reqs = []
@@ -1405,11 +1423,11 @@ class MultiPassPlanner:
 
     def _check_workflow_ordering(self, dag: Any, requirements: List[Any]) -> List[OrderingViolation]:
         """
-        Check workflow ordering violations
+        Check workflow ordering violations (domain-agnostic).
 
         Rules:
-        - Cart operations (create_cart, add_to_cart) before checkout_cart
-        - Checkout before payment
+        - Collection operations (create, add_item) before state transitions (checkout, submit, process)
+        - State transitions follow logical order based on BehaviorModelIR flows
 
         Args:
             dag: DAG object with waves
@@ -1419,54 +1437,68 @@ class MultiPassPlanner:
             List[OrderingViolation] for detected violations
 
         Example:
-            >>> # Valid: create_cart (wave 1) → add_to_cart (wave 2) → checkout (wave 3)
+            >>> # Valid: create_collection (wave 1) → add_item (wave 2) → process (wave 3)
             >>> violations = planner._check_workflow_ordering(dag, reqs)
             >>> len(violations)
             >>> # 0
         """
         violations = []
 
-        # Find workflow-related requirements
-        create_cart_req = None
-        add_to_cart_req = None
-        checkout_req = None
+        # Domain-agnostic workflow detection
+        # Find requirements with state transition verbs
+        create_collection_req = None
+        add_item_req = None
+        process_req = None
+
+        # State transition verbs (domain-agnostic)
+        state_transition_verbs = ['checkout', 'submit', 'process', 'approve', 'complete', 'pay', 'finalize']
+        add_verbs = ['add', 'append', 'insert']
 
         for req in requirements:
             desc_lower = req.description.lower()
 
-            if 'create' in desc_lower and 'cart' in desc_lower and 'checkout' not in desc_lower:
-                create_cart_req = req
-            elif 'add' in desc_lower and 'cart' in desc_lower:
-                add_to_cart_req = req
-            elif 'checkout' in desc_lower:
-                checkout_req = req
+            # Detect create + collection pattern (any entity that contains items)
+            if 'create' in desc_lower and any(verb not in desc_lower for verb in state_transition_verbs):
+                # Check if this might be a collection entity (from IR if available)
+                entity = self._extract_entity(req)
+                if entity != 'unknown':
+                    create_collection_req = req
 
-        # Check cart → checkout ordering
-        if checkout_req:
-            checkout_wave = dag.get_wave_for_requirement(checkout_req.id)
+            # Detect add item pattern
+            elif any(verb in desc_lower for verb in add_verbs) and 'item' in desc_lower:
+                add_item_req = req
 
-            # Check create_cart before checkout
-            if create_cart_req and checkout_wave is not None:
-                cart_wave = dag.get_wave_for_requirement(create_cart_req.id)
-                if cart_wave is not None and checkout_wave <= cart_wave:
+            # Detect state transition pattern
+            elif any(verb in desc_lower for verb in state_transition_verbs):
+                process_req = req
+
+        # Check collection → process ordering
+        if process_req:
+            process_wave = dag.get_wave_for_requirement(process_req.id)
+
+            # Check create before process
+            if create_collection_req and process_wave is not None:
+                create_wave = dag.get_wave_for_requirement(create_collection_req.id)
+                if create_wave is not None and process_wave <= create_wave:
+                    entity = self._extract_entity(create_collection_req)
                     violations.append(OrderingViolation(
-                        entity="cart",
+                        entity=entity,
                         violation_type="workflow",
-                        message=f"Checkout (wave {checkout_wave}) before create_cart (wave {cart_wave})",
-                        expected_order="create_cart → checkout",
-                        actual_order="checkout → create_cart"
+                        message=f"Process (wave {process_wave}) before create (wave {create_wave})",
+                        expected_order="create → process",
+                        actual_order="process → create"
                     ))
 
-            # Check add_to_cart before checkout
-            if add_to_cart_req and checkout_wave is not None:
-                add_wave = dag.get_wave_for_requirement(add_to_cart_req.id)
-                if add_wave is not None and checkout_wave <= add_wave:
+            # Check add_item before process
+            if add_item_req and process_wave is not None:
+                add_wave = dag.get_wave_for_requirement(add_item_req.id)
+                if add_wave is not None and process_wave <= add_wave:
                     violations.append(OrderingViolation(
-                        entity="cart",
+                        entity="item",
                         violation_type="workflow",
-                        message=f"Checkout (wave {checkout_wave}) before add_to_cart (wave {add_wave})",
-                        expected_order="add_to_cart → checkout",
-                        actual_order="checkout → add_to_cart"
+                        message=f"Process (wave {process_wave}) before add_item (wave {add_wave})",
+                        expected_order="add_item → process",
+                        actual_order="process → add_item"
                     ))
 
         return violations

@@ -144,9 +144,16 @@ class SeedDataAgent:
         entities: List[SeedDataEntity],
         ir: ApplicationIR
     ) -> List[SeedDataEntity]:
-        """Sort entities so parents come before children (FK dependencies)."""
+        """Sort entities so parents come before children (FK dependencies).
+
+        Uses two sources of FK information (domain-agnostic):
+        1. DomainModelIR.entities[].relationships (explicit)
+        2. ValidationModelIR.get_fk_relationships() (inferred from RELATIONSHIP rules)
+        """
         # Build dependency graph from IR relationships
         entity_deps: Dict[str, List[str]] = {}
+
+        # Source 1: Explicit relationships from DomainModelIR
         for entity in ir.get_entities():
             deps = []
             for rel in entity.relationships:
@@ -154,6 +161,19 @@ class SeedDataAgent:
                 if rel.type.value == "many_to_one" or rel.type.name == "MANY_TO_ONE":
                     deps.append(rel.target_entity)
             entity_deps[entity.name] = deps
+
+        # Source 2: FK relationships from ValidationModelIR (fallback/augmentation)
+        if ir.validation_model:
+            fk_rels = ir.validation_model.get_fk_relationships()
+            for fk in fk_rels:
+                child = fk["child_entity"]
+                parent = fk["parent_entity"]
+                if child not in entity_deps:
+                    entity_deps[child] = []
+                if parent not in entity_deps[child]:
+                    entity_deps[child].append(parent)
+
+        logger.debug(f"🔗 Entity dependencies: {entity_deps}")
 
         # Map seed entities by name
         entity_map = {e.entity_name: e for e in entities}
@@ -204,7 +224,11 @@ class SeedDataAgent:
         entity: SeedDataEntity,
         ir: ApplicationIR
     ) -> str:
-        """Generate Python code for a single entity."""
+        """Generate Python code for a single entity.
+
+        Phase 1.3: Uses IR constraints to generate valid field values
+        when not explicitly provided.
+        """
         entity_class = f"{entity.entity_name}Entity"
         var_name = f"test_{entity.entity_name.lower()}"
 
@@ -218,6 +242,10 @@ class SeedDataAgent:
         )
 
         for field_name, field_value in entity.fields.items():
+            # Phase 1.3: If value is None or empty, try to get from IR constraints
+            if field_value is None or field_value == "":
+                field_value = self._get_value_from_ir(entity.entity_name, field_name, ir)
+
             # Check if field is a FK (UUID type pointing to another entity)
             is_fk = False
             if ir_entity:
@@ -249,6 +277,56 @@ class SeedDataAgent:
             )
             session.add({var_name})
             logger.info("✅ Created test {entity.entity_name} with ID {entity.uuid}")'''
+
+    def _get_value_from_ir(self, entity_name: str, field_name: str, ir: ApplicationIR) -> Any:
+        """Phase 1.3: Get valid value from IR constraints.
+
+        Domain-agnostic value generation based on:
+        1. ValidationModelIR constraints (min/max, enums, formats)
+        2. DomainModelIR attribute defaults
+        3. Generic fallbacks by type
+        """
+        import re
+
+        # Try ValidationModelIR first
+        if ir.validation_model:
+            for rule in ir.validation_model.rules:
+                if rule.entity == entity_name and rule.attribute == field_name:
+                    condition = rule.condition or ""
+
+                    # Enum values (STATUS_TRANSITION)
+                    if "one of" in condition.lower():
+                        values = re.findall(r'[A-Z_]+', condition.split("one of")[-1])
+                        if values:
+                            return values[0]  # Return first (initial state)
+
+                    # Range constraints
+                    if "min" in condition.lower() or "ge=" in condition:
+                        try:
+                            min_val = float(re.search(r'(?:min[:\s=]*|ge=)(\d+\.?\d*)', condition, re.I).group(1))
+                            return min_val + 1  # Return min + 1
+                        except:
+                            pass
+
+        # Try DomainModelIR defaults
+        ir_entity = next((e for e in ir.get_entities() if e.name == entity_name), None)
+        if ir_entity:
+            for attr in ir_entity.attributes:
+                if attr.name == field_name and attr.default_value is not None:
+                    return attr.default_value
+
+        # Generic fallbacks by field name pattern
+        field_lower = field_name.lower()
+        if 'status' in field_lower:
+            return "PENDING"
+        if 'active' in field_lower:
+            return True
+        if 'quantity' in field_lower or 'stock' in field_lower:
+            return 10
+        if 'price' in field_lower or 'amount' in field_lower:
+            return 99.99
+
+        return "test_value"
 
     def _looks_like_uuid(self, value: str) -> bool:
         """Check if string looks like a UUID."""

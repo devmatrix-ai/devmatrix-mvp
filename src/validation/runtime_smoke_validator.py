@@ -372,6 +372,10 @@ class RuntimeSmokeTestValidator:
         self._using_docker = True
         self.server_process = None  # No process to track with Docker
 
+        # Bug #187: Wait for db-init to complete (seeds test data)
+        # With 'up -d', Docker returns immediately but db-init may still be running
+        await self._wait_for_db_init()
+
         # Wait for server to be ready
         await self._wait_for_server()
 
@@ -406,6 +410,62 @@ class RuntimeSmokeTestValidator:
 
         # Wait for server to be ready
         await self._wait_for_server()
+
+    async def _wait_for_db_init(self) -> None:
+        """
+        Wait for db-init container to complete seeding test data.
+
+        Bug #187 Fix: Docker 'up -d' returns immediately but db-init may still be running.
+        We need to wait for it to complete before running smoke tests.
+        """
+        if not self._using_docker:
+            return  # No db-init for uvicorn mode
+
+        start_time = time.time()
+        max_wait = 60  # Max 60 seconds for db-init
+
+        while (time.time() - start_time) < max_wait:
+            try:
+                # Check if db-init container has exited successfully
+                cmd = [
+                    'docker', 'compose',
+                    '-f', 'docker/docker-compose.yml',
+                    'ps', '--format', 'json'
+                ]
+                result = subprocess.run(
+                    cmd,
+                    cwd=str(self.app_dir),
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+
+                # Parse container status
+                output = result.stdout.strip()
+                if not output:
+                    await asyncio.sleep(1)
+                    continue
+
+                # Check if db-init is still running or has completed
+                # If db-init doesn't exist or has exited with 0, we're good
+                db_init_running = False
+                for line in output.split('\n'):
+                    if 'db-init' in line.lower():
+                        if 'running' in line.lower():
+                            db_init_running = True
+                            break
+
+                if not db_init_running:
+                    logger.info("✅ db-init completed or not present")
+                    return
+
+                await asyncio.sleep(1)
+
+            except Exception as e:
+                logger.warning(f"Error checking db-init status: {e}")
+                await asyncio.sleep(1)
+
+        logger.warning(f"⚠️ db-init did not complete within {max_wait}s, proceeding anyway")
 
     async def _wait_for_server(self) -> None:
         """Wait for server to be ready to accept connections."""
@@ -676,51 +736,41 @@ class RuntimeSmokeTestValidator:
             )
 
     def _substitute_path_params(self, path: str) -> str:
-        """Replace path parameters like {id} with test values."""
-        # Bug #85: Use predictable UUIDs that match seed data
-        # Each resource type gets its own UUID
-        uuid_product = '00000000-0000-4000-8000-000000000001'
-        uuid_customer = '00000000-0000-4000-8000-000000000002'
-        uuid_cart = '00000000-0000-4000-8000-000000000003'
-        uuid_order = '00000000-0000-4000-8000-000000000005'  # Bug #107: Was 004, seed uses 005
-        uuid_item = '00000000-0000-4000-8000-000000000006'
+        """Replace path parameters like {id} with test values (domain-agnostic)."""
+        # Domain-agnostic: Build UUID map from path segments
+        uuid_base = '00000000-0000-4000-8000-0000000000'
         uuid_generic = '00000000-0000-4000-8000-000000000099'
 
-        # Map path patterns to their specific UUIDs
-        # Order matters: specific patterns first, generic last
-        substitutions = [
-            (r'\{product_id\}', uuid_product),
-            (r'\{customer_id\}', uuid_customer),
-            (r'\{cart_id\}', uuid_cart),
-            (r'\{order_id\}', uuid_order),
-            (r'\{item_id\}', uuid_item),
-            (r'\{user_id\}', uuid_customer),  # user_id often maps to customer
-        ]
+        # Extract entity from path and generate deterministic UUID
+        def get_entity_uuid(entity_name: str, idx: int = 1) -> str:
+            return f"{uuid_base}{idx:02d}"
 
         result = path
 
-        # Apply specific substitutions first
-        for pattern, replacement in substitutions:
-            result = re.sub(pattern, replacement, result)
+        # Extract all path params
+        import re as re_module
+        params = re_module.findall(r'\{(\w+)\}', path)
 
-        # Handle generic {id} based on path context
-        if '{id}' in result:
-            if '/products' in path:
-                result = result.replace('{id}', uuid_product)
-            elif '/customers' in path:
-                result = result.replace('{id}', uuid_customer)
-            elif '/carts' in path:
-                result = result.replace('{id}', uuid_cart)
-            elif '/orders' in path:
-                result = result.replace('{id}', uuid_order)
+        # Build entity order from path segments
+        path_segments = [s.rstrip('s') for s in path.split('/') if s and not s.startswith('{')]
+        entity_uuids = {seg: get_entity_uuid(seg, idx + 1) for idx, seg in enumerate(path_segments)}
+
+        for param in params:
+            if param == 'id':
+                # Use first entity in path
+                if path_segments:
+                    replacement = entity_uuids.get(path_segments[0], uuid_generic)
+                else:
+                    replacement = uuid_generic
+            elif param.endswith('_id'):
+                # Extract entity from param name (product_id -> product)
+                entity = param.replace('_id', '')
+                replacement = entity_uuids.get(entity, uuid_generic)
             else:
-                result = result.replace('{id}', uuid_generic)
+                # Non-ID parameter
+                replacement = 'test-value'
 
-        # Handle any remaining *_id patterns
-        result = re.sub(r'\{[a-z_]+_id\}', uuid_generic, result)
-
-        # Non-ID parameters can be strings
-        result = re.sub(r'\{[a-z_]+\}', 'test-value', result)
+            result = result.replace(f'{{{param}}}', replacement)
 
         return result
 
@@ -799,39 +849,34 @@ class RuntimeSmokeTestValidator:
                 entity = part.rstrip('s')  # products -> product
                 break
 
-        # Generate payload based on entity type
-        if entity == 'product':
-            return {
-                'name': 'Test Product',
-                'description': 'Test description',
-                'price': 99.99,
-                'stock': 10,
-                'is_active': True
-            }
-        elif entity == 'customer':
-            return {
-                'email': 'test@example.com',
-                'full_name': 'Test Customer'
-            }
-        elif entity == 'cart':
-            # Bug #85: Use UUID that matches seed data for customer
-            return {
-                'customer_id': '00000000-0000-4000-8000-000000000002'  # Customer UUID
-            }
-        elif entity in ['order', 'order']:
-            # Bug #85: Use UUID that matches seed data for customer
-            return {
-                'customer_id': '00000000-0000-4000-8000-000000000002'  # Customer UUID
-            }
-        elif 'item' in (entity or ''):
-            # Bug #85: Use UUIDs that match seed data
-            return {
-                'product_id': '00000000-0000-4000-8000-000000000001',  # Product UUID
-                'quantity': 1
-            }
+        # Domain-agnostic payload generation based on field patterns
+        # Phase 1: Generate payloads from common field patterns, not entity names
+        payload = {}
 
-        # Generic fallback
-        return {'name': 'Test'}
+        # Common field patterns (domain-agnostic)
+        if entity:
+            entity_lower = entity.lower()
+            # Name-like entities
+            payload['name'] = f'Test {entity.title()}'
+
+            # Check for common field patterns by entity name heuristics
+            if 'item' in entity_lower:
+                # Item-like entities need parent FK and quantity
+                payload = {
+                    'quantity': 1
+                }
+            elif any(word in entity_lower for word in ['user', 'person', 'member', 'account']):
+                # User-like entities
+                payload = {
+                    'email': 'test@example.com',
+                    'full_name': 'Test User'
+                }
+
+        # If no specific pattern matched, use generic payload
+        if not payload:
+            payload = {'name': 'Test'}
+
+        return payload
 
     def _parse_error_response(self, response_text: str) -> Dict[str, Any]:
         """Parse error response to extract error type and stack trace."""

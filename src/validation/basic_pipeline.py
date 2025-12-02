@@ -117,11 +117,12 @@ REGRESSION_PATTERNS: List[Dict] = [
     },
     {
         "id": "REG-006",
-        "pattern": r"\bProductCreate\b.*\bPUT\b|\bPUT\b.*\bProductCreate\b",
+        # Domain-agnostic: Any *Create schema used with PUT endpoint
+        "pattern": r"\b\w+Create\b.*\bPUT\b|\bPUT\b.*\b\w+Create\b",
         "message": "Using Create schema for PUT (should use Update)",
         "category": "schema_error",
         "severity": ValidationSeverity.ERROR,
-        "fix_hint": "Use ProductUpdate for PUT endpoints, not ProductCreate",
+        "fix_hint": "Use *Update schema for PUT endpoints, not *Create",
     },
     {
         "id": "REG-007",

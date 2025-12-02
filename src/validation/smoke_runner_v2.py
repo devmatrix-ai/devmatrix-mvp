@@ -189,6 +189,60 @@ class SmokeRunnerV2:
 
         return scenarios
 
+    def _build_seed_uuids(self, is_delete: bool = False) -> Dict[str, str]:
+        """
+        Build seed UUIDs from IR entities (domain-agnostic).
+
+        Phase 1: Generates deterministic UUIDs based on entity order in IR.
+        This replaces hardcoded entity name mappings.
+
+        Args:
+            is_delete: If True, return delete variant UUIDs (offset by 10)
+
+        Returns:
+            Dict mapping entity name (lowercase) to UUID string
+        """
+        uuid_base = "00000000-0000-4000-8000-0000000000"
+        offset = 10 if is_delete else 0
+        item_offset = 20 if not is_delete else 21  # Item entities start at 20/21
+
+        seed_uuids = {}
+        item_counter = 0
+
+        # Get entities from TestsModelIR seed_scenarios
+        if hasattr(self.tests_model, 'seed_scenarios'):
+            for idx, seed in enumerate(self.tests_model.seed_scenarios, start=1):
+                entity_name = seed.entity_name.lower()
+                # Detect join tables (entities ending with 'item')
+                if 'item' in entity_name:
+                    uuid_num = item_offset + item_counter
+                    item_counter += 1
+                else:
+                    uuid_num = idx + offset
+                seed_uuids[entity_name] = f"{uuid_base}{uuid_num:02d}"
+
+        # Fallback: Extract from scenarios if no seed_scenarios
+        if not seed_uuids and hasattr(self.tests_model, 'scenarios'):
+            seen_entities = set()
+            idx = 1
+            for scenario in self.tests_model.scenarios:
+                entity = self._derive_entity_from_path(scenario.endpoint_path)
+                if entity and entity not in seen_entities:
+                    seen_entities.add(entity)
+                    if 'item' in entity:
+                        uuid_num = item_offset + item_counter
+                        item_counter += 1
+                    else:
+                        uuid_num = idx + offset
+                        idx += 1
+                    seed_uuids[entity] = f"{uuid_base}{uuid_num:02d}"
+
+        # Add 'item' alias for generic item references
+        if 'item' not in seed_uuids:
+            seed_uuids['item'] = f"{uuid_base}{item_offset:02d}"
+
+        return seed_uuids
+
     async def _execute_scenario(
         self,
         client: httpx.AsyncClient,
@@ -196,17 +250,29 @@ class SmokeRunnerV2:
     ) -> ScenarioResult:
         """Execute a single test scenario."""
         # Build actual path with params
+        # Phase 1: Domain-agnostic UUID generation from IR entities
         # Bug #136 Fix: Use predictable UUIDs that match seed_db.py
-        seed_uuids = {
-            'product': '00000000-0000-4000-8000-000000000001',
-            'customer': '00000000-0000-4000-8000-000000000002',
-            'cart': '00000000-0000-4000-8000-000000000003',
-            'order': '00000000-0000-4000-8000-000000000005',
-            'item': '00000000-0000-4000-8000-000000000006',
-            'user': '00000000-0000-4000-8000-000000000002',  # user often maps to customer
-        }
+        # Bug #187 Fix: DELETE tests use secondary UUIDs to not destroy seed data
+        seed_uuids_primary = self._build_seed_uuids(is_delete=False)
+        seed_uuids_delete = self._build_seed_uuids(is_delete=True)
+
+        # Bug #187: Choose UUID set based on HTTP method
+        is_delete = scenario.http_method.upper() == "DELETE"
+        seed_uuids = seed_uuids_delete if is_delete else seed_uuids_primary
+
         path = scenario.endpoint_path
-        for param_name, param_value in scenario.path_params.items():
+
+        # Bug #191: Auto-detect missing path params from endpoint_path
+        # Some edge_cases have empty path_params but still have {param} in path
+        import re
+        path_param_names = re.findall(r'\{(\w+)\}', scenario.endpoint_path)
+        effective_path_params = dict(scenario.path_params)
+        for param_name in path_param_names:
+            if param_name not in effective_path_params:
+                # Auto-fill with seed UUID based on param name
+                effective_path_params[param_name] = "{{seed_id}}"
+
+        for param_name, param_value in effective_path_params.items():
             # Handle placeholder values (e.g., {{seed_id}})
             if isinstance(param_value, str) and param_value.startswith("{{"):
                 # Bug #137 Fix: Derive entity type from param name OR path context
@@ -216,7 +282,16 @@ class SmokeRunnerV2:
                 else:
                     # Specific param name (e.g., product_id -> product)
                     entity_type = param_name.replace('_id', '').lower()
-                param_value = seed_uuids.get(entity_type, '00000000-0000-4000-8000-000000000099')
+
+                # Domain-agnostic: For item subresource paths, use PRIMARY parent UUID
+                # Item entities reference primary parent entity, not delete variant
+                is_item_subpath = '/items/' in scenario.endpoint_path
+                if is_item_subpath and param_name.endswith('_id') and param_name != 'id':
+                    # Use primary UUID for the referenced parent entity
+                    parent_entity = param_name.replace('_id', '')
+                    param_value = seed_uuids_primary.get(parent_entity, seed_uuids_primary.get(list(seed_uuids_primary.keys())[0] if seed_uuids_primary else 'unknown', '00000000-0000-4000-8000-000000000001'))
+                else:
+                    param_value = seed_uuids.get(entity_type, '00000000-0000-4000-8000-000000000099')
             # Bug #137: Do NOT convert zero UUIDs - they're intentional for _not_found tests
             path = path.replace(f"{{{param_name}}}", str(param_value))
 

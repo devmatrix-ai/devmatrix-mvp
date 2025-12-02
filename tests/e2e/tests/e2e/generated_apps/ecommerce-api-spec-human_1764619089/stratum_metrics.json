@@ -1,0 +1,43 @@
+{
+  "app_id": "ecommerce-api-spec-human_1764619089",
+  "timestamp": "2025-12-01T19:58:09.323566+00:00",
+  "execution_mode": "hybrid",
+  "strata": {
+    "template": {
+      "duration_ms": 3.48663330078125,
+      "files_generated": 32,
+      "errors_detected": 0,
+      "errors_repaired": 0,
+      "tokens_used": 0
+    },
+    "ast": {
+      "duration_ms": 2.3818016052246094,
+      "files_generated": 49,
+      "errors_detected": 0,
+      "errors_repaired": 0,
+      "tokens_used": 0
+    },
+    "llm": {
+      "duration_ms": 0.1957416534423828,
+      "files_generated": 6,
+      "errors_detected": 0,
+      "errors_repaired": 0,
+      "tokens_used": 6133
+    },
+    "qa": {
+      "duration_ms": 165.40813446044922,
+      "files_generated": 0,
+      "errors_detected": 0,
+      "errors_repaired": 0,
+      "tokens_used": 0
+    }
+  },
+  "totals": {
+    "duration_ms": 171.47231101989746,
+    "files": 87,
+    "errors_detected": 0,
+    "errors_repaired": 0,
+    "llm_tokens": 6133,
+    "success_rate": 100.0
+  }
+}

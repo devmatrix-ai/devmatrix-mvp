@@ -218,6 +218,15 @@ Smoke fails → Anti-pattern stored → Next codegen avoids pattern
 | 2025-12-01 | Deep Metrics Analysis | ✅ | Bug #170-#179 - 10 metrics issues identified |
 | 2025-12-01 | Task 5: Metrics Cleanup | ✅ | All 10 bugs fixed (#170-#179) |
 | 2025-12-01 | Bug #180-#183 | ✅ | Smoke repair loop + contract validation |
+| 2025-12-01 | IR Architecture Analysis | ✅ | 8 issues identified, documented in IR_ARCHITECTURE_ANALYSIS.md |
+| 2025-12-01 | Bug #I1: TestsModelIR Auto-gen | ✅ | SpecToApplicationIR now calls generate_tests_ir() |
+| 2025-12-01 | Bug #I2: IRFlow Fields | ✅ | _build_behavior_model() now populates all IRFlow fields |
+| 2025-12-01 | Bug #I3: LLM Validation | ✅ | Added Pydantic validation for LLM output |
+| 2025-12-01 | Bug #I5: Configurable Model | ✅ | DEVMATRIX_LLM_MODEL env var support |
+| 2025-12-01 | Bug #I6: Retry Logic | ✅ | Added exponential backoff (3 retries) |
+| 2025-12-01 | Bug #I8: Cache Invalidation | ✅ | Expanded from 6 to 14 files |
+| 2025-12-01 | Bug #184: SeedEntityIR.scenario | ✅ | Added missing `scenario` field to SeedEntityIR |
+| 2025-12-01 | Bug #185: top_candidates → candidates | ✅ | Fixed attribute name in smoke_repair_orchestrator.py |
 | | Task 6: Demo | ⏳ | |
 
 ---
@@ -667,3 +676,300 @@ Generated 30/32 missing endpoints
 | #179 | Missing endpoint math | HIGH | ✅ DONE |
 
 **✅ All metrics cleanup completed!**
+
+---
+
+## 🐛 Bug #184-#189: Session Fixes (2025-12-01)
+
+| Bug | Description | Status |
+|-----|-------------|--------|
+| #184 | `SeedEntityIR` missing `scenario` attribute | ✅ FIXED |
+| #185 | `ConfidenceModelResult.top_candidates` → `.candidates` | ✅ FIXED |
+| #186 | PUT/PATCH `_not_found` tests need valid body to get 404 | ✅ FIXED |
+| #187 | DELETE tests destroy seed data for other tests | ✅ FIXED |
+| #188 | `TestScenarioIR.type` → `.test_type` | ✅ FIXED |
+| #189 | `session.add()` rollback on duplicate → `session.merge()` upsert | ✅ FIXED |
+
+### Bug #187 Details: Dual UUID Strategy
+
+**Problem:** DELETE happy_path tests use the same seed UUID as GET/PUT/PATCH tests. When DELETE runs first, it destroys the seed data and subsequent tests fail with 404.
+
+**Solution:** Generate 2 records per entity:
+- **Primary UUID** (..01, ..02, etc.) → for GET, PUT, PATCH tests
+- **Secondary UUID** (..11, ..12, etc.) → for DELETE tests
+
+**Files Modified:**
+- `src/services/code_generation_service.py` - `_generate_seed_db_script()` creates 2 records
+- `src/validation/smoke_runner_v2.py` - DELETE tests use secondary UUIDs
+
+### Bug #189 Details: Upsert Instead of Insert
+
+**Problem:** When seed_db.py encounters a duplicate key error (record already exists), it rolls back the ENTIRE transaction including new DELETE variant records.
+
+**Solution:** Changed `session.add()` → `await session.merge()` for upsert behavior (update if exists, insert if not).
+
+---
+
+## 📋 QA Conclusion (2025-12-01 Session)
+
+### Estado Actual
+
+| Aspecto | Estado |
+|---------|--------|
+| Lógica base | ✅ OK |
+| Precondiciones de negocio en tests IR | ⚠️ Pendiente |
+| Seeding/estado inicial BD | ⚠️ Pendiente verificación Bug #189 |
+| Smoke Pass Rate | 85.1% (antes: 50%, meta: 95%+) |
+
+### ~7 Escenarios Fallidos - Análisis
+
+| Error | Causa Probable | Acción |
+|-------|----------------|--------|
+| 404 en DELETE | Recurso no creado en flujo previo | Verificar seed dual UUID |
+| 422 en POST /orders | Cart vacío / product inactivo | Revisar precondiciones checkout |
+| 422 en PUT not_found | Validación antes de existence check | Bug #186 aplicado |
+| 422 en GET /customers/{id}/orders | Path param literal `{customer_id}` | Bug en smoke_runner |
+
+### Checklist Final
+
+**Capa Infra/Entorno:**
+- [ ] QA pipeline usa `docker/docker-compose.yml` y `docker/Dockerfile`
+- [ ] Verificar que Bug #189 (`merge()`) resuelve persistencia
+
+**Capa Tests/Smoke:**
+- [ ] Analizar cada fallo en `smoke_test_results.json` / `ir_smoke_test_results.json`
+- [ ] Para 404: ¿se crea el recurso? ¿se borra antes?
+- [ ] Para 422: ¿qué valida? ¿payload correcto? ¿relaciones (cart vacío, product inactivo)?
+- [ ] Ajustar lógica de negocio O escenarios de test
+
+**Limpieza:**
+- [ ] Eliminar `@router.patch('/')` placeholder en product.py
+- [ ] Eliminar endpoints duplicados `@router.post('/') / @router.post('')`
+- [ ] Resolver o comentar TODOs en servicios de flows
+
+**Objetivo:** 90-100% smoke pass consistentemente
+
+---
+
+## 🐛 Bug #190-#193: Session 2025-12-01 (Continued)
+
+### Bug #190: Docker Compose Path in Repair Orchestrator
+**Status:** ✅ FIXED
+
+**Problem:** `smoke_repair_orchestrator.py` usaba `docker build .` que busca `Dockerfile` en root, pero las apps generadas tienen `docker/Dockerfile`.
+
+**Error:**
+```
+ERROR: failed to build: failed to solve: failed to read dockerfile: open Dockerfile: no such file or directory
+```
+
+**Fix:** Cambiar a `docker compose -f docker/docker-compose.yml build --no-cache`
+
+**Files Modified:**
+- `src/validation/smoke_repair_orchestrator.py` - `_rebuild_docker_no_cache()` y `_restart_container()`
+
+---
+
+### Bug #191: Edge Cases Missing path_params
+**Status:** ✅ FIXED
+
+**Problem:** El IR generator creaba edge_cases (como `_no_optional_params`) sin `path_params`, aunque el endpoint tenga `{customer_id}` en la ruta.
+
+**Example:**
+```json
+// Endpoint: GET /customers/{customer_id}/orders
+// happy_path tiene: path_params: {"customer_id": "{{seed_id}}"}
+// edge_case tiene:  path_params: {}  ← BUG!
+```
+
+**Root Cause:** `_generate_edge_cases()` no copiaba los path params del endpoint.
+
+**Fix:** Agregar extracción de path params en `_generate_edge_cases()`:
+```python
+# Bug #191 Fix: Build path params for edge cases (same as happy_path)
+path_params = {}
+for param in endpoint.parameters:
+    if param.location.value == "path":
+        path_params[param.name] = self._get_param_value(param.data_type, param.name)
+```
+
+**Files Modified:**
+- `src/services/tests_ir_generator.py` - `_generate_edge_cases()`
+
+---
+
+### Bug #192: CartItem/OrderItem Not Seeded
+**Status:** ✅ FIXED
+
+**Problem:** Los tests `DELETE /carts/{id}/items/{product_id}` fallaban con 404 porque CartItem/OrderItem no tenían seed data.
+
+**Root Cause:** `_generate_seed_db_script()` tenía estos en `skip_entities` pero nunca los seedeaba después.
+
+**Fix:** Agregar seeding de CartItem/OrderItem DESPUÉS de sus entidades padre (Cart, Order):
+```python
+# Bug #192: Seed CartItem/OrderItem AFTER parent entities
+item_entities = [e for e in entities_list if e.name.lower() in skip_entities]
+for entity in item_entities:
+    # Generate seeds linking to parent cart/order and product
+    ...
+```
+
+**Files Modified:**
+- `src/services/code_generation_service.py` - `_generate_seed_db_script()`
+
+---
+
+### Bug #193: Premature Convergence Detection
+**Status:** ✅ FIXED
+
+**Problem:** El repair cycle detectaba "convergence" en ciclo 2 si el pass rate no mejoraba, y salía sin intentar ciclo 3.
+
+**Log Evidence:**
+```
+  🔁 Cycle 2/3
+    📊 Pass rate: 85.1% (63/74)
+    📈 Converged at 85.1%
+  ⚠️ Convergence detected (no further improvement)
+```
+
+**Root Cause:** La lógica salía inmediatamente si `abs(current - previous) < epsilon`, sin importar si quedaban ciclos.
+
+**Fix:** Solo marcar convergence verdadera si es el último ciclo permitido:
+```python
+if cycle > 0 and abs(current_pass_rate - previous) < epsilon:
+    if cycle >= max_cycles - 1:
+        # Last cycle - truly converged
+        convergence_detected = True
+        break
+    else:
+        # Continue trying alternative repairs
+        logger.warning("No improvement, but continuing...")
+```
+
+**Files Modified:**
+- `src/validation/smoke_repair_orchestrator.py` - `run_full_repair_cycle()`
+
+---
+
+## 📊 Bug Tracker Summary (Session 2025-12-01)
+
+| Bug | Description | Status | File |
+|-----|-------------|--------|------|
+| #184 | `SeedEntityIR.scenario` field | ✅ | tests_ir_generator.py |
+| #185 | `ConfidenceModelResult.candidates` | ✅ | pattern_classifier.py |
+| #186 | Body en PUT/PATCH `_not_found` | ✅ | tests_ir_generator.py |
+| #187 | Dual UUID seeding strategy | ✅ | code_generation_service.py, smoke_runner_v2.py |
+| #188 | `TestScenarioIR.test_type` | ✅ | ir_persistence_service.py |
+| #189 | `session.merge()` upsert | ✅ | code_generation_service.py |
+| #190 | Docker compose path in repair | ✅ | smoke_repair_orchestrator.py |
+| #191 | Edge cases missing path_params | ✅ | tests_ir_generator.py |
+| #192 | CartItem/OrderItem seeding | ✅ | code_generation_service.py |
+| #193 | Premature convergence detection | ✅ | smoke_repair_orchestrator.py |
+
+**Total:** 10 bugs fixed this session
+
+---
+
+### Bug #194: README.md Not Generated
+**Status:** ✅ FIXED
+
+**Problem:** README.md no se generaba. El checkpoint mostraba "README not generated (missing from code generation)".
+
+**Root Cause:**
+1. PatternBank no tiene patterns de README
+2. `_generate_with_llm_fallback()` está en `essential_files` pero se ejecuta bajo `silent_logs()` y posiblemente fallaba silenciosamente
+3. `_compose_patterns()` tenía fallback para alembic pero no para README
+
+**Fix:** Agregar fallback explícito en `_compose_patterns()`:
+```python
+# Bug #194: README.md must be generated if not in PatternBank
+if "README.md" not in found_files:
+    logger.info("🔧 Generating README.md (not in PatternBank)")
+    files["README.md"] = self._generate_readme_content_fallback(spec_or_ir, is_app_ir)
+    found_files.add("README.md")
+```
+
+También se agregó `_generate_readme_content_fallback()` que genera un README completo usando ApplicationIR.
+
+**Files Modified:**
+- `src/services/code_generation_service.py` - `_compose_patterns()` y nuevo método `_generate_readme_content_fallback()`
+
+---
+
+## 📊 Updated Bug Tracker (Session 2025-12-01)
+
+| Bug | Description | Status | File |
+|-----|-------------|--------|------|
+| #184 | `SeedEntityIR.scenario` field | ✅ | tests_ir_generator.py |
+| #185 | `ConfidenceModelResult.candidates` | ✅ | pattern_classifier.py |
+| #186 | Body en PUT/PATCH `_not_found` | ✅ | tests_ir_generator.py |
+| #187 | Dual UUID seeding strategy | ✅ | code_generation_service.py, smoke_runner_v2.py |
+| #188 | `TestScenarioIR.test_type` | ✅ | ir_persistence_service.py |
+| #189 | `session.merge()` upsert | ✅ | code_generation_service.py |
+| #190 | Docker compose path in repair | ✅ | smoke_repair_orchestrator.py |
+| #191 | Edge cases missing path_params | ✅ | tests_ir_generator.py |
+| #192 | CartItem/OrderItem seeding | ✅ | code_generation_service.py |
+| #193 | Premature convergence detection | ✅ | smoke_repair_orchestrator.py |
+| #194 | README.md not generated | ✅ | code_generation_service.py |
+| #195 | Malformed UUID in CartItem/OrderItem | ✅ | code_generation_service.py |
+| #196 | Docker compose path duplication | ✅ | smoke_repair_orchestrator.py |
+| #197 | IR realignment NoneType error | 🔍 | TBD |
+
+**Total:** 13 bugs fixed this session (1 pending investigation)
+
+---
+
+## 📊 Current Status (Post-Session)
+
+| Metric | Value |
+|--------|-------|
+| **Pass Rate** | 89.2% (66/74) |
+| **Progress** | +39.2% from 50% baseline |
+| **Remaining Failures** | 8 |
+
+**See:** [REMAINING_8_FAILURES_PLAN.md](./REMAINING_8_FAILURES_PLAN.md) for detailed fix plan.
+
+---
+
+### Bug #195: Malformed UUID in CartItem/OrderItem Seeding
+**Status:** ✅ FIXED
+
+**Problem:** El seeding de CartItem/OrderItem fallaba con "badly formed hexadecimal UUID string".
+
+**Error Log:**
+```
+✅ Created/updated test Order with ID 00000000-0000-4000-8000-000000000015
+❌ Failed to seed data: badly formed hexadecimal UUID string
+❌ Database initialization failed: badly formed hexadecimal UUID string
+```
+
+**Root Cause:**
+```python
+item_uuid = f"{uuid_base}{20 + seed_idx}"
+# uuid_base = "00000000-0000-4000-8000-00000000000" (ends with single 0)
+# Result: "00000000-0000-4000-8000-0000000000020" ← 35 chars instead of 32!
+```
+
+El `uuid_base` termina en 1 dígito, y al agregar "20" produce un UUID de 35 caracteres (inválido).
+
+**Fix:**
+1. Usar `uuid_base_delete` (termina en 10 ceros) para item UUIDs
+2. Agregar contador global `item_uuid_counter` para evitar colisiones entre CartItem y OrderItem
+
+```python
+item_uuid_counter = 20  # Start at 20 for item entities
+for entity in item_entities:
+    ...
+    for seed_idx, (p_uuid, purpose) in enumerate([...]):
+        item_uuid = f"{uuid_base_delete}{item_uuid_counter}"  # e.g., "..000000000020"
+        item_uuid_counter += 1  # Increment for next item
+```
+
+**UUIDs generados:**
+- CartItem primary: `00000000-0000-4000-8000-000000000020`
+- CartItem delete:  `00000000-0000-4000-8000-000000000021`
+- OrderItem primary: `00000000-0000-4000-8000-000000000022`
+- OrderItem delete:  `00000000-0000-4000-8000-000000000023`
+
+**Files Modified:**
+- `src/services/code_generation_service.py` - `_generate_seed_db_script()`

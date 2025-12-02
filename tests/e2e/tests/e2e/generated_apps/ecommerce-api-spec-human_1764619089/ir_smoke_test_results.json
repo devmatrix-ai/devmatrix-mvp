@@ -1,0 +1,98 @@
+{
+  "passed": false,
+  "total_scenarios": 77,
+  "passed_count": 69,
+  "failed_count": 8,
+  "pass_rate": 89.6103896103896,
+  "endpoint_coverage": 100.0,
+  "violations": [
+    {
+      "type": "smoke_test_failure",
+      "severity": "medium",
+      "endpoint": "PUT /products/{id}",
+      "scenario": "update_product_validation_error",
+      "expected_status": 422,
+      "actual_status": 200,
+      "error_message": "Expected 422, got 200"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "medium",
+      "endpoint": "PUT /carts/{cart_id}/items/{item_id}",
+      "scenario": "update_cart_item_quantity_validation_error",
+      "expected_status": 422,
+      "actual_status": 200,
+      "error_message": "Expected 422, got 200"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "high",
+      "endpoint": "POST /orders",
+      "scenario": "checkout_happy_path",
+      "expected_status": 201,
+      "actual_status": 422,
+      "error_message": "Expected 201, got 422"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "high",
+      "endpoint": "DELETE /carts/{id}/items/{product_id}",
+      "scenario": "remove_item_from_cart_happy_path",
+      "expected_status": 204,
+      "actual_status": 404,
+      "error_message": "Expected 204, got 404"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "medium",
+      "endpoint": "PUT /orders/{id}/items/{product_id}",
+      "scenario": "add_item_to_order_validation_error",
+      "expected_status": 422,
+      "actual_status": 200,
+      "error_message": "Expected 422, got 200"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "high",
+      "endpoint": "DELETE /orders/{id}/items/{product_id}",
+      "scenario": "remove_item_from_order_happy_path",
+      "expected_status": 204,
+      "actual_status": 404,
+      "error_message": "Expected 204, got 404"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "medium",
+      "endpoint": "DELETE /products/{id}",
+      "scenario": "F11: Update Item Quantity_3_delete",
+      "expected_status": 204,
+      "actual_status": 404,
+      "error_message": "Expected 204, got 404"
+    },
+    {
+      "type": "smoke_test_failure",
+      "severity": "medium",
+      "endpoint": "DELETE /products/{id}",
+      "scenario": "F12: Empty Cart_2_delete",
+      "expected_status": 204,
+      "actual_status": 404,
+      "error_message": "Expected 204, got 404"
+    }
+  ],
+  "by_priority": {
+    "critical": 2,
+    "high": 0,
+    "medium": 73,
+    "low": 2
+  },
+  "failed_endpoints": [
+    "PUT /products/{id}",
+    "PUT /carts/{cart_id}/items/{item_id}",
+    "POST /orders",
+    "DELETE /carts/{id}/items/{product_id}",
+    "PUT /orders/{id}/items/{product_id}",
+    "DELETE /orders/{id}/items/{product_id}",
+    "DELETE /products/{id}",
+    "DELETE /products/{id}"
+  ]
+}

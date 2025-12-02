@@ -762,7 +762,7 @@ class PatternBank:
             'payment_workflow'
         """
         keyword_mappings = {
-            # CRUD operations
+            # CRUD operations (domain-agnostic verbs)
             'create': 'crud_create',
             'add': 'crud_create',
             'new': 'crud_create',
@@ -777,13 +777,22 @@ class PatternBank:
             'modify': 'crud_update',
             'delete': 'crud_delete',
             'remove': 'crud_delete',
-            # Workflow operations
-            'checkout': 'payment_workflow',
-            'pay': 'payment_workflow',
-            'payment': 'payment_workflow',
-            'order': 'payment_workflow',
-            'cart': 'cart_workflow',
-            'basket': 'cart_workflow',
+            # Domain-agnostic workflow operations (verbs, not entity names)
+            'checkout': 'state_transition_workflow',
+            'pay': 'state_transition_workflow',
+            'payment': 'state_transition_workflow',
+            'process': 'state_transition_workflow',
+            'submit': 'state_transition_workflow',
+            'approve': 'state_transition_workflow',
+            'reject': 'state_transition_workflow',
+            'cancel': 'state_transition_workflow',
+            'complete': 'state_transition_workflow',
+            'activate': 'state_transition_workflow',
+            'deactivate': 'state_transition_workflow',
+            # Collection management (domain-agnostic)
+            'add_item': 'collection_workflow',
+            'remove_item': 'collection_workflow',
+            'clear': 'collection_workflow',
         }
 
         return keyword_mappings.get(keyword.lower())

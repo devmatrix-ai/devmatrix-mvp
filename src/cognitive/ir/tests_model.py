@@ -55,9 +55,10 @@ class SeedEntityIR(BaseModel):
     """
     entity_name: str
     table_name: str  # Actual DB table name (snake_case)
-    fields: List[SeedFieldValue]
+    fields: List[SeedFieldValue] = Field(default_factory=list)
     dependencies: List[str] = Field(default_factory=list)  # Entities that must be seeded first
     count: int = 1  # How many instances to seed
+    scenario: str = "default"  # Bug #184: Test scenario context (e.g., "smoke_test", "integration")
 
     # Traceability
     source_entity_id: Optional[str] = None  # Reference to DomainModelIR entity

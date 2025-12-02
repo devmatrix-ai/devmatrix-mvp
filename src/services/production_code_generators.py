@@ -936,10 +936,16 @@ def _should_exclude_from_create(entity_name: str, field_name: str, validation_co
     if entity_lower.endswith('item') and field_name == 'unit_price':
         return True
 
-    # Bug #127 Fix: cart_id in *Item entities is auto-set from route parameter
-    # The cart_id comes from the route path (/carts/{cart_id}/items), not request body
-    if entity_lower.endswith('item') and field_name in ['cart_id', 'order_id']:
-        return True
+    # Bug #127 Fix: Parent FK in *Item entities is auto-set from route parameter
+    # The parent_id comes from the route path (/parents/{id}/items), not request body
+    # Domain-agnostic: Exclude parent FKs (first *_id field), keep item reference FK (second *_id)
+    if entity_lower.endswith('item') and field_name.endswith('_id'):
+        # The parent FK is excluded, but the item reference FK (e.g., product_id) is kept
+        # Heuristic: Keep FKs that reference non-parent entities (typically the "what" being added)
+        # Parent FK is usually first alphabetically or matches parent entity name
+        parent_name_guess = entity_lower.replace('item', '')  # cartitem -> cart
+        if parent_name_guess and field_name.startswith(parent_name_guess):
+            return True  # This is the parent FK, exclude it
 
     return False
 
@@ -980,13 +986,15 @@ def _should_exclude_from_update(entity_name: str, field_name: str, validation_co
     return False
 
 
-def generate_schemas(entities: List[Dict[str, Any]], validation_ground_truth: Dict[str, Any] = None) -> str:
+def generate_schemas(entities: List[Dict[str, Any]], validation_ground_truth: Dict[str, Any] = None, endpoint_schemas: List[Dict[str, Any]] = None) -> str:
     """
     Generate Pydantic schemas for request/response validation.
 
     Args:
         entities: List of entity dicts with 'name', 'plural', and 'fields'
         validation_ground_truth: Optional validation ground truth from spec parser
+        endpoint_schemas: Optional list of endpoint-specific schemas from IR (Bug #200)
+                         Each schema has 'name' and 'fields' (list of field dicts)
 
     Returns:
         Complete schemas.py code
@@ -1857,6 +1865,64 @@ ItemSchema = Dict[str, Any]
 
 
 '''
+
+    # Bug #200: Generate endpoint-specific schemas from IR
+    # These are schemas defined in endpoint.request_schema (e.g., UpdateCartItemQuantity)
+    # ONLY generate schemas that don't already exist from entity definitions
+    if endpoint_schemas:
+        # Build set of already-generated schema names from entities
+        existing_schema_names = set()
+        for entity in entities:
+            entity_name = entity.get('name', '')
+            if entity_name:
+                existing_schema_names.add(f"{entity_name}Base")
+                existing_schema_names.add(f"{entity_name}Create")
+                existing_schema_names.add(f"{entity_name}Update")
+                existing_schema_names.add(f"{entity_name}Response")
+                existing_schema_names.add(f"{entity_name}List")
+
+        generated_schema_names = set()  # Track to avoid duplicates within endpoint_schemas
+        for ep_schema in endpoint_schemas:
+            schema_name = ep_schema.get('name')
+            schema_fields = ep_schema.get('fields', [])
+
+            # Skip if no name, already generated, or exists from entity definitions
+            if not schema_name or schema_name in generated_schema_names or schema_name in existing_schema_names:
+                continue
+
+            generated_schema_names.add(schema_name)
+
+            # Build Pydantic class for this endpoint schema
+            code += f'''class {schema_name}(BaseSchema):
+    """Endpoint-specific request schema (from IR)."""
+'''
+            if schema_fields:
+                for field in schema_fields:
+                    fname = field.get('name', 'unknown')
+                    ftype = field.get('type', 'str')
+                    frequired = field.get('required', True)
+
+                    # Map IR types to Python types
+                    type_map = {
+                        'string': 'str',
+                        'integer': 'int',
+                        'number': 'float',
+                        'decimal': 'Decimal',
+                        'boolean': 'bool',
+                        'uuid': 'UUID',
+                    }
+                    python_type = type_map.get(ftype.lower(), ftype)
+
+                    if frequired:
+                        code += f"    {fname}: {python_type}\n"
+                    else:
+                        code += f"    {fname}: Optional[{python_type}] = None\n"
+            else:
+                code += "    pass\n"
+            code += "\n\n"
+
+        if generated_schema_names:
+            logger.info(f"✅ Generated {len(generated_schema_names)} endpoint-specific schemas from IR: {sorted(generated_schema_names)}")
 
     return code.strip()
 

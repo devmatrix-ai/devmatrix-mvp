@@ -111,6 +111,16 @@ except ImportError:
     CODE_REPAIR_AGENT_AVAILABLE = False
     CodeRepairAgent = None
 
+# Phase 2.1-2.4: IR-Agnostic Failure Classification and Repair Mapping
+try:
+    from src.validation.failure_classifier import FailureClassifier, FailureType, ClassifiedFailure
+    from src.validation.ir_repair_mapper import IRRepairMapper, RepairAction, RepairType
+    IR_AGNOSTIC_REPAIR_AVAILABLE = True
+except ImportError:
+    IR_AGNOSTIC_REPAIR_AVAILABLE = False
+    FailureClassifier = None
+    IRRepairMapper = None
+
 
 class RepairStrategyType(Enum):
     """Types of repair strategies based on error classification."""
@@ -295,9 +305,12 @@ class ServerLogParser:
             # Bug #145: AttributeError in service files → SERVICE repair (method missing)
             if 'service' in file_lower or 'service' in msg_lower:
                 return RepairStrategyType.SERVICE
-            # AttributeError with "has no attribute" in services context
-            if 'has no attribute' in msg_lower and any(x in msg_lower for x in ['add_item', 'checkout', 'pay', 'cancel', 'create_order']):
-                return RepairStrategyType.SERVICE
+            # Domain-agnostic: Missing method patterns detected by verb prefixes
+            # Common action verbs: add_, create_, remove_, update_, get_, set_, checkout_, pay_, cancel_, process_
+            if 'has no attribute' in msg_lower:
+                action_prefixes = ['add_', 'create_', 'remove_', 'update_', 'get_', 'set_', 'process_', 'checkout_', 'pay_', 'cancel_']
+                if any(prefix in msg_lower for prefix in action_prefixes):
+                    return RepairStrategyType.SERVICE
             return RepairStrategyType.ATTRIBUTE
         elif 'type' in exception_lower:
             return RepairStrategyType.TYPE
@@ -883,6 +896,64 @@ class SmokeRepairOrchestrator:
             'known_fixes': known_fixes_applied
         }
 
+    def _classify_with_ir(
+        self,
+        violations: List[SmokeViolation],
+        application_ir
+    ) -> List[ClassifiedFailure]:
+        """
+        Phase 2.1: Classify failures using IR semantics (domain-agnostic).
+
+        Uses FailureClassifier to categorize failures by:
+        - MISSING_PRECONDITION (404 when expecting success)
+        - VALIDATION_ERROR (422 - payload invalid)
+        - WRONG_STATUS_CODE (IR says valid, got error)
+        - MISSING_SIDE_EFFECT (postcondition not met)
+        """
+        if not IR_AGNOSTIC_REPAIR_AVAILABLE or not FailureClassifier:
+            return []
+
+        classifier = FailureClassifier(application_ir)
+        classified = []
+
+        for v in violations:
+            cf = classifier.classify(
+                endpoint_path=v.endpoint,
+                http_method=v.method,
+                expected_status=v.expected_status,
+                actual_status=v.actual_status,
+                response_body={"error": v.error_message} if v.error_message else None
+            )
+            classified.append(cf)
+            logger.debug(f"    🏷️ Classified {v.endpoint}: {cf.failure_type.value}")
+
+        return classified
+
+    def _get_ir_repair_actions(
+        self,
+        classified_failures: List[ClassifiedFailure],
+        application_ir,
+        app_path: Path
+    ) -> List[RepairAction]:
+        """
+        Phase 2.3-2.4: Map classified failures to repair actions using IR.
+
+        Uses IRRepairMapper to generate domain-agnostic repair actions.
+        """
+        if not IR_AGNOSTIC_REPAIR_AVAILABLE or not IRRepairMapper:
+            return []
+
+        mapper = IRRepairMapper(application_ir, str(app_path))
+        all_actions = []
+
+        for cf in classified_failures:
+            actions = mapper.map_to_repairs(cf)
+            all_actions.extend(actions)
+            if actions:
+                logger.debug(f"    🔧 Mapped {cf.endpoint_path} → {len(actions)} repair actions")
+
+        return all_actions
+
     def _try_known_fix(
         self,
         violation: SmokeViolation,
@@ -1183,9 +1254,9 @@ class SmokeRepairOrchestrator:
                 application_ir=application_ir
             )
 
-            # Use top-ranked candidate
-            if confidence_result.top_candidates:
-                best = confidence_result.top_candidates[0]
+            # Use top-ranked candidate (Bug #185: use .candidates not .top_candidates)
+            if confidence_result.candidates:
+                best = confidence_result.best_candidate or confidence_result.candidates[0]
                 logger.info(f"    🎯 Selected repair: {best.strategy_type.value} (confidence: {best.confidence:.2f})")
 
                 # Apply the best candidate
@@ -1669,15 +1740,15 @@ class SmokeRepairOrchestrator:
         # TODO: Implement business logic from workflow
         return entity
 '''
-        elif 'checkout' in method_name or 'create_order' in method_name:
-            # Checkout/convert pattern
+        elif 'checkout' in method_name or 'create' in method_name or 'convert' in method_name:
+            # Domain-agnostic: State transition pattern (checkout, create, convert, process)
             return f'''
     async def {method_name}(self, {entity_lower}_id: UUID, db: AsyncSession) -> Any:
-        """Checkout/create order - auto-generated by smoke repair."""
+        """State transition - auto-generated by smoke repair."""
         entity = await self.repository.get_by_id({entity_lower}_id, db)
         if not entity:
             raise ValueError(f"{entity_name} not found")
-        # TODO: Implement checkout/order creation logic
+        # TODO: Implement state transition logic from IR workflow
         return entity
 '''
         elif 'pay' in method_name:
@@ -1966,26 +2037,31 @@ class SmokeRepairOrchestrator:
         logger.info(f"    🐳 Rebuilding Docker (--no-cache) for {container_name}...")
 
         try:
-            # Stop existing container
-            stop_result = subprocess.run(
-                ["docker", "stop", container_name],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+            # Bug #190: Use docker compose with docker/docker-compose.yml
+            # The generated apps have Dockerfile in docker/ subdirectory, not root
+            # Bug #196: Use absolute paths to avoid path duplication issues
+            app_path_abs = Path(app_path).resolve()
+            compose_file = app_path_abs / "docker" / "docker-compose.yml"
 
-            # Remove container
+            if not compose_file.exists():
+                logger.warning(f"    ⚠️ docker-compose.yml not found at {compose_file}")
+                return False
+
+            # Stop and remove existing containers
+            # Use compose file relative to app_path to avoid path issues
             subprocess.run(
-                ["docker", "rm", container_name],
+                ["docker", "compose", "-f", "docker/docker-compose.yml", "down", "-v"],
+                cwd=str(app_path_abs),
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=60
             )
 
-            # Rebuild with --no-cache
+            # Rebuild with --no-cache using docker compose
+            # Use relative path for -f since cwd is app_path
             build_result = subprocess.run(
-                ["docker", "build", "--no-cache", "-t", container_name, "."],
-                cwd=str(app_path),
+                ["docker", "compose", "-f", "docker/docker-compose.yml", "build", "--no-cache"],
+                cwd=str(app_path_abs),
                 capture_output=True,
                 text=True,
                 timeout=300  # 5 min timeout for build
@@ -2025,32 +2101,34 @@ class SmokeRepairOrchestrator:
         Returns:
             True if container started successfully
         """
-        if not container_name:
-            container_name = app_path.name
+        # Bug #190: Use docker compose up instead of docker run
+        # Bug #196: Use absolute paths and relative -f to avoid path duplication
+        app_path_abs = Path(app_path).resolve()
+        compose_file = app_path_abs / "docker" / "docker-compose.yml"
+
+        if not compose_file.exists():
+            logger.warning(f"    ⚠️ docker-compose.yml not found at {compose_file}")
+            return False
 
         try:
-            # Run new container
+            # Start containers with docker compose
+            # Use relative path for -f since cwd is app_path
             run_result = subprocess.run(
-                [
-                    "docker", "run", "-d",
-                    "--name", container_name,
-                    "-p", f"{port}:{port}",
-                    "-e", "DATABASE_URL=sqlite:///./test.db",
-                    container_name
-                ],
+                ["docker", "compose", "-f", "docker/docker-compose.yml", "up", "-d"],
+                cwd=str(app_path_abs),
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=120
             )
 
             if run_result.returncode != 0:
-                logger.error(f"Docker run failed: {run_result.stderr[:500]}")
+                logger.error(f"Docker compose up failed: {run_result.stderr[:500]}")
                 return False
 
             # Wait for container to be ready
-            await asyncio.sleep(3)
+            await asyncio.sleep(5)
 
-            logger.info(f"    ✅ Container {container_name} restarted on port {port}")
+            logger.info(f"    ✅ Containers restarted via docker compose")
             return True
 
         except Exception as e:
@@ -2131,16 +2209,23 @@ class SmokeRepairOrchestrator:
                 break
 
             # 5. Check convergence
+            # Bug #193: Only exit on convergence if we've tried at least 2 cycles
+            # AND this is the last allowed cycle. Otherwise, keep trying different repairs.
             if cycle > 0 and abs(current_pass_rate - all_iterations[-1].pass_rate) < self.config.convergence_epsilon:
-                logger.info(f"    📈 Converged at {current_pass_rate:.1%}")
-                convergence_detected = True
-                all_iterations.append(SmokeIteration(
-                    iteration=cycle + 1,
-                    pass_rate=current_pass_rate,
-                    violations_count=len(violations),
-                    duration_ms=(time.time() - cycle_start) * 1000
-                ))
-                break
+                if cycle >= max_cycles - 1:
+                    # Last cycle and still no improvement - truly converged
+                    logger.info(f"    📈 Converged at {current_pass_rate:.1%}")
+                    convergence_detected = True
+                    all_iterations.append(SmokeIteration(
+                        iteration=cycle + 1,
+                        pass_rate=current_pass_rate,
+                        violations_count=len(violations),
+                        duration_ms=(time.time() - cycle_start) * 1000
+                    ))
+                    break
+                else:
+                    # Not last cycle - log warning but continue trying
+                    logger.warning(f"    ⚠️ No improvement in cycle {cycle + 1}, but continuing to try alternative repairs...")
 
             # 6. Parse logs
             stack_traces = []
