@@ -991,7 +991,9 @@ Output JSON only, no explanation:"""
                     f"{len(tests_model.flow_suites)} flow suites"
                 )
             except Exception as e:
+                import traceback
                 logger.warning(f"⚠️ TestsModelIR generation failed: {e}")
+                logger.debug(f"TestsModelIR traceback:\n{traceback.format_exc()}")
                 # Continue with empty tests_model - not blocking
         else:
             logger.warning("⚠️ TestsIRGenerator not available - TestsModelIR empty")

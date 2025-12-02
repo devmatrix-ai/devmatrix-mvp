@@ -4239,15 +4239,21 @@ router = APIRouter(
                 operation = None
                 path_segments = relative_path.strip('/').split('/')
 
-                # Pattern: /{entity}/{id}/{action} → action is the operation
-                if len(path_segments) >= 3 and '{' in path_segments[-2]:
+                # Bug #211 Fix: Pattern detection for nested resources
+                # Pattern 1: /{id}/items → ['cart_id', 'items'] (2 segments)
+                # Pattern 2: /entity/{id}/items → ['entity', 'cart_id', 'items'] (3 segments)
+                # In both cases: if last segment is an action (not path param) and there's an ID param before it
+                if len(path_segments) >= 2:
                     action = path_segments[-1]
-                    if '{' not in action:  # Not a path param
+                    # Check if there's a path param before the action
+                    has_id_param = any('{' in seg for seg in path_segments[:-1])
+
+                    if '{' not in action and has_id_param:  # Not a path param and has parent ID
                         if action.endswith('s') and action not in ['status']:
                             # Plural = nested resource (e.g., /items → add_item)
                             operation = f'add_{action.rstrip("s")}'
                         else:
-                            # Singular = action endpoint (e.g., /checkout)
+                            # Singular = action endpoint (e.g., /checkout, /clear)
                             operation = action
 
                 if operation:
@@ -4256,6 +4262,12 @@ router = APIRouter(
                     if operation == 'add_item':
                         body += f'''
     {entity_snake} = await service.add_item({id_param}, {schema_entity_snake}_data.model_dump() if hasattr({schema_entity_snake}_data, 'model_dump') else {schema_entity_snake}_data)
+    return {entity_snake}
+'''
+                    elif operation == 'clear':
+                        # Bug #212 Fix: Map 'clear' action to 'clear_items' service method
+                        body += f'''
+    {entity_snake} = await service.clear_items({id_param})
     return {entity_snake}
 '''
                     else:

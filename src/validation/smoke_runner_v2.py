@@ -255,20 +255,32 @@ class SmokeRunnerV2:
             except ValueError:
                 pass  # Entity not in registry, skip
 
-        # Add 'item' alias for generic item references (first item entity found)
+        # Bug #213 Fix: Item entities (CartItem, OrderItem) use separate UUID sequence
+        # The seed_db.py generates items starting at UUID ...20, not using entity index
+        # Override any item entity UUIDs to match what seed_db.py actually generates
+        item_counter = 20  # seed_db.py starts join table items at 20
+        for key in list(seed_uuids.keys()):
+            if 'item' in key:
+                # Item entities use separate sequence: 20, 21, 22, 23...
+                # Primary: 20, 22, 24... Delete: 21, 23, 25...
+                if is_delete:
+                    seed_uuids[key] = f"{SeedUUIDRegistry.UUID_BASE_DELETE}{item_counter + 1}"
+                else:
+                    seed_uuids[key] = f"{SeedUUIDRegistry.UUID_BASE_DELETE}{item_counter}"
+                item_counter += 2  # Skip 2 for next item entity (primary + delete)
+
+        # Add 'item' alias for generic item references
         if 'item' not in seed_uuids:
             for key in seed_uuids:
                 if 'item' in key:
                     seed_uuids['item'] = seed_uuids[key]
                     break
-            # Bug #205: Use correct UUID for item based on variant
-            # Primary items: 20, 22 (CartItem, OrderItem)
-            # Delete items: 21, 23 (CartItem for delete, OrderItem for delete)
+            # Fallback if no item entity found
             if 'item' not in seed_uuids:
                 if is_delete:
-                    seed_uuids['item'] = f"{SeedUUIDRegistry.UUID_BASE_DELETE}21"  # CartItem for delete
+                    seed_uuids['item'] = f"{SeedUUIDRegistry.UUID_BASE_DELETE}21"
                 else:
-                    seed_uuids['item'] = f"{SeedUUIDRegistry.UUID_BASE_DELETE}20"  # CartItem primary
+                    seed_uuids['item'] = f"{SeedUUIDRegistry.UUID_BASE_DELETE}20"
 
         return seed_uuids
 

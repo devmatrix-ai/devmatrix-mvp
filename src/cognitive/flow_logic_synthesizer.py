@@ -281,14 +281,50 @@ class FlowLogicSynthesizer:
         return lhs, rhs, op
 
     def _build_guards_for_flow(self, app_ir: Any, flow: Any) -> FlowGuards:
-        """Build guards for a single flow from its constraints."""
+        """
+        Build guards for a single flow from its preconditions/postconditions.
+
+        v2: Parses flow.preconditions and flow.postconditions strings directly.
+        100% domain-agnostic - only parses patterns, never knows entity names.
+        """
         pre: List[GuardSpec] = []
         post: List[GuardSpec] = []
         invariants: List[GuardSpec] = []
 
-        # Get constraints from flow or via constraint graph
-        constraints = self._get_constraints_for_flow(flow)
+        flow_id = getattr(flow, 'id', None) or getattr(flow, 'name', 'unknown')
+        entity_name = getattr(flow, 'primary_entity', None) or getattr(flow, 'entity_name', '')
 
+        # =========================================================
+        # v2: Parse preconditions from flow (100% agnóstico)
+        # =========================================================
+        preconditions = getattr(flow, 'preconditions', []) or []
+        for i, precond_str in enumerate(preconditions):
+            guard = self._parse_condition_string(precond_str, entity_name, f"{flow_id}_pre_{i}", "pre")
+            if guard:
+                pre.append(guard)
+
+        # =========================================================
+        # v2: Parse postconditions from flow
+        # =========================================================
+        postconditions = getattr(flow, 'postconditions', []) or []
+        for i, postcond_str in enumerate(postconditions):
+            guard = self._parse_condition_string(postcond_str, entity_name, f"{flow_id}_post_{i}", "post")
+            if guard:
+                post.append(guard)
+
+        # =========================================================
+        # Also check constraint_types for additional guards
+        # =========================================================
+        constraint_types = getattr(flow, 'constraint_types', []) or []
+        for ctype in constraint_types:
+            guard = self._infer_guard_from_constraint_type(ctype, entity_name, flow_id)
+            if guard and guard not in pre:
+                pre.append(guard)
+
+        # =========================================================
+        # Fallback: Get constraints from constraint graph
+        # =========================================================
+        constraints = self._get_constraints_for_flow(flow)
         for constraint in constraints:
             guard = self._constraint_to_guard(flow, constraint)
             if guard:
@@ -296,6 +332,146 @@ class FlowLogicSynthesizer:
                 phase_map.get(guard.phase, pre).append(guard)
 
         return FlowGuards(pre=pre, post=post, invariants=invariants)
+
+    def _parse_condition_string(self, cond: str, entity_name: str, source_id: str, phase: str) -> Optional[GuardSpec]:
+        """
+        Parse a condition string to GuardExpr (100% domain-agnostic).
+
+        Supports patterns:
+        - "{entity}.field == 'VALUE'" → MembershipExpr
+        - "{entity}.field != 'VALUE'" → MembershipExpr (negated)
+        - "{entity}.field > 0" → ComparisonExpr
+        - "len({entity}.items) > 0" → NotEmptyExpr
+        - "{ref}.exists" → ExistsExpr
+        - "{entity}.field in [V1, V2]" → MembershipExpr
+        """
+        import re
+
+        if not cond or not isinstance(cond, str):
+            return None
+
+        cond = cond.strip()
+
+        # Pattern 1: len({entity}.field) > 0 → NotEmptyExpr
+        len_match = re.match(r'len\(\{?(\w+)\}?\.(\w+)\)\s*>\s*0', cond)
+        if len_match:
+            ent, field = len_match.groups()
+            ent = ent if ent != 'entity' else entity_name
+            return GuardSpec(
+                expr=NotEmptyExpr(target=make_entity_ref(ent, field)),
+                error_code=422,
+                message=f"{ent}.{field} must not be empty",
+                source_constraint_id=source_id,
+                phase=phase
+            )
+
+        # Pattern 2: {entity}.field.exists or {ref}.exists → ExistsExpr
+        exists_match = re.match(r'\{?(\w+)\}?\.(\w+)\.exists', cond) or re.match(r'\{?(\w+)\}?\.exists', cond)
+        if exists_match:
+            groups = exists_match.groups()
+            ent = groups[0] if groups[0] != 'entity' else entity_name
+            field = groups[1] if len(groups) > 1 else 'id'
+            return GuardSpec(
+                expr=ExistsExpr(target=make_entity_ref(ent, field), kind="entity"),
+                error_code=404,
+                message=f"{ent} must exist",
+                source_constraint_id=source_id,
+                phase=phase
+            )
+
+        # Pattern 3: {entity}.field in [V1, V2, ...] → MembershipExpr
+        in_match = re.match(r"\{?(\w+)\}?\.(\w+)\s+in\s+\[([^\]]+)\]", cond)
+        if in_match:
+            ent, field, values_str = in_match.groups()
+            ent = ent if ent != 'entity' else entity_name
+            values = [v.strip().strip("'\"") for v in values_str.split(',')]
+            return GuardSpec(
+                expr=MembershipExpr(left=make_entity_ref(ent, field), op="in", right=values),
+                error_code=422,
+                message=f"{ent}.{field} must be one of {values}",
+                source_constraint_id=source_id,
+                phase=phase
+            )
+
+        # Pattern 4: {entity}.field == 'VALUE' → MembershipExpr (single value)
+        eq_match = re.match(r"\{?(\w+)\}?\.(\w+)\s*==\s*['\"]?(\w+)['\"]?", cond)
+        if eq_match:
+            ent, field, value = eq_match.groups()
+            ent = ent if ent != 'entity' else entity_name
+            return GuardSpec(
+                expr=MembershipExpr(left=make_entity_ref(ent, field), op="in", right=[value]),
+                error_code=422,
+                message=f"{ent}.{field} must be {value}",
+                source_constraint_id=source_id,
+                phase=phase
+            )
+
+        # Pattern 5: {entity}.field != 'VALUE' → MembershipExpr (not in)
+        neq_match = re.match(r"\{?(\w+)\}?\.(\w+)\s*!=\s*['\"]?(\w+)['\"]?", cond)
+        if neq_match:
+            ent, field, value = neq_match.groups()
+            ent = ent if ent != 'entity' else entity_name
+            return GuardSpec(
+                expr=MembershipExpr(left=make_entity_ref(ent, field), op="not in", right=[value]),
+                error_code=422,
+                message=f"{ent}.{field} must not be {value}",
+                source_constraint_id=source_id,
+                phase=phase
+            )
+
+        # Pattern 6: {entity}.field op value (comparison)
+        cmp_match = re.match(r"\{?(\w+)\}?\.(\w+)\s*([<>=!]+)\s*(\d+(?:\.\d+)?)", cond)
+        if cmp_match:
+            ent, field, op, value = cmp_match.groups()
+            ent = ent if ent != 'entity' else entity_name
+            return GuardSpec(
+                expr=ComparisonExpr(left=make_entity_ref(ent, field), op=op, right=float(value)),
+                error_code=422,
+                message=f"{ent}.{field} must be {op} {value}",
+                source_constraint_id=source_id,
+                phase=phase
+            )
+
+        # Pattern 7: field1 op field2 (cross-entity comparison)
+        cross_match = re.match(r"\{?(\w+)\}?\.(\w+)\s*([<>=!]+)\s*\{?(\w+)\}?\.(\w+)", cond)
+        if cross_match:
+            ent1, field1, op, ent2, field2 = cross_match.groups()
+            ent1 = ent1 if ent1 != 'entity' else entity_name
+            ent2 = ent2 if ent2 != 'entity' else entity_name
+            return GuardSpec(
+                expr=ComparisonExpr(
+                    left=make_entity_ref(ent1, field1),
+                    op=op,
+                    right=make_entity_ref(ent2, field2)
+                ),
+                error_code=422,
+                message=f"{ent1}.{field1} must be {op} {ent2}.{field2}",
+                source_constraint_id=source_id,
+                phase=phase
+            )
+
+        logger.debug(f"Could not parse condition: {cond}")
+        return None
+
+    def _infer_guard_from_constraint_type(self, ctype: str, entity_name: str, flow_id: str) -> Optional[GuardSpec]:
+        """
+        Infer a guard from constraint_type metadata (100% domain-agnostic).
+
+        constraint_types like ["stock_constraint", "status_constraint"] hint at
+        what guards are needed, but we don't know field names - use generic patterns.
+        """
+        if ctype == "status_constraint" or ctype == "status_transition":
+            # Entity likely has a status field that must be in valid state
+            return GuardSpec(
+                expr=ExistsExpr(target=make_entity_ref(entity_name, "status"), kind="entity"),
+                error_code=422,
+                message=f"{entity_name} status must be valid for this operation",
+                source_constraint_id=f"{flow_id}_{ctype}",
+                phase="pre"
+            )
+
+        # For other constraint types, we can't infer without more metadata
+        return None
 
     def _get_constraints_for_flow(self, flow: Any) -> list:
         """Get constraints associated with a flow."""

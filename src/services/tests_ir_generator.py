@@ -595,7 +595,8 @@ class TestsIRGenerator:
                     return invalid_body
 
                 # For numeric fields, test with negative value (domain-agnostic)
-                if field.data_type and field.data_type.lower() in ['int', 'integer', 'float', 'decimal', 'number']:
+                # Bug #206: APISchemaField uses 'type' not 'data_type'
+                if field.type and field.type.lower() in ['int', 'integer', 'float', 'decimal', 'number']:
                     invalid_body[field.name] = -1  # Negative value
                     return invalid_body
 

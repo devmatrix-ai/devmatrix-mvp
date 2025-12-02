@@ -604,14 +604,17 @@ def find_workflow_operations(entity_name: str, ir: Any) -> List[Dict[str, Any]]:
     entity_lower = entity_name.lower()
 
     for flow in ir.behavior_model.flows:
-        # Check if flow targets this entity
+        # Check if flow targets this entity as PRIMARY
         flow_name = flow.name.lower() if flow.name else ""
         primary_entity = (getattr(flow, 'primary_entity', None) or '').lower()
 
-        if entity_lower in flow_name or entity_lower == primary_entity or any(
-            entity_lower in (step.target_entity or "").lower()
-            for step in flow.steps
-        ):
+        # Bug #210 Fix: Only generate flow methods for the PRIMARY entity of the flow
+        # NOT for every entity mentioned in steps. "Add Item to Cart" should only
+        # generate add_item() on CartService, NOT on ProductService.
+        is_primary = entity_lower == primary_entity
+        is_in_flow_name = entity_lower in flow_name and not primary_entity
+
+        if is_primary or is_in_flow_name:
             operation = {
                 "name": flow.name,
                 "precondition_status": None,
@@ -2562,21 +2565,29 @@ def generate_service_method(entity_name: str, attributes: list = None, ir: Any =
     # NO hardcoded patterns like 'stock', 'quantity', 'product_id'
     # =========================================================
     flow_guards = None
+    all_guards = {}
     if ir and GUARD_IR_AVAILABLE:
         try:
             from src.cognitive.flow_logic_synthesizer import FlowLogicSynthesizer
+            from src.cognitive.guard_ir import FlowGuards
             synthesizer = FlowLogicSynthesizer()
             all_guards = synthesizer.synthesize_for_app(ir)
 
-            # Get guards for this entity (check specific operations and "*" wildcard)
-            flow_guards = all_guards.get((entity_name, "*"))
-            if not flow_guards:
-                # Try lowercase entity name
-                flow_guards = all_guards.get((entity_name.lower(), "*"))
+            # Merge guards from all matching keys for this entity
+            merged_pre = []
+            merged_post = []
+            merged_inv = []
 
-            if flow_guards:
-                logger.info(f"FlowLogicSynthesizer: Found {len(flow_guards.pre)} pre-guards, "
-                           f"{len(flow_guards.post)} post-guards for {entity_name}")
+            for (ent, op), guards in all_guards.items():
+                if ent.lower() == entity_name.lower():
+                    merged_pre.extend(guards.pre)
+                    merged_post.extend(guards.post)
+                    merged_inv.extend(guards.invariants)
+
+            if merged_pre or merged_post or merged_inv:
+                flow_guards = FlowGuards(pre=merged_pre, post=merged_post, invariants=merged_inv)
+                logger.info(f"FlowLogicSynthesizer: Found {len(merged_pre)} pre-guards, "
+                           f"{len(merged_post)} post-guards for {entity_name}")
         except Exception as e:
             logger.debug(f"FlowLogicSynthesizer: Could not synthesize guards for {entity_name}: {e}")
 

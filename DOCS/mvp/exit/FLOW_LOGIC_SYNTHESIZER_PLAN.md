@@ -1,8 +1,8 @@
 # FlowLogicSynthesizer - Plan para 100% Pass Rate
 
-**Fecha**: 2025-12-02 (Actualizado - Arquitectura Agnóstica)
-**Estado Actual**: 92.0% (69/75 tests)
-**Objetivo**: 100% (75/75 tests)
+**Fecha**: 2025-12-02 (Actualizado - Bugs #210-213 Fixed)
+**Estado Actual**: ~90% (estimado post-fix)
+**Objetivo**: 100%
 
 ---
 
@@ -216,13 +216,17 @@ def _generate_workflow_method_body(entity_name, operation, flow_guards, ...):
 - [ ] Verificar query usa PK del child
 - **Estado**: 🔄 Pendiente - DELETE /carts/{id}/items/{item_id} retorna 404
 
-### B. FlowLogicSynthesizer (Nuevo)
+### B. FlowLogicSynthesizer v2 (Completo)
 
 - [x] Crear `src/cognitive/guard_ir.py` con modelo de expresiones
 - [x] Crear `src/cognitive/flow_logic_synthesizer.py` agnóstico
 - [x] Definir contrato de `constraint.metadata` en IR
 - [x] Integrar con CodeGenerationService (varmap + traducción)
-- **Estado**: ✅ Implementado en `src/services/production_code_generators.py` líneas 82-183
+- [x] **v2: Parsear `flow.preconditions`/`flow.postconditions` strings → Guard IR**
+- [x] **v2: Merge guards por entity de todos los flows**
+- **Estado**: ✅ v2 Implementado
+  - `src/cognitive/flow_logic_synthesizer.py`: `_parse_condition_string()` parsea 7 patterns agnósticos
+  - `src/services/production_code_generators.py`: líneas 2559-2589 merging de guards
 
 ### C. Validación Final
 
@@ -256,6 +260,10 @@ def _generate_workflow_method_body(entity_name, operation, flow_guards, ...):
 | #206 | Conversion flow se activaba para {Entity}Create | ✅ Fixed |
 | #207 | PUT validation no rechaza datos inválidos | 🔄 Pendiente |
 | #208 | Test ordering causa DELETE 404 | 🔄 Pendiente |
+| #210 | Flow methods generados para entidades incorrectas | ✅ Fixed (find_workflow_operations solo primary_entity) |
+| #211 | POST /{id}/items creaba Cart nuevo en vez de agregar item | ✅ Fixed (path detection para 2 segmentos) |
+| #212 | POST /{id}/clear creaba Cart nuevo en vez de limpiar | ✅ Fixed (map 'clear' → 'clear_items') |
+| #213 | DELETE nested 404 - UUID mismatch entre registry y seed_db | ✅ Fixed (item UUIDs usan secuencia 20+) |
 
 ---
 
