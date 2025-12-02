@@ -4149,10 +4149,12 @@ router = APIRouter(
 
             # Bug #104 Fix: Detect action endpoints BEFORE adding body parameter
             # Action endpoints are detected by path structure, not hardcoded names
-            # Pattern: /{entity}/{id}/{action} where action is a single word (not a nested resource)
+            # Pattern: /{id}/{action} where action is a single word (not a nested resource)
+            # Bug #216 Fix: Changed >= 3 to >= 2 because relative_path like '/{id}/clear'
+            # splits into ['{id}', 'clear'] which is only 2 parts
             path_parts = relative_path.strip('/').split('/')
             # Action endpoint = has {id} followed by single word (not another {id} or plural noun)
-            is_action_endpoint = (len(path_parts) >= 3 and
+            is_action_endpoint = (len(path_parts) >= 2 and
                                   '{' in path_parts[-2] and
                                   '{' not in path_parts[-1] and
                                   not path_parts[-1].endswith('s'))
@@ -4346,27 +4348,36 @@ router = APIRouter(
     if hasattr({entity.name}Entity, status_field):
         create_data[status_field] = 'PENDING'
 
+    # Bug #215 Fix: Always initialize total fields to 0, then calculate if items exist
+    # This prevents ValidationError when OrderCreate requires total_amount
+    for total_attr in ['total', 'total_amount', 'amount', 'subtotal']:
+        if hasattr({entity.name}Entity, total_attr):
+            create_data[total_attr] = 0.0
+            break
+
     # Calculate total from items if both exist (domain-agnostic)
-    # Uses IR-provided computed_field metadata or skips
     if hasattr(source_obj, 'items') and source_obj.items:
-        # Look for numeric fields on item and multiply first two found
+        # Sum quantity * unit_price for each item (detect field names dynamically)
+        calculated_total = 0.0
         for item in source_obj.items:
-            numeric_vals = []
-            for attr in dir(item):
-                if not attr.startswith('_') and not callable(getattr(item, attr, None)):
-                    val = getattr(item, attr, None)
-                    if isinstance(val, (int, float)) and val > 0:
-                        numeric_vals.append(val)
-                    if len(numeric_vals) >= 2:
-                        break
-            # If item has at least 2 numeric fields, assume qty * price pattern
-            if len(numeric_vals) >= 2:
-                total = sum(numeric_vals[0] * numeric_vals[1] for item in source_obj.items)
-                # Set on any computed field that exists
-                for attr in ['total', 'total_amount', 'amount', 'subtotal']:
-                    if hasattr({entity.name}Entity, attr):
-                        create_data[attr] = total
-                        break
+            qty = None
+            price = None
+            # Find quantity field (quantity, qty, count)
+            for qf in ['quantity', 'qty', 'count']:
+                if hasattr(item, qf):
+                    qty = getattr(item, qf, None)
+                    break
+            # Find price field (unit_price, price, amount)
+            for pf in ['unit_price', 'price', 'amount']:
+                if hasattr(item, pf):
+                    price = getattr(item, pf, None)
+                    break
+            if qty is not None and price is not None:
+                calculated_total += float(qty) * float(price)
+        # Update total in create_data
+        for total_attr in ['total', 'total_amount', 'amount', 'subtotal']:
+            if total_attr in create_data:
+                create_data[total_attr] = calculated_total
                 break
 
     # Create target entity
@@ -4405,9 +4416,51 @@ router = APIRouter(
 '''
 
             elif method == 'put':
-                id_param = path_params[0] if path_params else 'id'
-                body += existence_check(id_param)
-                body += f'''
+                # Bug #217 Fix: Detect nested PUT (e.g., /carts/{id}/items/{item_id})
+                # For nested resources, we need to update the child item, not the parent entity
+                is_nested_put = len(path_params) >= 2 and '/items/' in relative_path
+
+                if is_nested_put:
+                    # Nested PUT: Update the child item
+                    parent_id_param = path_params[0] if path_params else 'id'
+                    child_id_param = path_params[-1] if len(path_params) > 1 else 'item_id'
+                    child_entity_name = f'{entity.name}Item'
+
+                    body += f'''    # Bug #217: Nested resource PUT - update child item by PK
+    from sqlalchemy import select
+    from src.models.entities import {child_entity_name}Entity
+
+    # Get the child item
+    stmt = select({child_entity_name}Entity).where(
+        {child_entity_name}Entity.{entity_snake}_id == {parent_id_param},
+        {child_entity_name}Entity.id == {child_id_param}
+    )
+    result = await db.execute(stmt)
+    child_obj = result.scalar_one_or_none()
+
+    if not child_obj:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Item not found in {entity.name}"
+        )
+
+    # Update fields from request data
+    update_data = {schema_entity_snake}_data.model_dump(exclude_unset=True) if hasattr({schema_entity_snake}_data, 'model_dump') else dict({schema_entity_snake}_data)
+    for key, value in update_data.items():
+        if hasattr(child_obj, key) and value is not None:
+            setattr(child_obj, key, value)
+
+    await db.flush()
+    await db.refresh(child_obj)
+
+    # Return the parent entity (for consistency with other nested operations)
+    parent_obj = await service.get({parent_id_param})
+    return parent_obj
+'''
+                else:
+                    id_param = path_params[0] if path_params else 'id'
+                    body += existence_check(id_param)
+                    body += f'''
     {entity_snake} = await service.update({id_param}, {schema_entity_snake}_data)
     return {entity_snake}
 '''

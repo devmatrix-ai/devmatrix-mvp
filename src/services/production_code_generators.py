@@ -6,6 +6,7 @@ These are used as fallback when LLM-generated patterns are incomplete.
 """
 
 import ast
+import re
 from collections import defaultdict
 from typing import List, Dict, Any
 import logging
@@ -480,12 +481,15 @@ def find_child_entity(entity_name: str, entities: List[Dict], ir: Any = None) ->
 
         # Check if entity name suggests it's a child (e.g., "{Parent}Item" for "{Parent}")
         if parent_lower in entity_name_check and entity_name_check != parent_lower:
-            child_fields = entity.get('fields', [])
+            # Bug #214 Fix: IR uses 'attributes' not 'fields'
+            child_fields = entity.get('fields', []) or entity.get('attributes', [])
 
             # Check fields for FK to parent
             for field in child_fields:
                 field_name = field.get('name', '').lower()
-                if field_name == expected_fk or 'fk' in field.get('data_type', '').lower():
+                # Bug #214 Fix: Support both 'type' and 'data_type' keys
+                field_type = field.get('data_type', '') or field.get('type', '')
+                if field_name == expected_fk or 'fk' in field_type.lower():
                     result["entity_name"] = entity.get('name')
                     result["entity_class"] = f"{entity.get('name')}Entity"
                     result["fk_field"] = field.get('name')
@@ -547,11 +551,11 @@ def _detect_auto_populated_fields(
     result["reference_fk"] = ref_fk['fk_field']
     result["reference_entity"] = ref_fk['ref_entity']
 
-    # Find the referenced entity's fields
+    # Bug #214 Fix: IR uses 'attributes' not 'fields'
     ref_entity_fields = []
     for entity in all_entities:
         if entity.get('name', '').lower() == ref_fk['ref_entity'].lower():
-            ref_entity_fields = entity.get('fields', [])
+            ref_entity_fields = entity.get('fields', []) or entity.get('attributes', [])
             break
 
     # Match child fields with ref entity fields by TYPE (domain-agnostic)
@@ -560,7 +564,8 @@ def _detect_auto_populated_fields(
 
     for child_field in child_fields:
         child_fname = child_field.get('name', '').lower()
-        child_type = child_field.get('type', '').lower()
+        # Bug #214 Fix: Support both 'type' and 'data_type' keys
+        child_type = (child_field.get('type', '') or child_field.get('data_type', '')).lower()
 
         # Skip id, FK fields, and timestamps
         if child_fname in ('id', 'created_at', 'updated_at') or child_fname.endswith('_id'):
@@ -572,7 +577,8 @@ def _detect_auto_populated_fields(
         if is_numeric:
             # Find corresponding numeric field in ref entity
             for ref_field in ref_entity_fields:
-                ref_type = ref_field.get('type', '').lower()
+                # Bug #214 Fix: Support both 'type' and 'data_type' keys
+                ref_type = (ref_field.get('type', '') or ref_field.get('data_type', '')).lower()
                 if any(t in ref_type for t in numeric_types):
                     result["auto_populated_fields"].append({
                         'child_field': child_field.get('name'),
@@ -2343,10 +2349,75 @@ ItemSchema = Dict[str, Any]
                     }
                     python_type = type_map.get(ftype.lower(), ftype)
 
-                    if frequired:
-                        code += f"    {fname}: {python_type}\n"
+                    # Bug #217 Fix: Inherit constraints from entity fields
+                    # Search for this field in any entity and copy its constraints
+                    field_constraints = []
+                    for entity in entities:
+                        entity_name = entity.get('name', '')
+                        entity_fields = entity.get('fields', []) or []
+                        for ef in entity_fields:
+                            ef_name = ef.get('name', '') if isinstance(ef, dict) else getattr(ef, 'name', '')
+                            if ef_name == fname:
+                                # Found matching field - extract constraints
+                                ef_constraints = ef.get('constraints', []) if isinstance(ef, dict) else getattr(ef, 'constraints', [])
+                                if ef_constraints:
+                                    for c in ef_constraints:
+                                        c_str = str(c).lower()
+                                        # Parse common constraint formats
+                                        if c_str.startswith('>=') or 'ge=' in c_str:
+                                            val = c_str.replace('>=', '').replace('ge=', '').strip()
+                                            if val:
+                                                field_constraints.append(f'ge={val}')
+                                        elif c_str.startswith('>') or 'gt=' in c_str:
+                                            val = c_str.replace('>', '').replace('gt=', '').strip()
+                                            if val:
+                                                field_constraints.append(f'gt={val}')
+                                        elif c_str.startswith('<=') or 'le=' in c_str:
+                                            val = c_str.replace('<=', '').replace('le=', '').strip()
+                                            if val:
+                                                field_constraints.append(f'le={val}')
+                                        elif c_str.startswith('<') or 'lt=' in c_str:
+                                            val = c_str.replace('<', '').replace('lt=', '').strip()
+                                            if val:
+                                                field_constraints.append(f'lt={val}')
+                                        elif c_str.startswith('range:'):
+                                            range_part = c_str.split(':', 1)[1].strip()
+                                            if range_part.startswith('>='):
+                                                field_constraints.append(f'ge={range_part[2:].strip()}')
+                                            elif range_part.startswith('>'):
+                                                field_constraints.append(f'gt={range_part[1:].strip()}')
+                                break
+                        if field_constraints:
+                            break
+
+                    # Also check validation_constraints from ground truth
+                    if not field_constraints and validation_constraints:
+                        for (v_entity, v_field), v_cons_list in validation_constraints.items():
+                            if v_field == fname:
+                                for v_c in v_cons_list:
+                                    v_c_str = str(v_c).lower()
+                                    if 'range:' in v_c_str and '>=' in v_c_str:
+                                        # "range: >= 1" → ge=1
+                                        match = re.search(r'>=\s*(\d+)', v_c_str)
+                                        if match:
+                                            field_constraints.append(f'ge={match.group(1)}')
+                                    elif 'range:' in v_c_str and '>' in v_c_str:
+                                        match = re.search(r'>\s*(\d+)', v_c_str)
+                                        if match:
+                                            field_constraints.append(f'gt={match.group(1)}')
+
+                    # Generate field with constraints
+                    if field_constraints:
+                        constraints_str = ', '.join(field_constraints)
+                        if frequired:
+                            code += f"    {fname}: {python_type} = Field(..., {constraints_str})\n"
+                        else:
+                            code += f"    {fname}: Optional[{python_type}] = Field(None, {constraints_str})\n"
                     else:
-                        code += f"    {fname}: Optional[{python_type}] = None\n"
+                        if frequired:
+                            code += f"    {fname}: {python_type}\n"
+                        else:
+                            code += f"    {fname}: Optional[{python_type}] = None\n"
             else:
                 code += "    pass\n"
             code += "\n\n"
