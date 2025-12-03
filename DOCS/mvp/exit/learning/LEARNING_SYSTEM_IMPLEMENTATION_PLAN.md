@@ -31,54 +31,161 @@ El análisis identifica un gap crítico: **el learning detecta y clasifica corre
 
 ---
 
+## Critical Adjustments (Feedback Incorporado)
+
+| Fase | Ajuste | Razón |
+|------|--------|-------|
+| 1 | `status_code == 404` explícito, no `"404" in str()` | Evita falsos positivos |
+| 1 | Normalizar `error_type` a enum definido | Routing predecible |
+| 1 | Guard injection idempotente (pattern match previo) | Evita duplicados |
+| 2 | Persistencia en Neo4j (no solo dict en memoria) | Reuso entre runs |
+| 2 | Merge defensivo: IR manda, learned rellena | No romper seeds |
+| 2 | Aplicar precondiciones solo en contexto del endpoint/flow | No sobre-ajustar |
+| 3 | Enhanced prompt declarativo, no logs crudos | LLM entiende mejor |
+| 3 | Solo para SERVICE/repos/flows, no schema | Foco donde importa |
+| 4 | `_compute_signature()` coherente con `store_fix()` | Que matchee |
+
+---
+
+## Implementation Order (Ajustado)
+
+| # | Phase | Esfuerzo | Dependencias | Impacto |
+|---|-------|----------|--------------|---------|
+| 1 | SERVICE Routing + Agent con learning básico | 4-6h | ServiceRepairAgent (✅) | ALTO |
+| 2 | PreconditionLearner + Auto-Seed minimal | 3-4h | Phase 1 | ALTO |
+| 3 | Fix Reuse solo para SERVICE (mini-Phase 4) | 2h | Phase 1 | MEDIO |
+| 4 | PromptEnhancer (cuando hay 2-3 patterns útiles) | 2-3h | Phases 1-3 | MEDIO |
+| 5 | Tracker (después de 3 runs comparables) | 2h | All | BAJO |
+
+**Total estimado:** 13-17 horas
+
+---
+
 ## Implementation Plan
 
 ### Phase 1: SERVICE Repair Integration (4-6h)
 
 **Objetivo:** Conectar el `ServiceRepairAgent` (ya implementado) con el Learning System.
 
-#### 1.1 Routing de Constraints a SERVICE Repair
+#### 1.1 Error Type Enum (Normalización)
+
+**Archivo:** `src/validation/error_types.py` (NUEVO)
+
+```python
+from enum import Enum
+
+class ViolationErrorType(str, Enum):
+    """Normalized error types for routing."""
+    MISSING_PRECONDITION = "MISSING_PRECONDITION"  # 404
+    BUSINESS_LOGIC = "BUSINESS_LOGIC"              # 422 status/stock
+    SCHEMA_VALIDATION = "SCHEMA_VALIDATION"        # 422 schema
+    INTERNAL_ERROR = "INTERNAL_ERROR"              # 500
+    UNKNOWN = "UNKNOWN"
+
+class ConstraintType(str, Enum):
+    """Normalized constraint types for SERVICE repair."""
+    STATUS_TRANSITION = "status_transition"
+    STOCK_CONSTRAINT = "stock_constraint"
+    WORKFLOW_CONSTRAINT = "workflow_constraint"
+    PRECONDITION_REQUIRED = "precondition_required"
+    CUSTOM = "custom"
+```
+
+#### 1.2 Routing de Constraints a SERVICE Repair
 
 **Archivo:** `src/validation/smoke_repair_orchestrator.py`
 
 ```python
-# Modificar _route_violation() para usar ServiceRepairAgent
+from src.validation.error_types import ViolationErrorType, ConstraintType
+
 def _route_violation(self, violation: dict) -> str:
+    """Route violation to appropriate repair agent."""
+    # CRÍTICO: Comparación explícita de status_code
+    status_code = violation.get("status_code")
     constraint_type = violation.get("constraint_type", "")
-    
-    # Business logic → SERVICE repair
-    if constraint_type in ["status_transition", "stock_constraint", "workflow_constraint"]:
+
+    # Normalizar error_type
+    error_type = self._normalize_error_type(violation)
+
+    # 404 → SERVICE repair (precondition)
+    if status_code == 404:
         return "SERVICE"
-    
-    # Schema issues → SCHEMA repair (actual)
+
+    # Business logic constraints → SERVICE repair
+    if constraint_type in [
+        ConstraintType.STATUS_TRANSITION,
+        ConstraintType.STOCK_CONSTRAINT,
+        ConstraintType.WORKFLOW_CONSTRAINT,
+    ]:
+        return "SERVICE"
+
+    # Precondition errors → SERVICE repair
+    if error_type == ViolationErrorType.MISSING_PRECONDITION:
+        return "SERVICE"
+
+    # Schema/validation issues → SCHEMA repair
     return "SCHEMA"
+
+def _normalize_error_type(self, violation: dict) -> ViolationErrorType:
+    """Normalize error type to enum."""
+    raw = violation.get("error_type", "")
+    status = violation.get("status_code")
+
+    if status == 404:
+        return ViolationErrorType.MISSING_PRECONDITION
+    if "precondition" in raw.lower():
+        return ViolationErrorType.MISSING_PRECONDITION
+    if status == 422:
+        if any(kw in raw.lower() for kw in ["status", "stock", "workflow"]):
+            return ViolationErrorType.BUSINESS_LOGIC
+        return ViolationErrorType.SCHEMA_VALIDATION
+    if status == 500:
+        return ViolationErrorType.INTERNAL_ERROR
+    return ViolationErrorType.UNKNOWN
 ```
+
+#### 1.3 Guard Injection Idempotente
 
 **Archivo:** `src/validation/service_repair_agent.py`
 
 ```python
-# Agregar método para aprender de reparaciones exitosas
-def learn_from_repair(self, constraint_type: str, guard_code: str, success: bool):
-    """Store successful guard patterns for reuse."""
-    if success:
-        self.store.store_fix_pattern(
-            error_type=constraint_type,
-            fix_code=guard_code,
-            confidence=0.8
-        )
+import re
+
+def _inject_guard(self, service_code: str, guard_code: str, method_name: str) -> str:
+    """Inject guard at method start - IDEMPOTENTE."""
+
+    # CRÍTICO: Verificar si guard ya existe (pattern match)
+    guard_signature = self._extract_guard_signature(guard_code)
+    if guard_signature and guard_signature in service_code:
+        # Guard ya presente, no duplicar
+        return service_code
+
+    # Buscar método y agregar guard después de def
+    pattern = rf'(def {method_name}\([^)]*\):[^\n]*\n)'
+
+    def add_guard(match):
+        return match.group(1) + f"        {guard_code}\n"
+
+    return re.sub(pattern, add_guard, service_code)
+
+def _extract_guard_signature(self, guard_code: str) -> str:
+    """Extract unique signature from guard for dedup."""
+    # "if cart.status != 'OPEN': raise..." → "cart.status != 'OPEN'"
+    match = re.search(r'if\s+([^:]+):', guard_code)
+    return match.group(1).strip() if match else ""
 ```
 
-#### 1.2 Feedback Loop para SERVICE Repairs
+#### 1.4 Feedback Loop para SERVICE Repairs
 
 **Archivo:** `src/learning/service_repair_feedback.py` (NUEVO)
 
 ```python
 class ServiceRepairFeedback:
     """Tracks SERVICE repair outcomes and updates learning."""
-    
+
     def record_repair_outcome(
         self,
-        constraint_type: str,
+        constraint_type: ConstraintType,
         guard_spec: GuardSpec,
         smoke_passed: bool
     ):
@@ -96,99 +203,263 @@ class ServiceRepairFeedback:
 
 **Objetivo:** Los errores de precondición (404) deben retroalimentar al Auto-Seed Generator.
 
-#### 2.1 Precondition Error Classifier
+#### 2.1 Precondition Learner con Neo4j Persistence
 
 **Archivo:** `src/learning/precondition_learner.py` (NUEVO)
 
 ```python
+from dataclasses import dataclass
+from typing import Optional, List, Dict
+
 @dataclass
 class PreconditionPattern:
-    """Learned precondition requirement."""
+    """Learned precondition requirement - persisted in Neo4j."""
+    pattern_id: str
     entity_type: str           # "Cart", "Order"
-    required_status: str       # "OPEN", "PENDING"
-    required_relations: list   # ["CartItem", "Product"]
-    occurrence_count: int
-    confidence: float
+    endpoint_pattern: str      # "/carts/{id}/checkout"
+    flow_name: Optional[str]   # "checkout_cart"
+    required_status: Optional[str] = None   # "OPEN"
+    required_relations: List[str] = None    # ["CartItem"]
+    required_fields: Dict[str, str] = None  # {"stock": "positive"}
+    occurrence_count: int = 1
+    confidence: float = 0.5
 
 class PreconditionLearner:
-    """Learns precondition requirements from 404 errors."""
-    
-    def learn_from_404(self, violation: dict, ir: ApplicationIR):
-        """Extract precondition pattern from 404 error."""
+    """Learns precondition requirements from 404 errors - Neo4j backed."""
+
+    def __init__(self, neo4j_driver=None):
+        self.driver = neo4j_driver
+
+    def learn_from_404(self, violation: dict, ir: 'ApplicationIR'):
+        """Extract and persist precondition pattern."""
+        # Solo procesar 404 explícitos
+        if violation.get("status_code") != 404:
+            return None
+
         endpoint = violation.get("endpoint", "")
         entity = self._extract_entity(endpoint)
-        
-        # Analizar IR para encontrar precondiciones
+
+        # Buscar flow en IR
         flow = self._find_flow_for_endpoint(endpoint, ir)
-        if flow and flow.preconditions:
-            pattern = self._extract_pattern(entity, flow.preconditions)
-            self.store.store_precondition(pattern)
+
+        pattern = PreconditionPattern(
+            pattern_id=f"precond_{entity}_{hash(endpoint) % 10000:04d}",
+            entity_type=entity,
+            endpoint_pattern=self._generalize_endpoint(endpoint),
+            flow_name=flow.name if flow else None,
+        )
+
+        if flow and hasattr(flow, 'preconditions'):
+            pattern.required_status = self._extract_status(flow.preconditions)
+            pattern.required_relations = self._extract_relations(flow.preconditions)
+            pattern.required_fields = self._extract_fields(flow.preconditions)
+
+        # PERSISTIR en Neo4j (no solo memoria)
+        self._upsert_to_neo4j(pattern)
+        return pattern
+
+    def _upsert_to_neo4j(self, pattern: PreconditionPattern):
+        """Upsert pattern to Neo4j."""
+        if not self.driver:
+            return
+
+        with self.driver.session() as session:
+            session.run("""
+                MERGE (p:PreconditionPattern {pattern_id: $pattern_id})
+                ON CREATE SET
+                    p.entity_type = $entity_type,
+                    p.endpoint_pattern = $endpoint_pattern,
+                    p.flow_name = $flow_name,
+                    p.required_status = $required_status,
+                    p.required_relations = $required_relations,
+                    p.required_fields = $required_fields,
+                    p.occurrence_count = 1,
+                    p.confidence = 0.5,
+                    p.created_at = datetime()
+                ON MATCH SET
+                    p.occurrence_count = p.occurrence_count + 1,
+                    p.confidence = CASE
+                        WHEN p.occurrence_count >= 5 THEN 0.95
+                        WHEN p.occurrence_count >= 3 THEN 0.8
+                        ELSE p.confidence + 0.1
+                    END,
+                    p.last_seen = datetime()
+            """, **pattern.__dict__)
+
+    def get_for_entity(self, entity_name: str, min_confidence: float = 0.5) -> List[PreconditionPattern]:
+        """Get learned preconditions for entity from Neo4j."""
+        if not self.driver:
+            return []
+
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (p:PreconditionPattern)
+                WHERE toLower(p.entity_type) = toLower($entity_name)
+                  AND p.confidence >= $min_confidence
+                RETURN p
+                ORDER BY p.confidence DESC
+            """, entity_name=entity_name, min_confidence=min_confidence)
+
+            return [self._to_pattern(r["p"]) for r in result]
 ```
 
-#### 2.2 Auto-Seed Enhancement
+#### 2.2 Auto-Seed Enhancement (Merge Defensivo)
 
 **Archivo:** `src/services/code_generation_service.py`
 
 ```python
-# En _generate_seed_db_script():
-def _generate_seed_db_script(self, ...):
-    # NUEVO: Consultar precondiciones aprendidas
-    learned_preconditions = self.precondition_learner.get_for_entity(entity_name)
-    
-    # Combinar con precondiciones del IR
-    all_preconditions = self._merge_preconditions(
-        ir_preconditions,
-        learned_preconditions
-    )
-    
-    # Generar seeds que satisfagan todas las precondiciones
+def _generate_seed_db_script(self, entities, ir, ...):
+    # 1. Extraer precondiciones del IR (FUENTE PRIMARIA)
+    ir_preconditions = self._extract_flow_preconditions(ir)
+
+    # 2. Consultar precondiciones aprendidas
+    learned_preconditions = {}
+    for entity in entities:
+        patterns = self.precondition_learner.get_for_entity(entity.name)
+        for p in patterns:
+            # MERGE DEFENSIVO: Solo agregar si NO existe en IR
+            key = f"{entity.name.lower()}.status"
+            if p.required_status and key not in ir_preconditions:
+                learned_preconditions[key] = p.required_status
+
+            for field, value in (p.required_fields or {}).items():
+                key = f"{entity.name.lower()}.{field}"
+                if key not in ir_preconditions:
+                    learned_preconditions[key] = value
+
+    # 3. Combinar: IR manda, learned rellena gaps
+    all_preconditions = {**learned_preconditions, **ir_preconditions}
+
+    # 4. Aplicar solo en contexto del endpoint/flow relevante
+    # (no sobre-ajustar con precondiciones de otros flows)
     ...
 ```
 
 ---
 
-### Phase 3: Learning → Generation Prompt (2-3h)
+### Phase 3: Fix Reuse para SERVICE (mini-Phase 4)
 
-**Objetivo:** Los anti-patterns deben modificar la generación inicial, no solo el repair.
+**Objetivo:** Reutilizar guards exitosos sin regenerar con LLM.
 
-#### 3.1 Integrar PromptEnhancer en CodeGenerationService
+#### 3.1 Signature Coherente
 
-**Archivo:** `src/services/code_generation_service.py`
+**Archivo:** `src/validation/service_repair_agent.py`
 
 ```python
-from src.learning.prompt_enhancer import get_prompt_enhancer
+def _compute_signature(self, constraint_type: str, entity: str, method: str) -> str:
+    """Compute signature coherente con store_fix()."""
+    # Normalizar para matching consistente
+    return f"{constraint_type}:{entity.lower()}:{method.lower()}"
 
-class CodeGenerationService:
-    def __init__(self, ...):
-        self.prompt_enhancer = get_prompt_enhancer()
-    
-    async def generate_service_code(self, entity, endpoints, ...):
-        # ANTES: prompt = self._build_service_prompt(entity, endpoints)
-        
-        # DESPUÉS: Enhance con anti-patterns aprendidos
-        base_prompt = self._build_service_prompt(entity, endpoints)
-        enhanced_prompt = self.prompt_enhancer.enhance_service_prompt(
-            base_prompt,
-            entity_name=entity.name
-        )
-        
-        # Generar con awareness de errores previos
-        code = await self.llm_client.generate(enhanced_prompt)
+async def repair_constraint(self, constraint_type, entity_name, method_name, ...):
+    # Usar MISMA lógica de signature
+    signature = self._compute_signature(constraint_type, entity_name, method_name)
+
+    # Buscar fix conocido
+    known_fix = self.fix_store.get_fix_for_error(
+        error_signature=signature,
+        min_confidence=0.7
+    )
+
+    if known_fix:
+        # Aplicar directamente (sin LLM)
+        result = self._apply_known_guard(known_fix.fix_code, service_code)
+        self.metrics["fixes_from_learning"] += 1
+        return result
+
+    # Generar nuevo guard
+    guard_code = self._generate_and_inject_guard(...)
+
+    # Guardar con MISMA signature
+    self.fix_store.store_fix(
+        error_signature=signature,
+        fix_code=guard_code,
+        ...
+    )
 ```
 
-#### 3.2 Agregar Anti-patterns de SERVICE Level
+---
+
+### Phase 4: Learning → Generation Prompt (2-3h)
+
+**Objetivo:** Anti-patterns influyen en generación inicial (solo SERVICE/repos/flows).
+
+#### 4.1 Prompt Declarativo (no logs crudos)
+
+**Archivo:** `src/learning/prompt_enhancer.py`
+
+```python
+def enhance_service_prompt(self, base_prompt: str, entity_name: str) -> str:
+    """Enhance SERVICE prompt - declarativo, no logs."""
+
+    # SOLO buscar patterns de SERVICE, no schema
+    patterns = self.pattern_store.get_patterns_for_entity(
+        entity_name=entity_name,
+        min_occurrences=self.min_occurrences,
+        category="service"  # FILTRAR por categoría
+    )
+
+    if not patterns:
+        return base_prompt
+
+    # Formato DECLARATIVO (no logs crudos)
+    warnings = ["\n# BUSINESS LOGIC CONSTRAINTS (learned):"]
+    for p in patterns[:3]:  # Max 3 para no saturar
+        # Formato claro para LLM
+        warnings.append(f"# - {p.entity_pattern}.{p.method_name}: {p.guard_template}")
+
+    return base_prompt + "\n".join(warnings)
+```
+
+#### 4.2 Categoría SERVICE en Anti-patterns
 
 **Archivo:** `src/learning/negative_pattern_store.py`
 
 ```python
-# Agregar categoría SERVICE a GenerationAntiPattern
 class GenerationAntiPattern:
     # Existente...
-    category: str  # "schema", "validation", "service", "repository"
-    
+    category: str  # "schema", "validation", "service", "repository", "flow"
+
     # NUEVO: Para SERVICE-level patterns
-    guard_template: Optional[str] = None  # Template de guard a inyectar
-    injection_point: Optional[str] = None  # "method_start", "before_db_call"
+    guard_template: Optional[str] = None   # "if entity.status != 'OPEN': raise 422"
+    method_name: Optional[str] = None      # "add_item", "checkout"
+    injection_point: str = "method_start"  # "method_start", "before_db_call"
+
+def get_patterns_for_entity(
+    self,
+    entity_name: str,
+    min_occurrences: int = 2,
+    category: str = None  # NUEVO: Filtrar por categoría
+) -> List[GenerationAntiPattern]:
+    """Get patterns filtered by category."""
+    patterns = self._get_all_for_entity(entity_name)
+
+    if category:
+        patterns = [p for p in patterns if p.category == category]
+
+    return [p for p in patterns if p.occurrence_count >= min_occurrences]
+```
+
+#### 4.3 Solo Enhance SERVICE/Repos/Flows
+
+**Archivo:** `src/services/code_generation_service.py`
+
+```python
+async def generate_service_code(self, entity, endpoints, ...):
+    base_prompt = self._build_service_prompt(entity, endpoints)
+
+    # SOLO enhance para SERVICE (no schema, no models)
+    enhanced_prompt = self.prompt_enhancer.enhance_service_prompt(
+        base_prompt,
+        entity_name=entity.name
+    )
+
+    code = await self.llm_client.generate(enhanced_prompt)
+
+async def generate_schema_code(self, entity, ...):
+    # NO enhance - schema no necesita business logic warnings
+    prompt = self._build_schema_prompt(entity)
+    code = await self.llm_client.generate(prompt)
 ```
 
 ---
@@ -289,16 +560,19 @@ class LearningEffectivenessTracker:
 ## Files to Modify/Create
 
 ### New Files
-- `src/learning/service_repair_feedback.py`
-- `src/learning/precondition_learner.py`
-- `src/learning/effectiveness_tracker.py`
+
+- `src/validation/error_types.py` - Enums normalizados (ViolationErrorType, ConstraintType)
+- `src/learning/service_repair_feedback.py` - Feedback loop para SERVICE repairs
+- `src/learning/precondition_learner.py` - Aprende precondiciones de 404s (Neo4j backed)
+- `src/learning/effectiveness_tracker.py` - Mide mejora real entre runs
 
 ### Modified Files
-- `src/validation/smoke_repair_orchestrator.py` - Route to SERVICE repair
-- `src/validation/service_repair_agent.py` - Add learning integration
-- `src/services/code_generation_service.py` - Integrate PromptEnhancer + Preconditions
-- `src/mge/v2/agents/code_repair_agent.py` - Fix pattern reuse
-- `src/learning/negative_pattern_store.py` - SERVICE category
+
+- `src/validation/smoke_repair_orchestrator.py` - Route to SERVICE repair con enums
+- `src/validation/service_repair_agent.py` - Guard idempotente + signature coherente
+- `src/services/code_generation_service.py` - Merge defensivo precondiciones + PromptEnhancer
+- `src/learning/prompt_enhancer.py` - Formato declarativo, filtro por categoría
+- `src/learning/negative_pattern_store.py` - Categoría SERVICE, guard_template
 - `src/validation/compliance_validator.py` - Learning metrics
 
 ---
