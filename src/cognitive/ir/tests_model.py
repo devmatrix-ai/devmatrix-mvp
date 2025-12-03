@@ -15,6 +15,8 @@ from enum import Enum
 from datetime import datetime
 import uuid
 
+from src.cognitive.ir.domain_model import NestedResourceInfo
+
 
 class TestType(str, Enum):
     """Type of test scenario."""
@@ -209,6 +211,9 @@ class TestsModelIR(BaseModel):
     # Standalone scenarios (for special cases)
     standalone_scenarios: List[TestScenarioIR] = Field(default_factory=list)
 
+    # Nested resources (from DomainModelIR) - for UUID resolution in smoke tests
+    nested_resources: List[NestedResourceInfo] = Field(default_factory=list)
+
     # Metrics configuration
     metrics_config: MetricsConfigIR = Field(default_factory=MetricsConfigIR)
 
@@ -297,3 +302,26 @@ class TestsModelIR(BaseModel):
                 for p in TestPriority
             }
         }
+
+    def get_nested_resource_for_path(self, path: str) -> Optional[NestedResourceInfo]:
+        """
+        Get nested resource info for a path like /orders/{id}/items/{item_id}.
+        Returns the NestedResourceInfo that matches the parent entity in the path.
+        """
+        path_parts = path.strip('/').split('/')
+        if len(path_parts) < 1:
+            return None
+
+        # First segment is parent entity (plural): orders -> Order
+        parent_segment = path_parts[0]
+        parent_entity = parent_segment.rstrip('s').title()
+
+        for nr in self.nested_resources:
+            if nr.parent_entity.lower() == parent_entity.lower():
+                return nr
+        return None
+
+    def get_child_entity_for_path(self, path: str) -> Optional[str]:
+        """Get child entity name for a nested path."""
+        nr = self.get_nested_resource_for_path(path)
+        return nr.child_entity if nr else None

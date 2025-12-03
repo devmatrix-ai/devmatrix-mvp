@@ -313,3 +313,121 @@ validable → sí
 auto-evolutivo → sí
 
 estratégico → absolutamente.
+
+---
+
+## ⭐ 4. Nested Resources IR — 100% agnóstico (Bug #218 Fix)
+
+### Problema Original
+El código usaba heurísticas para inferir relaciones padre-hijo:
+- `/carts/{id}/items/{item_id}` → asumía `CartItem` por convención de nombres
+- Fallaba con patrones no estándar: `/playlists/{id}/songs/{song_id}`
+
+### Solución: IR Explícito
+
+El IR ahora define explícitamente todas las relaciones nested:
+
+```python
+# En DomainModelIR - Relationship extendido
+Relationship(
+    source_entity="Cart",
+    target_entity="CartItem",
+    type=RelationshipType.ONE_TO_MANY,
+    field_name="items",
+    is_nested_resource=True,      # ← Genera rutas nested
+    path_segment="items",         # ← Segmento URL
+    fk_field="cart_id",           # ← FK en child
+    child_id_param="item_id",     # ← Nombre param en path
+    field_mappings={              # ← Auto-population
+        "unit_price": "Product.price",
+        "_reference_fk": "product_id",
+        "_reference_entity": "Product"
+    }
+)
+```
+
+### Clases Agregadas
+
+**`NestedResourceInfo`** (domain_model.py):
+```python
+class NestedResourceInfo(BaseModel):
+    parent_entity: str      # "Cart"
+    child_entity: str       # "CartItem"
+    path_segment: str       # "items"
+    fk_field: str           # "cart_id"
+    child_id_param: str     # "item_id"
+    reference_fk: Optional[str]       # "product_id"
+    reference_entity: Optional[str]   # "Product"
+    field_mappings: Dict[str, str]    # {"unit_price": "Product.price"}
+```
+
+### Métodos en DomainModelIR
+
+```python
+# Obtener todas las nested resources
+nested = domain_model.get_nested_resources()
+
+# Buscar por entidad padre
+nr = domain_model.get_nested_resource_for_parent("Cart")
+
+# Buscar por entidad hijo
+nr = domain_model.get_nested_resource_for_child("CartItem")
+```
+
+### TestsModelIR Self-Sufficiency
+
+`TestsModelIR` ahora incluye `nested_resources` para que smoke tests
+no dependan de otros IRs:
+
+```python
+class TestsModelIR(BaseModel):
+    seed_entities: List[SeedEntityIR]
+    endpoint_suites: List[EndpointTestSuite]
+    nested_resources: List[NestedResourceInfo]  # ← Nuevo
+    ...
+
+    def get_nested_resource_for_path(self, path: str) -> Optional[NestedResourceInfo]:
+        """Resuelve /orders/{id}/items/{item_id} → OrderItem"""
+        ...
+```
+
+### Código Afectado (Sin Heurísticas)
+
+| Archivo | Función | Cambio |
+|---------|---------|--------|
+| `domain_model.py` | `get_nested_resources()` | Solo retorna `is_nested_resource=True` |
+| `production_code_generators.py` | `find_child_entity()` | Sin fallback, solo IR |
+| `smoke_runner_v2.py` | `_build_seed_uuids()` | Usa `tests_model.nested_resources` |
+| `smoke_runner_v2.py` | UUID resolution | Usa `get_nested_resource_for_path()` |
+| `spec_to_application_ir.py` | `_enrich_nested_resources_from_endpoints()` | Detecta patterns desde paths |
+| `tests_ir_generator.py` | `generate()` | Copia `nested_resources` a TestsModelIR |
+
+### Flujo Completo de Datos
+
+```
+Spec Markdown
+    ↓
+SpecToApplicationIR._build_application_ir()
+    ↓
+_enrich_nested_resources_from_endpoints()  # Detecta /carts/{id}/items/{item_id}
+    ↓
+DomainModelIR.entities[].relationships[]   # is_nested_resource=True
+    ↓
+TestsIRGenerator.generate()
+    ↓
+domain_model.get_nested_resources()        # Extrae NestedResourceInfo[]
+    ↓
+TestsModelIR.nested_resources[]            # Self-sufficient para smoke tests
+    ↓
+SmokeRunnerV2._build_seed_uuids()          # Usa nested_resources
+SmokeRunnerV2.get_nested_resource_for_path() # Resuelve child entity
+```
+
+### Principio Fundamental
+
+```
+Si el IR no define is_nested_resource=True → No se genera ruta nested
+Si el IR no define field_mappings → No hay auto-population
+```
+
+**Cero heurísticas. Cero convenciones de nombres. 100% IR.**

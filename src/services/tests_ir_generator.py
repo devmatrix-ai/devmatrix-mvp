@@ -210,11 +210,18 @@ class TestsIRGenerator:
         # Generate IR hash for cache invalidation
         ir_hash = self._compute_ir_hash()
 
+        # Get nested resources from DomainModelIR (100% IR-driven)
+        nested_resources = []
+        if hasattr(self.app_ir, 'domain_model') and self.app_ir.domain_model:
+            if hasattr(self.app_ir.domain_model, 'get_nested_resources'):
+                nested_resources = self.app_ir.domain_model.get_nested_resources()
+
         tests_model = TestsModelIR(
             seed_entities=self._generate_seed_entities(),
             endpoint_suites=self._generate_endpoint_suites(),
             flow_suites=self._generate_flow_suites(),
             standalone_scenarios=self._generate_standalone_scenarios(),
+            nested_resources=nested_resources,  # From DomainModelIR
             metrics_config=self._generate_metrics_config(),
             generated_at=datetime.utcnow(),
             generator_version="1.0.0",

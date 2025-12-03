@@ -448,143 +448,57 @@ def find_status_field(entity_name: str, entity_fields: List[Dict], ir: Any = Non
 
 def find_child_entity(entity_name: str, entities: List[Dict], ir: Any = None) -> Dict[str, Any]:
     """
-    Find child entity for parent-child relationships (e.g., Parent -> ParentItem).
+    Find child entity for parent-child relationships from IR.
 
     Returns dict with:
-        - entity_name: Child entity name (derived from IR)
+        - entity_name: Child entity name (from IR)
         - entity_class: Class name for code (e.g., "{ChildName}Entity")
-        - fk_field: Foreign key field name (e.g., "{parent}_id")
-        - found: Boolean indicating if child was found
-        - auto_populated_fields: List of fields to fetch from referenced entities
-        - reference_fk: FK to referenced entity (e.g., "product_id")
-        - reference_entity: Referenced entity name (e.g., "Product")
+        - fk_field: Foreign key field name (from IR)
+        - found: Boolean indicating if child was found in IR
+        - auto_populated_fields: Fields to fetch from referenced entities (from IR)
+        - reference_fk: FK to referenced entity (from IR)
+        - reference_entity: Referenced entity name (from IR)
+        - path_segment: URL path segment for nested routes (from IR)
+        - child_id_param: Path parameter name for child (from IR)
 
-    Bug #109: Derives relationships from IR instead of hardcoding.
-    Bug #203: Detects auto-populated fields from referenced entities (domain-agnostic).
+    100% IR-driven: No heuristics. If IR doesn't have the relationship, returns found=False.
     """
     result = {
         "entity_name": None,
         "entity_class": None,
         "fk_field": None,
         "found": False,
-        "auto_populated_fields": [],  # Bug #203: Fields to fetch from referenced entity
-        "reference_fk": None,         # Bug #203: FK field to referenced entity
-        "reference_entity": None,     # Bug #203: Referenced entity name
+        "auto_populated_fields": [],
+        "reference_fk": None,
+        "reference_entity": None,
+        "path_segment": None,
+        "child_id_param": None,
     }
 
-    parent_lower = entity_name.lower()
-    expected_fk = f"{parent_lower}_id"
-
-    # Look for entities that have FK to this entity
-    for entity in entities:
-        entity_name_check = entity.get('name', '').lower()
-
-        # Check if entity name suggests it's a child (e.g., "{Parent}Item" for "{Parent}")
-        if parent_lower in entity_name_check and entity_name_check != parent_lower:
-            # Bug #214 Fix: IR uses 'attributes' not 'fields'
-            child_fields = entity.get('fields', []) or entity.get('attributes', [])
-
-            # Check fields for FK to parent
-            for field in child_fields:
-                field_name = field.get('name', '').lower()
-                # Bug #214 Fix: Support both 'type' and 'data_type' keys
-                field_type = field.get('data_type', '') or field.get('type', '')
-                if field_name == expected_fk or 'fk' in field_type.lower():
-                    result["entity_name"] = entity.get('name')
-                    result["entity_class"] = f"{entity.get('name')}Entity"
-                    result["fk_field"] = field.get('name')
-                    result["found"] = True
-
-                    # Bug #203: Detect auto-populated fields and referenced entity
-                    _detect_auto_populated_fields(
-                        result, child_fields, expected_fk, entities
-                    )
-                    return result
-
-    # Also check IR domain model for explicit relationships
+    # Only use IR's NestedResourceInfo - no fallback heuristics
     if ir and hasattr(ir, 'domain_model') and ir.domain_model:
-        if hasattr(ir.domain_model, 'relationships'):
-            for rel in ir.domain_model.relationships:
-                if hasattr(rel, 'source') and rel.source.lower() == parent_lower:
-                    result["entity_name"] = rel.target
-                    result["entity_class"] = f"{rel.target}Entity"
-                    result["fk_field"] = f"{parent_lower}_id"
-                    result["found"] = True
-                    return result
+        if hasattr(ir.domain_model, 'get_nested_resource_for_parent'):
+            nr = ir.domain_model.get_nested_resource_for_parent(entity_name)
+            if nr:
+                result["entity_name"] = nr.child_entity
+                result["entity_class"] = f"{nr.child_entity}Entity"
+                result["fk_field"] = nr.fk_field
+                result["found"] = True
+                result["reference_fk"] = nr.reference_fk
+                result["reference_entity"] = nr.reference_entity
+                result["path_segment"] = nr.path_segment
+                result["child_id_param"] = nr.child_id_param
+
+                # Convert field_mappings to auto_populated_fields format
+                for child_field, ref_spec in nr.field_mappings.items():
+                    if '.' in ref_spec:
+                        _, ref_field = ref_spec.split('.', 1)
+                        result["auto_populated_fields"].append({
+                            'child_field': child_field,
+                            'ref_field': ref_field,
+                        })
 
     return result
-
-
-def _detect_auto_populated_fields(
-    result: Dict[str, Any],
-    child_fields: List[Dict],
-    parent_fk: str,
-    all_entities: List[Dict]
-) -> None:
-    """
-    Bug #203: Detect fields in child entity that should be auto-populated from referenced entities.
-
-    Domain-agnostic detection:
-    - Find FK fields OTHER than the parent FK (e.g., product_id in CartItem)
-    - Find non-nullable fields that aren't in a typical create request
-    - Match field names with fields in the referenced entity (e.g., unit_price ↔ price)
-
-    This enables generating code like:
-        ref_entity = await db.get(RefEntity, data['ref_id'])
-        child_data['child_field'] = ref_entity.field
-    """
-    # Find other FK fields (not the parent FK)
-    other_fks = []
-    for field in child_fields:
-        fname = field.get('name', '').lower()
-        if fname.endswith('_id') and fname != 'id' and fname != parent_fk.lower():
-            other_fks.append({
-                'fk_field': field.get('name'),
-                'ref_entity': fname.replace('_id', '').title()
-            })
-
-    if not other_fks:
-        return
-
-    # Use first other FK as reference entity
-    ref_fk = other_fks[0]
-    result["reference_fk"] = ref_fk['fk_field']
-    result["reference_entity"] = ref_fk['ref_entity']
-
-    # Bug #214 Fix: IR uses 'attributes' not 'fields'
-    ref_entity_fields = []
-    for entity in all_entities:
-        if entity.get('name', '').lower() == ref_fk['ref_entity'].lower():
-            ref_entity_fields = entity.get('fields', []) or entity.get('attributes', [])
-            break
-
-    # Match child fields with ref entity fields by TYPE (domain-agnostic)
-    # Look for numeric fields (float, decimal) that exist in both child and ref
-    numeric_types = {'float', 'decimal', 'number', 'money', 'currency'}
-
-    for child_field in child_fields:
-        child_fname = child_field.get('name', '').lower()
-        # Bug #214 Fix: Support both 'type' and 'data_type' keys
-        child_type = (child_field.get('type', '') or child_field.get('data_type', '')).lower()
-
-        # Skip id, FK fields, and timestamps
-        if child_fname in ('id', 'created_at', 'updated_at') or child_fname.endswith('_id'):
-            continue
-
-        # Check if this is a numeric field by type
-        is_numeric = any(t in child_type for t in numeric_types)
-
-        if is_numeric:
-            # Find corresponding numeric field in ref entity
-            for ref_field in ref_entity_fields:
-                # Bug #214 Fix: Support both 'type' and 'data_type' keys
-                ref_type = (ref_field.get('type', '') or ref_field.get('data_type', '')).lower()
-                if any(t in ref_type for t in numeric_types):
-                    result["auto_populated_fields"].append({
-                        'child_field': child_field.get('name'),
-                        'ref_field': ref_field.get('name'),
-                    })
-                    break
 
 
 def find_workflow_operations(entity_name: str, ir: Any) -> List[Dict[str, Any]]:

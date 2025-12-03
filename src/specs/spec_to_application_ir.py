@@ -831,6 +831,12 @@ Output JSON only, no explanation:"""
                     type=self._parse_relationship_type(rel_data.get("type", "many_to_one")),
                     field_name=rel_data.get("field_name", rel_data["target_entity"].lower()),
                     back_populates=rel_data.get("back_populates"),
+                    # Nested resource fields (from IR or default False)
+                    is_nested_resource=rel_data.get("is_nested_resource", False),
+                    path_segment=rel_data.get("path_segment"),
+                    fk_field=rel_data.get("fk_field"),
+                    child_id_param=rel_data.get("child_id_param"),
+                    field_mappings=rel_data.get("field_mappings", {}),
                 )
                 relationships.append(rel)
 
@@ -844,6 +850,11 @@ Output JSON only, no explanation:"""
             entities.append(entity)
 
         domain_model = DomainModelIR(entities=entities)
+
+        # Detect nested resources from endpoints and enrich relationships
+        domain_model = self._enrich_nested_resources_from_endpoints(
+            domain_model, ir_data.get("endpoints", [])
+        )
 
         # Build APIModelIR
         endpoints = []
@@ -1527,6 +1538,106 @@ Output JSON only, no explanation:"""
 
         info["cached"] = info["redis_cached"] or info["filesystem_cached"]
         return info
+
+    def _enrich_nested_resources_from_endpoints(
+        self, domain_model: DomainModelIR, endpoints_data: list
+    ) -> DomainModelIR:
+        """
+        Detect nested resource patterns from endpoints and enrich relationships.
+
+        Scans endpoints for nested patterns like:
+        - /carts/{cart_id}/items/{item_id}
+        - /orders/{order_id}/items/{item_id}
+
+        Creates or updates relationships with is_nested_resource=True.
+        100% derived from endpoint paths - no hardcoded entity names.
+        """
+        import re
+
+        # Build entity lookup
+        entity_map = {e.name.lower(): e for e in domain_model.entities}
+
+        # Detect nested paths: /{parent}/{id}/{segment}/{child_id}
+        nested_pattern = re.compile(
+            r'^/([a-z]+)s/\{[^}]+\}/([a-z]+)s?/\{([^}]+)\}$', re.IGNORECASE
+        )
+
+        for ep in endpoints_data:
+            path = ep.get("path", "")
+            match = nested_pattern.match(path)
+            if not match:
+                continue
+
+            parent_singular = match.group(1).lower()  # cart, order
+            segment = match.group(2).lower()  # item
+            child_id_param = match.group(3)  # item_id
+
+            # Derive child entity: {Parent}{Segment} → CartItem, OrderItem
+            parent_name = parent_singular.title()
+            child_name = f"{parent_name}{segment.title()}"
+
+            # Find parent entity
+            parent_entity = entity_map.get(parent_singular)
+            if not parent_entity:
+                continue
+
+            # Check if child entity exists
+            child_entity = entity_map.get(child_name.lower())
+            if not child_entity:
+                continue
+
+            # Check if relationship already has is_nested_resource
+            existing_rel = None
+            for rel in parent_entity.relationships:
+                if rel.target_entity.lower() == child_name.lower():
+                    existing_rel = rel
+                    break
+
+            # Derive FK field from child entity attributes
+            fk_field = f"{parent_singular}_id"
+            reference_fk = None
+            reference_entity = None
+            field_mappings = {}
+
+            # Scan child entity for FKs
+            for attr in child_entity.attributes:
+                if attr.name == fk_field:
+                    continue  # Skip parent FK
+                if attr.name.endswith("_id") and attr.name != "id":
+                    # This is a reference FK (e.g., product_id)
+                    ref_entity_name = attr.name[:-3].title()  # product_id → Product
+                    if ref_entity_name.lower() in entity_map:
+                        reference_fk = attr.name
+                        reference_entity = ref_entity_name
+
+            if existing_rel:
+                # Update existing relationship
+                existing_rel.is_nested_resource = True
+                existing_rel.path_segment = f"{segment}s"
+                existing_rel.fk_field = fk_field
+                existing_rel.child_id_param = child_id_param
+                if reference_fk:
+                    existing_rel.field_mappings["_reference_fk"] = reference_fk
+                    existing_rel.field_mappings["_reference_entity"] = reference_entity
+            else:
+                # Create new relationship
+                new_rel = Relationship(
+                    source_entity=parent_name,
+                    target_entity=child_name,
+                    type=RelationshipType.ONE_TO_MANY,
+                    field_name=f"{segment}s",
+                    is_nested_resource=True,
+                    path_segment=f"{segment}s",
+                    fk_field=fk_field,
+                    child_id_param=child_id_param,
+                    field_mappings={
+                        "_reference_fk": reference_fk,
+                        "_reference_entity": reference_entity,
+                    } if reference_fk else {},
+                )
+                parent_entity.relationships.append(new_rel)
+
+        return domain_model
 
 
 # Sync wrapper for non-async contexts

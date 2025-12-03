@@ -207,10 +207,10 @@ class SmokeRunnerV2:
 
     def _build_seed_uuids(self, is_delete: bool = False) -> Dict[str, str]:
         """
-        Build seed UUIDs from IR entities (domain-agnostic).
+        Build seed UUIDs from IR entities (100% IR-driven, no heuristics).
 
-        Bug #192 Fix: Use centralized SeedUUIDRegistry for consistency with seed_db.py.
-        This ensures smoke tests use the same UUIDs that were seeded.
+        Uses TestsModelIR.seed_entities and TestsModelIR.nested_resources
+        to build UUID mappings for all entities.
 
         Args:
             is_delete: If True, return delete variant UUIDs
@@ -218,29 +218,13 @@ class SmokeRunnerV2:
         Returns:
             Dict mapping entity name (lowercase) to UUID string
         """
-        # Get entity names from TestsModelIR seed_entities
+        # Get entity names from TestsModelIR seed_entities (required)
         entity_names = []
         if hasattr(self.tests_model, 'seed_entities') and self.tests_model.seed_entities:
             entity_names = [seed.entity_name for seed in self.tests_model.seed_entities]
 
-        # Fallback: Extract entity names from scenarios if no seed_entities
         if not entity_names:
-            seen = set()
-            scenarios = []
-            if hasattr(self.tests_model, 'get_all_scenarios'):
-                scenarios = self.tests_model.get_all_scenarios()
-            elif hasattr(self.tests_model, 'endpoint_suites'):
-                for suite in self.tests_model.endpoint_suites:
-                    scenarios.append(suite.happy_path)
-                    scenarios.extend(suite.edge_cases)
-                    scenarios.extend(suite.error_cases)
-
-            for scenario in scenarios:
-                entity = self._derive_entity_from_path(scenario.endpoint_path)
-                if entity and entity not in seen:
-                    seen.add(entity)
-                    # Convert to PascalCase for registry
-                    entity_names.append(entity.title().replace('_', ''))
+            return {}  # No seed entities in IR = no UUIDs
 
         # Use centralized registry (same as code_generation_service.py)
         registry = SeedUUIDRegistry.from_entity_names(entity_names)
@@ -255,32 +239,18 @@ class SmokeRunnerV2:
             except ValueError:
                 pass  # Entity not in registry, skip
 
-        # Bug #213 Fix: Item entities (CartItem, OrderItem) use separate UUID sequence
-        # The seed_db.py generates items starting at UUID ...20, not using entity index
-        # Override any item entity UUIDs to match what seed_db.py actually generates
-        item_counter = 20  # seed_db.py starts join table items at 20
-        for key in list(seed_uuids.keys()):
-            if 'item' in key:
-                # Item entities use separate sequence: 20, 21, 22, 23...
-                # Primary: 20, 22, 24... Delete: 21, 23, 25...
+        # Use nested_resources from IR for child entity UUIDs
+        # IR defines: parent_entity, child_entity - use child_entity for UUID key
+        nested_resources = getattr(self.tests_model, 'nested_resources', [])
+        item_counter = 20  # seed_db.py starts nested items at offset 20
+        for nr in nested_resources:
+            child_key = nr.child_entity.lower()
+            if child_key not in seed_uuids:
                 if is_delete:
-                    seed_uuids[key] = f"{SeedUUIDRegistry.UUID_BASE_DELETE}{item_counter + 1}"
+                    seed_uuids[child_key] = f"{SeedUUIDRegistry.UUID_BASE_DELETE}{item_counter + 1}"
                 else:
-                    seed_uuids[key] = f"{SeedUUIDRegistry.UUID_BASE_DELETE}{item_counter}"
-                item_counter += 2  # Skip 2 for next item entity (primary + delete)
-
-        # Add 'item' alias for generic item references
-        if 'item' not in seed_uuids:
-            for key in seed_uuids:
-                if 'item' in key:
-                    seed_uuids['item'] = seed_uuids[key]
-                    break
-            # Fallback if no item entity found
-            if 'item' not in seed_uuids:
-                if is_delete:
-                    seed_uuids['item'] = f"{SeedUUIDRegistry.UUID_BASE_DELETE}21"
-                else:
-                    seed_uuids['item'] = f"{SeedUUIDRegistry.UUID_BASE_DELETE}20"
+                    seed_uuids[child_key] = f"{SeedUUIDRegistry.UUID_BASE_DELETE}{item_counter}"
+                item_counter += 2
 
         return seed_uuids
 
@@ -400,24 +370,15 @@ class SmokeRunnerV2:
                         # Specific param name (e.g., product_id -> product)
                         entity_type = param_name.replace('_id', '').lower()
 
-                    # Domain-agnostic: Resolve UUID from seed_uuids
-                    # Bug #205 Fix: For nested paths like /carts/{cart_id}/items/{item_id}
+                    # 100% IR-driven: Use nested_resources from TestsModelIR
+                    # For nested paths like /carts/{id}/items/{item_id}:
                     # - cart_id → "cart" entity UUID
-                    # - item_id → "item" entity UUID (which is "cartitem" or "orderitem")
-                    # Bug #218 Fix: Derive specific item entity from path prefix
-                    # /orders/{id}/items/{item_id} → orderitem
-                    # /carts/{id}/items/{item_id} → cartitem
-                    is_item_param = param_name == 'item_id'
-                    if is_item_param:
-                        # Derive parent entity from path to get correct item type
-                        # Path like /orders/{id}/items/{item_id} → parent is "order" → item is "orderitem"
-                        path_parts = scenario.endpoint_path.strip('/').split('/')
-                        if len(path_parts) >= 1:
-                            parent_entity = path_parts[0].rstrip('s')  # orders → order, carts → cart
-                            item_entity_key = f"{parent_entity}item"
-                            param_value = seed_uuids.get(item_entity_key, seed_uuids.get('item', SeedUUIDRegistry.NOT_FOUND_UUID))
-                        else:
-                            param_value = seed_uuids.get('item', SeedUUIDRegistry.NOT_FOUND_UUID)
+                    # - item_id → child entity from IR (e.g., "cartitem")
+                    nr = self.tests_model.get_nested_resource_for_path(scenario.endpoint_path)
+                    if nr and param_name == nr.child_id_param:
+                        # This is the child ID param - use child entity from IR
+                        child_key = nr.child_entity.lower()
+                        param_value = seed_uuids.get(child_key, SeedUUIDRegistry.NOT_FOUND_UUID)
                     else:
                         # Regular entity lookup
                         param_value = seed_uuids.get(entity_type, SeedUUIDRegistry.NOT_FOUND_UUID)
