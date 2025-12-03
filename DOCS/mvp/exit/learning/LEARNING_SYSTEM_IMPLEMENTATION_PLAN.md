@@ -45,6 +45,29 @@
   5. Modificado `_repair_from_smoke()` para usar SERVICE routing
 - **Impacto:** Learning y SERVICE repair ahora se ejecutan en el path real del pipeline
 
+**Bug #202 Details:**
+- **Problema:** `_extract_error_detail_from_response` retornaba "validation_error" en vez de los errores reales
+- **Causa:** Apps generadas usan formato `{"error":"validation_error","errors":[...]}` en vez de FastAPI `{"detail":...}`
+- **Fix:** Añadido manejo de formato `{errors:[...]}` en `_extract_error_detail_from_response()`
+- **Archivo:** `src/validation/smoke_repair_orchestrator.py` (líneas 1525-1607)
+- **Impacto:** Error messages ahora contienen detalles como "body.customer_id: Field required"
+
+**Bug #204 Details:**
+- **Problema:** Violations 422 marcadas como "unclassifiable" (1 unclassifiable en logs)
+- **Causa:** `_enrich_ir_context()` se ejecutaba DESPUÉS del check de `min_confidence`, pero el endpoint boost (+0.2) era necesario para pasar el threshold
+- **Fix:** Movido `_enrich_ir_context()` ANTES del check de confidence en `classify_for_generation()`
+- **Archivo:** `src/learning/smoke_feedback_classifier.py` (líneas 366-387)
+- **Impacto:** 422s ahora crean anti-patterns correctamente
+
+**Bug #205 Details:**
+- **Problema:** `No module named 'src.knowledge_graph'` → Neo4j Queries: 0
+- **Causa:** El módulo `src/knowledge_graph/neo4j_manager.py` no existía
+- **Fix:** Creado módulo completo con `Neo4jManager` class
+- **Archivos nuevos:**
+  - `src/knowledge_graph/__init__.py`
+  - `src/knowledge_graph/neo4j_manager.py`
+- **Impacto:** PreconditionLearner y ServiceGuardStore ahora pueden persistir a Neo4j
+
 ### Phase 1 Completed Files
 
 - ✅ `src/validation/error_types.py` (NEW) - Enums normalizados
