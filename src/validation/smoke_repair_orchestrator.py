@@ -148,6 +148,14 @@ except ImportError as e:
     FlowLogicSynthesizer = None
     InvariantInferencer = None
     ICBR = None
+
+# SERVICE Repair Agent for business logic constraints
+try:
+    from src.validation.service_repair_agent import ServiceRepairAgent
+    SERVICE_REPAIR_AGENT_AVAILABLE = True
+except ImportError:
+    SERVICE_REPAIR_AGENT_AVAILABLE = False
+    ServiceRepairAgent = None
     BehaviorLoweringProtocol = None
 
 
@@ -691,6 +699,11 @@ class SmokeRepairOrchestrator:
                 logger.info("  ✅ Cognitive Compiler components enabled (11 components)")
             except Exception as e:
                 logger.warning(f"  ⚠️ Cognitive Compiler partial init: {e}")
+
+        # SERVICE Repair Agent for business logic constraints
+        self.service_repair_agent: Optional[ServiceRepairAgent] = None
+        if SERVICE_REPAIR_AGENT_AVAILABLE:
+            logger.info("  ✅ SERVICE Repair Agent available")
 
     async def run_smoke_repair_cycle(
         self,
@@ -2000,12 +2013,42 @@ class SmokeRepairOrchestrator:
         if not entity_name:
             return None
 
+        # === SERVICE Repair Agent (IR-driven guard injection) ===
+        constraint_info = self._extract_constraint_from_error(error_message, violation)
+        if constraint_info and SERVICE_REPAIR_AGENT_AVAILABLE:
+            constraint_type = constraint_info.get('type', '')
+            if constraint_type in ('status_transition', 'stock_constraint', 'workflow_constraint', 'custom'):
+                # Initialize ServiceRepairAgent if needed
+                if not self.service_repair_agent:
+                    self.service_repair_agent = ServiceRepairAgent(app_path, application_ir)
+
+                method_name = self._infer_method_from_endpoint(violation.endpoint)
+                if method_name:
+                    result = self.service_repair_agent.repair_constraint(
+                        constraint_type=constraint_type,
+                        constraint_metadata={
+                            'entity': entity_name,
+                            **constraint_info.get('metadata', {})
+                        },
+                        target_method=method_name
+                    )
+                    if result.success:
+                        logger.info(f"    ✅ SERVICE Repair Agent: Injected guard for {constraint_type}")
+                        return RepairFix(
+                            file_path=result.file_path,
+                            fix_type=f"service_{constraint_type}",
+                            description=f"Injected {constraint_type} guard into {method_name}",
+                            old_code="",
+                            new_code=result.guard_injected[:200],
+                            success=True
+                        )
+                    elif result.is_manual:
+                        logger.info(f"    👁️ SERVICE Repair Agent: {constraint_type} marked as MANUAL")
+                        # Don't return None - let it fall through to other strategies
+
         # Identify constraint type from error (domain-agnostic pattern matching)
         fix_type = None
         fix_code = None
-
-        # Use IR constraints if available, not hardcoded keywords
-        constraint_info = self._extract_constraint_from_error(error_message, violation)
 
         # Comparison constraint errors (e.g., "value > limit")
         if constraint_info and constraint_info.get('type') == 'comparison':

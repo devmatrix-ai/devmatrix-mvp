@@ -140,6 +140,76 @@ class CodeRepairAgent:
         except Exception as e:
             logger.warning(f"Could not initialize PromptEnhancer for CodeRepairAgent: {e}")
 
+        # Idempotency: Track applied fixes to avoid re-applying
+        self._applied_fix_fingerprints: set = set()
+        self._file_ast_cache: dict = {}
+
+    # =========================================================================
+    # IDEMPOTENCY METHODS (avoid applying same fix twice)
+    # =========================================================================
+
+    def _get_fix_fingerprint(self, file_path: str, fix_type: str, target: str) -> str:
+        """Generate unique fingerprint for a fix to detect duplicates."""
+        import hashlib
+        key = f"{file_path}:{fix_type}:{target}"
+        return hashlib.md5(key.encode()).hexdigest()
+
+    def _is_fix_already_applied(self, file_path: str, fix_code: str) -> bool:
+        """Check if fix is already present in file using AST comparison."""
+        import ast
+        try:
+            if not Path(file_path).exists():
+                return False
+
+            current_content = Path(file_path).read_text()
+
+            # Quick string check first (fast path)
+            fix_stripped = fix_code.strip()
+            if fix_stripped and fix_stripped[:50] in current_content:
+                return True
+
+            # AST comparison for more accurate detection
+            if file_path in self._file_ast_cache:
+                cached_ast = self._file_ast_cache[file_path]
+            else:
+                try:
+                    cached_ast = ast.dump(ast.parse(current_content), annotate_fields=False)
+                    self._file_ast_cache[file_path] = cached_ast
+                except SyntaxError:
+                    return False
+
+            # Check if applying fix would change the AST
+            try:
+                # Simple approach: check if key identifiers from fix exist in AST
+                fix_tree = ast.parse(fix_code)
+                for node in ast.walk(fix_tree):
+                    if isinstance(node, ast.FunctionDef):
+                        if f"FunctionDef(name='{node.name}'" in cached_ast:
+                            return True  # Function already exists
+                    elif isinstance(node, ast.ClassDef):
+                        if f"ClassDef(name='{node.name}'" in cached_ast:
+                            return True  # Class already exists
+            except SyntaxError:
+                pass
+
+            return False
+        except Exception as e:
+            logger.debug(f"AST comparison failed: {e}")
+            return False
+
+    def _register_applied_fix(self, fingerprint: str, file_path: str):
+        """Register a fix as applied and invalidate AST cache."""
+        self._applied_fix_fingerprints.add(fingerprint)
+        # Invalidate AST cache for this file
+        if file_path in self._file_ast_cache:
+            del self._file_ast_cache[file_path]
+
+    def clear_idempotency_state(self):
+        """Clear idempotency tracking (call between repair sessions)."""
+        self._applied_fix_fingerprints.clear()
+        self._file_ast_cache.clear()
+        logger.debug("Idempotency state cleared")
+
     async def repair(
         self,
         compliance_report,
@@ -2904,12 +2974,23 @@ FIXED FILE CONTENT:
         app_path: Path
     ) -> bool:
         """
-        Repair a single smoke violation.
+        Repair a single smoke violation with idempotency check.
 
         Delegates to existing repair_single_runtime_violation for LLM-based fixes.
         """
         error_type = violation.get('error_type', 'HTTP_500')
         status_code = violation.get('status_code', 500)
+        endpoint = violation.get('endpoint', '')
+
+        # Idempotency: Check if we've already processed this exact fix
+        fingerprint = self._get_fix_fingerprint(
+            file_path=str(app_path),
+            fix_type=error_type,
+            target=endpoint
+        )
+        if fingerprint in self._applied_fix_fingerprints:
+            logger.debug(f"Skipping already-applied fix: {endpoint} ({error_type})")
+            return True  # Already fixed
 
         # Skip non-actionable errors
         if error_type in ['ConnectionError', 'TimeoutError']:
@@ -2918,7 +2999,10 @@ FIXED FILE CONTENT:
 
         # For 500 errors, use existing runtime violation repair
         if status_code >= 500:
-            return await self._repair_single_runtime_violation(violation)
+            result = await self._repair_single_runtime_violation(violation)
+            if result:
+                self._register_applied_fix(fingerprint, str(app_path))
+            return result
 
         # For 404 (route not found), could add route - but skip for now
         # Routes should be generated correctly initially

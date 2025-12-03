@@ -47,6 +47,8 @@ class ComplianceReport:
 
     Shows what was implemented vs what was expected,
     with compliance scores per category and overall.
+
+    Gap 3 Enhancement: Separated metrics for Schema vs Business Logic constraints.
     """
 
     overall_compliance: float  # 0.0-1.0
@@ -70,6 +72,13 @@ class ComplianceReport:
     # Per-category scores
     compliance_details: Dict[str, float] = dataclass_field(default_factory=dict)
 
+    # Gap 3: Separated metrics - Schema vs Business Logic
+    schema_constraints_implemented: List[str] = dataclass_field(default_factory=list)
+    schema_constraints_expected: List[str] = dataclass_field(default_factory=list)
+    business_logic_constraints_implemented: List[str] = dataclass_field(default_factory=list)
+    business_logic_constraints_expected: List[str] = dataclass_field(default_factory=list)
+    business_logic_constraints_manual: List[str] = dataclass_field(default_factory=list)  # Marked as MANUAL
+
     def __str__(self) -> str:
         """String representation of compliance report"""
         # For validations: show found/found when all expected are present
@@ -80,6 +89,26 @@ class ComplianceReport:
         else:
             # Partial compliance
             validations_display = f"{len(self.validations_implemented)}/{len(self.validations_expected)}"
+
+        # Gap 3: Calculate separated compliance
+        schema_compliance = self.compliance_details.get('schema_constraints', 0)
+        business_logic_compliance = self.compliance_details.get('business_logic_constraints', 0)
+
+        # Build separated metrics section
+        separated_metrics = ""
+        if self.schema_constraints_expected or self.business_logic_constraints_expected:
+            schema_count = len(self.schema_constraints_implemented)
+            schema_total = len(self.schema_constraints_expected)
+            bl_count = len(self.business_logic_constraints_implemented)
+            bl_total = len(self.business_logic_constraints_expected)
+            manual_count = len(self.business_logic_constraints_manual)
+
+            separated_metrics = f"""
+Constraint Breakdown:
+  Schema Constraints: {schema_compliance:.1%} ({schema_count}/{schema_total})
+  Business Logic Constraints: {business_logic_compliance:.1%} ({bl_count}/{bl_total})
+  Manual (not auto-repairable): {manual_count}
+"""
 
         return f"""
 Compliance Report
@@ -98,7 +127,7 @@ Validations: {validation_compliance:.1%} ({validations_display})
   Expected: {len(self.validations_expected)}
   Implemented: {len(self.validations_implemented)}
   Found (including extras): {len(self.validations_found)}
-
+{separated_metrics}
 Missing Requirements ({len(self.missing_requirements)}):
 {chr(10).join('  - ' + req for req in self.missing_requirements[:10])}
 """
@@ -495,7 +524,24 @@ class ComplianceValidator:
             spec_requirements,
         )
 
-        # 6. Build detailed report
+        # 6. Gap 3: Separate constraints into Schema vs Business Logic
+        expected_separated = self._separate_constraints(validations_expected)
+        found_separated = self._separate_constraints(validations_found)
+        matched_separated = self._separate_constraints(validations_matched)
+
+        # Calculate separated compliance
+        schema_expected = expected_separated['schema']
+        schema_found = matched_separated['schema']
+        schema_compliance = len(schema_found) / len(schema_expected) if schema_expected else 1.0
+
+        bl_expected = expected_separated['business_logic']
+        bl_found = matched_separated['business_logic']
+        bl_compliance = len(bl_found) / len(bl_expected) if bl_expected else 1.0
+
+        # Identify manual (not auto-repairable) business logic constraints
+        bl_manual = [c for c in bl_expected if 'custom' in c.lower()]
+
+        # 7. Build detailed report
         # Use matched validations (not all found) when ground truth exists for accurate metrics
         report = ComplianceReport(
             overall_compliance=overall_compliance,
@@ -511,7 +557,15 @@ class ComplianceValidator:
                 "entities": entity_compliance,
                 "endpoints": endpoint_compliance,
                 "validations": validation_compliance,
+                "schema_constraints": schema_compliance,
+                "business_logic_constraints": bl_compliance,
             },
+            # Gap 3: Separated metrics
+            schema_constraints_implemented=schema_found,
+            schema_constraints_expected=schema_expected,
+            business_logic_constraints_implemented=bl_found,
+            business_logic_constraints_expected=bl_expected,
+            business_logic_constraints_manual=bl_manual,
         )
 
         logger.info(
@@ -519,6 +573,12 @@ class ComplianceValidator:
             f"(entities: {entity_compliance:.1%}, "
             f"endpoints: {endpoint_compliance:.1%}, "
             f"validations: {validation_compliance:.1%})"
+        )
+        logger.info(
+            f"  Schema constraints: {schema_compliance:.1%} ({len(schema_found)}/{len(schema_expected)})"
+        )
+        logger.info(
+            f"  Business logic constraints: {bl_compliance:.1%} ({len(bl_found)}/{len(bl_expected)}, {len(bl_manual)} manual)"
         )
 
         return report
@@ -1158,7 +1218,24 @@ class ComplianceValidator:
                 spec_requirements,
             )
 
-            # 8. Build detailed report
+            # 8. Gap 3: Separate constraints into Schema vs Business Logic
+            expected_separated = self._separate_constraints(validations_expected)
+            found_separated = self._separate_constraints(validations_found)
+            matched_separated = self._separate_constraints(validations_matched)
+
+            # Calculate separated compliance
+            schema_expected = expected_separated['schema']
+            schema_found = matched_separated['schema']
+            schema_compliance = len(schema_found) / len(schema_expected) if schema_expected else 1.0
+
+            bl_expected = expected_separated['business_logic']
+            bl_found = matched_separated['business_logic']
+            bl_compliance = len(bl_found) / len(bl_expected) if bl_expected else 1.0
+
+            # Identify manual (not auto-repairable) business logic constraints
+            bl_manual = [c for c in bl_expected if 'custom' in c.lower()]
+
+            # 9. Build detailed report
             # Use matched validations (not all found) when ground truth exists for accurate metrics
             report = ComplianceReport(
                 overall_compliance=overall_compliance,
@@ -1174,7 +1251,15 @@ class ComplianceValidator:
                     "entities": entity_compliance,
                     "endpoints": endpoint_compliance,
                     "validations": validation_compliance,
+                    "schema_constraints": schema_compliance,
+                    "business_logic_constraints": bl_compliance,
                 },
+                # Gap 3: Separated metrics
+                schema_constraints_implemented=schema_found,
+                schema_constraints_expected=schema_expected,
+                business_logic_constraints_implemented=bl_found,
+                business_logic_constraints_expected=bl_expected,
+                business_logic_constraints_manual=bl_manual,
             )
 
             logger.info(
@@ -1182,6 +1267,12 @@ class ComplianceValidator:
                 f"(entities: {entity_compliance:.1%}, "
                 f"endpoints: {endpoint_compliance:.1%}, "
                 f"validations: {validation_compliance:.1%})"
+            )
+            logger.info(
+                f"  Schema constraints: {schema_compliance:.1%} ({len(schema_found)}/{len(schema_expected)})"
+            )
+            logger.info(
+                f"  Business logic constraints: {bl_compliance:.1%} ({len(bl_found)}/{len(bl_expected)}, {len(bl_manual)} manual)"
             )
 
             return report
@@ -2037,6 +2128,63 @@ class ComplianceValidator:
 
         # Default: if we don't recognize it, consider it fake to be conservative
         return False
+
+    def _classify_constraint(self, constraint: str) -> str:
+        """
+        Gap 3: Classify a constraint as 'schema' or 'business_logic'.
+
+        Schema constraints (auto-repairable by CodeRepair):
+        - required, nullable, unique
+        - gt, ge, lt, le, min_length, max_length
+        - enum, pattern, format (uuid, email)
+        - default values
+        - foreign keys
+
+        Business Logic constraints (require ServiceRepair or MANUAL):
+        - status_transition (state machine)
+        - stock_constraint (inventory checks)
+        - workflow_constraint (multi-step flows)
+        - custom (domain-specific logic)
+
+        Args:
+            constraint: Constraint string (e.g., "Product.price: gt=0")
+
+        Returns:
+            'schema' or 'business_logic'
+        """
+        constraint_lower = constraint.lower()
+
+        # Business Logic patterns (require ServiceRepair)
+        business_logic_patterns = [
+            'status_transition', 'state_transition', 'workflow',
+            'stock_constraint', 'inventory', 'quantity_check',
+            'custom', 'business_rule', 'domain_rule',
+            'checkout', 'cancel', 'complete', 'approve', 'reject',
+            'decrement', 'increment', '-=', '+=',
+        ]
+
+        for pattern in business_logic_patterns:
+            if pattern in constraint_lower:
+                return 'business_logic'
+
+        # Everything else is schema
+        return 'schema'
+
+    def _separate_constraints(self, constraints: List[str]) -> Dict[str, List[str]]:
+        """
+        Gap 3: Separate constraints into schema vs business_logic categories.
+
+        Args:
+            constraints: List of constraint strings
+
+        Returns:
+            Dict with 'schema' and 'business_logic' lists
+        """
+        result = {'schema': [], 'business_logic': []}
+        for constraint in constraints:
+            category = self._classify_constraint(constraint)
+            result[category].append(constraint)
+        return result
 
     def _calculate_validation_compliance(self, found: List[str], expected: List[str], use_exact_matching: bool = False) -> tuple[float, List[str]]:
         """
