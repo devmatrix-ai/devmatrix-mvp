@@ -239,18 +239,20 @@ class SmokeRunnerV2:
             except ValueError:
                 pass  # Entity not in registry, skip
 
-        # Use nested_resources from IR for child entity UUIDs
-        # IR defines: parent_entity, child_entity - use child_entity for UUID key
+        # Bug #203 Fix: Override nested resource child entity UUIDs
+        # The registry assigns sequential IDs (1,2,3...) but seed_db uses offset 20+ for child entities
+        # We MUST override the registry UUIDs for child entities to match seed_db
+        # Use UUID_BASE_DELETE (10 trailing zeros) for proper 12-digit suffix formatting
         nested_resources = getattr(self.tests_model, 'nested_resources', [])
         item_counter = 20  # seed_db.py starts nested items at offset 20
         for nr in nested_resources:
             child_key = nr.child_entity.lower()
-            if child_key not in seed_uuids:
-                if is_delete:
-                    seed_uuids[child_key] = f"{SeedUUIDRegistry.UUID_BASE_DELETE}{item_counter + 1}"
-                else:
-                    seed_uuids[child_key] = f"{SeedUUIDRegistry.UUID_BASE_DELETE}{item_counter}"
-                item_counter += 2
+            # Always override - registry UUIDs are wrong for child entities
+            if is_delete:
+                seed_uuids[child_key] = f"{SeedUUIDRegistry.UUID_BASE_DELETE}{item_counter + 1}"
+            else:
+                seed_uuids[child_key] = f"{SeedUUIDRegistry.UUID_BASE_DELETE}{item_counter}"
+            item_counter += 2
 
         return seed_uuids
 
