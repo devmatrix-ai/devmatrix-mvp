@@ -22,6 +22,9 @@
 |-----|-------------|--------|-------|
 | #200 | error_message no capturaba response body de FastAPI | ✅ FIXED | 2025-12-03 |
 | #201 | Learning code estaba en path LEGACY, no en SmokeRunnerV2 | ✅ FIXED | 2025-12-03 |
+| #202 | `_extract_error_detail_from_response` no manejaba formato `{errors:[...]}` | ✅ FIXED | 2025-12-03 |
+| #204 | Violations 422 marcadas como "unclassifiable" por low confidence | ✅ FIXED | 2025-12-03 |
+| #205 | `src/knowledge_graph` module no existía → Neo4j Queries: 0 | ✅ FIXED | 2025-12-03 |
 
 **Bug #200 Details:**
 - **Problema:** `error_message` en violations era "Expected 201, got 422" en vez del mensaje real del servidor
@@ -63,11 +66,11 @@
 ### Phase 4 Completed Files
 
 - ✅ `src/learning/negative_pattern_store.py` - category, guard_template, get_patterns_by_category()
-- ✅ `src/learning/prompt_enhancer.py` - enhance_service_prompt() con formato declarativo
+- ✅ `src/learning/prompt_enhancer.py` - GenerationPromptEnhancer, enhance_service_prompt() con formato declarativo
 
 ### Phase 5 Completed Files
 
-- ✅ `src/learning/effectiveness_tracker.py` (NEW) - RunMetrics, compare_runs(), get_trend()
+- ✅ `src/learning/effectiveness_tracker.py` (NEW) - LearningEffectivenessTracker, RunMetrics, compare_runs(), get_trend()
 
 ---
 

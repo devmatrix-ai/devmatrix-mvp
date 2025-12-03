@@ -370,19 +370,21 @@ class SmokeFeedbackClassifier:
             self.logger.debug(f"Error not classifiable: {violation.get('error_type')}")
             return None
 
-        if classification.ir_context.confidence < self.min_confidence:
-            self.logger.debug(
-                f"Low confidence ({classification.ir_context.confidence:.2f}): "
-                f"{violation.get('error_type')}"
-            )
-            return None
-
-        # 2. Enrich IR context from ApplicationIR
+        # Bug #204: Enrich IR context BEFORE confidence check
+        # The violation has endpoint info that can boost confidence
         ir_context = self._enrich_ir_context(
             classification.ir_context,
             violation,
             application_ir
         )
+
+        # Now check confidence after enrichment
+        if ir_context.confidence < self.min_confidence:
+            self.logger.debug(
+                f"Low confidence ({ir_context.confidence:.2f}): "
+                f"{violation.get('error_type')}"
+            )
+            return None
 
         # 3. Create anti-pattern
         pattern = create_anti_pattern(
@@ -506,9 +508,15 @@ class SmokeFeedbackClassifier:
         """Extract IR context (entity, field, etc.) from error details."""
         context = IRContext()
 
-        # HTTP errors get base confidence (they always have endpoint context)
-        if exception_class.startswith("HTTP_") or exception_class in ("ConnectionError", "TimeoutError", "HTTPDetail"):
-            context.confidence = 0.25  # Base confidence for HTTP errors
+        # Bug #204: HTTP errors get base confidence - endpoint always provides context
+        # 404 and 422 are more valuable (actionable) than 500
+        if exception_class.startswith("HTTP_"):
+            if exception_class in ("HTTP_404", "HTTP_422"):
+                context.confidence = 0.2  # Will be boosted by endpoint in _enrich_ir_context
+            else:
+                context.confidence = 0.15  # 500s need more evidence
+        elif exception_class in ("ConnectionError", "TimeoutError", "HTTPDetail"):
+            context.confidence = 0.25
 
         # Try to extract entity from error message
         entity_patterns = [

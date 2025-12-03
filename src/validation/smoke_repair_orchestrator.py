@@ -1531,9 +1531,12 @@ class SmokeRepairOrchestrator:
     ) -> str:
         """
         Bug #200: Extract detailed error from HTTP response body.
+        Bug #202: Handle multiple error formats (FastAPI, custom, Pydantic).
 
-        For 422 errors, FastAPI returns {"detail": "message"} or
-        {"detail": [{"loc": [...], "msg": "..."}]} for validation errors.
+        Formats supported:
+        1. FastAPI: {"detail": "message"} or {"detail": [...]}
+        2. Custom: {"error": "type", "message": "...", "errors": [...]}
+        3. Plain: {"message": "..."}
 
         This enables SERVICE repair routing to detect business logic errors.
         """
@@ -1546,8 +1549,8 @@ class SmokeRepairOrchestrator:
         try:
             body = json.loads(response_body)
 
-            # FastAPI validation error format
             if isinstance(body, dict):
+                # === Format 1: FastAPI standard {"detail": ...} ===
                 detail = body.get("detail")
 
                 if isinstance(detail, str):
@@ -1569,11 +1572,39 @@ class SmokeRepairOrchestrator:
                     if msgs:
                         return "; ".join(msgs)
 
-                # Other error formats
-                elif "error" in body:
-                    return str(body["error"])
-                elif "message" in body:
-                    return str(body["message"])
+                # === Format 2: Custom format {"error": ..., "errors": [...]} ===
+                # Bug #202: Generated apps may use this format
+                errors_list = body.get("errors")
+                if isinstance(errors_list, list) and errors_list:
+                    msgs = []
+                    for item in errors_list[:3]:  # Limit to first 3
+                        if isinstance(item, dict):
+                            field = item.get("field", "")
+                            msg = item.get("message", "")
+                            err_type = item.get("type", "")
+                            if field and msg:
+                                msgs.append(f"{field}: {msg}")
+                            elif msg:
+                                msgs.append(msg)
+                    if msgs:
+                        # Bug #202: Include error type for routing classification
+                        error_type = body.get("error", "")
+                        if error_type and error_type != "validation_error":
+                            return f"{error_type}: {'; '.join(msgs)}"
+                        return "; ".join(msgs)
+
+                # === Format 3: Simple message field ===
+                message = body.get("message")
+                if message and message != "Request validation failed":
+                    # Bug #202: "Request validation failed" is generic, look for specifics
+                    return str(message)
+
+                # === Fallback: error field ===
+                if "error" in body:
+                    error_val = body["error"]
+                    # Don't return just "validation_error" - it's too generic
+                    if error_val != "validation_error":
+                        return str(error_val)
 
         except (json.JSONDecodeError, TypeError):
             # Not JSON, return raw body (truncated)
