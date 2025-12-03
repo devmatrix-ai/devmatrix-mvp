@@ -549,6 +549,17 @@ class ErrorClassifier:
             error_message = violation.get('error_message', '')
             if status_code == 404:
                 strategy_type = RepairStrategyType.ROUTE
+                # Phase 2 Learning: Learn from 404 errors for Auto-Seed
+                try:
+                    from src.learning.precondition_learner import get_precondition_learner
+                    learner = get_precondition_learner()
+                    learner.learn_from_404(
+                        endpoint=endpoint,
+                        error_message=error_message,
+                        flow_name=violation.get('flow_name')
+                    )
+                except ImportError:
+                    pass  # Learning module not available
             elif status_code == 422:
                 # Bug #192: Detect business logic 422s vs schema validation 422s
                 # Business logic 422s come from service layer, not Pydantic validation

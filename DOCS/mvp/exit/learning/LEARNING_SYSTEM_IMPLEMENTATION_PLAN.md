@@ -11,16 +11,23 @@
 | Phase | Descripción | Estado | Fecha |
 |-------|-------------|--------|-------|
 | 1 | SERVICE Routing + Agent con learning básico | ✅ COMPLETE | 2025-12-03 |
-| 2 | PreconditionLearner + Auto-Seed minimal | ⏳ PENDING | - |
+| 2 | PreconditionLearner + Auto-Seed minimal | ✅ COMPLETE | 2025-12-03 |
 | 3 | Fix Reuse solo para SERVICE | ⏳ PENDING | - |
 | 4 | PromptEnhancer | ⏳ PENDING | - |
 | 5 | Tracker | ⏳ PENDING | - |
 
-### Phase 1 Completed Files:
+### Phase 1 Completed Files
+
 - ✅ `src/validation/error_types.py` (NEW) - Enums normalizados
 - ✅ `src/validation/smoke_repair_orchestrator.py` - _route_violation_to_repair_agent()
 - ✅ `src/validation/service_repair_agent.py` - Idempotencia + signatures
 - ✅ `src/learning/service_repair_feedback.py` (NEW) - Feedback loop
+
+### Phase 2 Completed Files
+
+- ✅ `src/learning/precondition_learner.py` (NEW) - Aprende de 404s, persiste Neo4j
+- ✅ `src/services/code_generation_service.py` - Merge defensivo en Auto-Seed
+- ✅ `src/validation/smoke_repair_orchestrator.py` - Llama learn_from_404()
 
 ---
 
@@ -70,13 +77,13 @@ El análisis identifica un gap crítico: **el learning detecta y clasifica corre
 | # | Phase | Esfuerzo | Dependencias | Impacto | Estado |
 |---|-------|----------|--------------|---------|--------|
 | 1 | SERVICE Routing + Agent con learning básico | 4-6h | ServiceRepairAgent (✅) | ALTO | ✅ DONE |
-| 2 | PreconditionLearner + Auto-Seed minimal | 3-4h | Phase 1 ✅ | ALTO | ⏳ |
+| 2 | PreconditionLearner + Auto-Seed minimal | 3-4h | Phase 1 ✅ | ALTO | ✅ DONE |
 | 3 | Fix Reuse solo para SERVICE (mini-Phase 4) | 2h | Phase 1 ✅ | MEDIO | ⏳ |
 | 4 | PromptEnhancer (cuando hay 2-3 patterns útiles) | 2-3h | Phases 1-3 | MEDIO | ⏳ |
 | 5 | Tracker (después de 3 runs comparables) | 2h | All | BAJO | ⏳ |
 
 **Total estimado:** 13-17 horas
-**Completado:** ~4-6h (Phase 1)
+**Completado:** ~7-10h (Phases 1-2)
 
 ---
 

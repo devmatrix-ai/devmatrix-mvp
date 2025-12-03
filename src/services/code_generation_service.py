@@ -5857,6 +5857,16 @@ datasources:
         flow_preconditions = self._extract_flow_preconditions(spec_requirements)
         logger.info(f"🔍 [SEED_DEBUG] Extracted {len(flow_preconditions)} flow precondition hints")
 
+        # Phase 2 Learning Integration: Merge with learned preconditions
+        # Merge defensivo: IR manda, learned rellena
+        try:
+            from src.learning.precondition_learner import get_precondition_learner
+            precond_learner = get_precondition_learner()
+            flow_preconditions = precond_learner.get_seed_hints(flow_preconditions)
+            logger.info(f"🔍 [SEED_DEBUG] After learning merge: {len(flow_preconditions)} hints")
+        except ImportError:
+            pass  # Learning module not available
+
         # Build entity-specific seed code dynamically from IR attributes
         # Bug #94 Fix: Read actual entity attributes from IR instead of hardcoding field names
         seed_blocks = []

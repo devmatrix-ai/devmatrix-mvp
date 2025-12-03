@@ -148,15 +148,154 @@ class PreconditionLearner:
     
     def _extract_entity_from_endpoint(self, endpoint: str) -> Optional[str]:
         """Extract entity name from endpoint path."""
-        # Pattern: /entities/{id}... -> Entity
-        match = re.search(r'/(\w+)/\{[^}]+\}', endpoint)
-        if match:
-            entity_plural = match.group(1)
-            # Simple depluralize
-            if entity_plural.endswith('ies'):
-                return entity_plural[:-3] + 'y'
-            elif entity_plural.endswith('s'):
-                return entity_plural[:-1]
-            return entity_plural
+        # Pattern 1: /entities/{id}... -> Entity (template format)
+        # Pattern 2: /entities/UUID... -> Entity (actual UUID)
+        # Pattern 3: /entities/123... -> Entity (numeric ID)
+        patterns = [
+            r'/(\w+)/\{[^}]+\}',  # Template: /carts/{id}
+            r'/(\w+)/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',  # UUID
+            r'/(\w+)/\d+',  # Numeric ID
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, endpoint, re.IGNORECASE)
+            if match:
+                entity_plural = match.group(1)
+                # Simple depluralize
+                if entity_plural.endswith('ies'):
+                    return entity_plural[:-3].capitalize() + 'y'
+                elif entity_plural.endswith('s') and len(entity_plural) > 1:
+                    return entity_plural[:-1].capitalize()
+                return entity_plural.capitalize()
         return None
+
+    def _extract_related_entity(self, error_message: str) -> Optional[str]:
+        """Extract related entity from error message."""
+        # Pattern: "Cart not found" -> Cart needs to exist
+        # Pattern: "Product with id X not found" -> Product
+        patterns = [
+            r'(\w+)\s+not\s+found',
+            r'(\w+)\s+with\s+id',
+            r'foreign\s+key.*?(\w+)',
+            r'references\s+(\w+)',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, error_message, re.IGNORECASE)
+            if match:
+                return match.group(1).capitalize()
+        return None
+
+    def _normalize_endpoint(self, endpoint: str) -> str:
+        """Normalize endpoint to pattern (replace IDs with {id})."""
+        # Replace UUIDs and numeric IDs with {id}
+        normalized = re.sub(
+            r'/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
+            '/{id}',
+            endpoint
+        )
+        normalized = re.sub(r'/\d+', '/{id}', normalized)
+        return normalized
+
+    def _persist_to_neo4j(self, key: str, precond: LearnedPrecondition) -> None:
+        """Persist precondition to Neo4j."""
+        if not self._neo4j_enabled:
+            return
+
+        try:
+            query = """
+            MERGE (p:LearnedPrecondition {key: $key})
+            SET p.entity_name = $entity,
+                p.field_name = $field,
+                p.required_value = $value,
+                p.related_entity = $related,
+                p.endpoint_pattern = $endpoint,
+                p.flow_name = $flow,
+                p.confidence = $confidence,
+                p.occurrences = $occurrences,
+                p.last_seen = datetime()
+            """
+            self._neo4j.execute_query(query, {
+                "key": key,
+                "entity": precond.entity_name,
+                "field": precond.field_name,
+                "value": precond.required_value,
+                "related": precond.related_entity,
+                "endpoint": precond.endpoint_pattern,
+                "flow": precond.flow_name,
+                "confidence": precond.confidence,
+                "occurrences": precond.occurrences,
+            })
+        except Exception as e:
+            logger.warning(f"Could not persist to Neo4j: {e}")
+
+    def get_preconditions_for_entity(self, entity_name: str) -> List[LearnedPrecondition]:
+        """Get all learned preconditions for an entity."""
+        entity_lower = entity_name.lower()
+        return [
+            p for p in self._learned.values()
+            if p.entity_name.lower() == entity_lower
+        ]
+
+    def get_all_learned(self) -> Dict[str, LearnedPrecondition]:
+        """Get all learned preconditions."""
+        return dict(self._learned)
+
+    def get_seed_hints(self, ir_hints: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Merge learned preconditions with IR hints (DEFENSIVO).
+
+        IR manda, learned rellena:
+        - IR hints take priority
+        - Learned hints fill gaps only
+
+        Args:
+            ir_hints: Hints extracted from ApplicationIR
+
+        Returns:
+            Merged hints dict
+        """
+        merged = dict(ir_hints)  # IR manda
+
+        # Add learned hints where IR doesn't specify
+        for key, precond in self._learned.items():
+            # Only add if confidence is high enough
+            if precond.confidence < 0.6:
+                continue
+
+            hint_key = f"{precond.entity_name.lower()}.{precond.field_name}"
+
+            if hint_key not in merged:
+                if precond.required_value:
+                    merged[hint_key] = precond.required_value
+                    logger.debug(f"📚 Added learned hint: {hint_key}={precond.required_value}")
+
+        return merged
+
+    def get_relationship_hints(self) -> List[tuple]:
+        """
+        Get learned entity relationships for seed ordering.
+
+        Returns list of (child_entity, parent_entity) tuples.
+        """
+        relationships = []
+        for precond in self._learned.values():
+            if precond.related_entity and precond.confidence >= 0.6:
+                relationships.append((precond.entity_name, precond.related_entity))
+        return relationships
+
+    def clear(self) -> None:
+        """Clear learned preconditions (for testing)."""
+        self._learned.clear()
+
+
+# Singleton instance
+_learner_instance: Optional[PreconditionLearner] = None
+
+
+def get_precondition_learner() -> PreconditionLearner:
+    """Get singleton PreconditionLearner instance."""
+    global _learner_instance
+    if _learner_instance is None:
+        _learner_instance = PreconditionLearner()
+    return _learner_instance
 
