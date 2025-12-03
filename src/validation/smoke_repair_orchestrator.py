@@ -158,6 +158,22 @@ except ImportError:
     ServiceRepairAgent = None
     BehaviorLoweringProtocol = None
 
+# Normalized Error Types for routing (Phase 1 Learning Integration)
+try:
+    from src.validation.error_types import (
+        ViolationErrorType,
+        ConstraintType,
+        normalize_error_type,
+        normalize_constraint_type,
+        should_route_to_service_repair,
+        SERVICE_REPAIR_CONSTRAINTS,
+    )
+    ERROR_TYPES_AVAILABLE = True
+except ImportError:
+    ERROR_TYPES_AVAILABLE = False
+    ViolationErrorType = None
+    ConstraintType = None
+
 
 class RepairStrategyType(Enum):
     """Types of repair strategies based on error classification."""
@@ -704,6 +720,77 @@ class SmokeRepairOrchestrator:
         self.service_repair_agent: Optional[ServiceRepairAgent] = None
         if SERVICE_REPAIR_AGENT_AVAILABLE:
             logger.info("  ✅ SERVICE Repair Agent available")
+
+        # Metrics for learning effectiveness
+        self._service_repairs_attempted = 0
+        self._service_repairs_successful = 0
+
+    def _route_violation_to_repair_agent(
+        self,
+        violation: Dict[str, Any]
+    ) -> str:
+        """
+        Route violation to appropriate repair agent using normalized enums.
+
+        Phase 1 Learning Integration: Explicit status_code checks, no string matching.
+
+        Args:
+            violation: Violation dict with status_code, constraint_type, etc.
+
+        Returns:
+            "SERVICE" or "SCHEMA" indicating which repair agent to use
+        """
+        # CRÍTICO: Comparación explícita de status_code (no "404" in str())
+        status_code = violation.get("status_code") or violation.get("actual_status")
+        constraint_type = violation.get("constraint_type", "")
+        error_message = violation.get("error_message", "")
+
+        # Use normalized routing if available
+        if ERROR_TYPES_AVAILABLE and should_route_to_service_repair:
+            if should_route_to_service_repair(status_code, constraint_type):
+                return "SERVICE"
+            return "SCHEMA"
+
+        # Fallback: explicit checks
+        # 404 → SERVICE (precondition not met)
+        if status_code == 404:
+            return "SERVICE"
+
+        # Business logic constraints → SERVICE
+        business_logic_keywords = ["status_transition", "stock_constraint", "workflow_constraint"]
+        if constraint_type and any(kw in constraint_type.lower() for kw in business_logic_keywords):
+            return "SERVICE"
+
+        # 422 with business logic message → SERVICE
+        if status_code == 422:
+            msg_lower = error_message.lower()
+            if any(kw in msg_lower for kw in ["status", "stock", "workflow", "transition"]):
+                return "SERVICE"
+
+        # Default: SCHEMA repair
+        return "SCHEMA"
+
+    def _normalize_violation_error_type(
+        self,
+        violation: Dict[str, Any]
+    ) -> Optional['ViolationErrorType']:
+        """
+        Normalize violation to ViolationErrorType enum.
+
+        Args:
+            violation: Violation dict
+
+        Returns:
+            ViolationErrorType or None if not available
+        """
+        if not ERROR_TYPES_AVAILABLE:
+            return None
+
+        status_code = violation.get("status_code") or violation.get("actual_status") or 0
+        error_message = violation.get("error_message", "")
+        constraint_type = violation.get("constraint_type", "")
+
+        return normalize_error_type(status_code, error_message, constraint_type)
 
     async def run_smoke_repair_cycle(
         self,

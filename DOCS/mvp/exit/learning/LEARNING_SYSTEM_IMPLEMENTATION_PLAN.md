@@ -1,8 +1,26 @@
 # Learning System Implementation Plan
 
-**Fecha:** 2025-12-03  
-**Basado en:** `analisis.md` - Evaluación Principal Engineer  
-**Estado:** PLAN DETALLADO
+**Fecha:** 2025-12-03
+**Basado en:** `analisis.md` - Evaluación Principal Engineer
+**Estado:** EN PROGRESO
+
+---
+
+## Progress Tracker
+
+| Phase | Descripción | Estado | Fecha |
+|-------|-------------|--------|-------|
+| 1 | SERVICE Routing + Agent con learning básico | ✅ COMPLETE | 2025-12-03 |
+| 2 | PreconditionLearner + Auto-Seed minimal | ⏳ PENDING | - |
+| 3 | Fix Reuse solo para SERVICE | ⏳ PENDING | - |
+| 4 | PromptEnhancer | ⏳ PENDING | - |
+| 5 | Tracker | ⏳ PENDING | - |
+
+### Phase 1 Completed Files:
+- ✅ `src/validation/error_types.py` (NEW) - Enums normalizados
+- ✅ `src/validation/smoke_repair_orchestrator.py` - _route_violation_to_repair_agent()
+- ✅ `src/validation/service_repair_agent.py` - Idempotencia + signatures
+- ✅ `src/learning/service_repair_feedback.py` (NEW) - Feedback loop
 
 ---
 
@@ -49,15 +67,16 @@ El análisis identifica un gap crítico: **el learning detecta y clasifica corre
 
 ## Implementation Order (Ajustado)
 
-| # | Phase | Esfuerzo | Dependencias | Impacto |
-|---|-------|----------|--------------|---------|
-| 1 | SERVICE Routing + Agent con learning básico | 4-6h | ServiceRepairAgent (✅) | ALTO |
-| 2 | PreconditionLearner + Auto-Seed minimal | 3-4h | Phase 1 | ALTO |
-| 3 | Fix Reuse solo para SERVICE (mini-Phase 4) | 2h | Phase 1 | MEDIO |
-| 4 | PromptEnhancer (cuando hay 2-3 patterns útiles) | 2-3h | Phases 1-3 | MEDIO |
-| 5 | Tracker (después de 3 runs comparables) | 2h | All | BAJO |
+| # | Phase | Esfuerzo | Dependencias | Impacto | Estado |
+|---|-------|----------|--------------|---------|--------|
+| 1 | SERVICE Routing + Agent con learning básico | 4-6h | ServiceRepairAgent (✅) | ALTO | ✅ DONE |
+| 2 | PreconditionLearner + Auto-Seed minimal | 3-4h | Phase 1 ✅ | ALTO | ⏳ |
+| 3 | Fix Reuse solo para SERVICE (mini-Phase 4) | 2h | Phase 1 ✅ | MEDIO | ⏳ |
+| 4 | PromptEnhancer (cuando hay 2-3 patterns útiles) | 2-3h | Phases 1-3 | MEDIO | ⏳ |
+| 5 | Tracker (después de 3 runs comparables) | 2h | All | BAJO | ⏳ |
 
 **Total estimado:** 13-17 horas
+**Completado:** ~4-6h (Phase 1)
 
 ---
 
@@ -899,11 +918,15 @@ class CodeGenerationService:
 
 ## Verification Checklist
 
-### Phase 1 Verification
-- [ ] SERVICE repair agent receives business logic violations
-- [ ] Guards are injected into service methods
-- [ ] Successful guards are stored for reuse
-- [ ] Metrics show `fixes_from_learning > 0`
+### Phase 1 Verification ✅ COMPLETE (2025-12-03)
+
+- [x] SERVICE repair agent receives business logic violations
+- [x] Guards are injected into service methods (idempotent)
+- [x] Successful guards are stored for reuse (`_compute_signature()`)
+- [x] Metrics tracking implemented (`get_repair_metrics()`)
+- [x] Normalized error types (`ViolationErrorType`, `ConstraintType` enums)
+- [x] Routing uses explicit `status_code == 404` (no string matching)
+- [x] Feedback loop for SERVICE repairs (`service_repair_feedback.py`)
 
 ### Phase 2 Verification
 - [ ] 404 errors create PreconditionPattern

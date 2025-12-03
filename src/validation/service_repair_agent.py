@@ -8,12 +8,18 @@ This agent handles constraints that CodeRepairAgent cannot:
 - custom → marked as MANUAL (requires human review)
 
 All guards are 100% domain-agnostic - derived from IR constraint metadata.
+
+Phase 1 Learning Integration:
+- Idempotent guard injection (checks if guard already exists)
+- Signature-based fix matching for reuse
+- Integration with learning feedback loop
 """
 import ast
 import re
 import logging
+import hashlib
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List, Tuple, Set
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -99,7 +105,7 @@ class ServiceRepairAgent:
     def __init__(self, app_path: Path, application_ir: Optional[Any] = None):
         """
         Initialize SERVICE Repair Agent.
-        
+
         Args:
             app_path: Path to the generated application
             application_ir: Optional ApplicationIR for context
@@ -107,7 +113,73 @@ class ServiceRepairAgent:
         self.app_path = Path(app_path)
         self.application_ir = application_ir
         self.services_dir = self.app_path / "src" / "services"
-        
+
+        # Phase 1 Learning Integration: Tracking for idempotency and learning
+        self._applied_guard_signatures: Set[str] = set()
+        self._repair_metrics = {
+            "total_attempts": 0,
+            "successful_repairs": 0,
+            "skipped_duplicate": 0,
+            "fixes_from_learning": 0,
+        }
+
+    def _compute_signature(self, constraint_type: str, entity: str, method: str) -> str:
+        """
+        Compute unique signature for a repair - coherent with learning store.
+
+        Used for:
+        1. Idempotency check (don't apply same guard twice)
+        2. Fix pattern matching (reuse learned guards)
+
+        Args:
+            constraint_type: Type of constraint
+            entity: Entity name
+            method: Method name
+
+        Returns:
+            Normalized signature string
+        """
+        # Normalize for consistent matching
+        return f"{constraint_type}:{entity.lower()}:{method.lower()}"
+
+    def _extract_guard_signature(self, guard_code: str) -> str:
+        """
+        Extract unique signature from guard code for dedup.
+
+        Examples:
+            "if cart.status != 'OPEN': raise..." → "cart.status != 'OPEN'"
+            "if product.stock < quantity: raise..." → "product.stock < quantity"
+
+        Args:
+            guard_code: Generated guard code
+
+        Returns:
+            Condition signature or empty string
+        """
+        match = re.search(r'if\s+([^:]+):', guard_code)
+        return match.group(1).strip() if match else ""
+
+    def _is_guard_already_applied(self, service_code: str, guard_code: str) -> bool:
+        """
+        Check if guard is already present in service code (idempotency).
+
+        Uses signature extraction to match semantically equivalent guards.
+
+        Args:
+            service_code: Current service file content
+            guard_code: Guard to inject
+
+        Returns:
+            True if guard already exists
+        """
+        signature = self._extract_guard_signature(guard_code)
+        if not signature:
+            # Fallback: Check if exact guard text exists
+            return guard_code.strip()[:50] in service_code
+
+        # Check if signature condition already in code
+        return signature in service_code
+
     def repair_constraint(
         self,
         constraint_type: str,
@@ -226,9 +298,27 @@ class ServiceRepairAgent:
         return None
 
     def _inject_guard(self, service_file: Path, method_name: str, guard_code: str) -> bool:
-        """Inject guard code at the beginning of a method."""
+        """
+        Inject guard code at the beginning of a method - IDEMPOTENT.
+
+        Phase 1 Learning Integration: Uses signature-based dedup to avoid duplicates.
+
+        Args:
+            service_file: Path to service file
+            method_name: Method to inject guard into
+            guard_code: Guard code to inject
+
+        Returns:
+            True if guard was injected or already exists
+        """
         try:
             content = service_file.read_text()
+
+            # IDEMPOTENCY CHECK: Use signature extraction
+            if self._is_guard_already_applied(content, guard_code):
+                logger.info(f"⏭️ Guard already exists in {method_name} (idempotent skip)")
+                self._repair_metrics["skipped_duplicate"] += 1
+                return True
 
             # Find the method definition
             patterns = [
@@ -250,16 +340,17 @@ class ServiceRepairAgent:
                         # Find first newline after def
                         insert_pos = method_start
 
-                    # Check if guard already exists
-                    if guard_code.strip()[:50] in content:
-                        logger.info(f"Guard already exists in {method_name}")
-                        return True
-
                     # Inject guard
                     new_content = content[:insert_pos] + guard_code + content[insert_pos:]
                     service_file.write_text(new_content)
 
+                    # Track applied guard signature
+                    signature = self._extract_guard_signature(guard_code)
+                    if signature:
+                        self._applied_guard_signatures.add(signature)
+
                     logger.info(f"✅ Injected guard into {service_file.name}::{method_name}")
+                    self._repair_metrics["successful_repairs"] += 1
                     return True
 
             logger.warning(f"Method {method_name} not found in {service_file}")
@@ -329,3 +420,29 @@ class ServiceRepairAgent:
 
         return results
 
+    def get_repair_metrics(self) -> Dict[str, int]:
+        """
+        Get repair metrics for learning effectiveness tracking.
+
+        Returns:
+            Dict with:
+            - total_attempts: Total repair attempts
+            - successful_repairs: Successfully injected guards
+            - skipped_duplicate: Guards skipped due to idempotency
+            - fixes_from_learning: Fixes applied from learned patterns
+        """
+        return dict(self._repair_metrics)
+
+    def clear_session_state(self) -> None:
+        """
+        Clear session state for new run.
+
+        Called between generation runs to reset idempotency tracking.
+        """
+        self._applied_guard_signatures.clear()
+        self._repair_metrics = {
+            "total_attempts": 0,
+            "successful_repairs": 0,
+            "skipped_duplicate": 0,
+            "fixes_from_learning": 0,
+        }
