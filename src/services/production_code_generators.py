@@ -2265,7 +2265,8 @@ ItemSchema = Dict[str, Any]
 
                     # Bug #217 Fix: Inherit constraints from entity fields
                     # Search for this field in any entity and copy its constraints
-                    field_constraints = []
+                    # Use dict to avoid duplicate constraint types (e.g., multiple gt=)
+                    field_constraints_dict = {}
                     for entity in entities:
                         entity_name = entity.get('name', '')
                         entity_fields = entity.get('fields', []) or []
@@ -2277,35 +2278,35 @@ ItemSchema = Dict[str, Any]
                                 if ef_constraints:
                                     for c in ef_constraints:
                                         c_str = str(c).lower()
-                                        # Parse common constraint formats
+                                        # Parse common constraint formats - use dict to avoid duplicates
                                         if c_str.startswith('>=') or 'ge=' in c_str:
                                             val = c_str.replace('>=', '').replace('ge=', '').strip()
-                                            if val:
-                                                field_constraints.append(f'ge={val}')
+                                            if val and 'ge' not in field_constraints_dict:
+                                                field_constraints_dict['ge'] = f'ge={val}'
                                         elif c_str.startswith('>') or 'gt=' in c_str:
                                             val = c_str.replace('>', '').replace('gt=', '').strip()
-                                            if val:
-                                                field_constraints.append(f'gt={val}')
+                                            if val and 'gt' not in field_constraints_dict:
+                                                field_constraints_dict['gt'] = f'gt={val}'
                                         elif c_str.startswith('<=') or 'le=' in c_str:
                                             val = c_str.replace('<=', '').replace('le=', '').strip()
-                                            if val:
-                                                field_constraints.append(f'le={val}')
+                                            if val and 'le' not in field_constraints_dict:
+                                                field_constraints_dict['le'] = f'le={val}'
                                         elif c_str.startswith('<') or 'lt=' in c_str:
                                             val = c_str.replace('<', '').replace('lt=', '').strip()
-                                            if val:
-                                                field_constraints.append(f'lt={val}')
+                                            if val and 'lt' not in field_constraints_dict:
+                                                field_constraints_dict['lt'] = f'lt={val}'
                                         elif c_str.startswith('range:'):
                                             range_part = c_str.split(':', 1)[1].strip()
-                                            if range_part.startswith('>='):
-                                                field_constraints.append(f'ge={range_part[2:].strip()}')
-                                            elif range_part.startswith('>'):
-                                                field_constraints.append(f'gt={range_part[1:].strip()}')
+                                            if range_part.startswith('>=') and 'ge' not in field_constraints_dict:
+                                                field_constraints_dict['ge'] = f'ge={range_part[2:].strip()}'
+                                            elif range_part.startswith('>') and 'gt' not in field_constraints_dict:
+                                                field_constraints_dict['gt'] = f'gt={range_part[1:].strip()}'
                                 break
-                        if field_constraints:
+                        if field_constraints_dict:
                             break
 
-                    # Also check validation_constraints from ground truth
-                    if not field_constraints and validation_constraints:
+                    # Also check validation_constraints from ground truth (only if not already found)
+                    if not field_constraints_dict and validation_constraints:
                         for (v_entity, v_field), v_cons_list in validation_constraints.items():
                             if v_field == fname:
                                 for v_c in v_cons_list:
@@ -2313,12 +2314,15 @@ ItemSchema = Dict[str, Any]
                                     if 'range:' in v_c_str and '>=' in v_c_str:
                                         # "range: >= 1" → ge=1
                                         match = re.search(r'>=\s*(\d+)', v_c_str)
-                                        if match:
-                                            field_constraints.append(f'ge={match.group(1)}')
+                                        if match and 'ge' not in field_constraints_dict:
+                                            field_constraints_dict['ge'] = f'ge={match.group(1)}'
                                     elif 'range:' in v_c_str and '>' in v_c_str:
                                         match = re.search(r'>\s*(\d+)', v_c_str)
-                                        if match:
-                                            field_constraints.append(f'gt={match.group(1)}')
+                                        if match and 'gt' not in field_constraints_dict:
+                                            field_constraints_dict['gt'] = f'gt={match.group(1)}'
+
+                    # Convert dict values to list
+                    field_constraints = list(field_constraints_dict.values())
 
                     # Generate field with constraints
                     if field_constraints:

@@ -851,10 +851,10 @@ Output JSON only, no explanation:"""
 
         domain_model = DomainModelIR(entities=entities)
 
-        # Detect nested resources from endpoints and enrich relationships
-        domain_model = self._enrich_nested_resources_from_endpoints(
-            domain_model, ir_data.get("endpoints", [])
-        )
+        # NOTE: Nested resource enrichment is done AFTER api_model enrichment
+        # because enrich_api_model() infers additional endpoints that may define
+        # nested resources (e.g., /orders/{id}/items/{item_id})
+        # See line ~932 where we call _enrich_nested_resources_from_endpoints()
 
         # Build APIModelIR
         endpoints = []
@@ -929,6 +929,17 @@ Output JSON only, no explanation:"""
             api_model,
             domain_model=domain_model,
             flows_data=ir_data.get("flows", [])
+        )
+
+        # Detect nested resources from ENRICHED api_model endpoints
+        # This must happen AFTER enrich_api_model() because it infers endpoints
+        # like /orders/{id}/items/{item_id} that define nested resources
+        endpoints_data = [
+            {"path": ep.path, "method": ep.method.value}
+            for ep in api_model.endpoints
+        ]
+        domain_model = self._enrich_nested_resources_from_endpoints(
+            domain_model, endpoints_data
         )
 
         # Build InfrastructureModelIR
@@ -1557,9 +1568,11 @@ Output JSON only, no explanation:"""
         # Build entity lookup
         entity_map = {e.name.lower(): e for e in domain_model.entities}
 
-        # Detect nested paths: /{parent}/{id}/{segment}/{child_id}
+        # Detect nested paths: /{parents}/{id}/{segments}/{child_id}
+        # Example: /carts/{cart_id}/items/{item_id}
+        # Captures: parent=cart, segment=items (full), child_id_param=item_id
         nested_pattern = re.compile(
-            r'^/([a-z]+)s/\{[^}]+\}/([a-z]+)s?/\{([^}]+)\}$', re.IGNORECASE
+            r'^/([a-z]+)s/\{[^}]+\}/([a-z]+s?)/\{([^}]+)\}$', re.IGNORECASE
         )
 
         for ep in endpoints_data:
@@ -1569,8 +1582,11 @@ Output JSON only, no explanation:"""
                 continue
 
             parent_singular = match.group(1).lower()  # cart, order
-            segment = match.group(2).lower()  # item
+            segment_raw = match.group(2).lower()  # items (with 's')
             child_id_param = match.group(3)  # item_id
+
+            # Remove trailing 's' from segment to get singular form
+            segment = segment_raw.rstrip('s')  # items → item
 
             # Derive child entity: {Parent}{Segment} → CartItem, OrderItem
             parent_name = parent_singular.title()
