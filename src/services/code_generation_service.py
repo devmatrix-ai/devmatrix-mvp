@@ -5866,6 +5866,7 @@ datasources:
         entity_names = [e.name for e in entities_list]
         uuid_registry = SeedUUIDRegistry.from_entity_names(entity_names)
         entity_uuids = uuid_registry.to_dict()  # For backward compatibility
+        uuid_base = SeedUUIDRegistry.UUID_BASE  # For fallback UUIDs
 
         logger.info(f"🔍 [SEED_DEBUG] SeedUUIDRegistry initialized with {len(entity_names)} entities")
         for name, uuids in entity_uuids.items():
