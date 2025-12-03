@@ -1626,15 +1626,40 @@ Output JSON only, no explanation:"""
                         reference_fk = attr.name
                         reference_entity = ref_entity_name
 
+            # Bug #203 Fix: Build field_mappings for auto-population
+            # Find child fields that should be copied from reference entity
+            if reference_fk and reference_entity:
+                ref_entity = entity_map.get(reference_entity.lower())
+                if ref_entity:
+                    ref_field_names = {a.name.lower(): a.name for a in ref_entity.attributes}
+                    for child_attr in child_entity.attributes:
+                        # Skip FKs and special fields
+                        if child_attr.name.endswith("_id") or child_attr.name == "id":
+                            continue
+                        if child_attr.name in ("created_at", "updated_at"):
+                            continue
+                        # Check if reference entity has matching field
+                        if child_attr.name.lower() in ref_field_names:
+                            # e.g., CartItem.unit_price <- Product.unit_price
+                            ref_field = ref_field_names[child_attr.name.lower()]
+                            field_mappings[child_attr.name] = f"{reference_entity}.{ref_field}"
+                        # Special case: child "unit_price" <- ref "price"
+                        elif child_attr.name == "unit_price" and "price" in ref_field_names:
+                            field_mappings["unit_price"] = f"{reference_entity}.{ref_field_names['price']}"
+
+            # Build complete field_mappings with internal metadata
+            complete_field_mappings = dict(field_mappings)  # Start with auto-populate mappings
+            if reference_fk:
+                complete_field_mappings["_reference_fk"] = reference_fk
+                complete_field_mappings["_reference_entity"] = reference_entity
+
             if existing_rel:
                 # Update existing relationship
                 existing_rel.is_nested_resource = True
                 existing_rel.path_segment = f"{segment}s"
                 existing_rel.fk_field = fk_field
                 existing_rel.child_id_param = child_id_param
-                if reference_fk:
-                    existing_rel.field_mappings["_reference_fk"] = reference_fk
-                    existing_rel.field_mappings["_reference_entity"] = reference_entity
+                existing_rel.field_mappings.update(complete_field_mappings)
             else:
                 # Create new relationship
                 new_rel = Relationship(
@@ -1646,10 +1671,7 @@ Output JSON only, no explanation:"""
                     path_segment=f"{segment}s",
                     fk_field=fk_field,
                     child_id_param=child_id_param,
-                    field_mappings={
-                        "_reference_fk": reference_fk,
-                        "_reference_entity": reference_entity,
-                    } if reference_fk else {},
+                    field_mappings=complete_field_mappings,
                 )
                 parent_entity.relationships.append(new_rel)
 
