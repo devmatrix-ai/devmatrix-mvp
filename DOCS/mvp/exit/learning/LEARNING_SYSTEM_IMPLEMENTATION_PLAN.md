@@ -1009,6 +1009,282 @@ class CodeGenerationService:
 
 ---
 
-**Documento creado:** 2025-12-03
-**Autor:** DevMatrix AI Pipeline Team
+## Bug #201 Fix: SERVICE Routing Integration (2025-12-03)
 
+### Problema Detectado
+
+En el análisis del log `logs/runs/Ariel_test_006_25_026_40.log` se identificó que:
+
+```
+- Neo4j Queries: 0
+- Learned patterns applied: 0
+- Most effective fix strategy: 'None' with 0% confidence
+- Repair Improvement: 0.0%
+```
+
+A pesar de que las 5 fases estaban "COMPLETE", el learning **NO estaba impactando el pipeline real**.
+
+### Root Cause Analysis
+
+El código de learning estaba en el **path incorrecto**:
+
+| Path | Método | Usado? | Learning? |
+|------|--------|--------|-----------|
+| LEGACY | `smoke_validator` → `classify_violations()` | ❌ No | ✅ Sí (pero nunca se ejecuta) |
+| SmokeRunnerV2 | `smoke_runner_v2` → `_convert_report_to_result()` | ✅ Sí | ❌ No (faltaba) |
+
+El pipeline usa **SmokeRunnerV2** (77 escenarios, IR-centric), pero el learning estaba en el path legacy que nunca se ejecuta.
+
+### Solución Implementada
+
+#### 1. `SmokeViolation` dataclass (líneas 204-216)
+
+```python
+@dataclass
+class SmokeViolation:
+    endpoint: str
+    method: str
+    expected_status: int
+    actual_status: int
+    error_type: str
+    error_message: str
+    stack_trace: Optional[StackTrace] = None
+    scenario_name: Optional[str] = None
+    # Bug #201: Added for SERVICE/SCHEMA routing
+    repair_target: Optional[str] = None  # "SERVICE" or "SCHEMA"
+    constraint_type: Optional[str] = None  # e.g., "status_transition"
+```
+
+#### 2. `_convert_report_to_result()` - Learning Hooks (líneas 1075-1170)
+
+```python
+def _convert_report_to_result(self, report):
+    # ...
+    for scenario_result in report.results:
+        if not scenario_result.passed:
+            # Bug #201: Call learn_from_404 for precondition learning
+            if status_code == 404:
+                try:
+                    from src.learning.precondition_learner import get_precondition_learner
+                    learner = get_precondition_learner()
+                    learner.learn_from_404(
+                        endpoint=scenario_result.endpoint_path,
+                        error_message=error_detail,
+                        flow_name=scenario_result.scenario_name
+                    )
+                except ImportError:
+                    pass
+
+            # Bug #201: Determine repair routing
+            repair_target = "SCHEMA"  # Default
+            constraint_type = None
+
+            if status_code == 404:
+                repair_target = "SERVICE"
+                constraint_type = "precondition_required"
+            elif status_code == 422:
+                # Check if business logic (SERVICE) or validation (SCHEMA)
+                constraint_info = self._extract_constraint_from_error(...)
+                if constraint_info:
+                    constraint_type = constraint_info.get("type")
+                    if constraint_type in ("status_transition", "stock_constraint", ...):
+                        repair_target = "SERVICE"
+
+            violations.append({
+                # ... existing fields ...
+                "repair_target": repair_target,  # Bug #201
+                "constraint_type": constraint_type,  # Bug #201
+            })
+```
+
+#### 3. `ErrorClassifier.classify_violations()` - Pass Fields (líneas 611-628)
+
+```python
+# Bug #201: Extract repair_target and constraint_type from violation
+repair_target = violation.get('repair_target', 'SCHEMA')
+constraint_type = violation.get('constraint_type')
+
+smoke_violation = SmokeViolation(
+    # ... existing fields ...
+    repair_target=repair_target,
+    constraint_type=constraint_type
+)
+```
+
+#### 4. `_repair_from_smoke()` - SERVICE Routing (líneas 1204-1251)
+
+```python
+for violation in violations:
+    try:
+        # Bug #201: Check repair_target for SERVICE routing
+        repair_target = getattr(violation, 'repair_target', None)
+
+        # === SERVICE REPAIR PATH ===
+        if repair_target == "SERVICE" and SERVICE_REPAIR_AGENT_AVAILABLE:
+            constraint_type = getattr(violation, 'constraint_type', None)
+            if constraint_type:
+                service_fix = await self._apply_service_repair(
+                    violation, constraint_type, app_path, application_ir
+                )
+                if service_fix and service_fix.success:
+                    fixes.append(service_fix)
+                    successful += 1
+                    self._service_repairs_successful += 1
+                    continue
+
+        # ... existing SCHEMA repair logic ...
+```
+
+#### 5. `_apply_service_repair()` - New Method (líneas 1661-1738)
+
+```python
+async def _apply_service_repair(
+    self,
+    violation: SmokeViolation,
+    constraint_type: str,
+    app_path: Path,
+    application_ir
+) -> Optional[RepairFix]:
+    """Bug #201: Apply SERVICE repair for business logic constraints."""
+    if not SERVICE_REPAIR_AGENT_AVAILABLE:
+        return None
+
+    # Initialize ServiceRepairAgent if needed
+    if not self.service_repair_agent:
+        self.service_repair_agent = ServiceRepairAgent(app_path, application_ir)
+
+    entity_name = self._extract_entity_from_endpoint(violation.endpoint)
+    method_name = self._infer_method_from_endpoint(violation.endpoint)
+
+    result = self.service_repair_agent.repair_constraint(
+        constraint_type=constraint_type,
+        constraint_metadata={'entity': entity_name, ...},
+        target_method=method_name
+    )
+
+    if result.success:
+        return RepairFix(
+            file_path=result.file_path,
+            fix_type=f"service_{constraint_type}",
+            description=f"Injected {constraint_type} guard into {method_name}",
+            success=True
+        )
+    return None
+```
+
+### Flujo Corregido
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    CORRECTED DATA FLOW                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  SmokeRunnerV2.run_all_scenarios()                              │
+│           │                                                     │
+│           ▼                                                     │
+│  _convert_report_to_result()  ◄── NOW has:                     │
+│           │                       - learn_from_404()            │
+│           │                       - repair_target classification│
+│           │                       - constraint_type extraction  │
+│           ▼                                                     │
+│  violations[] with:                                             │
+│    - repair_target: "SERVICE" | "SCHEMA"                        │
+│    - constraint_type: "status_transition" | "stock_constraint" │
+│           │                                                     │
+│           ▼                                                     │
+│  ErrorClassifier.classify_violations()                          │
+│           │                                                     │
+│           ▼                                                     │
+│  SmokeViolation objects with repair_target + constraint_type    │
+│           │                                                     │
+│           ▼                                                     │
+│  _repair_from_smoke()  ◄── NOW checks repair_target             │
+│           │                                                     │
+│           ├── if repair_target == "SERVICE"                     │
+│           │           │                                         │
+│           │           ▼                                         │
+│           │   _apply_service_repair()  ◄── NEW METHOD           │
+│           │           │                                         │
+│           │           ▼                                         │
+│           │   ServiceRepairAgent.repair_constraint()            │
+│           │                                                     │
+│           └── else (SCHEMA)                                     │
+│                       │                                         │
+│                       ▼                                         │
+│               Existing repair logic                             │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Expected Results After Fix
+
+En el próximo run, deberías ver:
+
+```
+✅ SERVICE repair: Injected status_transition guard into checkout
+✅ SERVICE repair: Injected stock_constraint guard into add_item
+Neo4j Queries: > 0
+Learned patterns applied: > 0
+Repair Improvement: > 0%
+```
+
+### Verification
+
+```bash
+python3 -c "
+from src.validation.smoke_repair_orchestrator import SmokeViolation, SmokeRepairOrchestrator
+import inspect
+
+# 1. SmokeViolation has new fields
+v = SmokeViolation(endpoint='POST /orders', method='POST', expected_status=201,
+                   actual_status=422, error_type='business_logic',
+                   error_message='Cart must have status open',
+                   repair_target='SERVICE', constraint_type='status_transition')
+assert v.repair_target == 'SERVICE'
+print('✅ SmokeViolation has repair_target')
+
+# 2. _convert_report_to_result has learning hooks
+source = inspect.getsource(SmokeRepairOrchestrator._convert_report_to_result)
+assert 'learn_from_404' in source
+print('✅ _convert_report_to_result has learn_from_404')
+
+# 3. _repair_from_smoke uses SERVICE routing
+source = inspect.getsource(SmokeRepairOrchestrator._repair_from_smoke)
+assert 'repair_target' in source and '_apply_service_repair' in source
+print('✅ _repair_from_smoke uses SERVICE routing')
+
+# 4. _apply_service_repair exists
+assert hasattr(SmokeRepairOrchestrator, '_apply_service_repair')
+print('✅ _apply_service_repair method exists')
+"
+```
+
+---
+
+## Summary: All Implementation Files
+
+### New Files Created (6)
+
+| File | Purpose | Lines |
+|------|---------|-------|
+| `src/validation/error_types.py` | ViolationErrorType, ConstraintType enums | ~80 |
+| `src/learning/service_repair_feedback.py` | Feedback loop for SERVICE repairs | ~100 |
+| `src/learning/precondition_learner.py` | Learn from 404s, persist to Neo4j | ~150 |
+| `src/learning/service_guard_store.py` | Store successful guards for reuse | ~120 |
+| `src/learning/effectiveness_tracker.py` | Track improvement across runs | ~180 |
+| `src/learning/prompt_enhancer.py` | Declarative prompt enhancement | ~100 |
+
+### Modified Files (5)
+
+| File | Changes |
+|------|---------|
+| `src/validation/smoke_repair_orchestrator.py` | Bug #200, #201 fixes, SERVICE routing |
+| `src/validation/service_repair_agent.py` | Idempotency, fix reuse |
+| `src/services/code_generation_service.py` | Defensive merge for Auto-Seed |
+| `src/learning/negative_pattern_store.py` | category, guard_template fields |
+| `tests/e2e/real_e2e_full_pipeline.py` | _extract_error_detail_from_response() |
+
+---
+
+**Documento actualizado:** 2025-12-03
+**Autor:** DevMatrix AI Pipeline Team
