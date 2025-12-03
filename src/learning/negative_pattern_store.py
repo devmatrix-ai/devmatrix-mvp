@@ -62,6 +62,12 @@ class GenerationAntiPattern:
     # Additional context
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    # Phase 4: SERVICE-level pattern fields
+    category: str = "schema"        # "schema", "validation", "service", "repository", "flow"
+    guard_template: Optional[str] = None   # e.g., "if entity.status != 'OPEN': raise 422"
+    method_name: Optional[str] = None      # e.g., "add_item", "checkout"
+    injection_point: str = "method_start"  # "method_start", "before_db_call"
+
     @property
     def confidence(self) -> float:
         """
@@ -973,6 +979,78 @@ class NegativePatternStore:
 
         except Exception as e:
             self.logger.warning(f"Failed to query patterns by exception class: {e}")
+            return cached
+
+    def get_patterns_by_category(
+        self,
+        category: str,
+        entity_name: str = None,
+        min_occurrences: int = None
+    ) -> List[GenerationAntiPattern]:
+        """
+        Get patterns by category (Phase 4: SERVICE-level patterns).
+
+        Args:
+            category: "schema", "validation", "service", "repository", "flow"
+            entity_name: Optional entity filter
+            min_occurrences: Minimum occurrence count
+
+        Returns:
+            List of patterns sorted by severity
+        """
+        min_occ = min_occurrences or self.MIN_OCCURRENCE_FOR_PROMPT
+
+        # Filter from cache
+        cached = [
+            p for p in self._cache.values()
+            if getattr(p, 'category', 'schema') == category
+            and p.occurrence_count >= min_occ
+            and (entity_name is None or
+                 p.entity_pattern.lower() == entity_name.lower() or
+                 p.entity_pattern == "*")
+        ]
+
+        if not self._neo4j_available or not self.driver:
+            return sorted(cached, key=lambda p: p.severity_score, reverse=True)
+
+        try:
+            with self.driver.session() as session:
+                query = """
+                    MATCH (ap:GenerationAntiPattern)
+                    WHERE ap.category = $category
+                      AND ap.occurrence_count >= $min_occ
+                """
+                params = {
+                    "category": category,
+                    "min_occ": min_occ,
+                    "limit": self.MAX_PATTERNS_PER_QUERY
+                }
+
+                if entity_name:
+                    query += """
+                      AND (toLower(ap.entity_pattern) = toLower($entity_name)
+                           OR ap.entity_pattern = "*")
+                    """
+                    params["entity_name"] = entity_name
+
+                query += """
+                    RETURN ap
+                    ORDER BY ap.occurrence_count DESC
+                    LIMIT $limit
+                """
+
+                result = session.run(query, params)
+
+                patterns = []
+                for record in result:
+                    pattern = self._node_to_pattern(record["ap"])
+                    self._cache[pattern.pattern_id] = pattern
+                    patterns.append(pattern)
+
+                return sorted(patterns, key=lambda p: p.severity_score, reverse=True)
+
+        except Exception as e:
+            self.logger.warning(f"Failed to query patterns by category: {e}")
             return cached
 
     def get_all_patterns(

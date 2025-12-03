@@ -55,6 +55,7 @@ class RepairResult:
     guard_injected: str = ""
     error_message: str = ""
     is_manual: bool = False   # True if constraint requires manual review
+    from_learning: bool = False  # Phase 3: True if guard was reused from store
 
 
 class ServiceRepairAgent:
@@ -123,6 +124,15 @@ class ServiceRepairAgent:
             "fixes_from_learning": 0,
         }
 
+        # Phase 3 Learning Integration: Guard store for fix reuse
+        self._guard_store = None
+        try:
+            from src.learning.service_guard_store import get_service_guard_store
+            self._guard_store = get_service_guard_store()
+            logger.debug("🛡️ ServiceRepairAgent: Guard store enabled for fix reuse")
+        except ImportError:
+            logger.debug("🛡️ ServiceRepairAgent: Guard store not available")
+
     def _compute_signature(self, constraint_type: str, entity: str, method: str) -> str:
         """
         Compute unique signature for a repair - coherent with learning store.
@@ -188,26 +198,58 @@ class ServiceRepairAgent:
     ) -> RepairResult:
         """
         Repair a business logic constraint by injecting a guard.
-        
+
+        Phase 3 Learning Integration: Attempts to reuse stored guards before
+        generating new ones with LLM.
+
         Args:
             constraint_type: Type of constraint (status_transition, stock_constraint, etc.)
             constraint_metadata: IR metadata for the constraint
             target_method: Method name where guard should be injected
-            
+
         Returns:
             RepairResult with outcome
         """
+        self._repair_metrics["total_attempts"] += 1
+
         # Route to appropriate handler
         if constraint_type == 'custom':
             return self._mark_as_manual(constraint_metadata, target_method)
-        
+
+        entity_name = constraint_metadata.get('entity', 'entity')
+        signature = self._compute_signature(constraint_type, entity_name, target_method)
+
+        # Phase 3: Try to reuse stored guard first
+        if self._guard_store:
+            stored_guard = self._guard_store.get_guard(signature)
+            if stored_guard:
+                logger.info(f"🔁 Reusing stored guard: {signature} (conf={stored_guard.confidence:.2f})")
+
+                # Find target service file
+                service_file = self._find_service_file(target_method, constraint_metadata)
+                if service_file and service_file.exists():
+                    success = self._inject_guard(service_file, target_method, stored_guard.guard_code)
+                    if success:
+                        self._repair_metrics["fixes_from_learning"] += 1
+                        self._guard_store.record_success(signature)
+                        return RepairResult(
+                            success=True,
+                            file_path=str(service_file),
+                            method_name=target_method,
+                            guard_injected=stored_guard.guard_code.strip(),
+                            from_learning=True
+                        )
+                    else:
+                        self._guard_store.record_failure(signature)
+
+        # Generate new guard
         guard_spec = self._constraint_to_guard_spec(constraint_type, constraint_metadata)
         if not guard_spec:
             return RepairResult(
                 success=False,
                 error_message=f"Cannot generate guard for constraint type: {constraint_type}"
             )
-        
+
         # Find target service file
         service_file = self._find_service_file(target_method, constraint_metadata)
         if not service_file or not service_file.exists():
@@ -215,11 +257,22 @@ class ServiceRepairAgent:
                 success=False,
                 error_message=f"Service file not found for method: {target_method}"
             )
-        
+
         # Generate and inject guard
         guard_code = self._generate_guard(guard_spec, constraint_type)
         success = self._inject_guard(service_file, target_method, guard_code)
-        
+
+        # Phase 3: Store successful guard for future reuse
+        if success and self._guard_store:
+            self._guard_store.store_guard(
+                signature=signature,
+                constraint_type=constraint_type,
+                entity_name=entity_name,
+                method_name=target_method,
+                guard_code=guard_code,
+                validated=False  # Will be validated after smoke test
+            )
+
         return RepairResult(
             success=success,
             file_path=str(service_file),

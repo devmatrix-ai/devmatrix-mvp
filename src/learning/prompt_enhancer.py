@@ -196,44 +196,61 @@ class GenerationPromptEnhancer:
         self,
         base_prompt: str,
         entity_name: str,
+        method_name: str = None,
     ) -> str:
         """
         Enhance prompt for service/business logic generation.
 
+        Phase 4: Uses DECLARATIVE format with SERVICE-level patterns only.
+
         Args:
             base_prompt: Original prompt for service generation
             entity_name: Related entity name
+            method_name: Optional method name for more targeted warnings
 
         Returns:
             Enhanced prompt with anti-pattern warnings
         """
-        # Services tend to have attribute and type errors
-        attr_patterns = self.pattern_store.get_patterns_by_error_type(
-            error_type="attribute",
-            min_occurrences=self.min_occurrences,
-        )
-
-        type_patterns = self.pattern_store.get_patterns_by_error_type(
-            error_type="type",
-            min_occurrences=self.min_occurrences,
-        )
-
-        entity_patterns = self.pattern_store.get_patterns_for_entity(
+        # Phase 4: Get SERVICE-category patterns specifically
+        service_patterns = self.pattern_store.get_patterns_by_category(
+            category="service",
             entity_name=entity_name,
             min_occurrences=self.min_occurrences,
         )
 
-        all_patterns = self._merge_patterns(attr_patterns, type_patterns, entity_patterns)
+        # Also get repository-level patterns (related to service layer)
+        repo_patterns = self.pattern_store.get_patterns_by_category(
+            category="repository",
+            entity_name=entity_name,
+            min_occurrences=self.min_occurrences,
+        )
 
-        enhanced = self._inject_patterns(base_prompt, all_patterns, context="service")
+        # Merge and limit
+        all_patterns = self._merge_patterns(service_patterns, repo_patterns)
 
-        if len(all_patterns) > 0:
+        if not all_patterns:
+            return base_prompt
+
+        # Phase 4: DECLARATIVE format (not raw logs)
+        warnings = ["\n\n# BUSINESS LOGIC CONSTRAINTS (learned from previous errors):"]
+
+        for pattern in all_patterns[:self.max_patterns]:
+            # Format: Entity.method: guard_template or correct_code_snippet
+            entity = pattern.entity_pattern
+            method = getattr(pattern, 'method_name', None) or pattern.endpoint_pattern
+            guard = getattr(pattern, 'guard_template', None) or pattern.correct_code_snippet
+
+            if guard:
+                warnings.append(f"# - {entity}.{method}: {guard}")
+
+        if len(warnings) > 1:  # More than just header
             self.logger.info(
-                f"Enhanced service prompt for {entity_name} with "
-                f"{min(len(all_patterns), self.max_patterns)} warnings"
+                f"🎯 Enhanced service prompt for {entity_name} with "
+                f"{len(warnings) - 1} business logic constraints"
             )
+            return base_prompt + "\n".join(warnings)
 
-        return enhanced
+        return base_prompt
 
     def enhance_generic_prompt(
         self,
