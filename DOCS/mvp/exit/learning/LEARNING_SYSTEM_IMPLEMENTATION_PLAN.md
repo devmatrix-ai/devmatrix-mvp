@@ -2,7 +2,7 @@
 
 **Fecha:** 2025-12-03
 **Basado en:** `analisis.md` - Evaluación Principal Engineer
-**Estado:** EN PROGRESO
+**Estado:** ✅ COMPLETE
 
 ---
 
@@ -15,6 +15,32 @@
 | 3 | Fix Reuse solo para SERVICE | ✅ COMPLETE | 2025-12-03 |
 | 4 | PromptEnhancer | ✅ COMPLETE | 2025-12-03 |
 | 5 | Tracker | ✅ COMPLETE | 2025-12-03 |
+
+### Bug Fixes During Implementation
+
+| Bug | Descripción | Estado | Fecha |
+|-----|-------------|--------|-------|
+| #200 | error_message no capturaba response body de FastAPI | ✅ FIXED | 2025-12-03 |
+| #201 | Learning code estaba en path LEGACY, no en SmokeRunnerV2 | ✅ FIXED | 2025-12-03 |
+
+**Bug #200 Details:**
+- **Problema:** `error_message` en violations era "Expected 201, got 422" en vez del mensaje real del servidor
+- **Causa:** `response_body` se capturaba pero no se parseaba para extraer `{"detail": "..."}`
+- **Fix:** Añadido `_extract_error_detail_from_response()` en:
+  - `src/validation/smoke_repair_orchestrator.py`
+  - `tests/e2e/real_e2e_full_pipeline.py`
+- **Impacto:** SERVICE routing ahora puede detectar business logic errors correctamente
+
+**Bug #201 Details:**
+- **Problema:** `learn_from_404()` y SERVICE routing estaban en `_classify_violations` (LEGACY), pero el pipeline usa `_convert_report_to_result` (SmokeRunnerV2)
+- **Causa:** El código de learning se agregó al path incorrecto
+- **Fix:**
+  1. Añadido `learn_from_404()` a `_convert_report_to_result()` (SmokeRunnerV2 path)
+  2. Añadido `repair_target` y `constraint_type` a violations
+  3. Añadido campos a `SmokeViolation` dataclass
+  4. Creado `_apply_service_repair()` método
+  5. Modificado `_repair_from_smoke()` para usar SERVICE routing
+- **Impacto:** Learning y SERVICE repair ahora se ejecutan en el path real del pipeline
 
 ### Phase 1 Completed Files
 

@@ -211,6 +211,9 @@ class SmokeViolation:
     error_message: str
     stack_trace: Optional[StackTrace] = None
     scenario_name: Optional[str] = None
+    # Bug #201: Added for SERVICE/SCHEMA routing
+    repair_target: Optional[str] = None  # "SERVICE" or "SCHEMA"
+    constraint_type: Optional[str] = None  # e.g., "status_transition", "stock_constraint"
 
 
 @dataclass
@@ -546,10 +549,13 @@ class ErrorClassifier:
                 )
 
             # Determine strategy type
+            # Bug #201: repair_target and constraint_type are now set in _convert_report_to_result
+            # for SmokeRunnerV2 path. For legacy path, we still need to classify here.
             error_message = violation.get('error_message', '')
             if status_code == 404:
                 strategy_type = RepairStrategyType.ROUTE
-                # Phase 2 Learning: Learn from 404 errors for Auto-Seed
+                # DEPRECATED: Learning now happens in _convert_report_to_result for SmokeRunnerV2
+                # This code only runs for legacy smoke_validator path
                 try:
                     from src.learning.precondition_learner import get_precondition_learner
                     learner = get_precondition_learner()
@@ -605,15 +611,21 @@ class ErrorClassifier:
                     # Infer from endpoint pattern when no exception info is available
                     strategy_type = self._infer_strategy_from_endpoint(endpoint, error_message)
 
+            # Bug #201: Extract repair_target and constraint_type from violation
+            repair_target = violation.get('repair_target', 'SCHEMA')
+            constraint_type = violation.get('constraint_type')
+
             smoke_violation = SmokeViolation(
                 endpoint=endpoint,
                 method=violation.get('method', 'GET'),
-                expected_status=200,
+                expected_status=violation.get('expected_status', 200),
                 actual_status=status_code or 500,
                 error_type=error_type,
                 error_message=violation.get('error_message', ''),
-                scenario_name=violation.get('scenario_name'),
-                stack_trace=stack_trace_obj
+                scenario_name=violation.get('scenario_name') or violation.get('scenario'),
+                stack_trace=stack_trace_obj,
+                repair_target=repair_target,
+                constraint_type=constraint_type
             )
 
             classified[strategy_type].append(smoke_violation)
@@ -1066,6 +1078,11 @@ class SmokeRepairOrchestrator:
 
         This ensures compatibility with the rest of the repair orchestrator
         which expects SmokeTestResult from RuntimeSmokeTestValidator.
+
+        Bug #201: Now includes learning integration that was missing:
+        - learn_from_404() for precondition learning
+        - SERVICE vs SCHEMA routing classification
+        - constraint_type extraction for business logic errors
         """
         from src.validation.runtime_smoke_validator import SmokeTestResult, EndpointTestResult
 
@@ -1088,14 +1105,63 @@ class SmokeRepairOrchestrator:
 
             # Create violation for failures
             if scenario_result.status.value != "passed":
+                status_code = scenario_result.actual_status_code
+                endpoint = f"{scenario_result.http_method} {scenario_result.endpoint_path}"
+
+                # Bug #200: Extract response body detail for SERVICE repair routing
+                error_detail = self._extract_error_detail_from_response(
+                    scenario_result.response_body,
+                    scenario_result.error_message,
+                    scenario_result.expected_status_code,
+                    status_code,
+                )
+
+                # Bug #201: Learn from 404 errors (was only in legacy path)
+                if status_code == 404:
+                    try:
+                        from src.learning.precondition_learner import get_precondition_learner
+                        learner = get_precondition_learner()
+                        learner.learn_from_404(
+                            endpoint=endpoint,
+                            error_message=error_detail,
+                            flow_name=scenario_result.scenario_name
+                        )
+                        logger.debug(f"  📚 Learned precondition from 404: {endpoint}")
+                    except ImportError:
+                        pass  # Learning module not available
+
+                # Bug #201: Determine repair routing (SERVICE vs SCHEMA)
+                repair_target = "SCHEMA"  # Default
+                constraint_type = None
+
+                if status_code == 404:
+                    repair_target = "SERVICE"
+                    constraint_type = "precondition_required"
+                elif status_code == 422:
+                    # Check if business logic (SERVICE) or validation (SCHEMA)
+                    constraint_info = self._extract_constraint_from_error(error_detail, {
+                        "endpoint": endpoint,
+                        "actual_status": status_code
+                    })
+                    if constraint_info:
+                        constraint_type = constraint_info.get("type")
+                        if constraint_type in ("status_transition", "stock_constraint",
+                                                "workflow_constraint", "custom"):
+                            repair_target = "SERVICE"
+                            logger.debug(f"  🔀 Routing {endpoint} to SERVICE ({constraint_type})")
+
                 violations.append({
                     "type": "smoke_test_failure",
                     "severity": "high" if "happy_path" in scenario_result.scenario_name else "medium",
-                    "endpoint": f"{scenario_result.http_method} {scenario_result.endpoint_path}",
+                    "endpoint": endpoint,
                     "scenario": scenario_result.scenario_name,
                     "expected_status": scenario_result.expected_status_code,
-                    "actual_status": scenario_result.actual_status_code,
-                    "error_message": scenario_result.error_message or f"Expected {scenario_result.expected_status_code}, got {scenario_result.actual_status_code}"
+                    "actual_status": status_code,
+                    "status_code": status_code,  # Bug #201: Explicit for routing
+                    "error_message": error_detail,
+                    "response_body": scenario_result.response_body,
+                    "repair_target": repair_target,  # Bug #201: SERVICE or SCHEMA
+                    "constraint_type": constraint_type,  # Bug #201: For SERVICE repair
                 })
 
         return SmokeTestResult(
@@ -1149,6 +1215,28 @@ class SmokeRepairOrchestrator:
 
             for violation in violations:
                 try:
+                    # Bug #201: Check repair_target for SERVICE routing
+                    # This uses the routing determined in _convert_report_to_result
+                    repair_target = getattr(violation, 'repair_target', None)
+                    if not repair_target:
+                        # Fallback: check dict-style access (SmokeRunnerV2 violations)
+                        repair_target = getattr(violation, '__dict__', {}).get('repair_target')
+
+                    # === SERVICE REPAIR PATH ===
+                    if repair_target == "SERVICE" and SERVICE_REPAIR_AGENT_AVAILABLE:
+                        constraint_type = getattr(violation, 'constraint_type', None)
+                        if constraint_type:
+                            service_fix = await self._apply_service_repair(
+                                violation, constraint_type, app_path, application_ir
+                            )
+                            if service_fix and service_fix.success:
+                                fixes.append(service_fix)
+                                successful += 1
+                                self._service_repairs_successful += 1
+                                logger.info(f"    ✅ SERVICE repair: {constraint_type} on {violation.endpoint}")
+                                continue
+                            self._service_repairs_attempted += 1
+
                     # Phase 2: Check for known fix patterns first (saves LLM calls)
                     known_fix = self._try_known_fix(violation, stack_traces)
                     if known_fix:
@@ -1159,7 +1247,6 @@ class SmokeRepairOrchestrator:
                         continue
 
                     # Bug #160 Fix: Try learned anti-patterns BEFORE regular repair
-                    # This enables inter-run learning - patterns from Run N used in Run N+1
                     learned_patterns = self._get_learned_antipatterns(violation, stack_traces)
                     if learned_patterns:
                         learned_fix = self._repair_with_learned_patterns(
@@ -1435,6 +1522,67 @@ class SmokeRepairOrchestrator:
 
         return None
 
+    def _extract_error_detail_from_response(
+        self,
+        response_body: Optional[str],
+        error_message: Optional[str],
+        expected_status: int,
+        actual_status: int,
+    ) -> str:
+        """
+        Bug #200: Extract detailed error from HTTP response body.
+
+        For 422 errors, FastAPI returns {"detail": "message"} or
+        {"detail": [{"loc": [...], "msg": "..."}]} for validation errors.
+
+        This enables SERVICE repair routing to detect business logic errors.
+        """
+        fallback = error_message or f"Expected {expected_status}, got {actual_status}"
+
+        if not response_body:
+            return fallback
+
+        import json
+        try:
+            body = json.loads(response_body)
+
+            # FastAPI validation error format
+            if isinstance(body, dict):
+                detail = body.get("detail")
+
+                if isinstance(detail, str):
+                    # Simple string detail: {"detail": "Cart must have status 'open' to checkout"}
+                    return detail
+
+                elif isinstance(detail, list) and detail:
+                    # Pydantic validation: [{"loc": ["body", "field"], "msg": "...", "type": "..."}]
+                    msgs = []
+                    for item in detail[:3]:  # Limit to first 3
+                        if isinstance(item, dict):
+                            loc = item.get("loc", [])
+                            msg = item.get("msg", "")
+                            if loc and msg:
+                                field = loc[-1] if loc else "unknown"
+                                msgs.append(f"{field}: {msg}")
+                            elif msg:
+                                msgs.append(msg)
+                    if msgs:
+                        return "; ".join(msgs)
+
+                # Other error formats
+                elif "error" in body:
+                    return str(body["error"])
+                elif "message" in body:
+                    return str(body["message"])
+
+        except (json.JSONDecodeError, TypeError):
+            # Not JSON, return raw body (truncated)
+            if len(response_body) > 200:
+                return response_body[:200] + "..."
+            return response_body
+
+        return fallback
+
     def _repair_with_learned_patterns(
         self,
         strategy_type: RepairStrategyType,
@@ -1521,6 +1669,88 @@ class SmokeRepairOrchestrator:
             logger.warning(f"Failed to apply learned pattern: {e}")
 
         return None
+
+    async def _apply_service_repair(
+        self,
+        violation: SmokeViolation,
+        constraint_type: str,
+        app_path: Path,
+        application_ir
+    ) -> Optional[RepairFix]:
+        """
+        Bug #201: Apply SERVICE repair for business logic constraints.
+
+        This method is called when repair_target == "SERVICE" in the violation.
+        It uses ServiceRepairAgent to inject guards into service layer code.
+
+        Args:
+            violation: The smoke test violation
+            constraint_type: Type of constraint (status_transition, stock_constraint, etc.)
+            app_path: Path to the generated application
+            application_ir: The ApplicationIR for context
+
+        Returns:
+            RepairFix if successful, None otherwise
+        """
+        if not SERVICE_REPAIR_AGENT_AVAILABLE:
+            logger.debug("SERVICE repair not available (ServiceRepairAgent not imported)")
+            return None
+
+        # Initialize ServiceRepairAgent if needed
+        if not self.service_repair_agent:
+            self.service_repair_agent = ServiceRepairAgent(app_path, application_ir)
+
+        # Extract entity from endpoint
+        entity_name = self._extract_entity_from_endpoint(violation.endpoint)
+        if not entity_name:
+            logger.debug(f"Could not extract entity from {violation.endpoint}")
+            return None
+
+        # Infer method name from endpoint
+        method_name = self._infer_method_from_endpoint(violation.endpoint)
+        if not method_name:
+            logger.debug(f"Could not infer method from {violation.endpoint}")
+            return None
+
+        # Extract additional metadata from error message
+        error_message = getattr(violation, 'error_message', '') or ''
+        constraint_info = self._extract_constraint_from_error(error_message, {
+            "endpoint": violation.endpoint,
+            "actual_status": getattr(violation, 'actual_status', 422)
+        })
+
+        metadata = {'entity': entity_name}
+        if constraint_info:
+            metadata.update(constraint_info.get('metadata', {}))
+
+        # Call ServiceRepairAgent
+        try:
+            result = self.service_repair_agent.repair_constraint(
+                constraint_type=constraint_type,
+                constraint_metadata=metadata,
+                target_method=method_name
+            )
+
+            if result.success:
+                logger.info(f"    ✅ SERVICE repair: Injected {constraint_type} guard into {method_name}")
+                return RepairFix(
+                    file_path=result.file_path,
+                    fix_type=f"service_{constraint_type}",
+                    description=f"Injected {constraint_type} guard into {method_name}",
+                    old_code="",
+                    new_code=result.guard_injected[:200] if result.guard_injected else "",
+                    success=True
+                )
+            elif result.is_manual:
+                logger.info(f"    👁️ SERVICE repair: {constraint_type} requires MANUAL intervention")
+                return None
+            else:
+                logger.debug(f"SERVICE repair failed: {result.error_message}")
+                return None
+
+        except Exception as e:
+            logger.warning(f"SERVICE repair exception: {e}")
+            return None
 
     def _determine_target_file(
         self,
@@ -2326,12 +2556,42 @@ class SmokeRepairOrchestrator:
                             }
                         }
 
-        # Fallback: infer from error message patterns (still domain-agnostic)
+        # Bug #200: Enhanced pattern matching for business logic constraints
+        # These patterns indicate SERVICE layer repairs are needed
         error_lower = error_message.lower()
-        if 'transition' in error_lower or 'status' in error_lower:
-            return {'type': 'status_transition', 'metadata': {}}
+
+        # Status transition patterns (domain-agnostic)
+        status_patterns = [
+            'transition', 'status', 'state', "must have status",
+            "must be", "cannot be", "invalid state", "current status",
+            "open", "closed", "pending", "active", "inactive",
+        ]
+        if any(pattern in error_lower for pattern in status_patterns):
+            return {'type': 'status_transition', 'metadata': {'raw_error': error_message}}
+
+        # Stock/inventory constraint patterns
+        stock_patterns = [
+            'stock', 'inventory', 'quantity', 'available',
+            'insufficient', 'not enough', 'out of stock',
+        ]
+        if any(pattern in error_lower for pattern in stock_patterns):
+            return {'type': 'stock_constraint', 'metadata': {'raw_error': error_message}}
+
+        # Workflow constraint patterns
+        workflow_patterns = [
+            'workflow', 'flow', 'process', 'step', 'order of',
+            'checkout', 'payment', 'before', 'after', 'first',
+        ]
+        if any(pattern in error_lower for pattern in workflow_patterns):
+            return {'type': 'workflow_constraint', 'metadata': {'raw_error': error_message}}
+
+        # Comparison/validation patterns
         if any(op in error_message for op in ['<', '>', '<=', '>=', '!=']):
-            return {'type': 'comparison', 'metadata': {}}
+            return {'type': 'comparison', 'metadata': {'raw_error': error_message}}
+
+        # Empty collection patterns
+        if any(kw in error_lower for kw in ['empty', 'no items', 'is empty']):
+            return {'type': 'precondition', 'metadata': {'condition': 'not_empty', 'raw_error': error_message}}
 
         return None
 

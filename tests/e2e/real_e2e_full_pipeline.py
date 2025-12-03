@@ -4166,6 +4166,54 @@ Once running, visit:
             import traceback
             traceback.print_exc()
 
+    def _extract_error_detail_from_response(
+        self,
+        response_body: Optional[str],
+        error_message: Optional[str],
+        expected_status: int,
+        actual_status: int,
+    ) -> str:
+        """
+        Bug #200: Extract detailed error from HTTP response body.
+
+        For 422 errors, FastAPI returns {"detail": "message"} which
+        enables SERVICE repair routing to detect business logic errors.
+        """
+        fallback = error_message or f"Expected {expected_status}, got {actual_status}"
+
+        if not response_body:
+            return fallback
+
+        import json
+        try:
+            body = json.loads(response_body)
+            if isinstance(body, dict):
+                detail = body.get("detail")
+                if isinstance(detail, str):
+                    return detail
+                elif isinstance(detail, list) and detail:
+                    msgs = []
+                    for item in detail[:3]:
+                        if isinstance(item, dict):
+                            loc = item.get("loc", [])
+                            msg = item.get("msg", "")
+                            if loc and msg:
+                                msgs.append(f"{loc[-1]}: {msg}")
+                            elif msg:
+                                msgs.append(msg)
+                    if msgs:
+                        return "; ".join(msgs)
+                elif "error" in body:
+                    return str(body["error"])
+                elif "message" in body:
+                    return str(body["message"])
+        except (json.JSONDecodeError, TypeError):
+            if len(response_body) > 200:
+                return response_body[:200] + "..."
+            return response_body
+
+        return fallback
+
     async def _run_ir_smoke_test(self) -> Optional[SmokeTestResult]:
         """
         TestsIR: Run IR-centric deterministic smoke tests.
@@ -4271,6 +4319,13 @@ Once running, visit:
 
             for result in report.results:
                 if result.status.value != "passed":
+                    # Bug #200: Extract detailed error from response body
+                    error_detail = self._extract_error_detail_from_response(
+                        getattr(result, 'response_body', None),
+                        result.error_message,
+                        result.expected_status_code,
+                        result.actual_status_code,
+                    )
                     violations.append({
                         "type": "smoke_test_failure",
                         "severity": "high" if "happy_path" in result.scenario_name else "medium",
@@ -4278,7 +4333,8 @@ Once running, visit:
                         "scenario": result.scenario_name,
                         "expected_status": result.expected_status_code,
                         "actual_status": result.actual_status_code,
-                        "error_message": result.error_message or f"Expected {result.expected_status_code}, got {result.actual_status_code}"
+                        "error_message": error_detail,
+                        "response_body": getattr(result, 'response_body', None),
                     })
 
                 if EndpointTestResult is not None:
