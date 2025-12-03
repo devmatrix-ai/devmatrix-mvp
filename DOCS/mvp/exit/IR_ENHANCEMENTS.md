@@ -431,3 +431,310 @@ Si el IR no define field_mappings → No hay auto-population
 ```
 
 **Cero heurísticas. Cero convenciones de nombres. 100% IR.**
+
+---
+
+## ⭐ 5. Auto-Seed IR-Céntrico — Implementación Definitiva (Bug #203 Fix)
+
+### Diagnóstico del Problema
+
+El E2E pipeline alcanzó **98.5% pass rate** pero falla en:
+- `POST /orders` → 422 (cart vacío, sin customer, sin stock)
+- `PUT/DELETE /carts/{id}/items/{item_id}` → 404 (no existe CartItem)
+- `PUT/DELETE /orders/{id}/items/{item_id}` → 404 (no existe OrderItem)
+
+**Causa raíz**: El `seed_db.py` NO deriva estado desde BehaviorModelIR.flows.preconditions.
+
+El Repair Agent no puede arreglar esto porque:
+```
+Constraint not auto-repairable: custom
+Constraint not auto-repairable: stock_constraint
+Constraint not auto-repairable: workflow_constraint
+```
+
+Estas son **faltas de datos**, no bugs de código.
+
+### Solución: Pre-Smoke IR State Builder
+
+El seed debe ser 100% derivado del IR:
+
+```
+DomainModelIR.entities        → Qué entidades crear
+DomainModelIR.relationships   → Orden topológico + FKs
+BehaviorModelIR.flows         → Preconditions del estado
+ValidationModelIR.constraints → Valores válidos (enums, ranges, min)
+TestsModelIR.nested_resources → Child entities con parent FKs
+```
+
+### Estructura de Datos
+
+```python
+@dataclass
+class SeedRequirement:
+    """Requirement derivado del IR para una entidad."""
+    entity_name: str
+    uuid: str                           # UUID predecible
+    uuid_delete: str                    # UUID para DELETE tests
+    fields: Dict[str, Any]              # Valores derivados del IR
+    fk_refs: Dict[str, str]             # {fk_field: parent_entity}
+    is_nested_child: bool               # True si es CartItem, OrderItem
+    parent_entity: Optional[str]        # "Cart" si is_nested_child
+    cardinality_min: int = 1            # Mínimo de instancias
+    flow_preconditions: List[str]       # Preconditions que satisface
+
+@dataclass
+class SeedPlan:
+    """Plan completo de seeds derivado del IR."""
+    requirements: List[SeedRequirement]  # Ordenados topológicamente
+    flow_states: Dict[str, List[str]]    # flow_name -> entities requeridas
+```
+
+### Algoritmo de Derivación
+
+```python
+def derive_seed_plan(ir: ApplicationIR) -> SeedPlan:
+    """Deriva plan de seeds 100% desde IR."""
+    requirements = []
+
+    # 1. Extraer entidades y ordenar topológicamente
+    entities = topological_sort(ir.domain_model.entities)
+
+    # 2. Para cada entidad, derivar campos válidos
+    for entity in entities:
+        fields = {}
+        for attr in entity.attributes:
+            # Saltar auto-generados
+            if attr.name in ('id', 'created_at', 'updated_at'):
+                continue
+            # Derivar valor desde ValidationModelIR
+            fields[attr.name] = derive_valid_value(attr, ir.validation_model)
+
+        # 3. Resolver FKs desde relationships
+        fk_refs = {}
+        for rel in entity.relationships:
+            if rel.type == 'many_to_one':
+                fk_field = f"{rel.target_entity.lower()}_id"
+                fk_refs[fk_field] = rel.target_entity
+
+        # 4. Detectar si es nested child
+        nr = ir.domain_model.get_nested_resource_for_child(entity.name)
+
+        requirements.append(SeedRequirement(
+            entity_name=entity.name,
+            fields=fields,
+            fk_refs=fk_refs,
+            is_nested_child=nr is not None,
+            parent_entity=nr.parent_entity if nr else None
+        ))
+
+    # 5. Analizar flow preconditions
+    flow_states = analyze_flow_preconditions(ir.behavior_model.flows)
+
+    return SeedPlan(requirements=requirements, flow_states=flow_states)
+```
+
+### Análisis de Flow Preconditions
+
+```python
+def analyze_flow_preconditions(flows: List[Flow]) -> Dict[str, List[str]]:
+    """Extrae preconditions de flows para determinar estado inicial."""
+    flow_states = {}
+
+    for flow in flows:
+        required_entities = []
+
+        for precondition in flow.preconditions:
+            # Parse IR preconditions (domain-agnostic)
+            # Ejemplos:
+            #   "{entity}.status == 'OPEN'"     → entity debe existir con status OPEN
+            #   "{ref}.exists"                  → ref entity debe existir
+            #   "quantity > 0"                  → atributo con valor > 0
+            #   "{container}.items.count >= 1" → child entities deben existir
+
+            entities = extract_entities_from_precondition(precondition)
+            required_entities.extend(entities)
+
+        flow_states[flow.name] = required_entities
+
+    return flow_states
+```
+
+### Derivación de Valores Válidos
+
+```python
+def derive_valid_value(attr: Attribute, validation: ValidationModelIR) -> Any:
+    """Deriva valor válido desde constraints del IR."""
+
+    # Buscar constraints para este campo
+    constraint = validation.get_constraint_for_field(attr.name)
+
+    if constraint:
+        # Enum: primer valor
+        if constraint.allowed_values:
+            return constraint.allowed_values[0]
+
+        # Range numérico: min + 1
+        if constraint.min_value is not None:
+            return constraint.min_value + 1
+
+        # String con pattern: generar match
+        if constraint.pattern:
+            return generate_matching_string(constraint.pattern)
+
+    # Fallbacks por tipo (domain-agnostic)
+    type_defaults = {
+        'string': f"Test {attr.name}",
+        'integer': 1,
+        'decimal': Decimal("99.99"),
+        'boolean': True,
+        'uuid': None,  # Se genera automáticamente
+        'datetime': None,  # Se genera automáticamente
+    }
+
+    return type_defaults.get(attr.data_type.value, "test_value")
+```
+
+### Generación de Nested Children
+
+```python
+def generate_nested_children(ir: ApplicationIR, parent_seeds: Dict[str, str]) -> List[str]:
+    """Genera seeds para child entities usando nested_resources del IR."""
+    child_seeds = []
+
+    for nr in ir.domain_model.get_nested_resources():
+        parent_uuid = parent_seeds[nr.parent_entity.lower()]
+
+        # Campos base
+        fields = {
+            nr.fk_field: f'UUID("{parent_uuid}")',  # FK al padre
+        }
+
+        # Auto-populate fields desde reference entity
+        if nr.field_mappings:
+            ref_entity = nr.field_mappings.get('_reference_entity')
+            ref_fk = nr.field_mappings.get('_reference_fk')
+
+            if ref_entity and ref_fk:
+                ref_uuid = parent_seeds[ref_entity.lower()]
+                fields[ref_fk] = f'UUID("{ref_uuid}")'
+
+                # Copiar campos mapeados
+                for child_field, ref_path in nr.field_mappings.items():
+                    if child_field.startswith('_'):
+                        continue
+                    # Derivar valor del reference entity
+                    fields[child_field] = derive_from_reference(ref_path, ir)
+
+        child_seeds.append(generate_seed_block(nr.child_entity, fields))
+
+    return child_seeds
+```
+
+### Seeds Requeridos por Endpoint
+
+| Endpoint Pattern | Seeds Requeridos |
+|------------------|------------------|
+| `GET /entities/{id}` | 1 entity con UUID predecible |
+| `PUT /entities/{id}` | 1 entity con UUID predecible |
+| `DELETE /entities/{id}` | 1 entity con UUID_DELETE |
+| `POST /parent/{id}/children` | 1 parent + FK válidos |
+| `PUT /parent/{pid}/children/{cid}` | 1 parent + 1 child con FK correcto |
+| `DELETE /parent/{pid}/children/{cid}` | 1 parent + 1 child (DELETE UUIDs) |
+| `POST /orders` (checkout flow) | customer + cart(OPEN) + cart_items + products(stock>0) |
+
+### Flow-Specific Seeds (Checkout Example)
+
+El IR define el flow `checkout`:
+
+```yaml
+flow: checkout
+preconditions:
+  - "{cart}.status == 'OPEN'"
+  - "{cart}.items.count >= 1"
+  - "{product}.stock >= {cart_item}.quantity"
+  - "{customer}.exists"
+```
+
+Derivación automática:
+
+```python
+# Del precondition "{cart}.items.count >= 1"
+# → Crear CartItem con cart_id = cart.id
+
+# Del precondition "{product}.stock >= {cart_item}.quantity"
+# → Crear Product con stock >= 1, cart_item.quantity = 1
+
+# Del precondition "{customer}.exists"
+# → Crear Customer (ya existe por relación Cart.customer_id)
+```
+
+### Código Generado (seed_db.py)
+
+```python
+# Auto-generated from IR - NO domain knowledge
+
+# 1. Base entities (order: topological)
+test_product = ProductEntity(
+    id=UUID("00000000-0000-4000-8000-000000000001"),
+    name="Test Product",
+    price=Decimal("99.99"),
+    stock=100,           # >= cart_item.quantity (from flow precondition)
+    is_active=True
+)
+
+test_customer = CustomerEntity(
+    id=UUID("00000000-0000-4000-8000-000000000002"),
+    email="test@example.com",
+    name="Test Customer"
+)
+
+test_cart = CartEntity(
+    id=UUID("00000000-0000-4000-8000-000000000003"),
+    customer_id=UUID("00000000-0000-4000-8000-000000000002"),  # FK
+    status="OPEN"        # From flow precondition
+)
+
+# 2. Nested children (from nested_resources)
+test_cartitem = CartItemEntity(
+    id=UUID("00000000-0000-4000-8000-000000000020"),
+    cart_id=UUID("00000000-0000-4000-8000-000000000003"),      # Parent FK
+    product_id=UUID("00000000-0000-4000-8000-000000000001"),   # Reference FK
+    quantity=1,          # <= product.stock
+    unit_price=Decimal("99.99")  # Auto-populated from Product.price
+)
+
+# Similar for Order + OrderItem...
+```
+
+### Sincronización UUID Registry ↔ seed_db
+
+El smoke runner DEBE usar los mismos UUIDs que seed_db:
+
+```python
+# smoke_runner_v2.py - _build_seed_uuids()
+
+# Base entities: registry sequential (1, 2, 3...)
+seed_uuids['product'] = "00000000-0000-4000-8000-000000000001"
+seed_uuids['customer'] = "00000000-0000-4000-8000-000000000002"
+seed_uuids['cart'] = "00000000-0000-4000-8000-000000000003"
+
+# Nested children: offset 20+ (from nested_resources)
+seed_uuids['cartitem'] = "00000000-0000-4000-8000-000000000020"
+seed_uuids['orderitem'] = "00000000-0000-4000-8000-000000000022"
+```
+
+### Principio Fundamental
+
+```
+El seed_db.py es la MATERIALIZACIÓN del estado IR en la base de datos.
+
+Cada entidad seeded satisface:
+  1. Constraints de ValidationModelIR
+  2. Relaciones de DomainModelIR
+  3. Preconditions de BehaviorModelIR.flows
+
+Si el IR define un invariante → el seed lo satisface.
+Si el IR define un flow → el seed crea el estado previo.
+
+100% IR-driven. 0% domain knowledge.
+```

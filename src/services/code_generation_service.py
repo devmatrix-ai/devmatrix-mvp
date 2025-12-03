@@ -5772,11 +5772,70 @@ datasources:
       timeInterval: 15s
 '''
 
+    def _extract_flow_preconditions(self, spec_requirements) -> dict:
+        """
+        Bug #203: Extract flow preconditions from BehaviorModelIR.
+
+        Returns dict of entity.field -> required_value derived from preconditions.
+        100% domain-agnostic - parses IR precondition patterns.
+
+        Examples:
+            "{cart}.status == 'OPEN'" -> {'cart.status': 'OPEN'}
+            "{product}.stock >= {quantity}" -> {'product.stock': '>=quantity'}
+        """
+        hints = {}
+
+        # Try to get behavior_model from IR
+        behavior_model = None
+        if hasattr(spec_requirements, 'behavior_model'):
+            behavior_model = spec_requirements.behavior_model
+
+        if not behavior_model:
+            return hints
+
+        flows = getattr(behavior_model, 'flows', []) or []
+
+        import re
+        for flow in flows:
+            preconditions = getattr(flow, 'preconditions', []) or []
+
+            for precond in preconditions:
+                # Pattern: "{entity}.status == 'VALUE'"
+                # Matches: {cart}.status == 'OPEN', {order}.status == 'PENDING'
+                status_match = re.search(r'\{(\w+)\}\.status\s*==\s*[\'"](\w+)[\'"]', precond)
+                if status_match:
+                    entity = status_match.group(1).lower()
+                    value = status_match.group(2)
+                    hints[f'{entity}.status'] = value
+                    logger.debug(f"[PRECOND] {entity}.status = '{value}' from: {precond}")
+
+                # Pattern: "{entity}.{field} >= {value}" for stock constraints
+                # Matches: {product}.stock >= {cart_item}.quantity
+                stock_match = re.search(r'\{(\w+)\}\.(\w+)\s*>=', precond)
+                if stock_match:
+                    entity = stock_match.group(1).lower()
+                    field = stock_match.group(2)
+                    # Mark as "needs_positive_value"
+                    hints[f'{entity}.{field}'] = 'positive_required'
+                    logger.debug(f"[PRECOND] {entity}.{field} needs positive value from: {precond}")
+
+                # Pattern: "{entity}.items.count >= N"
+                # Matches: {cart}.items.count >= 1
+                items_match = re.search(r'\{(\w+)\}\.items\.count\s*>=\s*(\d+)', precond)
+                if items_match:
+                    entity = items_match.group(1).lower()
+                    min_count = int(items_match.group(2))
+                    hints[f'{entity}.items_min'] = min_count
+                    logger.debug(f"[PRECOND] {entity} needs >= {min_count} items from: {precond}")
+
+        return hints
+
     def _generate_seed_db_script(self, spec_requirements) -> str:
         """
         Generate seed_db.py script for test data initialization.
 
         Bug #85 Fix: Creates tables and seeds test data for smoke testing.
+        Bug #203 Fix: IR-Centric Auto-Seed - derives values from flow preconditions.
         This ensures endpoints with {id} parameters have real resources.
         """
         # Extract entities from spec_requirements or ApplicationIR
@@ -5792,6 +5851,11 @@ datasources:
             elif hasattr(spec_requirements, 'domain_model') and spec_requirements.domain_model:
                 entities_list = spec_requirements.domain_model.entities
                 logger.info(f"🔍 [SEED_DEBUG] Got {len(entities_list) if entities_list else 0} entities from .domain_model.entities")
+
+        # Bug #203: Extract flow preconditions to derive valid seed values
+        # This is 100% IR-driven - NO domain knowledge
+        flow_preconditions = self._extract_flow_preconditions(spec_requirements)
+        logger.info(f"🔍 [SEED_DEBUG] Extracted {len(flow_preconditions)} flow precondition hints")
 
         # Build entity-specific seed code dynamically from IR attributes
         # Bug #94 Fix: Read actual entity attributes from IR instead of hardcoding field names
@@ -5919,9 +5983,16 @@ datasources:
                             name_suffix = " (Delete)" if seed_idx == 1 else ""
                             field_assignments.append(f'{attr_name}="Test {entity_name}{name_suffix}"')
                         elif 'status' in attr_name.lower():
-                            # Domain-agnostic: Use IR enum_values or default_value
-                            # enum_values already extracted at top of loop
-                            if enum_values:
+                            # Bug #203: IR-Centric - Check flow preconditions FIRST
+                            # e.g., "{cart}.status == 'OPEN'" means use OPEN, not first enum
+                            precond_key = f'{entity_snake}.{attr_name}'
+                            precond_value = flow_preconditions.get(precond_key)
+
+                            if precond_value and precond_value in (enum_values or []):
+                                # Use value from flow precondition (e.g., OPEN)
+                                field_assignments.append(f'{attr_name}="{precond_value}"')
+                                logger.debug(f"[SEED] Using precondition value '{precond_value}' for {precond_key}")
+                            elif enum_values:
                                 field_assignments.append(f'{attr_name}="{enum_values[0]}"')
                             elif has_default and isinstance(default_value, str):
                                 field_assignments.append(f'{attr_name}="{default_value}"')
@@ -5933,11 +6004,21 @@ datasources:
                         else:
                             field_assignments.append(f'{attr_name}="test_value"')
                     elif 'int' in data_type_lower or 'integer' in data_type_lower:
-                        # Type-based default (domain-agnostic)
-                        field_assignments.append(f'{attr_name}=1')
+                        # Bug #203: Check if flow preconditions require positive value
+                        precond_key = f'{entity_snake}.{attr_name}'
+                        if flow_preconditions.get(precond_key) == 'positive_required':
+                            # Stock/inventory fields that must be >= quantity (usually 1)
+                            field_assignments.append(f'{attr_name}=100')
+                            logger.debug(f"[SEED] Using high value 100 for {precond_key} (positive_required)")
+                        else:
+                            field_assignments.append(f'{attr_name}=1')
                     elif 'float' in data_type_lower or 'decimal' in data_type_lower or 'numeric' in data_type_lower:
-                        # Type-based default (domain-agnostic)
-                        field_assignments.append(f'{attr_name}=1.0')
+                        # Bug #203: Check if flow preconditions require positive value
+                        precond_key = f'{entity_snake}.{attr_name}'
+                        if flow_preconditions.get(precond_key) == 'positive_required':
+                            field_assignments.append(f'{attr_name}=999.99')
+                        else:
+                            field_assignments.append(f'{attr_name}=99.99')
                     elif 'bool' in data_type_lower:
                         # Type-based default (domain-agnostic)
                         field_assignments.append(f'{attr_name}=True')
